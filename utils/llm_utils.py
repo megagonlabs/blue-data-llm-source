@@ -46,9 +46,9 @@ _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE_DIR = os.getenv("LLM_UTILS_CACHE_DIR", os.path.join(_repo_root, "cache"))
 DEFAULT_MODEL = os.getenv("LLM_UTILS_DEFAULT_MODEL", "gpt-4o")
 DEFAULT_TEMP = float(os.getenv("LLM_UTILS_DEFAULT_TEMP", "0.0"))
-DEFAULT_MAX_CONCURRENT = int(os.getenv("LLM_UTILS_MAX_CONCURRENT", "20"))
+DEFAULT_MAX_CONCURRENT = int(os.getenv("LLM_UTILS_MAX_CONCURRENT", ""))
 DEFAULT_MAX_RETRIES = int(os.getenv("LLM_UTILS_MAX_RETRIES", "5"))
-DEFAULT_MAX_REQUESTS_PER_MINUTE = int(os.getenv("LLM_UTILS_MAX_REQUESTS_PER_MINUTE", "600"))
+DEFAULT_MAX_REQUESTS_PER_MINUTE = int(os.getenv("LLM_UTILS_MAX_REQUESTS_PER_MINUTE", "240"))
 
 # Configure Logging
 logging.basicConfig(

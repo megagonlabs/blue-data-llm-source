@@ -41,7 +41,7 @@ import asyncio
 from utils.llm_utils import LLMClient
 
 async def main():
-    llm = LLMClient(model="gpt-4o-mini", max_concurrent=10)
+    llm = LLMClient(model="gpt-4o-mini", max_concurrent=32)
     result = await llm.agenerate("What is Python?")
     print(result.content)
 
@@ -173,7 +173,7 @@ llm = LLMClient(model="ollama/llama3")
 ```bash
 export LLM_UTILS_DEFAULT_MODEL="gpt-4o-mini"
 export LLM_UTILS_CACHE_DIR="./cache"
-export LLM_UTILS_MAX_CONCURRENT=20
+export LLM_UTILS_MAX_CONCURRENT=32
 export LLM_UTILS_MAX_RETRIES=5
 export LLM_UTILS_MAX_REQUESTS_PER_MINUTE=600
 ```
@@ -184,7 +184,7 @@ export LLM_UTILS_MAX_REQUESTS_PER_MINUTE=600
 llm = LLMClient(
     model="gpt-4o-mini",
     cache_dir="./cache",
-    max_concurrent=10,
+    max_concurrent=32,
     max_retries=5,
     max_requests_per_minute=600,
     enable_retry=True
@@ -220,7 +220,7 @@ import asyncio
 from utils.llm_utils import LLMClient, aggregate_responses
 
 async def main():
-    llm = LLMClient(model="gpt-4o-mini", max_concurrent=10)
+    llm = LLMClient(model="gpt-4o-mini", max_concurrent=32)
     
     prompts = [
         "list the cities in bay areas",
