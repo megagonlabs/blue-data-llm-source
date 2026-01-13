@@ -1,0 +1,8 @@
+# Core dependencies for LLM Utils
+litellm>=1.80.0
+tenacity>=9.0.0
+diskcache>=5.6.0
+
+# Optional: For Jupyter notebook support
+nest_asyncio>=1.6.0
+
