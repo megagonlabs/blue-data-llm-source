@@ -70,10 +70,12 @@ htmlcov/
 logs/
 *.out
 
-# Research outputs
+# outputs
 results/
 outputs/
-experiments/
+
+# third party repositories
+third_parties/
 
 # Temporary files
 tmp/

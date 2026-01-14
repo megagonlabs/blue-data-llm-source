@@ -6,3 +6,6 @@ diskcache>=5.6.0
 # Optional: For Jupyter notebook support
 nest_asyncio>=1.6.0
 
+# Optional: For structured output with type verification
+pydantic>=2.0.0
+
