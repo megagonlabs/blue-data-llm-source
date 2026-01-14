@@ -1,6 +1,6 @@
 # LLM Client Utilities
 
-A comprehensive LLM client with async/sync support, caching, metrics tracking, and batch processing.
+A comprehensive, research-grade LLM client with async/sync support, persistent caching, metrics tracking, batch processing, and robust error handling. Designed for research workflows with support for multiple providers (OpenAI, Anthropic, Fireworks, Ollama, etc.).
 
 ## Installation
 
@@ -104,13 +104,14 @@ result = await llm.agenerate("What is Python?", cache_refresh=True)
 
 ### 4. Voting/Self-Consistency
 
-Generate multiple diverse responses for voting:
+Generate multiple diverse responses for voting. By default, caching is disabled to ensure diversity:
 
 ```python
 samples = await llm.agenerate_voting_samples(
     "list the cities in bay areas",
     num_samples=5,
     temperature=0.7
+    # use_cache=False by default for voting
 )
 
 # Perform majority voting
@@ -119,7 +120,51 @@ answers = [s.content for s in samples]
 most_common = Counter(answers).most_common(1)[0][0]
 ```
 
-### 5. Metrics Tracking
+**Note:** Each voting sample gets a unique cache key to prevent race conditions. Caching voting samples is generally not recommended as it defeats the purpose of getting diverse responses.
+
+### 5. Output Format Control
+
+Control output format by passing `response_format` in kwargs. LiteLLM automatically handles provider-specific differences:
+
+**JSON Mode (OpenAI):**
+
+```python
+result = await llm.agenerate(
+    "Return a JSON object with key 'city' and value 'San Francisco'",
+    response_format={"type": "json_object"}
+)
+# Note: OpenAI requires 'json' to appear in prompt/system message
+```
+
+**Structured Outputs (OpenAI):**
+
+```python
+schema = {
+    "type": "object",
+    "properties": {
+        "answer": {"type": "integer"},
+        "reasoning": {"type": "string"}
+    },
+    "required": ["answer", "reasoning"],
+    "additionalProperties": False
+}
+
+result = await llm.agenerate(
+    "What is 15 * 23?",
+    response_format={
+        "type": "json_schema",
+        "json_schema": {
+            "name": "response",
+            "schema": schema,
+            "strict": True
+        }
+    }
+)
+```
+
+**Note:** LiteLLM automatically handles `response_format` according to each provider's API. For OpenAI, JSON mode requires "json" in the prompt/system message. Structured outputs don't require this.
+
+### 6. Metrics Tracking
 
 ```python
 result = await llm.agenerate("What is Python?")
@@ -140,7 +185,7 @@ print(f"Total cost: ${stats['total_cost']:.6f}")
 print(f"Cache hit rate: {stats['cache_hit_rate']:.1f}%")
 ```
 
-### 6. Multiple Providers
+### 7. Multiple Providers
 
 **OpenAI:**
 
@@ -166,7 +211,7 @@ llm = LLMClient(model="anthropic/claude-3-5-sonnet")
 llm = LLMClient(model="ollama/llama3")
 ```
 
-### 7. Configuration
+### 8. Configuration
 
 **Environment Variables:**
 
@@ -191,7 +236,7 @@ llm = LLMClient(
 )
 ```
 
-### 8. API Key Configuration
+### 9. API Key Configuration
 
 **Environment Variables (recommended):**
 
@@ -298,7 +343,55 @@ async def main():
 asyncio.run(main())
 ```
 
-### Example 4: Cache Management
+### Example 4: Output Format Control
+
+```python
+import asyncio
+import json
+from utils.llm_utils import LLMClient
+
+async def main():
+    llm = LLMClient(model="gpt-4o-mini")
+    
+    # JSON Mode
+    result = await llm.agenerate(
+        "Return a JSON object with key 'cities' containing a list of 3 cities in the Bay Area",
+        response_format={"type": "json_object"}
+    )
+    
+    data = json.loads(result.content)
+    print(f"Cities: {data['cities']}")
+    
+    # Structured Outputs (OpenAI)
+    schema = {
+        "type": "object",
+        "properties": {
+            "cities": {"type": "array", "items": {"type": "string"}},
+            "count": {"type": "integer"}
+        },
+        "required": ["cities", "count"],
+        "additionalProperties": False
+    }
+    
+    result2 = await llm.agenerate(
+        "List 3 cities in the Bay Area",
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "response",
+                "schema": schema,
+                "strict": True
+            }
+        }
+    )
+    
+    data2 = json.loads(result2.content)
+    print(f"Found {data2['count']} cities: {data2['cities']}")
+
+asyncio.run(main())
+```
+
+### Example 5: Cache Management
 
 ```python
 import asyncio
@@ -344,11 +437,14 @@ LLMClient(
 
 **Methods:**
 
-- `agenerate(prompt, system, temperature, use_cache, cache_refresh, **kwargs)` - Async generation
-- `generate(prompt, system, temperature, use_cache, cache_refresh, **kwargs)` - Sync generation
-- `agenerate_batch(prompts, system, temperature, use_cache, cache_refresh, show_progress, **kwargs)` - Async batch
+- `agenerate(prompt, system="", temperature, use_cache, cache_refresh, **kwargs)` - Async generation
+  - `system`: System message (default empty string)
+  - `**kwargs`: Additional parameters passed to litellm (e.g., `max_tokens`, `seed`, `response_format`)
+- `generate(prompt, system="", temperature, use_cache, cache_refresh, **kwargs)` - Sync generation
+- `agenerate_batch(prompts, system="", temperature, use_cache, cache_refresh, show_progress, **kwargs)` - Async batch
 - `generate_batch(prompts, **kwargs)` - Sync batch
-- `agenerate_voting_samples(prompt, num_samples, system, temperature, use_cache, **kwargs)` - Voting samples (async)
+- `agenerate_voting_samples(prompt, num_samples, system="", temperature, use_cache=False, **kwargs)` - Voting samples (async)
+  - `use_cache`: Default `False` for voting to ensure diversity
 - `generate_voting_samples(prompt, num_samples, **kwargs)` - Voting samples (sync)
 
 ### LLMResponse
@@ -384,17 +480,26 @@ class LLMMetrics:
 
 ## Notes
 
-- **Caching**: Responses are cached based on model, messages, and all kwargs (temperature, seed, etc.)
+- **Caching**: Responses are cached based on model, messages, and all kwargs (temperature, seed, response_format, etc.)
   - Only successful responses are cached. Errors (rate limits, connection failures, etc.) are never cached, so future calls will retry the API.
-- **Voting**: Use `cache_refresh=True` or `agenerate_voting_samples()` to ensure diversity
+  - Voting samples get unique cache keys to prevent race conditions when caching is enabled
+- **Voting**: `agenerate_voting_samples()` defaults to `use_cache=False` to ensure diversity. Each sample gets a unique cache key if caching is enabled.
+- **System Prompt**: Defaults to empty string (`""`). Pass a system message explicitly if needed.
+- **Output Format**: Control output format via `response_format` in kwargs. LiteLLM handles provider-specific differences automatically.
+  - JSON Mode: `response_format={"type": "json_object"}` (OpenAI requires "json" in prompt/system)
+  - Structured Outputs: `response_format={"type": "json_schema", "json_schema": {...}}` (OpenAI)
 - **Concurrency**: `max_concurrent` limits parallel requests to prevent rate limits
 - **Rate Limiting**: `max_requests_per_minute` enforces per-minute rate limits
 - **Retries**: Automatic retries with exponential backoff for transient errors (rate limits, connection errors, service unavailable)
+  - Retry decorator is cached once per instance for efficiency
   - If all retries fail, the exception is raised and nothing is cached
+- **Token Counting**: Automatic fallback to manual token counting for local models (Ollama/vLLM) that don't return usage stats
+- **Cost Calculation**: Uses LiteLLM's cost calculation with safe fallback for unknown models
 
-- **Cost Calculation**: Uses LiteLLM's cost calculation for accurate pricing
+## Examples
 
-## See Also
+See the `examples/` directory for additional usage examples:
 
-- `CACHING_AND_VOTING.md` - Detailed guide on caching and voting patterns
-- `examples/` - Additional usage examples
+- `voting_example.py` - Voting/self-consistency patterns
+- `multi_provider_example.py` - Using multiple providers
+- `multiple_baselines.py` - Running multiple independent baselines

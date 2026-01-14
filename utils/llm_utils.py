@@ -46,9 +46,9 @@ _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE_DIR = os.getenv("LLM_UTILS_CACHE_DIR", os.path.join(_repo_root, "cache"))
 DEFAULT_MODEL = os.getenv("LLM_UTILS_DEFAULT_MODEL", "gpt-4o")
 DEFAULT_TEMP = float(os.getenv("LLM_UTILS_DEFAULT_TEMP", "0.0"))
-DEFAULT_MAX_CONCURRENT = int(os.getenv("LLM_UTILS_MAX_CONCURRENT", ""))
+DEFAULT_MAX_CONCURRENT = int(os.getenv("LLM_UTILS_MAX_CONCURRENT", "32"))
 DEFAULT_MAX_RETRIES = int(os.getenv("LLM_UTILS_MAX_RETRIES", "5"))
-DEFAULT_MAX_REQUESTS_PER_MINUTE = int(os.getenv("LLM_UTILS_MAX_REQUESTS_PER_MINUTE", "240"))
+DEFAULT_MAX_REQUESTS_PER_MINUTE = int(os.getenv("LLM_UTILS_MAX_REQUESTS_PER_MINUTE", "600"))
 
 # Configure Logging
 logging.basicConfig(
@@ -190,6 +190,9 @@ class LLMClient:
         self.max_retries = max_retries or DEFAULT_MAX_RETRIES
         self.enable_retry = enable_retry
         
+        # Cache retry decorator (created once, reused for all API calls)
+        self._retry_decorator = self._create_retry_decorator()
+        
         # Per-minute rate limiting
         self.max_requests_per_minute = max_requests_per_minute
         if self.max_requests_per_minute is None:
@@ -211,29 +214,74 @@ class LLMClient:
         )
 
     def _get_cache_key(self, messages: List[Dict], **kwargs) -> str:
-        """Create a deterministic hash of input + params for caching."""
+        """
+        Create a deterministic hash of input + params for caching.
+        
+        Handles special case: _voting_sample_id is included in cache key
+        to ensure each voting sample gets its own cache entry.
+        """
+        # Create a copy of kwargs for cache key generation
+        # Remove _voting_sample_id from the copy if present (it's only for cache key uniqueness)
+        cache_kwargs = kwargs.copy()
+        voting_sample_id = cache_kwargs.pop("_voting_sample_id", None)
+        
         key_data = {
             "model": self.model,
             "messages": messages,
-            "kwargs": kwargs
+            "kwargs": cache_kwargs
         }
+        
+        # Include voting sample ID in cache key if present (for unique cache entries per sample)
+        if voting_sample_id is not None:
+            key_data["_voting_sample_id"] = voting_sample_id
+        
         # Sort keys to ensure consistent JSON string
         return hashlib.sha256(
             json.dumps(key_data, sort_keys=True).encode()
         ).hexdigest()
 
-    def _extract_metrics(self, response_obj, duration: float = 0.0) -> LLMMetrics:
+    def _extract_metrics(self, response_obj, messages: List[Dict], duration: float = 0.0) -> LLMMetrics:
         """
         Extract standardized metrics from API response.
         
         Handles provider-specific differences (OpenAI vs Anthropic cache reporting).
+        Includes fallback token counting for local models (Ollama/vLLM) that don't return usage stats.
         """
         usage = getattr(response_obj, "usage", None)
-        if not usage:
-            logger.warning("No usage information in response")
-            return LLMMetrics(call_duration=duration)
+        
+        # Token counting with fallback for local models
+        input_tokens = 0
+        output_tokens = 0
+        total_tokens = 0
+        
+        if usage and usage.prompt_tokens > 0 and usage.completion_tokens > 0:
+            # Use API-provided token counts
+            input_tokens = usage.prompt_tokens
+            output_tokens = usage.completion_tokens
+            total_tokens = usage.total_tokens if hasattr(usage, "total_tokens") else (input_tokens + output_tokens)
+        else:
+            # Fallback: Manual token counting for local models (Ollama/vLLM) that don't return usage
+            try:
+                # Extract text from messages
+                input_text = " ".join([m.get("content", "") for m in messages])
+                # Extract output text
+                output_text = response_obj.choices[0].message.content if response_obj.choices else ""
+                output_text = output_text or ""
+                
+                # Use LiteLLM's token counter
+                input_tokens = litellm.token_counter(model=self.model, text=input_text)
+                output_tokens = litellm.token_counter(model=self.model, text=output_text)
+                total_tokens = input_tokens + output_tokens
+                
+                if not usage:
+                    logger.debug("No usage info from API, using token counter fallback")
+            except Exception as e:
+                logger.warning(f"Token counting fallback failed: {e}")
+                input_tokens = 0
+                output_tokens = 0
+                total_tokens = 0
 
-        # Calculate cost using LiteLLM - try completion_cost first, fallback to cost_per_token
+        # Cost calculation with safety wrapper (handles unknown/new models gracefully)
         cost = 0.0
         try:
             # Primary method: completion_cost (works with full response object)
@@ -241,14 +289,16 @@ class LLMClient:
         except Exception:
             try:
                 # Fallback: cost_per_token (more accurate, requires token counts)
-                input_cost, output_cost = litellm.cost_per_token(
-                    model=self.model,
-                    prompt_tokens=usage.prompt_tokens,
-                    completion_tokens=usage.completion_tokens,
-                )
-                cost = input_cost + output_cost
-            except Exception as e:
-                logger.warning(f"Could not calculate cost: {e}")
+                if input_tokens > 0 or output_tokens > 0:
+                    input_cost, output_cost = litellm.cost_per_token(
+                        model=self.model,
+                        prompt_tokens=input_tokens,
+                        completion_tokens=output_tokens,
+                    )
+                    cost = input_cost + output_cost
+            except Exception:
+                # Silently fail for unknown models (e.g., custom fine-tunes, local models)
+                # Don't log warning to avoid noise - this is expected for local models
                 cost = 0.0
 
         # Handle provider differences in Cache reporting
@@ -257,20 +307,21 @@ class LLMClient:
         cache_read = 0
         cache_create = 0
 
-        # Check OpenAI style
-        if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:
-            cache_read = getattr(usage.prompt_tokens_details, "cached_tokens", 0)
+        if usage:
+            # Check OpenAI style
+            if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:
+                cache_read = getattr(usage.prompt_tokens_details, "cached_tokens", 0)
 
-        # Check Anthropic style (LiteLLM normalizes this mostly, but just in case)
-        if hasattr(usage, "cache_read_input_tokens"):
-            cache_read = usage.cache_read_input_tokens
-        if hasattr(usage, "cache_creation_input_tokens"):
-            cache_create = usage.cache_creation_input_tokens
+            # Check Anthropic style (LiteLLM normalizes this mostly, but just in case)
+            if hasattr(usage, "cache_read_input_tokens"):
+                cache_read = usage.cache_read_input_tokens
+            if hasattr(usage, "cache_creation_input_tokens"):
+                cache_create = usage.cache_creation_input_tokens
 
         return LLMMetrics(
-            input_tokens=usage.prompt_tokens,
-            output_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
             cost=cost,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_create,
@@ -297,11 +348,6 @@ class LLMClient:
             before_sleep=before_sleep_log(logger, logging.WARNING),
             reraise=True,
         )
-
-    @property
-    def _retry_decorator(self):
-        """Lazy property to create retry decorator."""
-        return self._create_retry_decorator()
 
     async def _wait_for_rate_limit(self):
         """Wait if we've exceeded the per-minute rate limit."""
@@ -333,9 +379,7 @@ class LLMClient:
         
         This is the core async method that handles concurrency, rate limiting, and retries.
         """
-        retry_decorator = self._create_retry_decorator()
-
-        @retry_decorator
+        @self._retry_decorator
         async def _make_request():
             # Wait for rate limit if needed
             await self._wait_for_rate_limit()
@@ -370,9 +414,7 @@ class LLMClient:
         Note: Sync calls don't benefit from semaphore-based concurrency control.
         For batch processing, use async methods instead.
         """
-        retry_decorator = self._create_retry_decorator()
-
-        @retry_decorator
+        @self._retry_decorator
         def _make_request():
             try:
                 # Pass API key and organization if provided
@@ -399,7 +441,7 @@ class LLMClient:
     async def agenerate(
         self,
         prompt: str,
-        system: str = "You are a helpful assistant.",
+        system: str = "",
         temperature: float = DEFAULT_TEMP,
         use_cache: bool = True,
         cache_refresh: bool = False,
@@ -410,19 +452,23 @@ class LLMClient:
         
         Args:
             prompt: User prompt text
-            system: System message (default helpful assistant)
+            system: System message (default empty string)
             temperature: Sampling temperature (0.0 = deterministic)
             use_cache: Whether to use disk cache
             cache_refresh: If True, bypass cache and refresh the entry (useful for experiments)
-            **kwargs: Additional parameters passed to litellm (e.g., max_tokens, seed)
+            **kwargs: Additional parameters passed to litellm (e.g., max_tokens, seed, response_format)
+                You can control output format by passing response_format in kwargs:
+                - JSON Mode: response_format={"type": "json_object"}
+                - Structured Outputs: response_format={"type": "json_schema", "json_schema": {...}}
         
         Returns:
             LLMResponse with content, metrics, and metadata
         """
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt}
-        ]
+        # Build messages - only include system message if not empty
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
 
         cache_key = self._get_cache_key(messages, temperature=temperature, **kwargs)
 
@@ -442,13 +488,17 @@ class LLMClient:
         if cache_refresh and use_cache:
             logger.debug(f"Cache refresh requested, bypassing cache for: {cache_key[:8]}")
 
+        # Remove internal parameters before API call
+        api_kwargs = kwargs.copy()
+        api_kwargs.pop("_voting_sample_id", None)  # Internal parameter, not for API
+        
         # Call API with timing
         start_time = time.time()
         try:
             response = await self._acall_api(
                 messages,
                 temperature=temperature,
-                **kwargs
+                **api_kwargs
             )
             duration = time.time() - start_time
 
@@ -461,7 +511,7 @@ class LLMClient:
             # Format Result
             result = LLMResponse(
                 content=content,
-                metrics=self._extract_metrics(response, duration=duration),
+                metrics=self._extract_metrics(response, messages, duration=duration),
                 model_used=self.model,
                 cached=False,
                 raw_response=dict(response) if hasattr(response, "__dict__") else {}
@@ -496,7 +546,7 @@ class LLMClient:
     def generate(
         self,
         prompt: str,
-        system: str = "You are a helpful assistant.",
+        system: str = "",
         temperature: float = DEFAULT_TEMP,
         use_cache: bool = True,
         cache_refresh: bool = False,
@@ -509,7 +559,7 @@ class LLMClient:
         
         Args:
             prompt: User prompt text
-            system: System message (default helpful assistant)
+            system: System message (default empty string)
             temperature: Sampling temperature (0.0 = deterministic)
             use_cache: Whether to use disk cache
             cache_refresh: If True, bypass cache and refresh the entry
@@ -552,7 +602,7 @@ class LLMClient:
     async def agenerate_batch(
         self,
         prompts: List[str],
-        system: str = "You are a helpful assistant.",
+        system: str = "",
         temperature: float = DEFAULT_TEMP,
         use_cache: bool = True,
         cache_refresh: bool = False,
@@ -650,23 +700,28 @@ class LLMClient:
         self,
         prompt: str,
         num_samples: int = 5,
-        system: str = "You are a helpful assistant.",
+        system: str = "",
         temperature: float = 0.7,
-        use_cache: bool = True,
+        use_cache: bool = False,
         **kwargs
     ) -> List[LLMResponse]:
         """
         Generate multiple diverse responses for voting/self-consistency.
         
         This method generates multiple different responses from the same prompt
-        for voting. It uses cache_refresh=True to ensure diversity.
+        for voting. By default, caching is disabled to ensure diversity.
+        
+        Note: If use_cache=True, each sample gets a unique cache key to prevent
+        race conditions. However, caching voting samples is generally not recommended
+        as it defeats the purpose of getting diverse responses.
         
         Args:
             prompt: User prompt text
             num_samples: Number of diverse samples to generate
             system: System message
             temperature: Sampling temperature (should be > 0 for diversity)
-            use_cache: Whether to use disk cache (cache_refresh=True ensures fresh responses)
+            use_cache: Whether to use disk cache (default False for voting).
+                       If True, each sample gets a unique cache entry to prevent race conditions.
             **kwargs: Additional parameters passed to litellm
         
         Returns:
@@ -688,7 +743,8 @@ class LLMClient:
                 "Consider using temperature > 0 for voting diversity."
             )
         
-        # Generate samples with cache_refresh to ensure diversity
+        # Generate samples with unique cache keys to prevent race conditions
+        # Each sample gets a unique identifier in kwargs to ensure separate cache entries
         tasks = [
             self.agenerate(
                 prompt=prompt,
@@ -696,9 +752,10 @@ class LLMClient:
                 temperature=temperature,
                 use_cache=use_cache,
                 cache_refresh=True,  # Force fresh response for each sample
+                _voting_sample_id=i,  # Unique identifier for cache key
                 **kwargs
             )
-            for _ in range(num_samples)
+            for i in range(num_samples)
         ]
         
         return await asyncio.gather(*tasks)
