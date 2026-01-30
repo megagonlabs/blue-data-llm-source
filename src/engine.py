@@ -8,6 +8,7 @@ from dataclasses import asdict
 from src.dataplan import DataPlanRequest, MapTask
 from src.schema import Column
 from utils.llm_utils import LLMClient, LLMMetrics, sum_metrics
+from src.validator import Validator
 
 logger = logging.getLogger(__name__)
 
@@ -18,14 +19,17 @@ class MapReduceEngine:
     2. Reduce: Aggregates results into a single DataFrame.
     """
     
-    def __init__(self, llm_client: LLMClient):
+    def __init__(self, llm_client: LLMClient, max_concurrent: int = 5, extraction_temperature: float = 0.0):
         self.llm = llm_client
+        self.max_concurrent = max_concurrent
+        self.extraction_temperature = extraction_temperature
+        self.validator = Validator(llm_client)
         
     async def execute(self, plan: DataPlanRequest) -> Tuple[pd.DataFrame, LLMMetrics]:
         logger.info(f"Starting execution of {len(plan.map_tasks)} map tasks.")
         
         # 1. Map Phase
-        semaphore = asyncio.Semaphore(10) # Limit concurrency
+        semaphore = asyncio.Semaphore(self.max_concurrent) # Limit concurrency
         
         async def run_task(task: MapTask) -> Tuple[List[Dict], Optional[LLMMetrics]]:
             async with semaphore:
@@ -42,6 +46,9 @@ class MapReduceEngine:
         logger.info("Aggregating results...")
         df = self._reduce(results, plan.schema.columns)
         
+        # 3. Global Validation
+        df = self.validator.clean_data(df, primary_keys=plan.schema.primary_keys)
+        
         logger.info(f"Execution complete. Generated {len(df)} rows. Total Tokens: {total_metrics.total_tokens}")
         return df, total_metrics
         
@@ -51,7 +58,7 @@ class MapReduceEngine:
         
         try:
             # Using low temp for extraction
-            response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
+            response = await self.llm.agenerate(prompt, temperature=self.extraction_temperature, response_format={"type": "json_object"})
             
             content = response.content
             metrics = response.metrics
@@ -76,9 +83,22 @@ class MapReduceEngine:
                 for item in data:
                     if task.partition_key not in item and task.partition_key != "All":
                         item[task.partition_key] = task.partition_value
+                
+                # CHUNK VALIDATION
+                if task.partition_key != "All":
+                    # Create constraint dict
+                    constraints = {task.partition_key: task.partition_value}
+                    
+                    # Convert list to DF for validation
+                    chunk_df = pd.DataFrame(data)
+                    chunk_df = self.validator.validate_chunk(chunk_df, constraints)
+                    
+                    # Convert back to list
+                    data = chunk_df.to_dict('records')
+                    
                 return data, metrics
             else:
-                logger.warning(f"Task {task.id} returned non-list JSON.")
+                logger.warning(f"Task {task.id} returned non-list JSON. Type: {type(data)}. Content snippet: {str(data)[:200]}")
                 return [], metrics
                 
         except Exception as e:

@@ -157,6 +157,7 @@ class LLMClient:
         # API Key Configuration (optional - defaults to environment variables)
         api_key: Optional[str] = None,
         organization: Optional[str] = None,
+        default_use_cache: bool = True,
     ):
         """
         Initialize the LLMClient.
@@ -180,6 +181,7 @@ class LLMClient:
             api_key: Optional API key. If None, LiteLLM uses environment variables.
                 Pass directly to avoid setting env vars. LiteLLM handles provider detection.
             organization: Optional organization ID (for OpenAI and other providers)
+            default_use_cache: Default value for use_cache in generate calls.
         """
         # Use provided values or fall back to environment variables or defaults
         self.model = model or DEFAULT_MODEL
@@ -206,6 +208,7 @@ class LLMClient:
         # LiteLLM will handle provider detection automatically
         self.api_key = api_key
         self.organization = organization
+        self.default_use_cache = default_use_cache
         
         logger.info(
             f"Initialized LLMClient: model={self.model}, max_concurrent={self.max_concurrent}, "
@@ -443,7 +446,7 @@ class LLMClient:
         prompt: str,
         system: str = "",
         temperature: float = DEFAULT_TEMP,
-        use_cache: bool = True,
+        use_cache: Optional[bool] = None,
         cache_refresh: bool = False,
         **kwargs
     ) -> LLMResponse:
@@ -454,7 +457,7 @@ class LLMClient:
             prompt: User prompt text
             system: System message (default empty string)
             temperature: Sampling temperature (0.0 = deterministic)
-            use_cache: Whether to use disk cache
+            use_cache: Whether to use disk cache (defaults to self.default_use_cache if None)
             cache_refresh: If True, bypass cache and refresh the entry (useful for experiments)
             **kwargs: Additional parameters passed to litellm (e.g., max_tokens, seed, response_format)
                 You can control output format by passing response_format in kwargs:
@@ -464,6 +467,10 @@ class LLMClient:
         Returns:
             LLMResponse with content, metrics, and metadata
         """
+        # Resolve use_cache
+        if use_cache is None:
+            use_cache = self.default_use_cache
+
         # Build messages - only include system message if not empty
         messages = []
         if system:
