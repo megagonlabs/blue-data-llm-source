@@ -2,7 +2,7 @@
     "geo_countries": {
         "id": "geo_countries",
         "category": "Geography",
-        "table_title": "195 countries in the world",
+        "table_title": "List all countries in the world",
         "columns": [
             "Country",
             "Capital",
@@ -14,7 +14,7 @@
     "sci_elements": {
         "id": "sci_elements",
         "category": "Science",
-        "table_title": "chemical elements in the periodic table",
+        "table_title": "What are all chemical elements in the periodic table?",
         "columns": [
             "Element",
             "Symbol",
@@ -27,7 +27,7 @@
     "cult_pokemon": {
         "id": "cult_pokemon",
         "category": "Culture",
-        "table_title": "Pokemon from Generation 1 to Generation 9",
+        "table_title": "Provide all pokemons from Generation 1 to Generation 9",
         "columns": [
             "Pokedex ID",
             "Name",
@@ -40,7 +40,7 @@
     "bio_mammals": {
         "id": "bio_mammals",
         "category": "Biology",
-        "table_title": "200 distinct mammal species",
+        "table_title": "List 200 mammal species",
         "columns": [
             "Species Name",
             "Order",
@@ -52,7 +52,7 @@
     "ent_mcu": {
         "id": "ent_mcu",
         "category": "Entertainment",
-        "table_title": "movies in the Marvel Cinematic Universe",
+        "table_title": "Give me a table of movies in the Marvel Cinematic Universe",
         "columns": [
             "Title",
             "Release Date",
@@ -64,7 +64,7 @@
     "geo_us_cities": {
         "id": "geo_us_cities",
         "category": "Geography",
-        "table_title": "major cities in the United States",
+        "table_title": "List all cities in the United States",
         "columns": [
             "City",
             "State",

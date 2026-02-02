@@ -49,6 +49,8 @@ DEFAULT_TEMP = float(os.getenv("LLM_UTILS_DEFAULT_TEMP", "0.0"))
 DEFAULT_MAX_CONCURRENT = int(os.getenv("LLM_UTILS_MAX_CONCURRENT", "32"))
 DEFAULT_MAX_RETRIES = int(os.getenv("LLM_UTILS_MAX_RETRIES", "5"))
 DEFAULT_MAX_REQUESTS_PER_MINUTE = int(os.getenv("LLM_UTILS_MAX_REQUESTS_PER_MINUTE", "600"))
+DEFAULT_MAX_TOTAL_REQUESTS = int(os.getenv("LLM_UTILS_MAX_TOTAL_REQUESTS", "1000"))
+DEFAULT_MAX_TOTAL_COST = float(os.getenv("LLM_UTILS_MAX_TOTAL_COST", "10.0"))
 
 # Configure Logging
 logging.basicConfig(
@@ -59,6 +61,11 @@ logger = logging.getLogger("LLM_Utils")
 
 # Suppress noisy LiteLLM logs
 litellm.suppress_instrumentation = True
+
+
+class SafetyLimitExceededError(Exception):
+    """Raised when LLM safety limits (requests or cost) are exceeded."""
+    pass
 
 
 @dataclass
@@ -75,6 +82,8 @@ class LLMMetrics:
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
     call_duration: float = 0.0  # Duration in seconds
+    request_count: int = 0
+    max_tokens_per_request: int = 0
     
     def __add__(self, other: "LLMMetrics") -> "LLMMetrics":
         """Aggregate metrics for batch analysis."""
@@ -86,6 +95,8 @@ class LLMMetrics:
             cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
             cache_creation_tokens=self.cache_creation_tokens + other.cache_creation_tokens,
             call_duration=self.call_duration + other.call_duration,
+            request_count=self.request_count + other.request_count,
+            max_tokens_per_request=max(self.max_tokens_per_request, other.max_tokens_per_request),
         )
     
     def to_dict(self) -> Dict[str, Any]:
@@ -98,6 +109,8 @@ class LLMMetrics:
             "cache_read_tokens": self.cache_read_tokens,
             "cache_creation_tokens": self.cache_creation_tokens,
             "call_duration": self.call_duration,
+            "request_count": self.request_count,
+            "max_tokens_per_request": self.max_tokens_per_request,
         }
 
 
@@ -158,6 +171,11 @@ class LLMClient:
         api_key: Optional[str] = None,
         organization: Optional[str] = None,
         default_use_cache: bool = True,
+        # Global Safety Limits
+        max_total_requests: Optional[int] = None,
+        max_total_cost: Optional[float] = None,
+        # Shared State (for running multiple Clients with shared limits)
+        shared_state: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize the LLMClient.
@@ -182,15 +200,26 @@ class LLMClient:
                 Pass directly to avoid setting env vars. LiteLLM handles provider detection.
             organization: Optional organization ID (for OpenAI and other providers)
             default_use_cache: Default value for use_cache in generate calls.
+            shared_state: Dict containing 'semaphore', 'rate_limit_times', 'rate_limit_lock' 
+                          to share constraints across multiple client instances.
         """
         # Use provided values or fall back to environment variables or defaults
         self.model = model or DEFAULT_MODEL
         self.cache_dir = cache_dir or CACHE_DIR
         self.cache = Cache(self.cache_dir)
         self.max_concurrent = max_concurrent or DEFAULT_MAX_CONCURRENT
-        self.semaphore = asyncio.Semaphore(self.max_concurrent)
         self.max_retries = max_retries or DEFAULT_MAX_RETRIES
         self.enable_retry = enable_retry
+        
+        # Concurrency & Rate Limiting: Use Shared or New
+        if shared_state:
+            self.semaphore = shared_state.get("semaphore") or asyncio.Semaphore(self.max_concurrent)
+            self._rate_limit_times = shared_state.get("rate_limit_times", [])
+            self._rate_limit_lock = shared_state.get("rate_limit_lock") or asyncio.Lock()
+        else:
+            self.semaphore = asyncio.Semaphore(self.max_concurrent)
+            self._rate_limit_times = []
+            self._rate_limit_lock = asyncio.Lock()
         
         # Cache retry decorator (created once, reused for all API calls)
         self._retry_decorator = self._create_retry_decorator()
@@ -200,15 +229,20 @@ class LLMClient:
         if self.max_requests_per_minute is None:
             self.max_requests_per_minute = DEFAULT_MAX_REQUESTS_PER_MINUTE
         
-        # Rate limiting state
-        self._rate_limit_times: List[float] = []  # Track request times for rate limiting
-        self._rate_limit_lock = asyncio.Lock()
-        
         # Store API key and organization for passing to litellm calls
         # LiteLLM will handle provider detection automatically
         self.api_key = api_key
         self.organization = organization
         self.default_use_cache = default_use_cache
+
+        # Global Safety Limits
+        self.max_total_requests = max_total_requests or DEFAULT_MAX_TOTAL_REQUESTS
+        self.max_total_cost = max_total_cost or DEFAULT_MAX_TOTAL_COST
+        
+        # Safety State Tracking
+        self._total_requests_made = 0
+        self._total_cost_incurred = 0.0
+        self._safety_lock = asyncio.Lock()
         
         logger.info(
             f"Initialized LLMClient: model={self.model}, max_concurrent={self.max_concurrent}, "
@@ -328,7 +362,9 @@ class LLMClient:
             cost=cost,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_create,
-            call_duration=duration
+            call_duration=duration,
+            request_count=1,
+            max_tokens_per_request=total_tokens
         )
 
     def _create_retry_decorator(self):
@@ -360,21 +396,83 @@ class LLMClient:
         async with self._rate_limit_lock:
             now = time.time()
             # Remove requests older than 1 minute
-            self._rate_limit_times = [t for t in self._rate_limit_times if now - t < 60]
+            # [FIX] Modify list in place if shared? 
+            # If self._rate_limit_times is a reference to a mutable list in shared_state, we must mutate it carefully.
+            # Re-assigning self._rate_limit_times = [...] breaks the reference if it wasn't a class attribute/container.
+            # But here it's an instance attr. If it points to a shared list, reassigning 'self._rate_limit_times' 
+            # only changes the local pointer, NOT the shared list.
+            # We must use list methods to mutate the shared object.
             
-            # If we're at the limit, wait until the oldest request is > 1 minute old
+            # Prune old times
+            while self._rate_limit_times and now - self._rate_limit_times[0] > 60:
+                self._rate_limit_times.pop(0)
+
+            # If we're at the limit
             if len(self._rate_limit_times) >= self.max_requests_per_minute:
-                oldest_time = min(self._rate_limit_times)
-                wait_time = 60 - (now - oldest_time) + 0.1  # Add small buffer
+                oldest_time = self._rate_limit_times[0]
+                wait_time = 60 - (now - oldest_time) + 0.1
                 if wait_time > 0:
-                    logger.debug(f"Rate limit reached, waiting {wait_time:.2f}s")
+                    logger.debug(f"Rate limit reached ({len(self._rate_limit_times)} reqs), waiting {wait_time:.2f}s")
                     await asyncio.sleep(wait_time)
-                    # Clean up again after waiting
+                    # Time has passed, prune again
                     now = time.time()
-                    self._rate_limit_times = [t for t in self._rate_limit_times if now - t < 60]
+                    while self._rate_limit_times and now - self._rate_limit_times[0] > 60:
+                        self._rate_limit_times.pop(0)
             
             # Record this request
             self._rate_limit_times.append(now)
+
+    async def _check_and_update_safety_limits(self, cost_delta: float = 0.0, request_delta: int = 0):
+        """
+        Thread-safe check and update of global safety limits.
+        
+        Args:
+            cost_delta: Cost to add (usually after a call)
+            request_delta: Requests to add (usually before a call)
+            
+        Raises:
+            SafetyLimitExceededError: If limits are exceeded
+        """
+        async with self._safety_lock:
+            # Check Limits (Pre-flight)
+            if request_delta > 0:
+                if self._total_requests_made + request_delta > self.max_total_requests:
+                    raise SafetyLimitExceededError(
+                        f"Max total requests limit ({self.max_total_requests}) exceeded. "
+                        f"Current: {self._total_requests_made}"
+                    )
+            
+            # Update State
+            self._total_requests_made += request_delta
+            self._total_cost_incurred += cost_delta
+            
+            # Check Cost Limit (Post-flight/Accumulated)
+            if self._total_cost_incurred > self.max_total_cost:
+                 raise SafetyLimitExceededError(
+                    f"Max total cost limit (${self.max_total_cost:.2f}) exceeded. "
+                    f"Current: ${self._total_cost_incurred:.2f}"
+                )
+
+    def _check_safety_limits_sync(self, cost_delta: float = 0.0, request_delta: int = 0):
+        """Sync version of safety check (no lock, assumes single thread or acceptable race)."""
+        # Check Limits
+        if request_delta > 0:
+            if self._total_requests_made + request_delta > self.max_total_requests:
+                raise SafetyLimitExceededError(
+                    f"Max total requests limit ({self.max_total_requests}) exceeded. "
+                    f"Current: {self._total_requests_made}"
+                )
+        
+        # Update State
+        self._total_requests_made += request_delta
+        self._total_cost_incurred += cost_delta
+        
+        # Check Cost
+        if self._total_cost_incurred > self.max_total_cost:
+             raise SafetyLimitExceededError(
+                f"Max total cost limit (${self.max_total_cost:.2f}) exceeded. "
+                f"Current: ${self._total_cost_incurred:.2f}"
+            )
 
     async def _acall_api(self, messages: List[Dict], **kwargs):
         """
@@ -384,6 +482,9 @@ class LLMClient:
         """
         @self._retry_decorator
         async def _make_request():
+            # Check Safety Limits (Pre-flight)
+            await self._check_and_update_safety_limits(request_delta=1)
+            
             # Wait for rate limit if needed
             await self._wait_for_rate_limit()
             
@@ -396,11 +497,23 @@ class LLMClient:
                     if self.organization is not None:
                         call_kwargs["organization"] = self.organization
                     
-                    return await litellm.acompletion(
+                    response = await litellm.acompletion(
                         model=self.model,
                         messages=messages,
                         **call_kwargs
                     )
+                    
+                    # Update Safety Limits (Post-flight Cost)
+                    # We need to calculate cost here for safety tracking, even though we do it again in _extract_metrics
+                    # This is a bit redundant but safer.
+                    try:
+                        cost = litellm.completion_cost(completion_response=response)
+                    except:
+                        cost = 0.0
+                    
+                    await self._check_and_update_safety_limits(cost_delta=cost)
+                    
+                    return response
                 except Exception as e:
                     logger.error(
                         f"API call failed: {type(e).__name__}: {e}",
@@ -419,6 +532,9 @@ class LLMClient:
         """
         @self._retry_decorator
         def _make_request():
+            # Check Safety Limits (Pre-flight)
+            self._check_safety_limits_sync(request_delta=1)
+
             try:
                 # Pass API key and organization if provided
                 call_kwargs = kwargs.copy()
@@ -427,11 +543,21 @@ class LLMClient:
                 if self.organization is not None:
                     call_kwargs["organization"] = self.organization
                 
-                return litellm.completion(
+                response = litellm.completion(
                     model=self.model,
                     messages=messages,
                     **call_kwargs
                 )
+                
+                # Update Safety Limits (Post-flight Cost)
+                try:
+                    cost = litellm.completion_cost(completion_response=response)
+                except:
+                    cost = 0.0
+                
+                self._check_safety_limits_sync(cost_delta=cost)
+                
+                return response
             except Exception as e:
                 logger.error(
                     f"Sync API call failed: {type(e).__name__}: {e}",
@@ -486,7 +612,10 @@ class LLMClient:
             # Reconstruct object from cached dict
             # Ensure metrics is an LLMMetrics object, not a dict
             if isinstance(cached_data.get("metrics"), dict):
-                cached_data["metrics"] = LLMMetrics(**cached_data["metrics"])
+                m_dict = cached_data["metrics"]
+                m_dict.setdefault("request_count", 1)
+                m_dict.setdefault("max_tokens_per_request", m_dict.get("total_tokens", 0))
+                cached_data["metrics"] = LLMMetrics(**m_dict)
             elif not isinstance(cached_data.get("metrics"), LLMMetrics):
                 # Fallback: create empty metrics if missing
                 cached_data["metrics"] = LLMMetrics()

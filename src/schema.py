@@ -5,6 +5,12 @@ from dataclasses import dataclass, field
 import hashlib
 
 from utils.llm_utils import LLMClient
+from src.prompts import (
+    SCHEMA_POOL_PROMPT,
+    SCHEMA_CANDIDATES_PROMPT,
+    SCHEMA_RANKING_PROMPT,
+    SCHEMA_TYPE_INFERENCE_PROMPT
+)
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +19,8 @@ class Column:
     name: str
     description: str = ""
     semantic_type: str = "text" # text, categorical, numerical, time, entity
+    data_type: str = "text" # [NEW] V3: Underlying type (int, float, date, text)
+    formatting: str = "" # [NEW] V3: Format instructions (e.g. "YYYY-MM-DD")
     is_partition_key: bool = False
     
     def to_dict(self):
@@ -20,6 +28,8 @@ class Column:
             "name": self.name,
             "description": self.description,
             "semantic_type": self.semantic_type,
+            "data_type": self.data_type,
+            "formatting": self.formatting,
             "is_partition_key": self.is_partition_key
         }
 
@@ -28,7 +38,7 @@ class SchemaDefinition:
     table_name: str
     columns: List[Column]
     primary_keys: List[str] = field(default_factory=list)
-    partition_strategy: Optional[List[str]] = None  # Architecture V2: Explicit partition subset
+    # partition_strategy removed in Architecture V3 (Decoupled)
     
     def to_dict(self):
         return {
@@ -38,9 +48,6 @@ class SchemaDefinition:
         }
         
     def get_partition_keys(self) -> List[Column]:
-        if self.partition_strategy:
-             # V2: Use explicit strategy
-             return [c for c in self.columns if c.name in self.partition_strategy]
         return [c for c in self.columns if c.is_partition_key]
 
 class SchemaGenerator:
@@ -57,7 +64,7 @@ class SchemaGenerator:
         self.default_num_candidates = num_candidates
         self.default_temperature = temperature
         
-    async def infer_schema(self, query: str, num_candidates: Optional[int] = None, strategy: str = "llm_rank") -> SchemaDefinition:
+    async def infer_schema(self, query: str, num_candidates: Optional[int] = None, strategy: str = "llm_rank", context: dict = None) -> SchemaDefinition:
         """
         Main entry point: given a query like "List all US cities",
         infer the best schema.
@@ -66,13 +73,15 @@ class SchemaGenerator:
         2. Generate Schema Candidates (selecting from pool)
         3. Rank & Refine
         """
+        context = context or {}
+        
         # Step 1: Generate Global Schema Pool of latent attributes
-        global_pool = await self._generate_candidate_columns(query)
+        global_pool = await self.generate_pool(query)
         logger.info(f"Generated global schema pool: {global_pool}")
         
         # Step 2: Generate Schema Candidates using the pool
         k = num_candidates or self.default_num_candidates
-        candidates = await self._generate_candidates(query, k, global_pool)
+        candidates = await self.generate_candidates(query, k, global_pool)
         
         if not candidates:
             # Fallback
@@ -84,25 +93,32 @@ class SchemaGenerator:
             best_candidate = await self._rank_candidates(query, candidates)
         
         # Step 3: Refine types and keys
-        final_schema = await self._infer_types_and_keys(query, best_candidate)
+        final_schema = await self.infer_types_and_keys(query, best_candidate)
+        
+        # Artifact Persistence
+        if "output_dir" in context:
+            import os
+            try:
+                schema_artifact = {
+                    "query": query,
+                    "global_pool": global_pool,
+                    "candidates": candidates,
+                    "selected_strategy": strategy,
+                    "final_schema": final_schema.to_dict()
+                }
+                with open(os.path.join(context["output_dir"], "schema.json"), "w") as f:
+                    json.dump(schema_artifact, f, indent=2)
+            except Exception as e:
+                logger.warning(f"Failed to save schema artifact: {e}")
+                
         return final_schema
 
-    async def _generate_candidate_columns(self, query: str) -> List[str]:
+    async def generate_pool(self, query: str) -> List[str]:
         """
         Phase 2.1: Generate a pool of ~15 potential attributes.
         Include 'hidden' attributes good for partitioning (Time, Location, Category).
         """
-        prompt = f"""
-        User Query: "{query}"
-        
-        Brainstorm 15 potential attributes (columns) for a database table satisfying this query.
-        Include:
-        - Visible attributes (directly requested)
-        - Latent/Hidden attributes (e.g. "Release Year", "Country", "Genre", "Scientific Class", "Generation") that are valuable for filtering or partitioning.
-        
-        Return JSON list of strings.
-        Example: ["Name", "year", "genre", "director", "studio"]
-        """
+        prompt = SCHEMA_POOL_PROMPT.format(query=query)
         response = await self.llm.agenerate(prompt, temperature=0.7, response_format={"type": "json_object"})
         try:
             content = response.content
@@ -117,48 +133,9 @@ class SchemaGenerator:
             logger.warning(f"Failed to generate column pool: {e}")
             return []
 
-    async def _generate_candidates(self, query: str, k: int, column_pool: List[str] = []) -> List[Dict]:
+    async def generate_candidates(self, query: str, k: int, column_pool: List[str] = []) -> List[Dict]:
         pool_str = ", ".join(column_pool)
-        prompt = f"""
-        You are an expert database architect that designs database schemas to decompose user query by partitions.
-        User Query: "{query}"
-        Available Attribute Pool: [{pool_str}]
-        
-        Propose {k} different table schemas that split user query into subqueries (partitions).
-        Select the best subset of attributes from the pool (and add unique IDs if needed).
-        For each schema, provide:
-        1. Table Name
-        2. List of Columns (Name, Description)
-        3. Primary Key(s)
-        4. Partition Strategy: A list of columns to use for query decomposition, ordered by hierarchy (e.g. ["Year", "Month"]).
-        
-        Guidelines:
-        1. **Entity Centric**: The schema MUST include the main Entity Name (e.g. "City", "Pokemon Name").
-        2. **Decomposition Ready**: Choose attributes that make good Partition Keys (e.g. "Region", "Type", "Year").
-        3. **Scope Aware**: Respect constraints (e.g. if "US Cities", "Country" is a static attribute/constraint, maybe less useful for partitioning).
-        4. **Complete**: Ensure all requested data can be stored.
-        
-        CRITICAL: 
-        - Do NOT produce schemas with ONLY IDs.
-        - Ensure clear, descriptive column names.
-        
-        Output format: JSON object with key "schemas".
-        
-        Output Template (JSON):
-        {{
-            "schemas": [
-                {{
-                    "table_name": "EntityTableName",
-                    "columns": [
-                        {{"name": "Attribute1", "description": "Description of attribute"}},
-                        {{"name": "Attribute2", "description": "Description of another attribute"}}
-                    ],
-                    "primary_keys": ["Attribute1"],
-                    "partition_strategy": ["Attribute1", "Attribute2"]  # Architecture V2: List distinct keys in order of hierarchy
-                }}
-            ]
-        }}
-        """
+        prompt = SCHEMA_CANDIDATES_PROMPT.format(query=query, pool_str=pool_str, k=k)
         
         response = await self.llm.agenerate(prompt, temperature=self.default_temperature, response_format={"type": "json_object"})
         try:
@@ -206,28 +183,7 @@ class SchemaGenerator:
             
         # LLM-as-a-Judge ranking
         candidates_str = json.dumps(candidates, indent=2)
-        prompt = f"""
-        User Query: "{query}"
-        
-        I have {len(candidates)} candidate schemas:
-        {candidates_str}
-        
-        Which schema is the BEST for general-purpose extraction if I want to decompose the query into subqueries (partitions)?
-        Rank based on:
-        - the partitions under this schema are independent and can be processed in parallel
-        - the partitions under this schema are roughly equal in size
-        - Atomicity (columns are not composite)
-        - Partition Strategy Viability: Does the proposed partition strategy (if any) make sense for the query?
-        - Orthogonality (no redundant columns)
-        - Coverage (captures all necessary attributes in the query)
-        
-        BAD Schemas:
-        - Only Numeric stats (no Names)
-        - Only IDs and Foreign Keys
-        - Missing crucial grouping columns
-        
-        Return ONLY the index (0-based) of the best schema.
-        """
+        prompt = SCHEMA_RANKING_PROMPT.format(query=query, num_candidates=len(candidates), candidates_str=candidates_str)
         response = await self.llm.agenerate(prompt, temperature=0.0)
         try:
             # Extract first number
@@ -239,33 +195,16 @@ class SchemaGenerator:
             
         return candidates[0]
 
-    async def _infer_types_and_keys(self, query: str, schema_dict: Dict) -> SchemaDefinition:
+    async def infer_types_and_keys(self, query: str, schema_dict: Dict) -> SchemaDefinition:
         # Determine semantic types and partition suitability
         if 'columns' not in schema_dict:
             logger.error(f"Schema dict missing 'columns': {schema_dict}")
             return self._create_fallback_schema(query)
             
         columns_str = ", ".join([c.get('name', 'Unknown') for c in schema_dict['columns']])
+        table_name = schema_dict.get('table_name', 'data')
         
-        prompt = f"""
-        Query: "{query}"
-        Table: {schema_dict.get('table_name', 'data')}
-        Columns: {columns_str}
-        
-        For each column, determine:
-        1. Semantic Type (categorical, numerical, time, entity, text)
-        2. Is it a good Partition Key? 
-           - Good keys divide data into chunks (e.g. State, Year, Genre, Generation, Phase).
-           - BAD keys: Unique IDs (e.g. 1, 2, 3...), High cardinality names (City Name), Booleans (too few).
-           
-        Return JSON:
-        {{
-            "columns": {{
-                "ColumnName": {{"type": "...", "is_partition": true/false}},
-                ...
-            }}
-        }}
-        """
+        prompt = SCHEMA_TYPE_INFERENCE_PROMPT.format(query=query, table_name=table_name, columns_str=columns_str)
         
         response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
         type_info = {}
@@ -291,8 +230,7 @@ class SchemaGenerator:
         return SchemaDefinition(
             table_name=schema_dict.get('table_name', 'extracted_data'),
             columns=cols,
-            primary_keys=schema_dict.get('primary_keys', []),
-            partition_strategy=schema_dict.get('partition_strategy', [])
+            primary_keys=schema_dict.get('primary_keys', [])
         )
         
     def _create_fallback_schema(self, query: str) -> SchemaDefinition:

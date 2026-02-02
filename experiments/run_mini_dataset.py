@@ -50,25 +50,62 @@ def setup_global_logging(output_dir: str):
     )
     print(f"Logging detailed execution traces to {log_file}")
 
-async def evaluate_dataset(dataset_path: str, base_output_dir: str):
+async def evaluate_dataset(dataset_path: str, base_output_dir: str, args=None):
     # 1. Create Independent Run Directory
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = os.path.join(base_output_dir, f"run_{timestamp}")
     os.makedirs(run_dir, exist_ok=True)
     print(f"Starting new experiment run at: {run_dir}")
     
+    
     # 2. Setup Logging
     setup_global_logging(run_dir)
     
     # 3. Copy Config (Dataset)
-    shutil.copy(dataset_path, os.path.join(run_dir, "config_mini_dataset.json"))
+    # Skipped per user request
+    # shutil.copy(dataset_path, os.path.join(run_dir, "config_mini_dataset.json"))
+    
+    # 4. Save Run Config
+    # Configurable Experiment Settings from Args or Defaults
+    config = {
+        "timestamp": timestamp,
+        "dataset_path": dataset_path,
+        "model": args.model if args else "gpt-4o",
+        "schema_selection_strategy": args.strategy if args else "llm_rank",
+        "use_cache": args.use_cache if args else False,
+        "max_concurrent": args.max_concurrent if args else 20,
+        "max_partitions": args.max_partitions if args else 50,
+        "num_schema_candidates": 3,   # Still hardcoded for now, or add arg
+        "schema_temperature": 0.7,
+        "extraction_temperature": 0.0,
+        "decomposition_strategy": args.decomposition_strategy if args else "rule_based",
+        "row_threshold": args.row_threshold if args else 50,
+        "max_depth": args.max_depth if args else 1,
+        "partitioning_method": args.partitioning_method if args else "semantic"
+    }
+    
+    with open(os.path.join(run_dir, "run_config.json"), 'w') as f:
+        json.dump(config, f, indent=4)
     
     print(f"Loading dataset from {dataset_path}...")
     with open(dataset_path, 'r') as f:
         dataset = json.load(f)
 
-    print("Initializing PKDB...")
-    pkdb = PKDB(model="gpt-4o", cache_dir=".cache_pkdb")
+    print(f"Initializing PKDB with config: {config}...")
+    pkdb = PKDB(
+        model=config["model"], 
+        cache_dir=".cache_pkdb",
+        use_cache=config["use_cache"],
+        max_concurrent=config["max_concurrent"],
+        max_partitions=config["max_partitions"],
+        num_schema_candidates=config["num_schema_candidates"],
+        schema_temperature=config["schema_temperature"],
+        extraction_temperature=config["extraction_temperature"],
+        decomposition_strategy=config["decomposition_strategy"],
+        row_threshold=config["row_threshold"],
+        max_depth=config["max_depth"],
+        partitioning_method=config["partitioning_method"]
+    )
     
     results = []
     
@@ -86,18 +123,50 @@ async def evaluate_dataset(dataset_path: str, base_output_dir: str):
         start = time.time()
         
         # Setup individual log for this query
-        with query_logging_context(run_dir, uid):
+        # Create per-query output directory
+        query_out_dir = os.path.join(run_dir, uid)
+        os.makedirs(query_out_dir, exist_ok=True)
+        
+        # Setup individual log for this query (inside its own dir)
+        with query_logging_context(query_out_dir, "process"):
             try:
-                df, metrics, subquery_count = await pkdb.extract_table(q)
+                # Pass output_dir context to PKDB
+                df, metrics, subquery_count = await pkdb.extract_table(
+                    q, 
+                    strategy=config["schema_selection_strategy"],
+                    context={"output_dir": query_out_dir, "dataset_id": uid}
+                )
                 duration = time.time() - start
                 count = len(df)
                 
-                print(f"-> Extracted {count} rows in {duration:.2f}s")
-                print(f"-> Metrics: {metrics.total_tokens} tokens. Cost: ${metrics.cost:.4f}. Subqueries: {subquery_count}")
+                # Log to both console (via root handler) and file (via query handler)
+                msg = f"-> Extracted {count} rows in {duration:.2f}s. Metrics: {metrics.total_tokens} tokens. Cost: ${metrics.cost:.4f}. Subqueries: {subquery_count}"
+                print(msg)
+                logging.info(msg)
                 
-                # Save individual table
-                out_file = os.path.join(run_dir, f"{uid}.csv")
+                # Save individual table in query dir
+                out_file = os.path.join(query_out_dir, f"{uid}.csv")
                 df.to_csv(out_file, index=False)
+
+                # Artifact Persistence: Cost & Metrics
+                # Calculate derived metrics
+                req_count = metrics.request_count if metrics.request_count > 0 else 1
+                avg_tokens = metrics.total_tokens / req_count
+                
+                cost_artifact = {
+                    "query_id": uid,
+                    "duration_seconds": duration,
+                    "total_cost_usd": metrics.cost,
+                    "total_tokens": metrics.total_tokens,
+                    "input_tokens": metrics.input_tokens,
+                    "output_tokens": metrics.output_tokens,
+                    "request_count": metrics.request_count,
+                    "avg_tokens_per_prompt": avg_tokens,
+                    "max_tokens_per_prompt": metrics.max_tokens_per_request
+                }
+                
+                with open(os.path.join(query_out_dir, "cost.json"), "w") as f:
+                    json.dump(cost_artifact, f, indent=2)
                 
                 results.append({
                     "ID": uid,
@@ -109,6 +178,7 @@ async def evaluate_dataset(dataset_path: str, base_output_dir: str):
                     "Total_Tokens": metrics.total_tokens,
                     "Input_Tokens": metrics.input_tokens,
                     "Output_Tokens": metrics.output_tokens,
+                    "Request_Count": metrics.request_count,
                     "Cost_USD": metrics.cost,
                     "Output_File": out_file,
                     "Status": "Success"
@@ -139,4 +209,29 @@ async def evaluate_dataset(dataset_path: str, base_output_dir: str):
     print(f"\nSummary saved to {summary_path}")
 
 if __name__ == "__main__":
-    asyncio.run(evaluate_dataset("experiments/mini_dataset.json", "experiments/runs"))
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Run Mini Dataset Benchmark")
+    parser.add_argument("--dataset_path", type=str, default="experiments/mini_dataset.json", help="Path to input dataset JSON")
+    parser.add_argument("--base_output_dir", type=str, default="experiments/runs", help="Base directory for output runs")
+    
+    # Core Configs
+    parser.add_argument("--model", type=str, default="gpt-4o", help="LLM model name")
+    parser.add_argument("--strategy", type=str, default="llm_rank", help="Schema selection strategy")
+    parser.add_argument("--decomposition_strategy", type=str, default="llm_based", choices=["rule_based", "llm_based"], help="Decomposition strategy")
+    parser.add_argument("--partitioning_method", type=str, default="smart", choices=["semantic", "greedy", "smart"], help="Partitioning method (semantic, greedy, smart)")
+    
+    # Toggles & Thresholds
+    parser.add_argument("--use_cache", action="store_true", help="Enable semantic caching")
+    parser.add_argument("--row_threshold", type=int, default=50, help="Row count threshold for decomposition")
+    parser.add_argument("--max_depth", type=int, default=1, help="Max recursion depth")
+    parser.add_argument("--max_partitions", type=int, default=50, help="Max partitions per map task")
+    parser.add_argument("--max_concurrent", type=int, default=20, help="Max concurrent requests")
+    
+    args = parser.parse_args()
+    
+    asyncio.run(evaluate_dataset(
+        dataset_path=args.dataset_path, 
+        base_output_dir=args.base_output_dir,
+        args=args
+    ))

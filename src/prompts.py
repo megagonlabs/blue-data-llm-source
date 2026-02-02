@@ -1,0 +1,264 @@
+# Centralized Prompts for PKDB Framework
+
+# --- QUERY ANALYSIS ---
+
+QUERY_ANALYSIS_PROMPT = """
+User Query: "{query}"
+
+Analyze this query and extract:
+1. **Refined Query**: A clear, standalone natural language task description.
+2. **Constraints**: A JSON dictionary of hard filters (e.g. {{"Year": "2023", "Country": "USA"}}). Use empty {{}} if none.
+3. **Collection Strategy**: "ALL" (default), "LIMIT <N>", or "MOST_COMMON".
+
+Return JSON:
+{{
+    "refined_query": "...",
+    "constraints": {{...}},
+    "collection_strategy": "..."
+}}
+"""
+
+QUERY_REWRITE_PROMPT = """
+You are an expert Data Engineer optimizing queries for an LLM-based database.
+
+Goal: Rewrite the user query to be:
+- **Precise**: Resolve ambiguities.
+- **Comprehensive**: Clearly state the intent to retrieve a complete structured dataset.
+- **Constraint-Aware**: Preserve all filters and constraints (e.g. "US Cities" -> "The cities' country is USA").
+
+Guidelines:
+- Clarify ambiguous terms.
+- Specify that where the query want a "complete list" / "all items" or just some (like 100).
+- Mention including key attributes if implied.
+
+Output Requirements: 
+- Return ONLY the rewritten query text.
+- NO quotes, NO explanation, NO JSON.
+
+Input Query: "{query}"
+"""
+
+ROW_ESTIMATION_PROMPT = """
+Query: "{query}"
+
+Estimate the total number of rows (items) that would be in the full result table for this query.
+Be realistic. 
+- "US States" -> 50
+- "Pokemon" -> ~1000
+- "Nobel Prize Winners" -> ~1000
+- "Harry Potter Movies" -> 8
+
+Return ONLY a single integer number.
+"""
+
+DECOMPOSITION_DECISION_PROMPT = """
+Query: "{query}"
+Estimated Rows: {estimated_rows}
+
+Determine if this extraction task requires "Map-Reduce Decomposition" (breaking into partitions) or if it can be done in a "Flat" single pass.
+
+Guidelines:
+- Flat: Small lists, simple fixed sets (e.g. "The 7 Continents"), that could be fetched in a single query.
+- MapReduce: Large lists, open-ended sets, or complex attributes requiring detail, that would require multiple queries.
+- Also consider if there are natural partition keys (e.g. "Category", "Year", "Region").
+
+Return JSON Code:
+{{
+    "requires_map_reduce": true/false,
+    "reason": "Brief explanation..."
+}}
+"""
+
+# --- SCHEMA GENERATION ---
+
+SCHEMA_POOL_PROMPT = """
+User Query: "{query}"
+
+Brainstorm 15 potential attributes (columns) for a database table satisfying this query.
+Include:
+- Visible attributes (directly requested)
+- Latent/Hidden attributes (e.g. "Release Year", "Country", "Genre", "Scientific Class", "Generation") that are valuable for filtering or partitioning.
+
+Return JSON list of strings.
+Example: ["Name", "year", "genre", "director", "studio"]
+"""
+
+SCHEMA_CANDIDATES_PROMPT = """
+You are an expert database architect that designs database schemas to decompose user query by partitions.
+User Query: "{query}"
+Available Attribute Pool: [{pool_str}]
+
+Propose {k} different table schemas that split user query into subqueries (partitions).
+Select the best subset of attributes from the pool (and add unique IDs if needed).
+For each schema, provide:
+1. Table Name
+2. List of Columns (Name, Description)
+3. Primary Key(s)
+4. Partition Strategy: A list of columns to use for query decomposition, ordered by hierarchy (e.g. ["Year", "Month"]).
+
+Guidelines:
+1. **Entity Centric**: The schema MUST include the main Entity Name (e.g. "City", "Pokemon Name").
+2. **Decomposition Ready**: Choose attributes that make good Partition Keys (e.g. "Region", "Type", "Year").
+3. **Scope Aware**: Respect constraints (e.g. if "US Cities", "Country" is a static attribute/constraint, maybe less useful for partitioning).
+4. **Complete**: Ensure all requested data can be stored.
+
+CRITICAL: 
+- Do NOT produce schemas with ONLY IDs.
+- Ensure clear, descriptive column names.
+
+Output format: JSON object with key "schemas".
+
+Output Template (JSON):
+{{
+    "schemas": [
+        {{
+            "table_name": "EntityTableName",
+            "columns": [
+                {{"name": "Attribute1", "description": "Description of attribute"}},
+                {{"name": "Attribute2", "description": "Description of another attribute"}}
+            ],
+            "primary_keys": ["Attribute1"],
+            "partition_strategy": ["Attribute1", "Attribute2"]  # Architecture V2: List distinct keys in order of hierarchy
+        }}
+    ]
+}}
+"""
+
+SCHEMA_RANKING_PROMPT = """
+User Query: "{query}"
+
+I have {num_candidates} candidate schemas:
+{candidates_str}
+
+Which schema is the BEST for general-purpose extraction if I want to decompose the query into subqueries (partitions)?
+Rank based on:
+- the partitions under this schema are independent and can be processed in parallel
+- the partitions under this schema are roughly equal in size
+- Atomicity (columns are not composite)
+- Partition Strategy Viability: Does the proposed partition strategy (if any) make sense for the query?
+- Orthogonality (no redundant columns)
+- Coverage (captures all necessary attributes in the query)
+
+BAD Schemas:
+- Only Numeric stats (no Names)
+- Only IDs and Foreign Keys
+- Missing crucial grouping columns
+
+Return ONLY the index (0-based) of the best schema.
+"""
+
+SCHEMA_TYPE_INFERENCE_PROMPT = """
+Query: "{query}"
+Table: {table_name}
+Columns: {columns_str}
+
+For each column, determine:
+1. Semantic Type (categorical, numerical, time, entity, text)
+2. Is it a good Partition Key? 
+   - Good keys divide data into chunks (e.g. State, Year, Genre, Generation, Phase).
+   - BAD keys: Unique IDs (e.g. 1, 2, 3...), High cardinality names (City Name), Booleans (too few).
+   
+Return JSON:
+{{
+    "columns": {{
+        "ColumnName": {{"type": "...", "is_partition": true/false}},
+        ...
+    }}
+}}
+"""
+
+# --- ESTIMATION & STRATEGY ---
+
+DISTRIBUTION_ESTIMATION_PROMPT = """
+Your Task: Analyze the data distribution for the partition key "{key_name}" given the query "{query}".
+
+Guidelines:
+1. **Estimate Rows**: List the likely partitions and estimate the number of rows (items) in each.
+2. **Assess Ambiguity**: Is this key clear and mutually exclusive? (0.0=Clear, 1.0=Ambiguous).
+3. **Common Sense Scope**: 
+   - Pay attention to the query scope and constrains. If the query implies a specific scope or constrains (e.g. "US Cities"), corresponding partition keys like "Country" could be limited (e.g. only "USA").
+   - Do NOT hallucinate values outside the query scope.
+
+Return JSON Code:
+{{
+    "partitions": {{
+        "PartitionName1": <est_count>,
+        "PartitionName2": <est_count>,
+        ...
+    }},
+    "ambiguity_score": <float 0.0-1.0>,
+    "reasoning": "<Explain if the query is good to be partitioned by this key, how you determined the partitions, and other relevant information>"
+}}
+
+Query: "{query}"
+Potential Partition Key: "{key_name}"
+"""
+
+PARTITION_VALUES_PROMPT = """
+Reference Query: "{query}"
+Target Attribute: "{key_name}" ({key_description})
+
+Task: List ALL possible values for "{key_name}" that are STRICTLY relevant to the query scope.
+Return JSON list of strings.
+"""
+
+SUBQUERY_NATURAL_STR = """
+Rewrite the following query to restrict it to: {key} = "{val}".
+Original Query: "{query}"
+
+Return ONLY the rewritten query text.
+"""
+
+# --- EXECUTION ---
+
+# Note: Task prompt is constructed dynamically in DataTask.to_prompt() due to high variability
+# But we can extract the template parts if needed. For now keeping dynamic.
+
+ROW_BY_ROW_KEYS_PROMPT = """
+User Request: "{query}"
+We are building a table.
+First, list ALL unique entities for the column: "{key_col}".
+Do not generate the full table yet. Just the keys.
+
+Constraints: {constraints}
+
+Return JSON list of strings: [ "Key1", "Key2", ... ]
+"""
+
+ROW_BY_ROW_FETCH_PROMPT = """
+User Request: "{query}"
+Generate the table row for the {key_col}: "{key_val}".
+Columns: {key_col}, {other_cols}
+
+Return JSON object: {{ "{key_col}": "{key_val}", "Col2": "Val2" ... }}
+"""
+
+# --- VALIDATION ---
+
+CHUNK_REFINEMENT_PROMPT = """
+You are a Data Cleaning Assistant.
+The following rows extracted from a table violate the constraint: {constraints}.
+
+Invalid Rows:
+{rows}
+
+YOUR TASK:
+1. Correct the data in these rows to satisfy the constraint IF POSSIBlE (e.g. fix year, normalize name).
+2. If a row is completely irrelevant or cannot be fixed, DROP it.
+3. Return ONLY the fixed rows in JSON format.
+
+Return JSON object: {{ "fixed_rows": [...] }}
+"""
+
+ENTITY_RESOLUTION_PROMPT = """
+You are an Entity Resolver.
+The following rows might represent the SAME entity but have conflicting or redundant info:
+{rows}
+
+YOUR TASK:
+1. Determining if they are indeed duplicates (referring to the same real-world entity).
+2. If yes, MERGE them into a SINGLE canonical row. Resolve conflicts by choosing the most detailed/accurate value.
+3. If they are distinct entities, keep them separate.
+
+Return JSON object: {{ "resolved_rows": [...] }}
+"""
