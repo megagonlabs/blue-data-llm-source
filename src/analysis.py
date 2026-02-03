@@ -151,6 +151,9 @@ class QueryAnalyzer:
         # 2. Estimate Rows
         estimated_rows = await self._estimate_row_count(rewritten_query)
         logger.info(f"Estimated rows: {estimated_rows}")
+        
+        # [REVERTED] Propagate estimate to task for Completeness Check downstream
+        # task.estimated_rows = estimated_rows
 
         # 3. Determine Decomposition
         if decomposition_strategy == "llm_based":

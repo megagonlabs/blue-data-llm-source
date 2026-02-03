@@ -23,7 +23,7 @@ class PKDBConfig:
     schema_temperature: float = 0.7
     extraction_temperature: float = 0.0
     decomposition_strategy: str = "rule_based"
-    row_threshold: int = 120 # [Optimized Default V4]
+    row_threshold: int = 120 # [Optimized Default V4.2: Reverted to 120 for best F1/Cost balance]
     max_depth: int = 1
     partitioning_method: str = "smart"
     max_total_requests: int = 10000
