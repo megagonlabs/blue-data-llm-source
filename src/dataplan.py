@@ -215,17 +215,17 @@ class DataPlanBuilder:
                 partition_keys = final_schema.get_partition_keys()
                 
                 for pk in partition_keys:
-                     strategy_candidates.append(StrategyCandidate(
-                         schema=final_schema,
-                         partition_key=pk.name
-                     ))
+                    strategy_candidates.append(StrategyCandidate(
+                        schema=final_schema,
+                        partition_key=pk.name
+                    ))
                 
                 if strategy_candidates:
                     # Evaluate concurrent
                     evaluated_candidates = await self.evaluator.evaluate_concurrent(rewritten_query, strategy_candidates)
                     best_strategy = self.evaluator.select_best(evaluated_candidates)
                     if best_strategy:
-                         logger.info(f"Selected Best Partition Key for Strict Schema: {best_strategy.partition_key}")
+                        logger.info(f"Selected Best Partition Key for Strict Schema: {best_strategy.partition_key}")
 
         # 1. Joint Optimization (Schema + Partition Strategy) - ONLY IF NO SCHEMA PROVIDED
         elif partitioning_method == "smart" and analysis.requires_decomposition:
@@ -249,10 +249,10 @@ class DataPlanBuilder:
                     continue
                     
                 for pk in partition_keys:
-                     strategy_candidates.append(StrategyCandidate(
-                         schema=schema_def,
-                         partition_key=pk.name
-                     ))
+                    strategy_candidates.append(StrategyCandidate(
+                        schema=schema_def,
+                        partition_key=pk.name
+                    ))
             
             if strategy_candidates:
                 # D. Concurrent Evaluation
@@ -268,8 +268,8 @@ class DataPlanBuilder:
 
         # Fallback / Non-Smart Path
         if not final_schema:
-             strategy = "first" if partitioning_method == "greedy" else "llm_rank"
-             final_schema = await self.schema_gen.infer_schema(rewritten_query, strategy=strategy, context=context)
+            strategy = "first" if partitioning_method == "greedy" else "llm_rank"
+            final_schema = await self.schema_gen.infer_schema(rewritten_query, strategy=strategy, context=context)
         
         # Attach schema to root task
         root_task.schema = final_schema
@@ -351,12 +351,12 @@ class DataPlanBuilder:
         if hasattr(self, 'current_chunk_count') and self.current_chunk_count >= getattr(self, 'max_chunks_limit', 100):
             logger.warning(f"Global max_chunks limit ({self.max_chunks_limit}) reached. Creating flat task.")
             return [DataTask(
-                 query=query,
-                 constraints=task.constraints,
-                 schema=schema,
-                 parent=task,
-                 partition_key="Filter",
-                 partition_value="Remaining"
+                query=query,
+                constraints=task.constraints,
+                schema=schema,
+                parent=task,
+                partition_key="Filter",
+                partition_value="Remaining"
             )]
         
         # If too deep, fallback to flat
@@ -430,7 +430,7 @@ class DataPlanBuilder:
                     best_stats = stats
             
             if best_stats and best_stats.ambiguity_score > 0.8:
-                 return [DataTask(
+                return [DataTask(
                     query=query,
                     constraints=task.constraints,
                     schema=schema,
@@ -438,37 +438,37 @@ class DataPlanBuilder:
                     partition_key="All",
                     partition_value="All",
                     estimated_rows=task.estimated_rows if depth == 0 else None
-                 )]
+                )]
             selected_stats = best_stats
 
         pkey = best_key
         
         # 3. Fetch Values & Recurse
         if selected_stats and selected_stats.partition_counts:
-             values = list(selected_stats.partition_counts.keys())
-             counts = selected_stats.partition_counts
+            values = list(selected_stats.partition_counts.keys())
+            counts = selected_stats.partition_counts
         else:
-             values = await self._fetch_partition_values(query, pkey)
-             counts = {}
+            values = await self._fetch_partition_values(query, pkey)
+            counts = {}
 
         logger.info(f"Selected Key: {pkey.name}. Values: {len(values)}")
 
         # [NEW] Smart Quota Allocation Setup
         limit_n = None
         if task.collection_strategy and task.collection_strategy.startswith("LIMIT "):
-             try:
-                 limit_n = int(task.collection_strategy.split(" ")[1])
-             except ValueError:
-                 pass
+            try:
+                limit_n = int(task.collection_strategy.split(" ")[1])
+            except ValueError:
+                pass
         
         total_weight = 0
         use_counts = False
         if limit_n:
-             if counts and sum(counts.values()) > 0:
-                 total_weight = sum(counts.values())
-                 use_counts = True
-             else:
-                 total_weight = len(values)
+            if counts and sum(counts.values()) > 0:
+                total_weight = sum(counts.values())
+                use_counts = True
+            else:
+                total_weight = len(values)
 
         for i, val in enumerate(values):
             # Check for Fat Partition
@@ -479,11 +479,11 @@ class DataPlanBuilder:
             child_limit = None
             
             if limit_n is not None and total_weight > 0:
-                 w = est_count if use_counts else 1
-                 ratio = w / total_weight
-                 child_limit = int(limit_n * ratio)
-                 if child_limit < 1: child_limit = 1
-                 child_strategy = f"LIMIT {child_limit}"
+                w = est_count if use_counts else 1
+                ratio = w / total_weight
+                child_limit = int(limit_n * ratio)
+                if child_limit < 1: child_limit = 1
+                child_strategy = f"LIMIT {child_limit}"
             
             new_constraints = task.constraints.copy()
             new_constraints[pkey.name] = val
@@ -639,12 +639,12 @@ class DataPlanBuilder:
         if hasattr(self, 'current_chunk_count') and self.current_chunk_count >= getattr(self, 'max_chunks_limit', 100):
             logger.warning(f"Global max_chunks limit ({self.max_chunks_limit}) reached. Creating flat task.")
             return [DataTask(
-                 query=query,
-                 constraints=task.constraints,
-                 schema=schema,
-                 parent=task,
-                 partition_key="Filter",
-                 partition_value="Remaining"
+                query=query,
+                constraints=task.constraints,
+                schema=schema,
+                parent=task,
+                partition_key="Filter",
+                partition_value="Remaining"
             )]
         
         # If too deep, fallback to flat
@@ -717,25 +717,25 @@ class DataPlanBuilder:
                     best_stats = stats
             
             if best_stats and best_stats.ambiguity_score > 0.8:
-                 return [DataTask(
+                return [DataTask(
                     query=query,
                     constraints=task.constraints,
                     schema=schema,
                     parent=task,
                     partition_key="All",
                     partition_value="All"
-                 )]
+                )]
             selected_stats = best_stats
 
         pkey = best_key
         
         # 3. Fetch Values & Recurse
         if selected_stats and selected_stats.partition_counts:
-             values = list(selected_stats.partition_counts.keys())
-             counts = selected_stats.partition_counts
+            values = list(selected_stats.partition_counts.keys())
+            counts = selected_stats.partition_counts
         else:
-             values = await self._fetch_partition_values(query, pkey)
-             counts = {}
+            values = await self._fetch_partition_values(query, pkey)
+            counts = {}
 
         logger.info(f"Selected Key: {pkey.name}. Values: {len(values)}")
 

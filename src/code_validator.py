@@ -120,10 +120,10 @@ class CodeValidator:
             if isinstance(parsed, list):
                 result_list = parsed
             elif isinstance(parsed, dict):
-                 for k, v in parsed.items():
-                     if isinstance(v, list):
-                         result_list = v
-                         break
+                for k, v in parsed.items():
+                    if isinstance(v, list):
+                        result_list = v
+                        break
             
             fixed_data = result_list
             logger.info(f"CodeValidator: Fixed {len(fixed_data)} rows.")
@@ -150,8 +150,8 @@ class CodeValidator:
         try:
             valid, invalid = self.execute_validation(data, assertions)
         except Exception as e:
-             logger.error(f"Validation Execution Failed: {e}")
-             return data
+            logger.error(f"Validation Execution Failed: {e}")
+            return data
         
         if not invalid:
             return valid
@@ -163,7 +163,7 @@ class CodeValidator:
         try:
             fixed = await self.fix_data(invalid)
         except Exception as e:
-             logger.error(f"Fix Failed: {e}")
+            logger.error(f"Fix Failed: {e}")
         
         # 4. Merge (Soft Validator: Keep even unfixed rows to preserve Recall)
         # Identify rows that were successfully fixed (by index or content?)

@@ -201,7 +201,7 @@ class LLMClient:
             organization: Optional organization ID (for OpenAI and other providers)
             default_use_cache: Default value for use_cache in generate calls.
             shared_state: Dict containing 'semaphore', 'rate_limit_times', 'rate_limit_lock' 
-                          to share constraints across multiple client instances.
+                        to share constraints across multiple client instances.
         """
         # Use provided values or fall back to environment variables or defaults
         self.model = model or DEFAULT_MODEL
@@ -448,7 +448,7 @@ class LLMClient:
             
             # Check Cost Limit (Post-flight/Accumulated)
             if self._total_cost_incurred > self.max_total_cost:
-                 raise SafetyLimitExceededError(
+                raise SafetyLimitExceededError(
                     f"Max total cost limit (${self.max_total_cost:.2f}) exceeded. "
                     f"Current: ${self._total_cost_incurred:.2f}"
                 )
@@ -469,7 +469,7 @@ class LLMClient:
         
         # Check Cost
         if self._total_cost_incurred > self.max_total_cost:
-             raise SafetyLimitExceededError(
+            raise SafetyLimitExceededError(
                 f"Max total cost limit (${self.max_total_cost:.2f}) exceeded. "
                 f"Current: ${self._total_cost_incurred:.2f}"
             )
@@ -857,7 +857,7 @@ class LLMClient:
             system: System message
             temperature: Sampling temperature (should be > 0 for diversity)
             use_cache: Whether to use disk cache (default False for voting).
-                       If True, each sample gets a unique cache entry to prevent race conditions.
+                    If True, each sample gets a unique cache entry to prevent race conditions.
             **kwargs: Additional parameters passed to litellm
         
         Returns:

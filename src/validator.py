@@ -124,7 +124,7 @@ class Validator:
         
         # 3. LLM Entity Resolution (Semantic Deduplication)
         if self.llm and primary_keys:
-             # Identify potential collision columns (Content Columns)
+            # Identify potential collision columns (Content Columns)
             content_cols = []
             name_candidates = ['Name', 'Entity', 'Title', 'CountryName', 'CityName', 'CommonName', 'ScientificName', 'Symbol', 'PokemonName']
             for col in df.columns:
@@ -144,16 +144,16 @@ class Validator:
                 
                 duplicates = df[df.duplicated(subset=content_cols, keep=False)]
                 if not duplicates.empty:
-                     logger.info(f"GlobalValidator: Found {len(duplicates)} potential semantic duplicates. Resolving...")
-                     df = await self.resolve_entities(df, duplicates, content_cols)
+                    logger.info(f"GlobalValidator: Found {len(duplicates)} potential semantic duplicates. Resolving...")
+                    df = await self.resolve_entities(df, duplicates, content_cols)
         
         # 4. Renumber IDs
         if primary_keys:
             for pk in primary_keys:
                 if pk.lower().endswith('id') and pk in df.columns:
-                     # Check if it looks numerical roughly
-                     df[pk] = range(1, len(df) + 1)
-                     logger.info(f"GlobalValidator: Regenerated {pk}.")
+                    # Check if it looks numerical roughly
+                    df[pk] = range(1, len(df) + 1)
+                    logger.info(f"GlobalValidator: Regenerated {pk}.")
 
         final_len = len(df)
         logger.info(f"GlobalValidator cleaned data: {initial_len} -> {final_len} rows.")

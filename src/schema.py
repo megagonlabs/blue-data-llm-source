@@ -163,11 +163,11 @@ class SchemaGenerator:
                 s = {k.lower(): v for k, v in s.items()}
                 # Also normalize keys inside columns if needed (not strictly needed but good practice)
                 if "columns" in s and isinstance(s["columns"], list):
-                     new_cols = []
-                     for c in s["columns"]:
-                         if isinstance(c, dict):
-                             new_cols.append({k.lower(): v for k, v in c.items()})
-                     s["columns"] = new_cols
+                    new_cols = []
+                    for c in s["columns"]:
+                        if isinstance(c, dict):
+                            new_cols.append({k.lower(): v for k, v in c.items()})
+                    s["columns"] = new_cols
 
                 if isinstance(s, dict) and "columns" in s and "table_name" in s:
                     valid_schemas.append(s)

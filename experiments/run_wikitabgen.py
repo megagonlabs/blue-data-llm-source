@@ -293,16 +293,22 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
             
             # Create FRESH PKDB instance per table to reset Safety Quotas (max_total_requests)
             # But share the rate limiter (shared_state) to protect the API
-            pkdb = PKDB(
+            from src.interface import PKDBConfig # Import Config
+            
+            cfg = PKDBConfig(
                 model=args.model if args else "gpt-4o",
                 use_cache=args.use_cache if args else True,
                 max_concurrent=args.max_concurrent if args else 10,
-                row_threshold=args.row_threshold if args else 50,
+                row_threshold=args.row_threshold if args else 120,
                 decomposition_strategy=args.decomposition_strategy, 
                 partitioning_method="smart",
-                max_total_requests=1000, # Per-query safety limit (prevent runaways)
-                shared_state=shared_state,
+                max_total_requests=1000,
                 default_execution_mode=args.execution_mode if args else "batch"
+            )
+            
+            pkdb = PKDB(
+                config=cfg,
+                shared_state=shared_state
             )
             
             # [RESUME] Check if result already exists

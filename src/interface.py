@@ -9,6 +9,26 @@ from src.code_validator import CodeValidator
 
 logger = logging.getLogger(__name__)
 
+from dataclasses import dataclass, field
+
+@dataclass
+class PKDBConfig:
+    """Centralized Configuration for PKDB."""
+    model: str = "gpt-4o"
+    cache_dir: str = ".cache_pkdb"
+    max_concurrent: int = 5
+    use_cache: bool = True
+    max_partitions: int = 50
+    num_schema_candidates: int = 3
+    schema_temperature: float = 0.7
+    extraction_temperature: float = 0.0
+    decomposition_strategy: str = "rule_based"
+    row_threshold: int = 120 # [Optimized Default V4]
+    max_depth: int = 1
+    partitioning_method: str = "smart"
+    max_total_requests: int = 10000
+    default_execution_mode: str = "batch"
+
 class PKDB:
     """
     Parametric Knowledge Database (PKDB) Client.
@@ -17,47 +37,56 @@ class PKDB:
     
     def __init__(
         self, 
-        model: str = "gpt-4o-mini", 
-        cache_dir: Optional[str] = ".cache_pkdb", 
-        max_concurrent: int = 5, 
-        use_cache: bool = True, 
-        max_partitions: int = 50,
-        num_schema_candidates: int = 3,
-        schema_temperature: float = 0.7,
-        extraction_temperature: float = 0.0,
-        decomposition_strategy: str = "rule_based",
-        row_threshold: int = 50,
-        max_depth: int = 1,
-        partitioning_method: str = "semantic",
-        max_total_requests: int = 10000,
-        shared_state: Optional[dict] = None,
-        default_execution_mode: str = "batch"
+        config: Optional[PKDBConfig] = None,
+        **kwargs # Backward compatibility for loose args
     ):
+        # 1. Resolve Config
+        if config is None:
+            # Check if kwargs are populated, else use defaults
+            # Filter kwargs to only those matching PKDBConfig fields
+            valid_keys = PKDBConfig.__annotations__.keys()
+            filtered_args = {k: v for k, v in kwargs.items() if k in valid_keys}
+            self.config = PKDBConfig(**filtered_args)
+        else:
+            self.config = config
+            
+        # 2. Initialize Components
         self.llm = LLMClient(
-            model=model, 
-            cache_dir=cache_dir, 
-            default_use_cache=use_cache, 
-            max_total_requests=max_total_requests,
-            shared_state=shared_state
+            model=self.config.model, 
+            cache_dir=self.config.cache_dir, 
+            default_use_cache=self.config.use_cache, 
+            max_total_requests=self.config.max_total_requests,
+            shared_state=kwargs.get('shared_state') # Special case: Runtime object, not config
         )
-        self.decomposition_strategy = decomposition_strategy
-        self.row_threshold = row_threshold
-        self.max_depth = max_depth
-        self.partitioning_method = partitioning_method
-        self.default_execution_mode = default_execution_mode
         
         self.builder = DataPlanBuilder(
             self.llm, 
-            max_partitions=max_partitions,
-            num_candidates=num_schema_candidates,
-            temperature=schema_temperature
+            max_partitions=self.config.max_partitions,
+            num_candidates=self.config.num_schema_candidates,
+            temperature=self.config.schema_temperature
         )
         self.engine = MapReduceEngine(
             self.llm, 
-            extraction_temperature=extraction_temperature
+            extraction_temperature=self.config.extraction_temperature
         )
         self.validator = Validator()
         self.code_validator = CodeValidator(self.llm)
+        
+    @property
+    def row_threshold(self):
+        return self.config.row_threshold
+        
+    @property
+    def decomposition_strategy(self):
+        return self.config.decomposition_strategy
+        
+    @property
+    def partitioning_method(self):
+        return self.config.partitioning_method
+
+    @property
+    def default_execution_mode(self):
+        return self.config.default_execution_mode
         
     async def extract_table(
         self, 

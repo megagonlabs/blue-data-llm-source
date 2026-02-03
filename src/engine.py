@@ -40,10 +40,10 @@ class MapReduceEngine:
                 # Creating a simplified dict representation for logging
                 tasks_log = []
                 for t in plan.map_tasks:
-                     t_dict = asdict(t)
-                     if t.parent: t_dict["parent"] = t.parent.query # Flatten parent
-                     tasks_log.append(t_dict)
-                     
+                    t_dict = asdict(t)
+                    if t.parent: t_dict["parent"] = t.parent.query # Flatten parent
+                    tasks_log.append(t_dict)
+                    
                 tasks_artifact = {
                     "tasks": tasks_log
                 }
@@ -119,13 +119,20 @@ class MapReduceEngine:
             attempts = 0
             max_attempts = 3
             
+            # Helper to accumulate cost across attempts
+            if metrics is None:
+                metrics = LLMMetrics() # Base metrics if any
+                
             while attempts < max_attempts:
                 attempts += 1
                 
                 # Execute LLM Call
                 response = await self.llm.agenerate(current_prompt, temperature=self.extraction_temperature, response_format={"type": "json_object"})
                 content = response.content
-                metrics = response.metrics # Note: this overwrites metrics; ideally should sum them up but for simplicity we keep last
+                
+                # Accumulate Metrics (Cost of all attempts)
+                if response.metrics:
+                    metrics = metrics + response.metrics
                 
                 # ... [Parsing Logic Reuse] ...
                 chunk_data = []
@@ -141,33 +148,33 @@ class MapReduceEngine:
                     if isinstance(parsed, list):
                         chunk_data = parsed
                     else:
-                         logger.warning(f"Task {task.trace_id} returned non-list JSON: {type(parsed)}")
-                         
+                        logger.warning(f"Task {task.trace_id} returned non-list JSON: {type(parsed)}")
+                        
                 except json.JSONDecodeError:
                     # 2. Robust path: Handle Truncation (Common with "List ALL" prompt)
                     logger.warning(f"Task {task.trace_id} JSON Decode Error (likely truncation). Attempting repair...")
                     
                     s = content.strip()
                     if s.startswith("{") and '"items":' in s:
-                         last_comma = s.rfind("},")
-                         if last_comma != -1:
-                             fixed = s[:last_comma+1] + "]}" 
-                             try:
-                                 parsed = json.loads(fixed)
-                                 if isinstance(parsed, dict) and "items" in parsed:
-                                     chunk_data = parsed["items"]
-                                     logger.info(f"Task {task.trace_id}: Repair successful (Wrapped). Recovered {len(chunk_data)} items.")
-                             except:
-                                 pass
+                        last_comma = s.rfind("},")
+                        if last_comma != -1:
+                            fixed = s[:last_comma+1] + "]}" 
+                            try:
+                                parsed = json.loads(fixed)
+                                if isinstance(parsed, dict) and "items" in parsed:
+                                    chunk_data = parsed["items"]
+                                    logger.info(f"Task {task.trace_id}: Repair successful (Wrapped). Recovered {len(chunk_data)} items.")
+                            except:
+                                pass
                     elif s.startswith("["):
-                         last_comma = s.rfind("},")
-                         if last_comma != -1:
-                             fixed = s[:last_comma+1] + "]"
-                             try:
-                                 chunk_data = json.loads(fixed)
-                                 logger.info(f"Task {task.trace_id}: Repair successful (List). Recovered {len(chunk_data)} items.")
-                             except:
-                                 pass
+                        last_comma = s.rfind("},")
+                        if last_comma != -1:
+                            fixed = s[:last_comma+1] + "]"
+                            try:
+                                chunk_data = json.loads(fixed)
+                                logger.info(f"Task {task.trace_id}: Repair successful (List). Recovered {len(chunk_data)} items.")
+                            except:
+                                pass
 
                 if chunk_data:
                     all_data.extend(chunk_data)
@@ -175,21 +182,21 @@ class MapReduceEngine:
                 # COMPLETENESS CHECK
                 # Only check if we have an estimate and it's substantial
                 if getattr(task, 'estimated_rows', 0) and task.estimated_rows > 10:
-                     if len(all_data) < 0.5 * task.estimated_rows:
-                          logger.info(f"Task {task.trace_id}: Incomplete Result ({len(all_data)}/{task.estimated_rows}). Reprompting...")
-                          # Construct Reprompt
-                          current_prompt = prompt + f"\n\nPREVIOUSLY EXTRACTED: {len(all_data)} rows. We expected {task.estimated_rows}.\nCONTINUE extraction from where you left off. Do not repeat previous items. Return next batch."
-                          continue # Loop again
-                     else:
-                          break # Good enough
+                    if len(all_data) < 0.5 * task.estimated_rows:
+                        logger.info(f"Task {task.trace_id}: Incomplete Result ({len(all_data)}/{task.estimated_rows}). Reprompting...")
+                        # Construct Reprompt
+                        current_prompt = prompt + f"\n\nPREVIOUSLY EXTRACTED: {len(all_data)} rows. We expected {task.estimated_rows}.\nCONTINUE extraction from where you left off. Do not repeat previous items. Return next batch."
+                        continue # Loop again
+                    else:
+                        break # Good enough
                 else:
-                     break # No estimate, single pass
+                    break # No estimate, single pass
             
             data = all_data
 
             if not data and "Unterminated string" not in str(content):
-                 # Only warn if we really failed to get anything
-                 logger.warning(f"Task {task.trace_id} failed to parse any data.")
+                # Only warn if we really failed to get anything
+                logger.warning(f"Task {task.trace_id} failed to parse any data.")
 
             if data:
                 # Enrich with partition info if missing
@@ -212,7 +219,7 @@ class MapReduceEngine:
                     
                 return data, metrics
             else:
-                 return [], metrics
+                return [], metrics
 
         except Exception as e:
             logger.error(f"Task {task.trace_id} CRITICAL FAILURE: {e}")
@@ -280,16 +287,16 @@ class MapReduceEngine:
             if isinstance(parsed, dict):
                 # New Optimized SOTA Prompt returns {"keys": [...]}
                 if "keys" in parsed and isinstance(parsed["keys"], list):
-                     keys_data = parsed["keys"]
+                    keys_data = parsed["keys"]
                 elif len(parsed) == 1 and isinstance(list(parsed.values())[0], list):
-                     # Fallback for "items" or prompt hallucination
-                     keys_data = list(parsed.values())[0]
+                    # Fallback for "items" or prompt hallucination
+                    keys_data = list(parsed.values())[0]
                 else: 
-                     # Maybe it's just 'items': [...]
-                     for v in parsed.values():
-                         if isinstance(v, list):
-                             keys_data = v
-                             break
+                    # Maybe it's just 'items': [...]
+                    for v in parsed.values():
+                        if isinstance(v, list):
+                            keys_data = v
+                            break
             elif isinstance(parsed, list):
                 keys_data = parsed
                 
@@ -354,10 +361,10 @@ class MapReduceEngine:
                 row_obj = json.loads(resp.content)
                 # Handle wrapping
                 if isinstance(row_obj, dict) and len(row_obj) == 1:
-                     # Check if value is dict (wrapped)
-                     first_val = list(row_obj.values())[0]
-                     if isinstance(first_val, dict):
-                         row_obj = first_val
+                    # Check if value is dict (wrapped)
+                    first_val = list(row_obj.values())[0]
+                    if isinstance(first_val, dict):
+                        row_obj = first_val
                 
                 # Enforce Key Consistency (Overwrite with prompted key)
                 for k, v in key_inst.items():

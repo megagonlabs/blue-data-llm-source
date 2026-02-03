@@ -42,7 +42,7 @@ class DataTask:
     def get_full_context(self) -> str:
         """Returns lineage string for debugging constraints"""
         if self.parent:
-             return f"{self.parent.get_full_context()} -> {self.query}"
+            return f"{self.parent.get_full_context()} -> {self.query}"
         return self.query
 
     def to_prompt(self) -> str:
@@ -59,7 +59,7 @@ class DataTask:
             
         estimate_str = ""
         if self.estimated_rows and self.estimated_rows > 0:
-             estimate_str = f"Estimated Target Rows: ~{self.estimated_rows}. You MUST extract them all."
+            estimate_str = f"Estimated Target Rows: ~{self.estimated_rows}. You MUST extract them all."
 
         prompt = f"""
         User Request: "{self.query}"
@@ -77,7 +77,7 @@ class DataTask:
         """
         
         if self.partition_key and self.partition_value:
-             prompt += f"""
+            prompt += f"""
         You are processing a PARTITION: "{self.partition_key}" = "{self.partition_value}".
         You MUST ONLY return items where "{self.partition_key}" is equal to "{self.partition_value}".
         """
@@ -168,8 +168,8 @@ class QueryAnalyzer:
             reasoning = f"Estimated rows ({estimated_rows}) > Threshold ({row_threshold})"
             
             if "LIMIT" in task.collection_strategy and estimated_rows < row_threshold * 2:
-                 # If limited and small-ish, keep flat
-                 pass # Logic holds
+                # If limited and small-ish, keep flat
+                pass # Logic holds
 
         logger.info(f"Decomposition Assessment: {requires_decomposition} ({reasoning})")
 
