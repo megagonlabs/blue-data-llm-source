@@ -220,7 +220,7 @@ def evaluate_table_metrics(df_fetched, df_ref, primary_columns, keys_type, date_
     non_keys_recall = non_key_matches / n_non_key_cells_ref if n_non_key_cells_ref > 0 else 1.0 # 1 if empty?
     non_keys_precision = non_key_matches / n_non_key_cells_fetched if n_non_key_cells_fetched > 0 else 1.0
     non_keys_f1_score = 2*non_keys_recall*non_keys_precision/(non_keys_recall+non_keys_precision) if (non_keys_recall + non_keys_precision) > 0 else 0.0
-     
+    
     relative_non_key_accuracy = (total_matches - key_matches*nk) / (key_matches * (df_ref.shape[1] - nk)) if (key_matches * (df_ref.shape[1] - nk)) > 0 else 0.0
         
     return keys_recall, keys_precision, keys_f1_score, non_keys_recall, non_keys_precision, non_keys_f1_score, recall, precision, f1_score, relative_non_key_accuracy
@@ -234,7 +234,7 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
     if args and args.resume_dir:
         run_dir = args.resume_dir
         if not os.path.exists(run_dir):
-             os.makedirs(run_dir, exist_ok=True)
+            os.makedirs(run_dir, exist_ok=True)
         print(f"Resuming WikiTabGen benchmark at: {run_dir}")
     else:
         run_dir = os.path.join(base_output_dir, f"wikitabgen_{timestamp}")
@@ -319,7 +319,7 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                 try:
                     df = pd.read_csv(out_file)
                 except Exception as e:
-                     print(f"Error loading {table_name}: {e}. Re-running.")
+                    print(f"Error loading {table_name}: {e}. Re-running.")
             
             if df is None:
                 # ... (Normal Generation Logic) ...
@@ -351,17 +351,17 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                         df, metrics, subqueries = await pkdb.extract_table(task_query, schema=target_schema)
                         duration = time.time() - start
                 except Exception as e:
-                     print(f"-> Failed {table_name}: {e}")
-                     return {"Table": table_name, "Status": f"Error: {e}"}
+                    print(f"-> Failed {table_name}: {e}")
+                    return {"Table": table_name, "Status": f"Error: {e}"}
             else:
-                 # Dummy metrics for loaded run
-                 from src.analysis import QueryAnalysisResult # Just a placeholder
-                 duration = 0.0
-                 subqueries = 0
-                 # We need to recreate metrics object or just mock cost
-                 class MockMetrics:
-                     cost = 0.0
-                 metrics = MockMetrics()
+                # Dummy metrics for loaded run
+                from src.analysis import QueryAnalysisResult # Just a placeholder
+                duration = 0.0
+                subqueries = 0
+                # We need to recreate metrics object or just mock cost
+                class MockMetrics:
+                    cost = 0.0
+                metrics = MockMetrics()
 
             # [COMMON PATH] Metrics Calculation
             try:
