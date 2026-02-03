@@ -199,20 +199,56 @@ Reference Query: "{query}"
 Target Attribute: "{key_name}" ({key_description})
 
 Task: List ALL possible values for "{key_name}" that are STRICTLY relevant to the query scope.
-Return JSON list of strings.
+
+CRITICAL RULES:
+1. **Scope Enforcement**: If the query limits the scope, only list values within that scope.
+2. **Completeness**: If the scope is broad, list ALL possible values according to common sense and query context. If there are too many (>100), list the most common or most relevant 100 values.
+3. **Relevance**: Only list values that actually contain data for this query.
+
+Format: Return ONLY a simple list of strings, one per line. No numbering, no bullets.
 """
 
-SUBQUERY_NATURAL_STR = """
-Rewrite the following query to restrict it to: {key} = "{val}".
-Original Query: "{query}"
+SUBQUERY_REWRITE_PROMPT = """
+Base Query: "{base_query}"
+Filter: {key} = {value}
+
+Rewrite the query to naturally include the filter.
+Examples:
+- Query: "List all Pokemon", Filter: Type = Fire -> "List all Fire-type Pokemon"
+- Query: "List US Cities", Filter: State = CA -> "List all US Cities in California"
+- Query: "List Nobel Winners", Filter: Field = Physics -> "List all Nobel Prize winners in Physics"
 
 Return ONLY the rewritten query text.
 """
 
-# --- EXECUTION ---
+# --- EXECUTION & EXTRACTION ---
 
 # Note: Task prompt is constructed dynamically in DataTask.to_prompt() due to high variability
 # But we can extract the template parts if needed. For now keeping dynamic.
+
+DATA_EXTRACTION_PROMPT = """
+User Request: "{query}"
+Target Scope:
+{constraint_str}
+{estimate_str}
+
+**CRITICAL INSTRUCTION**: Extract ALL data matching the request.
+You must be as comprehensive as possible. If the table usually has many rows, return MANY rows.
+
+**OUTPUT FORMAT**:
+Return ONLY the raw JSON list (or CSV) containing the data. 
+DO NOT include any text like "Here is the table" or markdown code blocks.
+Just the raw data.
+"""
+
+DATA_EXTRACTION_PARTITION_CONTEXT = """
+CONTEXT:
+This is a PARTITIONED sub-task.
+You are focusing ONLY on the subset defined by:
+**{partition_key} = {partition_value}**
+
+Ensure all returned rows adhere to this partition filter.
+"""
 
 ROW_BY_ROW_KEYS_PROMPT = """
     You are a retriever of facts.
@@ -276,4 +312,45 @@ YOUR TASK:
 3. If they are distinct entities, keep them separate.
 
 Return JSON object: {{ "resolved_rows": [...] }}
+"""
+
+GEN_ASSERTION_PROMPT = """
+You are a QA Engineer interacting with a Python Data Validator.
+Your goal is to write a set of Python `assert` statements to validate a row of data.
+
+Context:
+Schema/Description: {schema_desc}
+Sample Row: {sample_row}
+
+Instructions:
+1. Write 3-5 critical assertions that must hold true for this data.
+2. Focus on numerical ranges, data types, date formats, and non-empty fields.
+3. Assume the variable is named `row`.
+4. Do NOT use external libraries except `re` (regular expressions) or standard `datetime`.
+5. **IMPORTANT**: Do NOT invent strict mathematical formulas between columns (e.g. `Total = A + B`) unless the relationship is completely obvious and universal. Real-world data often has noise. Prefer looser bounds (e.g. `Total >= A`, `Total >= B`).
+6. Return ONLY the python code block.
+
+Example:
+assert row['Population'] > 0, "Population must be positive"
+assert '20' in row['Date'], "Date must be 20th century or later"
+
+Code:
+"""
+
+FIX_DATA_PROMPT = """
+You are a Data Repair Agent.
+We found errors in the following data rows based on python assertions.
+
+Error Report:
+{error_report}
+
+Instructions:
+1. Fix the values in the rows to satisfy the assertions. 
+2. If a value is unfixable (e.g. clearly garbage), set it to None or empty string.
+3. Return corrected rows as a JSON list.
+"""
+
+DATA_EXTRACTION_COLUMNS_SUFFIX = """
+Extract the following columns: {cols}.
+Return as JSON object with key "items": {{"items": [...]}}.
 """

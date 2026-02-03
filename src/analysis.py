@@ -11,7 +11,10 @@ from src.prompts import (
     QUERY_ANALYSIS_PROMPT,
     QUERY_REWRITE_PROMPT,
     ROW_ESTIMATION_PROMPT,
-    DECOMPOSITION_DECISION_PROMPT
+    DECOMPOSITION_DECISION_PROMPT,
+    DATA_EXTRACTION_PROMPT,
+    DATA_EXTRACTION_PARTITION_CONTEXT,
+    DATA_EXTRACTION_COLUMNS_SUFFIX
 )
 
 logger = logging.getLogger(__name__)
@@ -61,31 +64,19 @@ class DataTask:
         if self.estimated_rows and self.estimated_rows > 0:
             estimate_str = f"Estimated Target Rows: ~{self.estimated_rows}. You MUST extract them all."
 
-        prompt = f"""
-        User Request: "{self.query}"
-        Target Scope:
-        {constraint_str}
-        {estimate_str}
-
-        **CRITICAL INSTRUCTION**: Extract ALL data matching the request.
-        You must be as comprehensive as possible. If the table usually has many rows, return MANY rows.
-        
-        **OUTPUT FORMAT**:
-        Return ONLY the raw JSON list (or CSV) containing the data. 
-        DO NOT include any text like "Here is the table" or markdown code blocks.
-        Just the raw data.
-        """
+        prompt = DATA_EXTRACTION_PROMPT.format(
+            query=self.query,
+            constraint_str=constraint_str,
+            estimate_str=estimate_str
+        )
         
         if self.partition_key and self.partition_value:
-            prompt += f"""
-        You are processing a PARTITION: "{self.partition_key}" = "{self.partition_value}".
-        You MUST ONLY return items where "{self.partition_key}" is equal to "{self.partition_value}".
-        """
+            prompt += DATA_EXTRACTION_PARTITION_CONTEXT.format(
+                partition_key=self.partition_key,
+                partition_value=self.partition_value
+            )
         
-        prompt += f"""
-        Extract the following columns: {cols}.
-        Return as JSON object with key "items": {{"items": [...]}}.
-        """
+        prompt += DATA_EXTRACTION_COLUMNS_SUFFIX.format(cols=cols)
         return prompt
 
 @dataclass
@@ -157,9 +148,9 @@ class QueryAnalyzer:
 
         # 3. Determine Decomposition
         if decomposition_strategy == "llm_based":
-            # Hybrid approach: If rows > 100, force decomposition to avoid truncation
-            if estimated_rows > 100:
-                logger.info(f"Estimated rows ({estimated_rows}) > 100. Forcing Map-Reduce to prevent LLM truncation.")
+            # Hybrid approach: If rows > threshold, force decomposition to avoid truncation
+            if estimated_rows > row_threshold:
+                logger.info(f"Estimated rows ({estimated_rows}) > {row_threshold}. Forcing Map-Reduce to prevent LLM truncation.")
                 requires_decomposition = True
                 reasoning = "Forced decomposition due to high row count."
             else:

@@ -12,7 +12,10 @@ from unidecode import unidecode
 from dateutil import parser as date_parser
 
 # Ensure project root is in path
+# Ensure project root is in path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import src
+print(f"DEBUG: src imported from: {src.__file__}")
 
 from src.interface import PKDB
 from src.schema import SchemaDefinition, Column
@@ -244,6 +247,7 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
     setup_global_logging(run_dir)
     
     # 2. Load Config (Dataset Metadata)
+    # Load Config
     print(f"Loading config from {cfg_path}...")
     with open(cfg_path, 'r') as f:
         cfg = json.load(f)

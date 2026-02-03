@@ -11,7 +11,9 @@ from src.analysis import DataTask, QueryAnalyzer, QueryAnalysisResult
 from src.prompts import (
     DISTRIBUTION_ESTIMATION_PROMPT,
     PARTITION_VALUES_PROMPT,
-    SUBQUERY_NATURAL_STR
+    DISTRIBUTION_ESTIMATION_PROMPT,
+    PARTITION_VALUES_PROMPT,
+    SUBQUERY_REWRITE_PROMPT
 )
 from utils.llm_utils import LLMClient
 
@@ -107,10 +109,11 @@ class DistributionEstimator:
             # Auto-calculate stats from the detailed counts
             if partition_counts:
                 num_partitions = len(partition_counts)
-                max_partition_size = max(partition_counts.values()) if partition_counts else 0
+                # Ensure values are ints
+                max_partition_size = max(int(v) for v in partition_counts.values()) if partition_counts else 0
             else:
-                num_partitions = data.get("num_partitions", 0)
-                max_partition_size = data.get("max_partition_size", 0)
+                num_partitions = int(data.get("num_partitions", 0))
+                max_partition_size = int(data.get("max_partition_size", 0))
             
             return DistributionStats(
                 key_name=key_name,
@@ -174,7 +177,6 @@ class DataPlanBuilder:
         
         # 0. Analyze Query & Decompose
         # If strict schema is provided, we might still want analysis for estimation/decomposition, 
-        # but the query rewrite might need to be careful not to drift from the schema.
         # but the query rewrite might need to be careful not to drift from the schema.
         analysis = await self.analyzer.analyze(
             query, 
@@ -453,6 +455,21 @@ class DataPlanBuilder:
 
         logger.info(f"Selected Key: {pkey.name}. Values: {len(values)}")
 
+        # [FIX] Zero-Value Fallback: If no values generated (e.g. too many, or unknown), revert to flat task
+        if not values:
+            logger.warning(f"Partition key {pkey.name} generated NO values. Falling back to FLAT execution.")
+            return [DataTask(
+                query=query,
+                constraints=task.constraints,
+                collection_strategy=task.collection_strategy,
+                schema=schema,
+                parent=task,
+                partition_key="All", # Fallback
+                partition_value="Fallback",
+                execution_mode=getattr(task, 'execution_mode', 'batch'),
+                estimated_rows=task.estimated_rows
+            )]
+
         # [NEW] Smart Quota Allocation Setup
         limit_n = None
         if task.collection_strategy and task.collection_strategy.startswith("LIMIT "):
@@ -538,19 +555,11 @@ class DataPlanBuilder:
         
     async def _fetch_partition_values(self, query: str, key: Column) -> List[str]:
         """Ask LLM to list all values for the partition key."""
-        prompt = f"""
-        Reference Query: "{query}"
-        Target Attribute: "{key.name}" ({key.description})
-        
-        Task: List ALL possible values for "{key.name}" that are STRICTLY relevant to the query scope.
-        
-        CRITICAL RULES:
-        1. **Scope Enforcement**: If the query limits the scope, only list values within that scope.
-        2. **Completeness**: If the scope is broad, list ALL possible values according to common sense and query context. If there are too many (>100), list the most common or most relevant 100 values.
-        3. **Relevance**: Only list values that actually contain data for this query.
-        
-        Format: Return ONLY a simple list of strings, one per line. No numbering, no bullets.
-        """
+        prompt = PARTITION_VALUES_PROMPT.format(
+            query=query, 
+            key_name=key.name, 
+            key_description=key.description
+        )
         
         response = await self.llm.agenerate(prompt, temperature=0.0)
         
@@ -573,18 +582,7 @@ class DataPlanBuilder:
         Constructs a natural language sub-query using an LLM rewrite to avoid robotic phrasing.
         e.g. "List all US States" + Key="Region", Value="West" -> "List all US States in the West region"
         """
-        prompt = f"""
-        Base Query: "{base_query}"
-        Filter: {key} = {value}
-        
-        Rewrite the query to naturally include the filter.
-        Examples:
-        - Query: "List all Pokemon", Filter: Type = Fire -> "List all Fire-type Pokemon"
-        - Query: "List US Cities", Filter: State = CA -> "List all US Cities in California"
-        - Query: "List Nobel Winners", Filter: Field = Physics -> "List all Nobel Prize winners in Physics"
-        
-        Return ONLY the rewritten query text.
-        """
+        prompt = SUBQUERY_REWRITE_PROMPT.format(base_query=base_query, key=key, value=value)
         response = await self.llm.agenerate(prompt, temperature=0.0)
         return response.content.strip().strip('"')
 
@@ -738,6 +736,21 @@ class DataPlanBuilder:
             counts = {}
 
         logger.info(f"Selected Key: {pkey.name}. Values: {len(values)}")
+
+        # [FIX] Zero-Value Fallback: If no values generated, revert to flat task
+        if not values:
+            logger.warning(f"Partition key {pkey.name} generated NO values (Local Path). Falling back to FLAT execution.")
+            return [DataTask(
+                query=query,
+                constraints=task.constraints,
+                collection_strategy=task.collection_strategy,
+                schema=schema,
+                parent=task,
+                partition_key="All",
+                partition_value="Fallback",
+                execution_mode=getattr(task, 'execution_mode', 'batch'),
+                estimated_rows=task.estimated_rows
+            )]
 
         for i, val in enumerate(values):
             # Check for Fat Partition

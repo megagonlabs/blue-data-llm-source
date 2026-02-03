@@ -3,44 +3,14 @@ import json
 import traceback
 from typing import List, Dict, Tuple, Optional
 from utils.llm_utils import LLMClient
+from src.prompts import (
+    GEN_ASSERTION_PROMPT,
+    FIX_DATA_PROMPT
+)
 
 logger = logging.getLogger(__name__)
 
-GEN_ASSERTION_PROMPT = """
-You are a QA Engineer interacting with a Python Data Validator.
-Your goal is to write a set of Python `assert` statements to validate a row of data.
 
-Context:
-Schema/Description: {schema_desc}
-Sample Row: {sample_row}
-
-Instructions:
-1. Write 3-5 critical assertions that must hold true for this data.
-2. Focus on numerical ranges, data types, date formats, and non-empty fields.
-3. Assume the variable is named `row`.
-4. Do NOT use external libraries except `re` (regular expressions) or standard `datetime`.
-5. **IMPORTANT**: Do NOT invent strict mathematical formulas between columns (e.g. `Total = A + B`) unless the relationship is completely obvious and universal. Real-world data often has noise. Prefer looser bounds (e.g. `Total >= A`, `Total >= B`).
-6. Return ONLY the python code block.
-
-Example:
-assert row['Population'] > 0, "Population must be positive"
-assert '20' in row['Date'], "Date must be 20th century or later"
-
-Code:
-"""
-
-FIX_DATA_PROMPT = """
-You are a Data Repair Agent.
-We found errors in the following data rows based on python assertions.
-
-Error Report:
-{error_report}
-
-Instructions:
-1. Fix the values in the rows to satisfy the assertions. 
-2. If a value is unfixable (e.g. clearly garbage), set it to None or empty string.
-3. Return corrected rows as a JSON list.
-"""
 
 class CodeValidator:
     def __init__(self, llm_client: LLMClient):
