@@ -5,6 +5,7 @@ from utils.llm_utils import LLMClient, LLMMetrics
 from src.dataplan import DataPlanBuilder
 from src.engine import MapReduceEngine
 from src.validator import Validator
+from src.code_validator import CodeValidator
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ class PKDB:
             extraction_temperature=extraction_temperature
         )
         self.validator = Validator()
+        self.code_validator = CodeValidator(self.llm)
         
     async def extract_table(
         self, 
@@ -89,7 +91,8 @@ class PKDB:
             partitioning_method=self.partitioning_method,
             context=context,
             schema=schema,
-            execution_mode=mode
+            execution_mode=mode,
+            row_threshold=self.row_threshold
         )
         
         # 2. Execute
@@ -101,5 +104,18 @@ class PKDB:
             primary_keys=plan.schema.primary_keys, 
             context=context
         )
+        
+        # 4. Code-Based Validation (Gen-T Assertions)
+        if not final_df.empty and plan.schema:
+            logger.info("Running Code-Based Validation...")
+            try:
+                # Generate schema description for context
+                schema_desc = f"Table: {plan.schema.table_name}\nColumns: {', '.join([c.name for c in plan.schema.columns])}"
+                
+                records = final_df.to_dict('records')
+                validated_records = await self.code_validator.run(records, schema_desc)
+                final_df = pd.DataFrame(validated_records)
+            except Exception as e:
+                logger.error(f"Code Validation failed: {e}")
         
         return final_df, metrics, len(plan.map_tasks)

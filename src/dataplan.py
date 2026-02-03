@@ -175,7 +175,12 @@ class DataPlanBuilder:
         # 0. Analyze Query & Decompose
         # If strict schema is provided, we might still want analysis for estimation/decomposition, 
         # but the query rewrite might need to be careful not to drift from the schema.
-        analysis = await self.analyzer.analyze(query, decomposition_strategy=decomposition_strategy)
+        # but the query rewrite might need to be careful not to drift from the schema.
+        analysis = await self.analyzer.analyze(
+            query, 
+            decomposition_strategy=decomposition_strategy,
+            row_threshold=row_threshold
+        )
         logger.info(f"Query Analysis: {analysis}")
         
         # Use the structured task
@@ -185,7 +190,8 @@ class DataPlanBuilder:
             query=analysis.rewritten_query,
             constraints=analysis.task.constraints if analysis.task else {},
             collection_strategy=analysis.task.collection_strategy if analysis.task else "ALL",
-            execution_mode=execution_mode
+            execution_mode=execution_mode,
+            estimated_rows=analysis.estimated_rows
         )
         root_task.schema = None # Will be set below
         
@@ -280,7 +286,8 @@ class DataPlanBuilder:
                 schema=final_schema,
                 parent=root_task,
                 partition_key="All",
-                partition_value="All"
+                partition_value="All",
+                execution_mode=root_task.execution_mode
             )
             map_tasks.append(flat_task)
         else:
@@ -361,7 +368,9 @@ class DataPlanBuilder:
                 schema=schema,
                 parent=task,
                 partition_key="Filter",
-                partition_value="Remaining"
+                partition_value="Remaining",
+                execution_mode=getattr(task, 'execution_mode', 'batch'),
+                estimated_rows=task.estimated_rows if depth == 0 else None
             )]
             
         # 2. Identify Assignments (Partition Strategy)
@@ -389,7 +398,8 @@ class DataPlanBuilder:
                 parent=task,
                 partition_key="All",
                 partition_value="All",
-                execution_mode=getattr(task, 'execution_mode', 'batch')
+                execution_mode=getattr(task, 'execution_mode', 'batch'),
+                estimated_rows=task.estimated_rows if depth == 0 else None
             )]
 
         # Intelligent Selection (Phase 2.3)
@@ -426,7 +436,8 @@ class DataPlanBuilder:
                     schema=schema,
                     parent=task,
                     partition_key="All",
-                    partition_value="All"
+                    partition_value="All",
+                    estimated_rows=task.estimated_rows if depth == 0 else None
                  )]
             selected_stats = best_stats
 
@@ -492,7 +503,9 @@ class DataPlanBuilder:
                     query=sub_query,
                     collection_strategy=child_strategy,
                     constraints=new_constraints,
-                    parent=task
+
+                    parent=task,
+                    execution_mode=getattr(task, 'execution_mode', 'batch')
                 )
                 
                 sub_tasks = await self._create_plan_recursive(
@@ -515,7 +528,9 @@ class DataPlanBuilder:
                     schema=schema,
                     parent=task,
                     partition_key=pkey.name,
-                    partition_value=val
+                    partition_value=val,
+                    execution_mode=getattr(task, 'execution_mode', 'batch'),
+                    estimated_rows=task.estimated_rows if depth == 0 else None
                 ))
                 self.current_chunk_count += 1
         

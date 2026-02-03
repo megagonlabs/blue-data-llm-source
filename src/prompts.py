@@ -41,14 +41,14 @@ Input Query: "{query}"
 ROW_ESTIMATION_PROMPT = """
 Query: "{query}"
 
-Estimate the total number of rows (items) that would be in the full result table for this query.
-Be realistic. 
-- "US States" -> 50
-- "Pokemon" -> ~1000
-- "Nobel Prize Winners" -> ~1000
-- "Harry Potter Movies" -> 8
+Estimate the total number of rows (items) that would be in the FULL result table for this query.
+Think about the comprehensive nature of the request.
+- If it asks for "US States", that's naturally ~50.
+- If it asks for "Pokemon", that's ~1000.
+- If it asks for "Movies", "Cities", "People", or "Events" over a long time range, the number could be LARGE (100+ or 1000+).
+- Do NOT underestimate. It is safer to overestimate for robustness.
 
-Return ONLY a single integer number.
+Return ONLY a single integer number representing the expected row count.
 """
 
 DECOMPOSITION_DECISION_PROMPT = """
@@ -215,23 +215,38 @@ Return ONLY the rewritten query text.
 # But we can extract the template parts if needed. For now keeping dynamic.
 
 ROW_BY_ROW_KEYS_PROMPT = """
-User Request: "{query}"
-We are building a table.
-First, list ALL unique entities for the column: "{key_col}".
-Do not generate the full table yet. Just the keys.
-
-Constraints: {constraints}
-
-Return JSON list of strings: [ "Key1", "Key2", ... ]
-"""
+    You are a retriever of facts.
+    We want to create a table with the detailed information about {query}.
+    {key_desc}.
+    List all {key_col} entities for the table. 
+    Never shorten the list with ellipsis (...) in the middle. List every single entity found.
+    The response will be formatted as JSON object shown below.
+    
+    RESPONSE FORMAT:
+    {{
+        "keys": [
+            {{
+                "{key_col}": "value"
+            }}
+        ]
+    }}
+    """
 
 ROW_BY_ROW_FETCH_PROMPT = """
-User Request: "{query}"
-Generate the table row for the {key_col}: "{key_val}".
-Columns: {key_col}, {other_cols}
-
-Return JSON object: {{ "{key_col}": "{key_val}", "Col2": "Val2" ... }}
-"""
+    You are a retriever of facts.
+    We want to create a table with the detailed information about {query}.
+    Columns in the table are {columns}.
+    {key_desc}.     
+    Retrieve a single row whose key is {key_val}.
+    The response will be formatted as JSON dictionary shown below.
+    Pay special attention to wrap all property names and values in double quotes!
+    
+    RESPONSE FORMAT:
+    {{
+        "{key_col}": "{key_val}",
+        ...
+    }}
+    """
 
 # --- VALIDATION ---
 

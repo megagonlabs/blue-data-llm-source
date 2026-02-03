@@ -34,6 +34,7 @@ class DataTask:
     # 3. Partitioning Context (If this is a leaf/partition node)
     partition_key: Optional[str] = None   # e.g. "Year"
     partition_value: Optional[str] = None # e.g. "2023"
+    estimated_rows: Optional[int] = None # Estimated total rows (for completeness check)
     
     # 4. Execution Config
     execution_mode: str = "batch" # "batch" or "row_by_row"
@@ -56,12 +57,23 @@ class DataTask:
         if self.constraints:
             constraint_str = f"Constraints: {json.dumps(self.constraints)}"
             
+        estimate_str = ""
+        if self.estimated_rows and self.estimated_rows > 0:
+             estimate_str = f"Estimated Target Rows: ~{self.estimated_rows}. You MUST extract them all."
+
         prompt = f"""
         User Request: "{self.query}"
+        Target Scope:
         {constraint_str}
-        
+        {estimate_str}
+
         **CRITICAL INSTRUCTION**: Extract ALL data matching the request.
-        You must be as comprehensive as possible. If the table usually has many rows, return MANY rows. Do not stop after a few examples.
+        You must be as comprehensive as possible. If the table usually has many rows, return MANY rows.
+        
+        **OUTPUT FORMAT**:
+        Return ONLY the raw JSON list (or CSV) containing the data. 
+        DO NOT include any text like "Here is the table" or markdown code blocks.
+        Just the raw data.
         """
         
         if self.partition_key and self.partition_value:

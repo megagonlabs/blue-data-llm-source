@@ -110,16 +110,88 @@ class MapReduceEngine:
             elif "```" in content:
                 content = content.split("```")[1].split("```")[0]
                 
-            data = json.loads(content)
+            # Auto-unwrap if "items" or "rows" key exists (or repair if truncated)
+            data = []
             
-            # Auto-unwrap if "items" or "rows" key exists
-            if isinstance(data, dict):
-                for key in ["items", "rows", "data"]:
-                    if key in data and isinstance(data[key], list):
-                        data = data[key]
-                        break
+            # --- PAGINATION & COMPLETENESS LOOP ---
+            current_prompt = prompt
+            all_data = [] # Accumulate rows across pages
+            attempts = 0
+            max_attempts = 3
             
-            if isinstance(data, list):
+            while attempts < max_attempts:
+                attempts += 1
+                
+                # Execute LLM Call
+                response = await self.llm.agenerate(current_prompt, temperature=self.extraction_temperature, response_format={"type": "json_object"})
+                content = response.content
+                metrics = response.metrics # Note: this overwrites metrics; ideally should sum them up but for simplicity we keep last
+                
+                # ... [Parsing Logic Reuse] ...
+                chunk_data = []
+                try:
+                    # 1. Fast path: Valid JSON
+                    parsed = json.loads(content)
+                    if isinstance(parsed, dict):
+                        for key in ["items", "rows", "data"]:
+                            if key in parsed and isinstance(parsed[key], list):
+                                parsed = parsed[key]
+                                break
+                                
+                    if isinstance(parsed, list):
+                        chunk_data = parsed
+                    else:
+                         logger.warning(f"Task {task.trace_id} returned non-list JSON: {type(parsed)}")
+                         
+                except json.JSONDecodeError:
+                    # 2. Robust path: Handle Truncation (Common with "List ALL" prompt)
+                    logger.warning(f"Task {task.trace_id} JSON Decode Error (likely truncation). Attempting repair...")
+                    
+                    s = content.strip()
+                    if s.startswith("{") and '"items":' in s:
+                         last_comma = s.rfind("},")
+                         if last_comma != -1:
+                             fixed = s[:last_comma+1] + "]}" 
+                             try:
+                                 parsed = json.loads(fixed)
+                                 if isinstance(parsed, dict) and "items" in parsed:
+                                     chunk_data = parsed["items"]
+                                     logger.info(f"Task {task.trace_id}: Repair successful (Wrapped). Recovered {len(chunk_data)} items.")
+                             except:
+                                 pass
+                    elif s.startswith("["):
+                         last_comma = s.rfind("},")
+                         if last_comma != -1:
+                             fixed = s[:last_comma+1] + "]"
+                             try:
+                                 chunk_data = json.loads(fixed)
+                                 logger.info(f"Task {task.trace_id}: Repair successful (List). Recovered {len(chunk_data)} items.")
+                             except:
+                                 pass
+
+                if chunk_data:
+                    all_data.extend(chunk_data)
+                
+                # COMPLETENESS CHECK
+                # Only check if we have an estimate and it's substantial
+                if getattr(task, 'estimated_rows', 0) and task.estimated_rows > 10:
+                     if len(all_data) < 0.5 * task.estimated_rows:
+                          logger.info(f"Task {task.trace_id}: Incomplete Result ({len(all_data)}/{task.estimated_rows}). Reprompting...")
+                          # Construct Reprompt
+                          current_prompt = prompt + f"\n\nPREVIOUSLY EXTRACTED: {len(all_data)} rows. We expected {task.estimated_rows}.\nCONTINUE extraction from where you left off. Do not repeat previous items. Return next batch."
+                          continue # Loop again
+                     else:
+                          break # Good enough
+                else:
+                     break # No estimate, single pass
+            
+            data = all_data
+
+            if not data and "Unterminated string" not in str(content):
+                 # Only warn if we really failed to get anything
+                 logger.warning(f"Task {task.trace_id} failed to parse any data.")
+
+            if data:
                 # Enrich with partition info if missing
                 for item in data:
                     if task.partition_key not in item and task.partition_key != "All":
@@ -140,11 +212,10 @@ class MapReduceEngine:
                     
                 return data, metrics
             else:
-                logger.warning(f"Task {task.trace_id} returned non-list JSON. Type: {type(data)}. Content snippet: {str(data)[:200]}")
-                return [], metrics
-                
+                 return [], metrics
+
         except Exception as e:
-            logger.error(f"Task {task.trace_id} failed: {e}")
+            logger.error(f"Task {task.trace_id} CRITICAL FAILURE: {e}")
             return [], None
 
     def _save_trace(self, task, prompt, response, tokens, context):
@@ -164,28 +235,36 @@ class MapReduceEngine:
 
     async def _execute_row_by_row(self, task: DataTask, context: dict) -> Tuple[List[Dict], Optional[LLMMetrics]]:
         """
-        Executes a task in two steps:
+        Executes a task in two steps using SOTA prompts:
         1. Generate list of keys (Primary Key entities).
         2. Generate full row for each key (in parallel).
         """
-        # A. Identify Key Column
-        # If schema exists, use first primary key. Else ask LLM or use 'Entity'.
-        key_col = "Entity"
-        other_cols = ["..."]
-        if task.schema and task.schema.primary_keys:
-            key_col = task.schema.primary_keys[0] # Driver, Country, etc.
-            other_cols = [c.name for c in task.schema.columns if c.name != key_col]
+        # A. Identify Key Column(s)
+        # If schema exists, use schema keys. Else fallback.
+        keys = ["Entity"]
+        all_cols = ["Entity", "Description"]
+        
+        if task.schema:
+            if task.schema.primary_keys:
+                keys = task.schema.primary_keys
+            all_cols = [c.name for c in task.schema.columns]
+        
+        key_col_str = keys[0] # For single key simple logic
+        
+        # Helper for "key_desc"
+        if len(keys) == 1:
+            key_desc = f"The key column in the table is {keys[0]}"
         else:
-             # Try to find a reasonable key from constraints or query?
-             # For now fallback to "Entity"
-             pass
+            key_desc = f"The key columns in the table are {', '.join(keys)}"
+            
+        columns_str = ", ".join(all_cols)
 
         # B. Step 1: Generate Keys
-        # Build prompt: "List all [KeyColumn] for [Query]"
+        # Build prompt using SOTA template
         keys_prompt = ROW_BY_ROW_KEYS_PROMPT.format(
             query=task.query,
-            key_col=key_col,
-            constraints=json.dumps(task.constraints)
+            key_desc=key_desc,
+            key_col=keys[0] # Focusing on primary key for list generation
         )
         
         keys_resp = await self.llm.agenerate(keys_prompt, temperature=self.extraction_temperature, response_format={"type": "json_object"})
@@ -194,60 +273,96 @@ class MapReduceEngine:
         
         self._save_trace(task, keys_prompt, keys_content, keys_resp.metrics.total_tokens, context)
         
+        keys_data = [] # List of dicts
         try:
-            keys_data = json.loads(keys_content)
-            # Unwrap
-            if isinstance(keys_data, dict):
-                 # Look for list values
-                 for v in keys_data.values():
-                     if isinstance(v, list):
-                         keys_data = v
-                         break
+            parsed = json.loads(keys_content)
+            # SOTA Logic: Handle wrapped JSON or list
+            if isinstance(parsed, dict):
+                # New Optimized SOTA Prompt returns {"keys": [...]}
+                if "keys" in parsed and isinstance(parsed["keys"], list):
+                     keys_data = parsed["keys"]
+                elif len(parsed) == 1 and isinstance(list(parsed.values())[0], list):
+                     # Fallback for "items" or prompt hallucination
+                     keys_data = list(parsed.values())[0]
+                else: 
+                     # Maybe it's just 'items': [...]
+                     for v in parsed.values():
+                         if isinstance(v, list):
+                             keys_data = v
+                             break
+            elif isinstance(parsed, list):
+                keys_data = parsed
+                
+            # Normalize keys to dicts
+            normalized_keys = []
+            for k in keys_data:
+                if isinstance(k, dict):
+                    normalized_keys.append(k)
+                elif isinstance(k, str):
+                    normalized_keys.append({keys[0]: k})
             
-            if not isinstance(keys_data, list):
-                 logger.warning(f"Row-by-Row: Failed to parse keys list. Got {type(keys_data)}")
-                 return [], total_metrics
-                 
+            keys_data = normalized_keys
+            
         except Exception as e:
             logger.error(f"Row-by-Row key parse error: {e}")
             return [], total_metrics
 
+        if not keys_data:
+            logger.warning("No keys found in response.")
+            return [], total_metrics
+
         # C. Step 2: Generate Rows (Parallel)
-        # We need a semaphore for row generation as well if not already bounded
-        # But _execute_map_task is already bounded by self.max_concurrent (e.g. 10).
-        # If we launch N tasks here, we might flood.
-        # C. Step 2: Generate Rows (Parallel)
-        # Concurrency managed by LLMClient internally
-        
-        async def fetch_row(key_val):
+        async def fetch_row(key_instance: dict):
+            # Format key representation for prompt: "(Name = Key, ...)"
+            # SOTA Logic
+            key_repr_parts = []
+            for k, v in key_instance.items():
+                key_repr_parts.append(f"{k} = {v}")
+            row_key_str = f"({', '.join(key_repr_parts)})"
+            
+            # Use specific value for single key case in prompt variable if needed, 
+            # but template takes {key_val} which maps to row_key which is the parenthesized list
+            # Wait, SOTA template uses %s for key value.
+            # "Retrieve a single row whose key is %s" -> "(Name = Foo)"
+            
             row_prompt = ROW_BY_ROW_FETCH_PROMPT.format(
                 query=task.query,
-                key_col=key_col,
-                key_val=key_val,
-                other_cols=', '.join(other_cols)
+                columns=columns_str,
+                key_desc=key_desc,
+                key_col=keys[0], # Not strictly used in new template logic but passed for safety
+                key_val=row_key_str
             )
             
             resp = await self.llm.agenerate(row_prompt, temperature=0.0, response_format={"type": "json_object"})
-            return resp, row_prompt
+            return resp, row_prompt, key_instance
         
         row_tasks = [fetch_row(k) for k in keys_data]
         row_results = await asyncio.gather(*row_tasks, return_exceptions=True)
         
         final_rows = []
-        for i, res in enumerate(row_results):
+        for res in row_results:
             if isinstance(res, Exception):
-                logger.error(f"Row failure for {keys_data[i]}: {res}")
+                logger.error(f"Row failure detected: {res}")
                 continue
                 
-            resp, prompt = res
-            total_metrics = total_metrics + resp.metrics
+            resp, prompt, key_inst = res
+            if resp.metrics:
+                total_metrics = total_metrics + resp.metrics
             self._save_trace(task, prompt, resp.content, resp.metrics.total_tokens, context)
             
             try:
                 row_obj = json.loads(resp.content)
-                if isinstance(row_obj, list): row_obj = row_obj[0]
-                # Enforce key
-                row_obj[key_col] = keys_data[i]
+                # Handle wrapping
+                if isinstance(row_obj, dict) and len(row_obj) == 1:
+                     # Check if value is dict (wrapped)
+                     first_val = list(row_obj.values())[0]
+                     if isinstance(first_val, dict):
+                         row_obj = first_val
+                
+                # Enforce Key Consistency (Overwrite with prompted key)
+                for k, v in key_inst.items():
+                    row_obj[k] = v
+                    
                 final_rows.append(row_obj)
             except:
                 pass

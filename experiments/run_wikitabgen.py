@@ -266,6 +266,7 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
         "max_concurrent": args.max_concurrent if args else 10,
         "row_threshold": args.row_threshold if args else 50,
         "decomposition_strategy": args.decomposition_strategy,
+        "execution_mode": args.execution_mode if args else "batch",
         "generated_by": "experiments/run_wikitabgen.py"
     }
     with open(os.path.join(run_dir, "run_config.json"), "w") as f:
@@ -300,7 +301,8 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                 decomposition_strategy=args.decomposition_strategy, 
                 partitioning_method="smart",
                 max_total_requests=1000, # Per-query safety limit (prevent runaways)
-                shared_state=shared_state
+                shared_state=shared_state,
+                default_execution_mode=args.execution_mode if args else "batch"
             )
             
             # [RESUME] Check if result already exists
@@ -440,10 +442,11 @@ if __name__ == "__main__":
     parser.add_argument("--limit", type=int, default=3, help="Max number of tables to evaluate")
     parser.add_argument("--use_cache", action="store_true")
     parser.add_argument("--max_concurrent", type=int, default=10)
-    parser.add_argument("--row_threshold", type=int, default=50)
+    parser.add_argument("--row_threshold", type=int, default=120)
     parser.add_argument("--decomposition_strategy", type=str, default="rule_based", choices=["rule_based", "llm_based"])
     parser.add_argument("--table_concurrent", type=int, default=5, help="Number of tables to process concurrently")
     parser.add_argument("--resume_dir", type=str, default=None, help="Directory to resume run from")
+    parser.add_argument("--execution_mode", type=str, default="batch", choices=["batch", "row_by_row"], help="Execution mode")
     
     args = parser.parse_args()
     
