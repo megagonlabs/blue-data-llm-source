@@ -143,6 +143,7 @@ BAD Schemas:
 - Only Numeric stats (no Names)
 - Only IDs and Foreign Keys
 - Missing crucial grouping columns
+- Entities satisfy more than one partition
 
 Return ONLY the index (0-based) of the best schema.
 """
@@ -173,13 +174,14 @@ DISTRIBUTION_ESTIMATION_PROMPT = """
 Your Task: Analyze the data distribution for the partition key "{key_name}" given the query "{query}".
 
 Guidelines:
-1. **Estimate Rows**: List the likely partitions and estimate the number of rows (items) in each.
-2. **Assess Ambiguity**: Is this key clear and mutually exclusive? (0.0=Clear, 1.0=Ambiguous).
-3. **Common Sense Scope**: 
+1. **Partitions**: List the most suitable partitions to divide large data into chunks that mutually exclusive and cover the entire data. Please note that partition keys are not always categorical, you might use interval (e.g. year 2003-2009, ID from 11 to 20, etc.) as partitions if it makes sense.
+2. **Estimate Rows**: List the likely partitions and estimate the number of rows (entities) in each partition.
+3. **Assess Ambiguity**: Is this partition key clear and mutually exclusive? (0.0=Clear, 1.0=Ambiguous).
+4. **Common Sense Scope**: 
    - Pay attention to the query scope and constrains. If the query implies a specific scope or constrains (e.g. "US Cities"), corresponding partition keys like "Country" could be limited (e.g. only "USA").
    - Do NOT hallucinate values outside the query scope.
 
-Return JSON Code:
+Return only JSON Code in the following format:
 {{
     "partitions": {{
         "PartitionName1": <est_count>,
@@ -195,15 +197,18 @@ Potential Partition Key: "{key_name}"
 """
 
 PARTITION_VALUES_PROMPT = """
-Reference Query: "{query}"
-Target Attribute: "{key_name}" ({key_description})
+Task: List ALL possible partition values for partition key "{key_name}" that are STRICTLY relevant to the query scope.
 
-Task: List ALL possible values for "{key_name}" that are STRICTLY relevant to the query scope.
+Data Query: "{query}"
+Partition Key: "{key_name}"
+Partition Key Description: "{key_description}"
+Constraints: {constraints}
 
 CRITICAL RULES:
-1. **Scope Enforcement**: If the query limits the scope, only list values within that scope.
-2. **Completeness**: If the scope is broad, list ALL possible values according to common sense and query context. If there are too many (>100), list the most common or most relevant 100 values.
-3. **Relevance**: Only list values that actually contain data for this query.
+1. **Partitions**: List the most suitable partitions to divide the target data for the data query into chunks that mutually exclusive and cover the entire data. Please note that partition keys are not always categorical, you might also use interval (e.g. year 2003-2009, ID from 11 to 20, etc.) as partitions if it makes sense.
+2. **Scope Enforcement**: If the query limits the scope, only list values within the scope of the query.
+3. **Completeness**: List ALL possible partition values according to factual common sense, query context, and constraints.
+4. **Relevance**: Following for completeness, only list partition values that actually contain data for this query.
 
 Format: Return ONLY a simple list of strings, one per line. No numbering, no bullets.
 """
@@ -242,12 +247,8 @@ Just the raw data.
 """
 
 DATA_EXTRACTION_PARTITION_CONTEXT = """
-CONTEXT:
-This is a PARTITIONED sub-task.
-You are focusing ONLY on the subset defined by:
-**{partition_key} = {partition_value}**
-
-Ensure all returned rows adhere to this partition filter.
+You are processing a PARTITION: "{partition_key}" = "{partition_value}".
+You MUST ONLY return items where "{partition_key}" is equal to "{partition_value}".
 """
 
 ROW_BY_ROW_KEYS_PROMPT = """

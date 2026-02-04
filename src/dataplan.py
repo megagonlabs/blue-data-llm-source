@@ -11,8 +11,6 @@ from src.analysis import DataTask, QueryAnalyzer, QueryAnalysisResult
 from src.prompts import (
     DISTRIBUTION_ESTIMATION_PROMPT,
     PARTITION_VALUES_PROMPT,
-    DISTRIBUTION_ESTIMATION_PROMPT,
-    PARTITION_VALUES_PROMPT,
     SUBQUERY_REWRITE_PROMPT
 )
 from utils.llm_utils import LLMClient
@@ -157,6 +155,7 @@ class DataPlanBuilder:
         self.analyzer = QueryAnalyzer(llm_client)
         self.schema_gen = SchemaGenerator(llm_client)
         self.evaluator = StrategyEvaluator(llm_client)
+        self.dist_estimator = DistributionEstimator(llm_client)
         
     async def create_plan(
         self, 
@@ -586,32 +585,6 @@ class DataPlanBuilder:
         response = await self.llm.agenerate(prompt, temperature=0.0)
         return response.content.strip().strip('"')
 
-        # Artifact Persistence
-        if "output_dir" in context:
-            import dataclasses
-            import os
-            try:
-                plan_artifact = {
-                    "query": query,
-                    "rewritten_query": rewritten_query,
-                    "schema": final_schema.to_dict(), # Changed from `schema` to `final_schema`
-                    "map_tasks": [dataclasses.asdict(t) for t in map_tasks],
-                    "decomposition_strategy": decomposition_strategy
-                }
-                # Remove original_task recursion from MapTask dicts for clean JSON (DataTask is complex)
-                # Just keeping it simple for now as asdict might recurse.
-                # DataTask fields are simple enough (string, dict, string), should be fine.
-                
-                with open(os.path.join(context["output_dir"], "plan.json"), "w") as f:
-                    json.dump(plan_artifact, f, indent=2)
-            except Exception as e:
-                logger.warning(f"Failed to save plan artifact: {e}")
-                
-        return DataPlanRequest(
-            task=root_task,
-            schema=schema,
-            map_tasks=map_tasks
-        )
 
     async def _create_plan_recursive(
         self, 
@@ -732,7 +705,7 @@ class DataPlanBuilder:
             values = list(selected_stats.partition_counts.keys())
             counts = selected_stats.partition_counts
         else:
-            values = await self._fetch_partition_values(query, pkey)
+            values = await self._fetch_partition_values(query, pkey, task.constraints)
             counts = {}
 
         logger.info(f"Selected Key: {pkey.name}. Values: {len(values)}")
@@ -800,24 +773,17 @@ class DataPlanBuilder:
         
         return map_tasks
         
-    async def _fetch_partition_values(self, query: str, key: Column) -> List[str]:
+    async def _fetch_partition_values(self, query: str, key: Column, constraints: Dict[str, Any] = {}) -> List[str]:
         """
         Ask LLM to list all values for the partition key.
         e.g. "List all States"
         """
-        prompt = f"""
-        Reference Query: "{query}"
-        Target Attribute: "{key.name}" ({key.description})
-        
-        Task: List ALL possible values for "{key.name}" that are STRICTLY relevant to the query scope.
-        
-        CRITICAL RULES:
-        1. **Scope Enforcement**: If the query limits the scope, only list values within that scope.
-        2. **Completeness**: If the scope is broad, list ALL possible values according to common sense and query context. If there are too many (>100), list the most common or most relevant 100 values.
-        3. **Relevance**: Only list values that actually contain data for this query.
-        
-        Format: Return ONLY a simple list of strings, one per line. No numbering, no bullets.
-        """
+        prompt = PARTITION_VALUES_PROMPT.format(
+            query=query,
+            key_name=key.name,
+            key_description=key.description,
+            constraints=json.dumps(constraints, indent=2)
+        )
         
         response = await self.llm.agenerate(prompt, temperature=0.0)
         
@@ -854,3 +820,4 @@ class DataPlanBuilder:
         """
         response = await self.llm.agenerate(prompt, temperature=0.0)
         return response.content.strip().strip('"')
+

@@ -85,8 +85,7 @@ class SchemaGenerator:
         
         if not candidates:
             # Fallback
-            return self._create_fallback_schema(query)
-            
+            return self._create_fallback_schema(query)         
         if strategy == "first":
             best_candidate = candidates[0]
         else:
