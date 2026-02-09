@@ -112,6 +112,12 @@ async def evaluate_dataset(dataset_path: str, base_output_dir: str, args=None):
     # Dataset is now a dict, iterate values
     tasks = list(dataset.values())
     
+    # Filter by IDs if provided
+    if args and args.ids:
+        target_ids = [tid.strip() for tid in args.ids.split(",")]
+        tasks = [t for t in tasks if t['id'] in target_ids]
+        print(f"Filtering dataset to {len(tasks)} tasks: {target_ids}")
+    
     for i, item in enumerate(tasks):
         uid = item['id']
         category = item['category']
@@ -212,8 +218,8 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Run Mini Dataset Benchmark")
-    parser.add_argument("--dataset_path", type=str, default="experiments/mini_dataset.json", help="Path to input dataset JSON")
-    parser.add_argument("--base_output_dir", type=str, default="experiments/runs", help="Base directory for output runs")
+    parser.add_argument("--dataset_path", type=str, default="datasets/mini_dataset.json", help="Path to input dataset JSON")
+    parser.add_argument("--base_output_dir", type=str, default="exp_results/runs_mini", help="Base directory for output runs")
     
     # Core Configs
     parser.add_argument("--model", type=str, default="gpt-4o", help="LLM model name")
@@ -225,8 +231,9 @@ if __name__ == "__main__":
     parser.add_argument("--use_cache", action="store_true", help="Enable semantic caching")
     parser.add_argument("--row_threshold", type=int, default=50, help="Row count threshold for decomposition")
     parser.add_argument("--max_depth", type=int, default=1, help="Max recursion depth")
-    parser.add_argument("--max_partitions", type=int, default=50, help="Max partitions per map task")
+    parser.add_argument("--max_partitions", type=int, default=200, help="Max partitions per map task")
     parser.add_argument("--max_concurrent", type=int, default=20, help="Max concurrent requests")
+    parser.add_argument("--ids", type=str, default=None, help="Comma-separated list of dataset IDs to run (e.g. 'geo_countries,sci_elements')")
     
     args = parser.parse_args()
     

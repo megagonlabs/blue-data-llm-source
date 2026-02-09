@@ -146,31 +146,18 @@ class QueryAnalyzer:
         # [REVERTED] Propagate estimate to task for Completeness Check downstream
         # task.estimated_rows = estimated_rows
 
-        # 3. Determine Decomposition
-        if decomposition_strategy == "llm_based":
-            # Hybrid approach: If rows > threshold, force decomposition to avoid truncation
-            if estimated_rows > row_threshold:
-                logger.info(f"Estimated rows ({estimated_rows}) > {row_threshold}. Forcing Map-Reduce to prevent LLM truncation.")
-                requires_decomposition = True
-                reasoning = "Forced decomposition due to high row count."
-            else:
-                requires_decomposition, reasoning = await self._decide_decomposition_llm(rewritten_query, estimated_rows)
-        else:
-            # Rule based default
-            # Check strategy too? If LIMIT 5, maybe flat is fine?
-            requires_decomposition = estimated_rows > row_threshold
-            reasoning = f"Estimated rows ({estimated_rows}) > Threshold ({row_threshold})"
-            
-            if "LIMIT" in task.collection_strategy and estimated_rows < row_threshold * 2:
-                # If limited and small-ish, keep flat
-                pass # Logic holds
-
-        logger.info(f"Decomposition Assessment: {requires_decomposition} ({reasoning})")
+        # 3. Determine Decomposition (Decoupled in V5)
+        # The Analyzer now only provides the estimate. The logic is in DataPlanBuilder.
+        # We perform a basic check here just for the 'reasoning' field if needed, or return defaults.
+        requires_decomposition = False 
+        reasoning = "Decomposition decision deferred to Planner."
+        
+        logger.info(f"Analysis Complete. Rows: {estimated_rows}")
 
         return QueryAnalysisResult(
             rewritten_query=rewritten_query,
             estimated_rows=estimated_rows,
-            requires_decomposition=requires_decomposition,
+            requires_decomposition=requires_decomposition, # Placeholder
             reasoning=reasoning,
             task=task
         )
@@ -197,7 +184,10 @@ class QueryAnalyzer:
             logger.warning(f"Row estimation failed for '{query}': {e}. Defaulting to 100.")
             return 100
 
-    async def _decide_decomposition_llm(self, query: str, estimated_rows: int) -> Tuple[bool, str]:
+    async def should_decompose(self, query: str, estimated_rows: int) -> Tuple[bool, str]:
+        """
+        Asks LLM if Map-Reduce decomposition is necessary for this query.
+        """
         prompt = DECOMPOSITION_DECISION_PROMPT.format(query=query, estimated_rows=estimated_rows)
         response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
         try:

@@ -8,7 +8,6 @@ from dataclasses import asdict
 from src.dataplan import DataPlanRequest, DataTask
 from src.schema import Column
 from utils.llm_utils import LLMClient, LLMMetrics, sum_metrics
-from src.validator import Validator
 from src.prompts import (
     ROW_BY_ROW_KEYS_PROMPT,
     ROW_BY_ROW_FETCH_PROMPT
@@ -23,10 +22,14 @@ class MapReduceEngine:
     2. Reduce: Aggregates results into a single DataFrame.
     """
     
-    def __init__(self, llm_client: LLMClient, extraction_temperature: float = 0.0):
+    
+    def __init__(self, llm_client: LLMClient, planner=None, max_partitions: int = 50, default_execution_mode: str = "batch", map_validator=None):
         self.llm = llm_client
-        self.extraction_temperature = extraction_temperature
-        self.validator = Validator(llm_client)
+        self.planner = planner
+        self.max_partitions = max_partitions
+        self.default_execution_mode = default_execution_mode
+        self.map_validator = map_validator # [NEW] V5: Unified Validator
+        # self.validator = Validator(llm_client) # Old validator deprecated
         
     async def execute(self, plan: DataPlanRequest, context: dict = None) -> Tuple[pd.DataFrame, LLMMetrics]:
         context = context or {}
@@ -71,7 +74,7 @@ class MapReduceEngine:
         df = self._reduce(results, plan.schema.columns)
         
         # 3. Global Validation
-        df = await self.validator.clean_data(df, primary_keys=plan.schema.primary_keys, context=context)
+        # df = await self.validator.clean_data(df, primary_keys=plan.schema.primary_keys, context=context)
         
         logger.info(f"Execution complete. Generated {len(df)} rows. Total Tokens: {total_metrics.total_tokens}")
         return df, total_metrics
@@ -86,53 +89,51 @@ class MapReduceEngine:
             if hasattr(task, 'execution_mode') and task.execution_mode == 'row_by_row':
                 return await self._execute_row_by_row(task, context)
                 
-            # Default: Batch Mode
-            # Using low temp for extraction
-            response = await self.llm.agenerate(prompt, temperature=self.extraction_temperature, response_format={"type": "json_object"})
-            
-            content = response.content
-            metrics = response.metrics
-            
-            # Artifact Persistence: Trace
-            if "output_dir" in context:
-                # ... existing trace logic ...
-                self._save_trace(
-                    task=task,
-                    prompt=prompt,
-                    response=content,
-                    tokens=metrics.total_tokens,
-                    context=context
-                )
-            
-            # Basic cleaning
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0]
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0]
-                
-            # Auto-unwrap if "items" or "rows" key exists (or repair if truncated)
-            data = []
+            # Default Batch Mode
+            # Extraction Temperature from context or default
+            temp = context.get('extraction_temperature', 0.0) if context else 0.0
             
             # --- PAGINATION & COMPLETENESS LOOP ---
+            # Moved first API call inside loop to ensure proper data accumulation
             current_prompt = prompt
             all_data = [] # Accumulate rows across pages
             attempts = 0
             max_attempts = 3
-            
-            # Helper to accumulate cost across attempts
-            if metrics is None:
-                metrics = LLMMetrics() # Base metrics if any
+            metrics = LLMMetrics() # Initialize metrics accumulator
                 
             while attempts < max_attempts:
                 attempts += 1
                 
-                # Execute LLM Call
-                response = await self.llm.agenerate(current_prompt, temperature=self.extraction_temperature, response_format={"type": "json_object"})
+                # Extract (Map) - First call and subsequent pagination calls
+                # V5: Use temperature from context or default
+                temperature = context.get('extraction_temperature', 0.0) if context else 0.0
+                
+                response = await self.llm.agenerate(
+                    current_prompt, 
+                    temperature=temperature, 
+                    response_format={"type": "json_object"}
+                )
                 content = response.content
                 
                 # Accumulate Metrics (Cost of all attempts)
                 if response.metrics:
                     metrics = metrics + response.metrics
+                
+                # Artifact Persistence: Trace (save each attempt)
+                if "output_dir" in context:
+                    self._save_trace(
+                        task=task,
+                        prompt=current_prompt,
+                        response=content,
+                        tokens=response.metrics.total_tokens if response.metrics else 0,
+                        context=context
+                    )
+                
+                # Basic cleaning
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0]
+                elif "```" in content:
+                    content = content.split("```")[1].split("```")[0]
                 
                 # ... [Parsing Logic Reuse] ...
                 chunk_data = []
@@ -205,17 +206,34 @@ class MapReduceEngine:
                         if task.partition_key: # Ensure it's not None
                             item[task.partition_key] = task.partition_value
                 
-                # CHUNK VALIDATION
-                if task.partition_key and task.partition_key != "All":
-                    # Create constraint dict
-                    constraints = {task.partition_key: task.partition_value}
-                    
-                    # Convert list to DF for validation
-                    chunk_df = pd.DataFrame(data)
-                    chunk_df = await self.validator.validate_chunk(chunk_df, constraints)
-                    
-                    # Convert back to list
-                    data = chunk_df.to_dict('records')
+                # Convert list to DF for validation and completeness check
+                df = pd.DataFrame(data)
+                
+                # 4. Map-side Validation (Chunk Validation)
+                # Replaces old self.validator.validate_chunk() call
+                if self.map_validator and not df.empty:
+                    # Context for validation: constraints
+                    val_context = {
+                        "constraints": task.constraints or {},
+                        "schema": task.schema # If available
+                    }
+                    logger.info(f"Running Map Validator for task query: {task.query[:50]}...")
+                    df = await self.map_validator.run(df, context=val_context)
+
+                # 5. Completeness Check & Pagination (if batch mode)
+                # Note: Validated rows might be fewer. We check count against estimate.
+                # 'mode' is not directly available here, assuming it's 'batch' for this path
+                est_rows = getattr(task, 'estimated_rows', 0) or 0
+                if est_rows > 0: # Check if we have an estimate
+                    current_count = len(df)
+                    # If we have significantly fewer rows than expected (e.g. < 50%), and we haven't looped too much
+                    # We trigger pagination.
+                    # Simplified logic for V3: Just log warning for now, full pagination is complex.
+                    if current_count < 0.5 * task.estimated_rows:
+                        logger.warning(f"Map Task yielded {current_count} rows, expected ~{task.estimated_rows}. Possible incomplete extraction.")
+                        
+                # Convert back to list
+                data = df.to_dict('records')
                     
                 return data, metrics
             else:
@@ -274,7 +292,7 @@ class MapReduceEngine:
             key_col=keys[0] # Focusing on primary key for list generation
         )
         
-        keys_resp = await self.llm.agenerate(keys_prompt, temperature=self.extraction_temperature, response_format={"type": "json_object"})
+        keys_resp = await self.llm.agenerate(keys_prompt, temperature=0.0, response_format={"type": "json_object"})
         keys_content = keys_resp.content
         total_metrics = keys_resp.metrics
         

@@ -338,7 +338,7 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                 for c_name in item['columns']:
                     sem_type = "numerical" if c_name in numeric_cols else "text"
                     is_pk = c_name in keys
-                    cols.append(Column(name=c_name, semantic_type=sem_type, is_partition_key=is_pk))
+                    cols.append(Column(name=c_name, semantic_type=sem_type))
                 
                 target_schema = SchemaDefinition(
                     table_name=table_name,
@@ -403,6 +403,9 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                     "Key_Precision": kp,
                     "Key_Recall": kr,
                     "Key_F1": kf1,
+                    "Non_Key_Precision": nkp,
+                    "Non_Key_Recall": nkr,
+                    "Non_Key_F1": nkf1,
                     "Subqueries": subqueries,
                     "Time_s": duration,
                     "Cost_USD": metrics.cost,
@@ -425,18 +428,33 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
     print("\n=== WIKITABGEN EVALUATION SUMMARY ===")
     summary_df = pd.DataFrame(results)
     if not summary_df.empty:
-        cols_show = ["Table", "GT_Rows", "Extracted_Rows", "Cell_F1", "Key_F1", "Time_s", "Status"]
+        cols_show = ["Table", "GT_Rows", "Extracted_Rows", "Cell_F1", "Key_F1", "Non_Key_F1", "Time_s", "Status"]
         print(summary_df[[c for c in cols_show if c in summary_df.columns]])
         
         summary_path = os.path.join(run_dir, "summary.csv")
         summary_df.to_csv(summary_path, index=False)
         print(f"\nSaved summary to {summary_path}")
         
-        # Calculate Averages and Totals
-        numeric_cols = ["Cell_F1", "Key_F1", "Cell_Precision", "Cell_Recall", "Key_Precision", "Key_Recall", "Time_s", "Cost_USD"]
-        print("\n--- Averages ---")
-        print(summary_df[numeric_cols].mean())
+        # Also save a version with Non_Key_F1 included
+        if "Non_Key_F1" in summary_df.columns:
+            summary_with_nonkey_path = os.path.join(run_dir, "summary_with_nonkey.csv")
+            summary_df.to_csv(summary_with_nonkey_path, index=False)
+            print(f"Saved summary with Non-Key F1 to {summary_with_nonkey_path}")
         
+        # Calculate Averages and Totals
+        numeric_cols = ["Cell_F1", "Key_F1", "Non_Key_F1", "Cell_Precision", "Cell_Recall", "Key_Precision", "Key_Recall", "Non_Key_Precision", "Non_Key_Recall", "Time_s", "Cost_USD"]
+        means = summary_df[numeric_cols].mean()
+        print("\n--- Averages ---")
+        print(means)
+        
+        # Save detailed metrics JSON
+        metrics_path = os.path.join(run_dir, "metrics.json")
+        metrics_dict = means.to_dict()
+        metrics_dict["Total_Cost_USD"] = summary_df['Cost_USD'].sum()
+        with open(metrics_path, "w") as f:
+            json.dump(metrics_dict, f, indent=2)
+        print(f"Saved aggregate metrics to {metrics_path}")
+
         print("\n--- Totals ---")
         print(f"Total Cost: ${summary_df['Cost_USD'].sum():.4f}")
     else:
@@ -447,7 +465,7 @@ if __name__ == "__main__":
     # Paths adjusted to assume running from project root
     parser.add_argument("--cfg_path", type=str, default="third_parties/WikiTabGen/benchmark/cfg.json")
     parser.add_argument("--tables_dir", type=str, default="third_parties/WikiTabGen/benchmark/tables")
-    parser.add_argument("--base_output_dir", type=str, default="experiments/runs_wikitabgen")
+    parser.add_argument("--base_output_dir", type=str, default="exp_results/runs_wikitabgen")
     parser.add_argument("--model", type=str, default="gpt-4o")
     parser.add_argument("--limit", type=int, default=3, help="Max number of tables to evaluate")
     parser.add_argument("--use_cache", action="store_true")

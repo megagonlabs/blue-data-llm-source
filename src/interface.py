@@ -4,8 +4,7 @@ from typing import List, Optional, Tuple
 from utils.llm_utils import LLMClient, LLMMetrics
 from src.dataplan import DataPlanBuilder
 from src.engine import MapReduceEngine
-from src.validator import Validator
-from src.code_validator import CodeValidator
+from src.schema import SchemaDefinition, SchemaGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -18,13 +17,13 @@ class PKDBConfig:
     cache_dir: str = ".cache_pkdb"
     max_concurrent: int = 5
     use_cache: bool = True
-    max_partitions: int = 50
+    max_partitions: int = 200
     num_schema_candidates: int = 3
     schema_temperature: float = 0.7
     extraction_temperature: float = 0.0
     decomposition_strategy: str = "rule_based"
     row_threshold: int = 120 # [Optimized Default V4.2: Reverted to 120 for best F1/Cost balance]
-    max_depth: int = 1
+    max_depth: int = 2
     partitioning_method: str = "smart"
     max_total_requests: int = 10000
     default_execution_mode: str = "batch"
@@ -59,18 +58,54 @@ class PKDB:
             shared_state=kwargs.get('shared_state') # Special case: Runtime object, not config
         )
         
-        self.builder = DataPlanBuilder(
+        # Validators (Configurable)
+        from src.validator import GlobalValidator
+        from src.schema import SchemaDefinition, SchemaGenerator
+        from src.dataplan import DataPlanBuilder # Re-import for clarity, though already there
+        from src.engine import MapReduceEngine # Re-import for clarity, though already there
+        from src.schema import SchemaDefinition # Needed for new extract_table signature
+        self.map_validator = GlobalValidator(self.llm, strategies=getattr(self.config, 'map_validators', ["ChunkConstraints"]))
+        self.global_validator = GlobalValidator(self.llm, strategies=getattr(self.config, 'global_validators', ["Deduplication", "Code"]))
+        
+        self.schema_generator = SchemaGenerator(
             self.llm, 
-            max_partitions=self.config.max_partitions,
             num_candidates=self.config.num_schema_candidates,
             temperature=self.config.schema_temperature
         )
-        self.engine = MapReduceEngine(
-            self.llm, 
-            extraction_temperature=self.config.extraction_temperature
+        
+        self.planner = DataPlanBuilder(
+            llm_client=self.llm,
+            max_partitions=self.config.max_partitions,
+            num_candidates=self.config.num_schema_candidates,
+            temperature=self.config.schema_temperature,
+            row_threshold=self.config.row_threshold,
+            decomposition_strategy=self.config.decomposition_strategy, 
+            partitioning_method=self.config.partitioning_method
         )
-        self.validator = Validator()
-        self.code_validator = CodeValidator(self.llm)
+        
+        # V5: Unified GlobalValidator
+        # We can configure sub-validators here
+        self.validator = self.global_validator
+        
+        # Inject map_validator into Engine
+        # For now, map_validator can be the same GlobalValidator instance or a lightweight one
+        # Let's use the same instance, but GlobalValidator logic differentiates based on phase?
+        # Actually, let's create a separate lightweight one if needed, or share.
+        # Sharing is fine as it's stateless mostly.
+        # self.map_validator is already initialized above with 'map_validators' config strategy
+        # Keeping them separate allows different strategies for Map vs Reduce phases.
+        # self.map_validator = self.validator  # REMOVED overwrite 
+        
+        self.engine = MapReduceEngine(
+            llm_client=self.llm, 
+            planner=self.planner,
+            max_partitions=self.config.max_partitions,
+            default_execution_mode=self.config.default_execution_mode,
+            map_validator=self.map_validator
+        )
+        
+        self.code_validator = None # Deprecated, integrated into GlobalValidator = None # Deprecated
+        self.builder = None # Deprecated
         
     @property
     def row_threshold(self):
@@ -91,14 +126,13 @@ class PKDB:
     async def extract_table(
         self, 
         query: str, 
-        strategy: str = "llm_rank", 
+        strategy: str = "llm_rank",
+        schema: Optional[SchemaDefinition] = None,
         context: dict = None,
-        schema: Optional['SchemaDefinition'] = None,
         execution_mode: Optional[str] = None
-    ) -> Tuple[pd.DataFrame, LLMMetrics, int]:
+    ) -> Tuple[pd.DataFrame, LLMMetrics]:
         """
-        Main API: Extracts a table from the LLM's parametric knowledge
-        using the Map-Reduce Auto-Partitioning strategy.
+        Main API: Extracts a table from the LLM's parametric knowledge.
         
         Args:
             query: The user query, e.g. "List all US cities"
@@ -114,37 +148,40 @@ class PKDB:
         mode = execution_mode or self.default_execution_mode
         
         # 1. Plan
-        plan = await self.builder.create_plan(
+        plan = await self.planner.create_plan(
             query, 
             decomposition_strategy=self.decomposition_strategy,
             partitioning_method=self.partitioning_method,
             context=context,
             schema=schema,
             execution_mode=mode,
-            row_threshold=self.row_threshold
+            row_threshold=self.row_threshold,
+            max_depth=self.config.max_depth
         )
         
         # 2. Execute
         raw_df, metrics = await self.engine.execute(plan, context=context)
-        
-        # 3. Validate/Clean
-        final_df = await self.validator.clean_data(
-            raw_df, 
-            primary_keys=plan.schema.primary_keys, 
-            context=context
+        # 2. Schema Gen
+        # V5: Pass 'schema' to infer_schema for bypass/enrichment
+        target_schema = await self.schema_generator.infer_schema(
+             query, 
+             strategy=strategy,
+             context={"output_dir": "."}, # TODO: handle context better
+             input_schema=schema 
         )
         
-        # 4. Code-Based Validation (Gen-T Assertions)
-        if not final_df.empty and plan.schema:
-            logger.info("Running Code-Based Validation...")
-            try:
-                # Generate schema description for context
-                schema_desc = f"Table: {plan.schema.table_name}\nColumns: {', '.join([c.name for c in plan.schema.columns])}"
-                
-                records = final_df.to_dict('records')
-                validated_records = await self.code_validator.run(records, schema_desc)
-                final_df = pd.DataFrame(validated_records)
-            except Exception as e:
-                logger.error(f"Code Validation failed: {e}")
+        # 3. Validate/Clean
+        # Enrich context for validators
+        val_context = context.copy()
+        if plan.schema:
+            val_context['schema'] = plan.schema
+            val_context['primary_keys'] = plan.schema.primary_keys
+            
+        final_df = await self.validator.run(
+            raw_df, 
+            context=val_context
+        )
+        
+        # 4. Code-Based Validation is now integrated into GlobalValidator
         
         return final_df, metrics, len(plan.map_tasks)

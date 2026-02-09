@@ -81,8 +81,14 @@ third_parties/
 tmp/
 temp/
 *.tmp
+cache*
+.cache*
 
 # OS
 .DS_Store
 Thumbs.db
+
+# experiments
+exp_results/
+examples/
 

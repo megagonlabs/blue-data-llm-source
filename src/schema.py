@@ -21,7 +21,6 @@ class Column:
     semantic_type: str = "text" # text, categorical, numerical, time, entity
     data_type: str = "text" # [NEW] V3: Underlying type (int, float, date, text)
     formatting: str = "" # [NEW] V3: Format instructions (e.g. "YYYY-MM-DD")
-    is_partition_key: bool = False
     
     def to_dict(self):
         return {
@@ -29,8 +28,7 @@ class Column:
             "description": self.description,
             "semantic_type": self.semantic_type,
             "data_type": self.data_type,
-            "formatting": self.formatting,
-            "is_partition_key": self.is_partition_key
+            "formatting": self.formatting
         }
 
 @dataclass
@@ -38,7 +36,6 @@ class SchemaDefinition:
     table_name: str
     columns: List[Column]
     primary_keys: List[str] = field(default_factory=list)
-    # partition_strategy removed in Architecture V3 (Decoupled)
     
     def to_dict(self):
         return {
@@ -46,9 +43,9 @@ class SchemaDefinition:
             "columns": [c.to_dict() for c in self.columns],
             "primary_keys": self.primary_keys
         }
+
         
-    def get_partition_keys(self) -> List[Column]:
-        return [c for c in self.columns if c.is_partition_key]
+
 
 class SchemaGenerator:
     """
@@ -64,35 +61,61 @@ class SchemaGenerator:
         self.default_num_candidates = num_candidates
         self.default_temperature = temperature
         
-    async def infer_schema(self, query: str, num_candidates: Optional[int] = None, strategy: str = "llm_rank", context: dict = None) -> SchemaDefinition:
+    async def infer_schema(self, query: str, num_candidates: Optional[int] = None, strategy: str = "llm_rank", context: dict = None, input_schema: Optional[SchemaDefinition] = None) -> SchemaDefinition:
         """
-        Main entry point: given a query like "List all US cities",
-        infer the best schema.
-        Phase 2 Update:
-        1. Generate Global Schema Pool (Hidden/Candidate Columns)
-        2. Generate Schema Candidates (selecting from pool)
-        3. Rank & Refine
+        Main entry point.
+        Process:
+        1. [Optional] If input_schema provided:
+           - Skip Generation (Steps 1-3).
+           - Jump to Step 4 (Enrichment) if missing metadata.
+        2. Step 1: Generate Pool.
+        3. Step 2: Generate Candidates.
+        4. Step 3: Rank.
+        5. Step 4: Enrich (Description, Types).
         """
         context = context or {}
         
-        # Step 1: Generate Global Schema Pool of latent attributes
+        # --- PATH A: BYPASS (Schema Provided) ---
+        if input_schema:
+            logger.info(f"Schema provided for '{query}'. Skipping generation.")
+            # Verify if enrichment is needed (if descriptions/types are empty)
+            needs_enrichment = any(not c.description or not c.semantic_type for c in input_schema.columns)
+            
+            if needs_enrichment:
+                logger.info("Provided schema lacks metadata. Running Enrichment Step.")
+                # Enrich operates on dict representation internally for now, or we adapt
+                # Creating a dummy 'best_candidate' dict from the schema object
+                candidate_dict = {
+                    "table_name": input_schema.table_name,
+                    "columns": [c.to_dict() for c in input_schema.columns],
+                    "primary_keys": input_schema.primary_keys
+                }
+                final_schema = await self.infer_enrichment(query, candidate_dict)
+                return final_schema
+            else:
+                return input_schema
+
+        # --- PATH B: GENERATION (CoT) ---
+        
+        # Step 1: Pool
         global_pool = await self.generate_pool(query)
         logger.info(f"Generated global schema pool: {global_pool}")
         
-        # Step 2: Generate Schema Candidates using the pool
+        # Step 2: Candidates
         k = num_candidates or self.default_num_candidates
         candidates = await self.generate_candidates(query, k, global_pool)
         
         if not candidates:
-            # Fallback
             return self._create_fallback_schema(query)         
+            
+        # Step 3: Rank
         if strategy == "first":
             best_candidate = candidates[0]
         else:
             best_candidate = await self._rank_candidates(query, candidates)
         
-        # Step 3: Refine types and keys
-        final_schema = await self.infer_types_and_keys(query, best_candidate)
+        # Step 4: Enrich (Replaces old 'infer_types_and_keys')
+        final_schema = await self.infer_enrichment(query, best_candidate)
         
         # Artifact Persistence
         if "output_dir" in context:
@@ -108,9 +131,74 @@ class SchemaGenerator:
                 with open(os.path.join(context["output_dir"], "schema.json"), "w") as f:
                     json.dump(schema_artifact, f, indent=2)
             except Exception as e:
-                logger.warning(f"Failed to save schema artifact: {e}")
+                pass
                 
         return final_schema
+
+    async def infer_enrichment(self, query: str, schema_dict: Dict) -> SchemaDefinition:
+        """
+        Step 4: Enrichment.
+        Given a structure (Table, Columns), infer:
+        - Description
+        - Semantic Type (Entity, Text, Num, Time)
+        - Data Type (int, float, str)
+        - Partition Suitability
+        """
+        if 'columns' not in schema_dict:
+            return self._create_fallback_schema(query)
+            
+        columns_str = ", ".join([c.get('name', 'Unknown') for c in schema_dict['columns']])
+        table_name = schema_dict.get('table_name', 'data')
+        
+        prompt = SCHEMA_TYPE_INFERENCE_PROMPT.format(query=query, table_name=table_name, columns_str=columns_str)
+        
+        response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
+        type_info = {}
+        primary_keys_from_enrichment = []
+        try:
+            content = response.content
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0]
+            parsed_data = json.loads(content)
+            type_info = parsed_data.get("columns", {})
+            # Try to extract primary keys from enrichment if provided
+            primary_keys_from_enrichment = parsed_data.get("primary_keys", [])
+        except Exception as e:
+            logger.error(f"Enrichment failed: {e}")
+
+        cols = []
+        
+        for c_dict in schema_dict['columns']:
+            name = c_dict['name']
+            info = type_info.get(name, {})
+            cols.append(Column(
+                name=name,
+                description=info.get('description', c_dict.get('description', '')), # Prefer LLM enriched
+                semantic_type=info.get('type', 'text'),
+                data_type=info.get('data_type', 'text'),
+                formatting=info.get('formatting', '')
+            ))
+        
+        # Use primary keys from enrichment if available, otherwise fall back to schema_dict
+        # If still empty, infer from column names (common patterns: "id", "name", etc.)
+        final_primary_keys = primary_keys_from_enrichment or schema_dict.get('primary_keys', [])
+        if not final_primary_keys:
+            # Infer primary keys: look for common patterns
+            column_names = [c.name.lower() for c in cols]
+            for col in cols:
+                col_lower = col.name.lower()
+                if col_lower in ['id', 'name', 'key'] or col_lower.endswith('_id') or col_lower.endswith('id'):
+                    final_primary_keys.append(col.name)
+                    break  # Use first match as primary key
+            # If still no primary key found, use first column as fallback
+            if not final_primary_keys and cols:
+                final_primary_keys = [cols[0].name]
+            
+        return SchemaDefinition(
+            table_name=schema_dict.get('table_name', 'extracted_data'),
+            columns=cols,
+            primary_keys=final_primary_keys
+        )
 
     async def generate_pool(self, query: str) -> List[str]:
         """
@@ -194,46 +282,11 @@ class SchemaGenerator:
             
         return candidates[0]
 
-    async def infer_types_and_keys(self, query: str, schema_dict: Dict) -> SchemaDefinition:
-        # Determine semantic types and partition suitability
-        if 'columns' not in schema_dict:
-            logger.error(f"Schema dict missing 'columns': {schema_dict}")
-            return self._create_fallback_schema(query)
-            
-        columns_str = ", ".join([c.get('name', 'Unknown') for c in schema_dict['columns']])
-        table_name = schema_dict.get('table_name', 'data')
-        
-        prompt = SCHEMA_TYPE_INFERENCE_PROMPT.format(query=query, table_name=table_name, columns_str=columns_str)
-        
-        response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
-        type_info = {}
-        try:
-            content = response.content
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0]
-            type_info = json.loads(content).get("columns", {})
-        except Exception as e:
-            logger.error(f"Type inference failed: {e}")
 
-        cols = []
-        for c_dict in schema_dict['columns']:
-            name = c_dict['name']
-            info = type_info.get(name, {})
-            cols.append(Column(
-                name=name,
-                description=c_dict.get('description', ''),
-                semantic_type=info.get('type', 'text'),
-                is_partition_key=info.get('is_partition', False)
-            ))
-            
-        return SchemaDefinition(
-            table_name=schema_dict.get('table_name', 'extracted_data'),
-            columns=cols,
-            primary_keys=schema_dict.get('primary_keys', [])
-        )
         
     def _create_fallback_schema(self, query: str) -> SchemaDefinition:
         return SchemaDefinition(
             table_name="data",
-            columns=[Column(name="Content", description="Extracted content", is_partition_key=False)]
+            columns=[Column(name="Content", description="Extracted content")],
+            primary_keys=[]
         )
