@@ -56,7 +56,6 @@ class MapReduceEngine:
                 logger.warning(f"Failed to save tasks artifact: {e}")
         
         # 1. Map Phase
-        # 1. Map Phase
         # Concurrency managed by LLMClient internally
         
         async def run_task(task: DataTask) -> Tuple[List[Dict], Optional[LLMMetrics]]:
@@ -120,14 +119,7 @@ class MapReduceEngine:
                     metrics = metrics + response.metrics
                 
                 # Artifact Persistence: Trace (save each attempt)
-                if "output_dir" in context:
-                    self._save_trace(
-                        task=task,
-                        prompt=current_prompt,
-                        response=content,
-                        tokens=response.metrics.total_tokens if response.metrics else 0,
-                        context=context
-                    )
+
                 
                 # Basic cleaning
                 if "```json" in content:
@@ -177,6 +169,17 @@ class MapReduceEngine:
                             except:
                                 pass
 
+                # Artifact Persistence: Trace (save each attempt)
+                if "output_dir" in context:
+                    self._save_task_io(
+                        task=task,
+                        prompt=current_prompt,
+                        response=content,
+                        parsed_count=len(chunk_data),
+                        tokens=response.metrics.total_tokens if response.metrics else 0,
+                        context=context
+                    )
+
                 if chunk_data:
                     all_data.extend(chunk_data)
                 
@@ -215,7 +218,8 @@ class MapReduceEngine:
                     # Context for validation: constraints
                     val_context = {
                         "constraints": task.constraints or {},
-                        "schema": task.schema # If available
+                        "schema": task.schema, # If available
+                        "output_dir": context.get("output_dir") # [NEW] Pass output_dir for logging
                     }
                     logger.info(f"Running Map Validator for task query: {task.query[:50]}...")
                     df = await self.map_validator.run(df, context=val_context)
@@ -243,17 +247,20 @@ class MapReduceEngine:
             logger.error(f"Task {task.trace_id} CRITICAL FAILURE: {e}")
             return [], None
 
-    def _save_trace(self, task, prompt, response, tokens, context):
+    def _save_task_io(self, task, prompt, response, parsed_count, tokens, context):
         import os
         try:
             trace_entry = {
                 "task_id": task.trace_id,
-                "mode": getattr(task, 'execution_mode', 'batch'),
+                "partition_key": task.partition_key,
+                "partition_value": task.partition_value,
                 "prompt": prompt,
-                "response": response,
-                "tokens": tokens
+                "raw_response": response,
+                "parsed_item_count": parsed_count,
+                "tokens": tokens,
+                "constraints": task.constraints
             }
-            with open(os.path.join(context["output_dir"], "trace.jsonl"), "a") as f:
+            with open(os.path.join(context["output_dir"], "tasks_io.jsonl"), "a") as f:
                 f.write(json.dumps(trace_entry) + "\n")
         except Exception as e:
             pass

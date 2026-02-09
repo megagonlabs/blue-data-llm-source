@@ -179,6 +179,7 @@ Guidelines:
 3. **Assess Ambiguity**: Is this partition key clear and mutually exclusive? (0.0=Clear, 1.0=Ambiguous).
 4. **Common Sense Scope**: 
    - Pay attention to the query scope and constrains. If the query implies a specific scope or constrains (e.g. "US Cities"), corresponding partition keys like "Country" could be limited (e.g. only "USA").
+   - **Sub-ranging**: If the current partition is already a range (e.g. 1-100) and is too large, prefer sub-dividing this range (e.g. 1-50, 51-100) over switching to a new key, as this preserves orthogonality.
    - Do NOT hallucinate values outside the query scope.
 
 Return only JSON Code in the following format:
