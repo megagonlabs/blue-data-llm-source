@@ -10,7 +10,8 @@ from src.prompts import (
     CHUNK_REFINEMENT_PROMPT,
     ENTITY_RESOLUTION_PROMPT,
     GEN_ASSERTION_PROMPT,
-    FIX_DATA_PROMPT
+    FIX_DATA_PROMPT,
+    VALUE_VALIDATION_PROMPT
 )
 
 logger = logging.getLogger(__name__)
@@ -71,7 +72,11 @@ class GlobalValidator:
             "ChunkConstraints": ChunkValidator(**params),
             "Deduplication": DeduplicationValidator(**params),
             "Code": CodeValidator(**params),
-            "Embedding": EmbeddingValidator(**params)
+            "Embedding": EmbeddingValidator(**params),
+            "FormatNormalization": FormatNormalizationValidator(**params),
+            "EntityResolution": EntityResolutionValidator(**params),
+            "PrimaryKeyValidation": DeduplicationValidator(**params), # Alias for now
+            "Completeness": ChunkValidator(**params) # Placeholder, logic in Engine
         }
         
         active = []
@@ -89,7 +94,7 @@ class GlobalValidator:
         context = context or {}
         for validator in self.validators:
             try:
-                # logger.info(f"Running Validator: {validator.__class__.__name__}")
+                logger.info(f"Running Validator: {validator.__class__.__name__}")
                 df = await validator.run(df, context)
             except Exception as e:
                 logger.error(f"Validator {validator.__class__.__name__} failed: {e}")
@@ -100,51 +105,87 @@ class GlobalValidator:
 
 class ChunkValidator(BaseValidator):
     """
-    Enforces partition constraints (e.g. Year=2020).
+    Enforces partition constraints (e.g. Year=2020) and General Data Quality.
+    Uses LLM to validate values against constraints, types, and schema.
     """
     async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> List[int]:
-        """Returns list of indices violating constraints."""
+        """Returns list of indices violating constraints using LLM-based value validation."""
         constraints = context.get('constraints', {})
-        if not constraints:
+        
+        # Determine columns to validate (Constraints + PKs)
+        columns_to_validate = list(constraints.keys())
+        
+        schema = context.get('schema')
+        primary_keys = schema.primary_keys if schema else []
+        for pk in primary_keys:
+            if pk not in columns_to_validate and pk in df.columns:
+                columns_to_validate.append(pk)
+        
+        if not columns_to_validate:
             return []
             
-        invalid_indices = []
-        for col, val in constraints.items():
-            if col in df.columns:
-                val_str = str(val).lower()
-                
-                def check_match(x):
-                    x_str = str(x).lower()
-                    # 1. Alphabetic Range Check (A-D)
-                    alpha_range = re.match(r'^([a-z])-([a-z])$', val_str.strip())
-                    if alpha_range:
-                        start_char, end_char = alpha_range.groups()
-                        if x_str:
-                            first_char = x_str[0].lower()
-                            return start_char <= first_char <= end_char
-
-                    # 2. Numerical Range Check (100-200, 0.5-1.0)
-                    # Supports integers and floats
-                    num_range = re.match(r'^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)$', val_str.strip())
-                    if num_range:
-                        try:
-                            min_val, max_val = float(num_range.group(1)), float(num_range.group(2))
-                            # Try to convert x to float
-                            x_val = float(x)
-                            return min_val <= x_val <= max_val
-                        except (ValueError, TypeError):
-                            # If x is not a number, it fails the range check? 
-                            # Or strict fail? Let's assume fail.
-                            pass
-
-                    # 3. Exact Match (Case Insensitive)
-                    return x_str == val_str
-
-                matches = df[col].apply(check_match)
-                failed = df[~matches].index.tolist()
-                invalid_indices.extend(failed)
+        invalid_indices = set()
         
-        unique_invalid = sorted(list(set(invalid_indices)))
+        for col in columns_to_validate:
+            if col not in df.columns:
+                continue
+                
+            # 1. Extract Unique Values to reduce LLM tokens
+            unique_values = df[col].dropna().unique().tolist()
+            if len(unique_values) > 100:
+                # heuristic: take a mix
+                unique_values = unique_values[:50] + unique_values[-50:]
+                
+            if not unique_values:
+                continue
+            
+            # Extract Schema Metadata
+            semantic_type = "Unknown"
+            formatting = "None"
+            if schema:
+                for c in schema.columns:
+                    if c.name == col:
+                        semantic_type = c.semantic_type
+                        formatting = c.formatting
+                        break
+                
+            # 2. Query LLM
+            prompt = VALUE_VALIDATION_PROMPT.format(
+                constraint=constraints.get(col, "General Quality Check (PK/Type)"),
+                column=col,
+                dtype=str(df[col].dtype),
+                semantic_type=semantic_type,
+                formatting=formatting,
+                values=json.dumps(unique_values, default=str)
+            )
+            
+            try:
+                response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
+                content = response.content
+                
+                # [LOGGING] Save I/O
+                if context and "output_dir" in context:
+                    self._log_val_io(context["output_dir"], "ChunkValidator.detect_val", prompt, content, len(unique_values))
+                
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0]
+                data = json.loads(content)
+                
+                invalid_list = data.get("invalid_values", [])
+                
+                # 3. Map back to indices
+                invalid_vals = set(invalid_list)
+                
+                # Check for string match (safer for LLM output)
+                mask = df[col].apply(lambda x: str(x) in invalid_vals)
+                col_invalid_indices = df[mask].index.tolist()
+                
+                invalid_indices.update(col_invalid_indices)
+                
+            except Exception as e:
+                logger.warning(f"ChunkValidator value validation failed for {col}: {e}")
+                
+        unique_invalid = sorted(list(invalid_indices))
         
         if context and "output_dir" in context:
             # [LOGGING] Log actual content of invalid rows
@@ -159,7 +200,7 @@ class ChunkValidator(BaseValidator):
                 "total_rows": len(df),
                 "invalid_count": len(unique_invalid),
                 "invalid_indices": unique_invalid,
-                "invalid_rows": invalid_rows_data  # <--- NEW: Actual Data
+                "invalid_rows": invalid_rows_data
             })
             
         return unique_invalid
@@ -216,7 +257,7 @@ class ChunkValidator(BaseValidator):
                     "attempted_fix_count": len(report),
                     "successfully_fixed_count": len(fixed_rows),
                     "dropped_count": len(report) - len(fixed_rows),
-                    "fixed_rows": fixed_rows  # <--- NEW: Actual Data
+                    "fixed_rows": fixed_rows
                 })
 
             return final_df
@@ -257,85 +298,37 @@ class ChunkValidator(BaseValidator):
 
 
 class DeduplicationValidator(BaseValidator):
-    """
-    Semantic Deduplication using Entity Resolution.
-    """
-    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> List[List[int]]:
-        """
-        Returns list of GROUPS of indices that are potential duplicates.
-        Logic: Group by content columns -> If size > 1 -> Candidate.
-        """
-        # Exact Dedupe first (implicit fix for exact matches)
-        # But detect() expects to return report. 
-        # For simplicity, we DO structural cleanup here or assume it's done. 
-        # Let's check for SEMANTIC duplicates.
+    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> List[int]:
+        # DeduplicationValidator is a placeholder if semantics are handled by GlobalValidator or others.
+        # But here we implement strict PK-based deduplication if needed as a strategy.
+        # Actually, let's make DeduplicationValidator the one used in GlobalValidator.
         
-        primary_keys = context.get('primary_keys', [])
+        schema = context.get('schema')
+        primary_keys = schema.primary_keys if schema else []
         
-        # Identify Content Columns
-        content_cols = []
-        name_candidates = ['Name', 'Entity', 'Title', 'CountryName', 'CityName', 'CommonName', 'ScientificName', 'Symbol', 'PokemonName']
-        for col in df.columns:
-            if col in name_candidates:
-                content_cols.append(col)
+        invalid_indices = []
         
-        if not content_cols:
-            content_cols = [c for c in df.columns if not c.lower().endswith('id')]
-            
-        if not content_cols:
-            return []
+        if primary_keys:
+            is_dup = df.duplicated(subset=primary_keys, keep='first')
+            invalid_indices.extend(df[is_dup].index.tolist())
+            if any(is_dup):
+                logger.info(f"DeduplicationValidator: Found {sum(is_dup)} duplicates based on PK: {primary_keys}")
+        else:
+            try:
+                is_dup = df.astype(str).duplicated(keep='first')
+                invalid_indices.extend(df[is_dup].index.tolist())
+                if any(is_dup):
+                    logger.info(f"DeduplicationValidator: Found {sum(is_dup)} exact duplicates (No PK).")
+            except Exception as e:
+                pass
+                
+        return sorted(list(set(invalid_indices)))
 
-        # Find duplicates based on exact content match but potentially different IDs
-        # or we just group by content cols.
-        duplicates_groups = []
-        duplicated_subset = df.duplicated(subset=content_cols, keep=False)
-        if duplicated_subset.any():
-            result = df[duplicated_subset].groupby(content_cols).groups
-            # result is dict: {val: Index([...])}
-            for indices in result.values():
-                if len(indices) > 1:
-                    duplicates_groups.append(list(indices))
-                    
-        return duplicates_groups
-
-    async def fix(self, df: pd.DataFrame, report: List[List[int]], context: Dict[str, Any] = None) -> pd.DataFrame:
-        """
-        Asks LLM to merge groups of duplicates.
-        """
+    async def fix(self, df: pd.DataFrame, report: List[int], context: Dict[str, Any] = None) -> pd.DataFrame:
         if not report:
             return df
-            
-        logger.info(f"DeduplicationValidator: Resolving {len(report)} clusters of duplicates.")
-        
-        # We need to process clusters. Rows to drop are all indices in report.
-        all_indices_to_drop = [idx for group in report for idx in group]
-        
-        resolved_rows = []
-        for group_indices in report:
-            rows = df.loc[group_indices].to_dict('records')
-            
-            prompt = ENTITY_RESOLUTION_PROMPT.format(rows=json.dumps(rows, indent=2))
-            try:
-                response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
-                content = response.content
-                if "```json" in content:
-                    content = content.split("```json")[1].split("```")[0]
-                data = json.loads(content)
-                merged = data.get("resolved_rows", rows)
-                resolved_rows.extend(merged)
-            except Exception as e:
-                logger.warning(f"Entity Resolution failed for group: {e}")
-                resolved_rows.extend(rows) # Fallback keep original
-
-        # Drop original duplicates, append resolved
-        df_clean = df.drop(all_indices_to_drop)
-        if resolved_rows:
-            df_resolved = pd.DataFrame(resolved_rows)
-            # Align columns
-            df_resolved = df_resolved.reindex(columns=df_clean.columns)
-            return pd.concat([df_clean, df_resolved], ignore_index=True)
-            
-        return df_clean
+        logger.info(f"DeduplicationValidator: Dropping {len(report)} rows.")
+        return df.drop(report)
 
 
 class CodeValidator(BaseValidator):
@@ -594,5 +587,251 @@ class EmbeddingValidator(BaseValidator):
         if confirmed_invalid_indices:
             logger.info(f"EmbeddingValidator: Dropping {len(confirmed_invalid_indices)} confirmed invalid rows.")
             return df.drop(confirmed_invalid_indices)
+            
+        return df
+
+
+class FormatNormalizationValidator(BaseValidator):
+    """
+    Normalizes column formats (e.g., "Generation 1" -> 1).
+    """
+    def __init__(self, llm_client=None, model_name="all-MiniLM-L6-v2"):
+        super().__init__(llm_client)
+        from src.prompts import FORMAT_NORMALIZATION_PROMPT
+        self.prompt_template = FORMAT_NORMALIZATION_PROMPT
+
+    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> List[int]:
+        # This validator modifies in-place during fix(), so detect() is a pass-through or identification step.
+        # We identify columns that need normalization.
+        # For simplicity, we just return a "flag" in the report to trigger fix.
+        return [1] if not df.empty else []
+
+    async def fix(self, df: pd.DataFrame, report: List[int], context: Dict[str, Any] = None) -> pd.DataFrame:
+        if df.empty or not report:
+            return df
+            
+        schema = context.get('schema')
+        if not schema:
+            return df
+
+        # Iterate over columns with specific types
+        for col in schema.columns:
+            if col.name not in df.columns:
+                continue
+                
+            # Heuristic: Check if column content matches type
+            # If INT but has strings -> Normalize
+            # If DATE but has raw text -> Normalize
+            
+            target_type = col.data_type.lower() if col.data_type else "string"
+            formatting = col.formatting
+            
+            # Skip if explicitly string/text and no specific format
+            if target_type in ["string", "text", "str"] and not formatting:
+                continue
+                
+            # Sample values
+            unique_values = df[col.name].dropna().unique().tolist()
+            if not unique_values:
+                continue
+                
+            # Quick check: Are they already valid?
+            # e.g. if target is INT, are all values integers?
+            needs_fix = False
+            if target_type in ["int", "integer"]:
+                try:
+                    # check if any value is not convertible to clean int or has extra text
+                    # "5" is fine. "Gen 5" is not. 
+                    # We look for non-digit chars (ignoring dot for float-int)
+                    for v in unique_values:
+                        s = str(v)
+                        if not s.replace('.', '', 1).isdigit() and not (s.startswith('-') and s[1:].isdigit()):
+                             needs_fix = True
+                             break
+                except:
+                    needs_fix = True
+            elif formatting:
+                needs_fix = True # Always check formatted columns
+                
+            if needs_fix:
+                logger.info(f"FormatValidator: Normalizing column '{col.name}' for type '{target_type}'...")
+                
+                # LLM Call
+                prompt = self.prompt_template.format(
+                    column=col.name,
+                    dtype=target_type,
+                    formatting=formatting or "Standard",
+                    values=json.dumps(unique_values[:50], default=str) # Limit samples
+                )
+                
+                try:
+                    response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
+                    content = response.content
+                    if "```json" in content:
+                        content = content.split("```json")[1].split("```")[0]
+                    data = json.loads(content)
+                    corrections = data.get("corrections", {})
+                    
+                    if corrections:
+                        # Apply mapping
+                        # Use map with fallback to original
+                        df[col.name] = df[col.name].map(lambda x: corrections.get(str(x), x))
+                        
+                        # Post-process: Attempt cast
+                        if target_type in ["int", "integer"]:
+                            try:
+                                df[col.name] = pd.to_numeric(df[col.name], errors='ignore')
+                            except:
+                                pass
+                                
+                except Exception as e:
+                    logger.warning(f"FormatNormalization failed for {col.name}: {e}")
+                    
+        return df
+
+
+class EntityResolutionValidator(BaseValidator):
+    """
+    Resolves duplicates based on Entity Name/Identity, overriding strict PK differences.
+    Fixes hallucinations where same entity appears with different IDs.
+    """
+    def __init__(self, llm_client=None):
+        super().__init__(llm_client)
+        from src.prompts import ENTITY_RESOLUTION_DECISION_PROMPT
+        self.prompt_template = ENTITY_RESOLUTION_DECISION_PROMPT
+
+    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> List[int]:
+        # Returns indices of DUPLICATE entities that need resolution.
+        # We group by specific "Entity Name" columns.
+        
+        logger.info("EntityResolution: Starting Detection...")
+        logger.info(f"EntityResolution: DF Shape: {df.shape}")
+        
+        schema = context.get('schema')
+        if not schema:
+            logger.warning("EntityResolution: No schema found in context.")
+            return []
+            
+        # 1. Identify "Name" / "Title" column
+        name_col = None
+        schema_cols = [c.name for c in schema.columns]
+        logger.info(f"EntityResolution: Schema Columns: {schema_cols}")
+        
+        for col in schema.columns:
+            if col.name.lower() in ["name", "title", "entity", "pokemon"]:
+                name_col = col.name
+                break
+        
+        if not name_col or name_col not in df.columns:
+            logger.warning(f"EntityResolution: Name column not found. target='{name_col}'. DF Cols: {list(df.columns)}")
+            return []
+            
+        # 2. Find duplicates in Name
+        # We look for Name duplicates where other fields (like ID) differ.
+        dup_mask = df.duplicated(subset=[name_col], keep=False)
+        num_dups = dup_mask.sum()
+        logger.info(f"EntityResolution: Duplicates Mask Sum: {num_dups}")
+        
+        if not any(dup_mask):
+            return []
+            
+        candidates = df[dup_mask].index.tolist()
+        logger.info(f"EntityResolution: Found {len(candidates)} duplicates for resolution in column '{name_col}'.")
+        return candidates
+
+    async def fix(self, df: pd.DataFrame, report: List[int], context: Dict[str, Any] = None) -> pd.DataFrame:
+        if not report:
+            return df
+            
+        # Determine Name col again
+        schema = context.get('schema')
+        name_col = None
+        for col in schema.columns:
+            if col.name.lower() in ["name", "title", "entity", "pokemon"]:
+                name_col = col.name
+                break
+                
+        # Group duplicates
+        subset = df.loc[report]
+        groups = subset.groupby(name_col)
+        
+        indices_to_drop = []
+        
+        for name, group in groups:
+            if len(group) < 2:
+                continue
+                
+            # If they are EXACT duplicates in all columns, standard dedup (pandas) handles it.
+            # We assume GlobalValidator calls DeduplicationValidator first or after.
+            # But let's check if rows are identical.
+            # if group.iloc[0].equals(group.iloc[1]): ...
+            
+            # If they differ (e.g. ID=51 vs ID=101), we need LLM or Heuristic.
+            
+            # Heuristic 1: If one ID matches constraints and other doesn't?
+            # Complexity is high. Let's simple ask LLM "Which one is right?"
+            
+            # Prepare conflict string
+            conflicts = group.to_dict(orient='records')
+            
+            # Optimization: If many duplicates, this is slow. 
+            # Limit scope? 
+            
+            # Let's try simple heuristic first: Majority vote? 
+            # Or just keep the one with lowest ID? (Data bias)
+            
+            # Let's use LLM as designed for accuracy.
+            prompt = self.prompt_template.format(
+                entity_name=name,
+                conflicts=json.dumps(conflicts, indent=2, default=str),
+                constraints=context.get('constraints', {})
+            )
+            
+            try:
+                # We expect the LLM to return the INDEX of the keeper? 
+                # Or we can just ask for "keep_index": int
+                # But indices are DF indices.
+                
+                # Let's map internal index 0..N
+                labeled_conflicts = [{**row, "_local_idx": i} for i, row in enumerate(conflicts)]
+                
+                response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
+                content = response.content
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0]
+                
+                try:
+                    data = json.loads(content)
+                    # Expecting: {"keep_index": 0} or {"keep_indices": [0]} relative to the conflict list
+                    keep = data.get("keep_index", 0)
+                    
+                    # Convert local index to DF index
+                    # conflict list was created from iterating 'groups', but we need to map back to original indices.
+                    # The 'conflicts' dict list should have preserved order relative to 'group'.
+                    # Let's verify 'group' index access.
+                    
+                    # group is a DataFrame slice.
+                    # If LLM says "keep index 0", it means group.iloc[0].
+                    
+                    df_keep_idx = group.index[keep]
+                    
+                    # Mark others as drop
+                    for idx in group.index:
+                        if idx != df_keep_idx:
+                            indices_to_drop.append(idx)
+                            
+                except Exception as parse_err:
+                    logger.warning(f"EntityResolution: Parse failed '{parse_err}' for {name}. Defaulting to first.")
+                    # Fallback: Keep First
+                    indices_to_drop.extend(group.index[1:].tolist())
+
+            except Exception as e:
+                logger.error(f"EntityResolution: Fix failed for {name}: {e}")
+                # On error, keep first
+                indices_to_drop.extend(group.index[1:].tolist())
+
+        if indices_to_drop:
+            logger.info(f"EntityResolution: Dropping {len(indices_to_drop)} resolved duplicates.")
+            return df.drop(indices_to_drop)
             
         return df

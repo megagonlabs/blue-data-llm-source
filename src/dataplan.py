@@ -42,12 +42,12 @@ class StrategyEvaluator:
     def __init__(self, llm_client: LLMClient):
         self.estimator = DistributionEstimator(llm_client)
         
-    async def evaluate_concurrent(self, query: str, candidates: List[StrategyCandidate]) -> List[StrategyCandidate]:
+    async def evaluate_concurrent(self, query: str, candidates: List[StrategyCandidate], constraints: dict = {}) -> List[StrategyCandidate]:
         """
         Runs distribution estimation in parallel for all candidates.
         """
         async def evaluate_one(cand: StrategyCandidate) -> StrategyCandidate:
-            stats = await self.estimator.estimate(query, cand.partition_key)
+            stats = await self.estimator.estimate(query, cand.partition_key, constraints)
             cand.stats = stats
             # Simple Scoring Model
             # Penalty for Ambiguity (0.0 to 1.0) -> high ambiguity is bad
@@ -94,8 +94,12 @@ class DistributionEstimator:
     def __init__(self, llm_client: LLMClient):
         self.llm = llm_client
 
-    async def estimate(self, query: str, key_name: str) -> DistributionStats:
-        prompt = DISTRIBUTION_ESTIMATION_PROMPT.format(query=query, key_name=key_name)
+    async def estimate(self, query: str, key_name: str, constraints: dict = {}) -> DistributionStats:
+        prompt = DISTRIBUTION_ESTIMATION_PROMPT.format(
+            query=query, 
+            key_name=key_name,
+            constraints=json.dumps(constraints, indent=2)
+        )
         try:
             response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
         except Exception as e:
@@ -319,7 +323,7 @@ class DataPlanBuilder:
                 
                 if strategy_candidates:
                     # Evaluate concurrent
-                    evaluated_candidates = await self.evaluator.evaluate_concurrent(rewritten_query, strategy_candidates)
+                    evaluated_candidates = await self.evaluator.evaluate_concurrent(rewritten_query, strategy_candidates, constraints=root_task.constraints)
                     best_strategy = self.evaluator.select_best(evaluated_candidates)
                     if best_strategy:
                         logger.info(f"Selected Best Partition Key for Strict Schema: {best_strategy.partition_key}")
@@ -355,7 +359,7 @@ class DataPlanBuilder:
             
             if strategy_candidates:
                 # D. Concurrent Evaluation
-                evaluated_candidates = await self.evaluator.evaluate_concurrent(rewritten_query, strategy_candidates)
+                evaluated_candidates = await self.evaluator.evaluate_concurrent(rewritten_query, strategy_candidates, constraints=root_task.constraints)
                 
                 # E. Selection
                 best_strategy = self.evaluator.select_best(evaluated_candidates)
@@ -445,6 +449,9 @@ class DataPlanBuilder:
     ) -> List[DataTask]:
         
         used_keys = used_keys or set()
+        # [FIX] Treat constrained keys as 'used' to prevent redundant partitioning
+        if task.constraints:
+            used_keys = used_keys | set(task.constraints.keys())
         
         query = task.query
         logger.info(f"Recursive Planning (Depth {depth}): {query} (Method: {partitioning_method})")
@@ -494,7 +501,9 @@ class DataPlanBuilder:
         
         if not partition_keys:
             # Standard Search
+            logger.info(f"Depth {depth}: Used Keys: {used_keys}")
             partition_keys = [k for k in schema.columns if k.name not in used_keys]
+            logger.info(f"Depth {depth}: Available Candidates: {[k.name for k in partition_keys]}")
         
         if not partition_keys:
             logger.info("No partition keys found or all used. Fallback to flat.")
@@ -527,7 +536,7 @@ class DataPlanBuilder:
             best_score = float('inf')
             
             for pkey in partition_keys:
-                stats = await self.dist_estimator.estimate(query, pkey.name)
+                stats = await self.dist_estimator.estimate(query, pkey.name, constraints=task.constraints)
                 # ... Simplified Scoring ...
                 score = (stats.ambiguity_score * 1000)
                 if stats.num_partitions > 50: score += 10000

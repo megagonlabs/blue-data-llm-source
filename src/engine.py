@@ -23,12 +23,15 @@ class MapReduceEngine:
     """
     
     
-    def __init__(self, llm_client: LLMClient, planner=None, max_partitions: int = 50, default_execution_mode: str = "batch", map_validator=None):
+    def __init__(self, llm_client: LLMClient, planner=None, max_partitions: int = 50, default_execution_mode: str = "batch", map_validator=None, global_validator=None, completeness_strategy: str = "heuristic"):
         self.llm = llm_client
         self.planner = planner
         self.max_partitions = max_partitions
         self.default_execution_mode = default_execution_mode
-        self.map_validator = map_validator # [NEW] V5: Unified Validator
+        self.default_execution_mode = default_execution_mode
+        self.map_validator = map_validator # Runs on each partition (Map side)
+        self.global_validator = None # [NEW] Runs on final result (Reduce side)
+        self.completeness_strategy = completeness_strategy
         # self.validator = Validator(llm_client) # Old validator deprecated
         
     async def execute(self, plan: DataPlanRequest, context: dict = None) -> Tuple[pd.DataFrame, LLMMetrics]:
@@ -72,8 +75,12 @@ class MapReduceEngine:
         logger.info("Aggregating results...")
         df = self._reduce(results, plan.schema.columns)
         
-        # 3. Global Validation
-        # df = await self.validator.clean_data(df, primary_keys=plan.schema.primary_keys, context=context)
+        # 3. Global Validation (Deduplication, etc)
+        if self.global_validator:
+             logger.info("Running Global Validator (Reduce Side)...")
+             # Pass schema for PK awareness
+             val_context = {**context, "schema": plan.schema}
+             df = await self.global_validator.run(df, context=val_context)
         
         logger.info(f"Execution complete. Generated {len(df)} rows. Total Tokens: {total_metrics.total_tokens}")
         return df, total_metrics
@@ -186,7 +193,8 @@ class MapReduceEngine:
                 # COMPLETENESS CHECK
                 # Only check if we have an estimate and it's substantial
                 if getattr(task, 'estimated_rows', 0) and task.estimated_rows > 10:
-                    if len(all_data) < 0.5 * task.estimated_rows:
+                    is_complete = await self._check_completeness(task, len(all_data), current_prompt, context)
+                    if not is_complete:
                         logger.info(f"Task {task.trace_id}: Incomplete Result ({len(all_data)}/{task.estimated_rows}). Reprompting...")
                         # Construct Reprompt
                         current_prompt = prompt + f"\n\nPREVIOUSLY EXTRACTED: {len(all_data)} rows. We expected {task.estimated_rows}.\nCONTINUE extraction from where you left off. Do not repeat previous items. Return next batch."
@@ -428,3 +436,55 @@ class MapReduceEngine:
         df = df.drop_duplicates()
         
         return df
+
+    async def _check_completeness(self, task: DataTask, current_count: int, prompt: str, context: dict) -> bool:
+        """
+        Determines if the extraction is complete enough.
+        Strategy:
+        - "heuristic": Uses 50% rule.
+        - "llm": Asks LLM.
+        """
+        est_rows = task.estimated_rows
+        
+        # 1. Heuristic Strategy (Fast)
+        if self.completeness_strategy == "heuristic":
+            # Loose bound: 50%
+            return current_count >= 0.5 * est_rows
+            
+        # 2. LLM Strategy (Smart)
+        elif self.completeness_strategy == "llm":
+            # If we already have MORE than estimate, it's complete.
+            if current_count >= est_rows:
+                return True
+                
+            # If very low (< 20%), definitely incomplete.
+            if current_count < 0.2 * est_rows:
+                return False
+                
+            # Gray area (20% - 99%): Ask LLM
+            logger.info(f"Task {task.trace_id}: Checking completeness via LLM ({current_count}/{est_rows})...")
+            
+            from src.prompts import COMPLETENESS_CHECK_PROMPT
+            check_prompt = COMPLETENESS_CHECK_PROMPT.format(
+                query=task.query,
+                estimated_rows=est_rows,
+                actual_rows=current_count
+            )
+            
+            try:
+                response = await self.llm.agenerate(check_prompt, temperature=0.0, response_format={"type": "json_object"})
+                content = response.content
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0]
+                data = json.loads(content)
+                
+                is_complete = data.get("is_complete", False)
+                reason = data.get("reason", "No reason provided")
+                logger.info(f"Completeness Decision: {is_complete} ({reason})")
+                return is_complete
+                
+            except Exception as e:
+                logger.warning(f"Completeness Check Failed: {e}. Fallback to heuristic.")
+                return current_count >= 0.5 * est_rows
+                
+        return True # Default safe

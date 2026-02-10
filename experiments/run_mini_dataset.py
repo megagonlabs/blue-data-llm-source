@@ -137,6 +137,24 @@ async def evaluate_dataset(dataset_path: str, base_output_dir: str, args=None):
         with query_logging_context(query_out_dir, "process"):
             try:
                 # Pass output_dir context to PKDB
+                # [NEW] V5: Validator Config
+                # [NEW] V5: Validator Config
+                from src.validator import GlobalValidator
+                
+                # Use new validators for Generic Fixes
+                # Use new validators for Generic Fixes
+                # [FIX] Split validators into Map-side (local) and Global (reduce)
+                map_strategies = ["ChunkConstraints", "FormatNormalization"]
+                global_strategies = ["EntityResolution", "Deduplication"]
+                
+                map_validator = GlobalValidator(pkdb.llm, strategies=map_strategies)
+                global_validator = GlobalValidator(pkdb.llm, strategies=global_strategies)
+                
+                # Inject dependencies into Engine (Runtime Config)
+                pkdb.engine.map_validator = map_validator
+                pkdb.engine.global_validator = global_validator
+                pkdb.engine.completeness_strategy = args.completeness_strategy if args else "heuristic"
+                
                 df, metrics, subquery_count = await pkdb.extract_table(
                     q, 
                     strategy=config["schema_selection_strategy"],
@@ -226,6 +244,7 @@ if __name__ == "__main__":
     parser.add_argument("--strategy", type=str, default="llm_rank", help="Schema selection strategy")
     parser.add_argument("--decomposition_strategy", type=str, default="llm_based", choices=["rule_based", "llm_based"], help="Decomposition strategy")
     parser.add_argument("--partitioning_method", type=str, default="smart", choices=["semantic", "greedy", "smart"], help="Partitioning method (semantic, greedy, smart)")
+    parser.add_argument("--completeness_strategy", type=str, default="heuristic", choices=["heuristic", "llm"], help="Completeness check strategy")
     
     # Toggles & Thresholds
     parser.add_argument("--use_cache", action="store_true", help="Enable semantic caching")

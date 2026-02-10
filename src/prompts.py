@@ -7,7 +7,9 @@ User Query: "{query}"
 
 Analyze this query and extract:
 1. **Refined Query**: A clear, standalone natural language task description.
-2. **Constraints**: A JSON dictionary of hard filters (e.g. {{"Year": "2023", "Country": "USA"}}). Use empty {{}} if none.
+2. **Constraints**: A JSON dictionary of hard filters (e.g. {{"Year": "2023", "Country": "USA", "Generation": "4"}}). 
+   - Extract ALL implicit filters as explicit constraints.
+   - Use empty {{}} if none.
 3. **Collection Strategy**: "ALL" (default), "LIMIT <N>", or "MOST_COMMON".
 
 Return JSON:
@@ -179,6 +181,8 @@ Guidelines:
 3. **Assess Ambiguity**: Is this partition key clear and mutually exclusive? (0.0=Clear, 1.0=Ambiguous).
 4. **Common Sense Scope**: 
    - Pay attention to the query scope and constrains. If the query implies a specific scope or constrains (e.g. "US Cities"), corresponding partition keys like "Country" could be limited (e.g. only "USA").
+   - **Scope Enforcement**: If the query limits the scope, only list values within the scope of the query. Verify each value against the constraints.
+     - Example: If constraints have "Year": "2020", do NOT list years like "2019" or "2021".
    - **Sub-ranging**: If the current partition is already a range (e.g. 1-100) and is too large, prefer sub-dividing this range (e.g. 1-50, 51-100) over switching to a new key, as this preserves orthogonality.
    - Do NOT hallucinate values outside the query scope.
 
@@ -195,6 +199,7 @@ Return only JSON Code in the following format:
 
 Query: "{query}"
 Potential Partition Key: "{key_name}"
+Constraints: {constraints}
 """
 
 PARTITION_VALUES_PROMPT = """
@@ -207,7 +212,7 @@ Constraints: {constraints}
 
 CRITICAL RULES:
 1. **Partitions**: List the most suitable partitions to divide the target data for the data query into chunks that mutually exclusive and cover the entire data. Please note that partition keys are not always categorical, you might also use interval (e.g. year 2003-2009, ID from 11 to 20, etc.) as partitions if it makes sense.
-2. **Scope Enforcement**: If the query limits the scope, only list values within the scope of the query.
+2. **Scope Enforcement**: If the query limits the scope, only list values within the scope of the query. Verify each value against the constraints.
 3. **Completeness**: List ALL possible partition values according to factual common sense, query context, and constraints.
 4. **Relevance**: Following for completeness, only list partition values that actually contain data for this query.
 
@@ -227,6 +232,11 @@ Examples:
 - Query: "List all Pokemon", Filter: Type = Fire -> "List all Fire-type Pokemon"
 - Query: "List US Cities", Filter: State = CA -> "List all US Cities in California"
 - Query: "List Nobel Winners", Filter: Field = Physics -> "List all Nobel Prize winners in Physics"
+
+CRITICAL:
+- Do NOT hallucinate new constraints.
+- Do NOT repeat the base query if it contradicts the new filter.
+- Ensure the result is a subset of the Base Query.
 
 Return ONLY the rewritten query text.
 """
@@ -356,7 +366,96 @@ Instructions:
 3. Return corrected rows as a JSON list.
 """
 
+VALUE_VALIDATION_PROMPT = """
+Task: Validate the following values extracted from a column against a specific constraint rule and general quality standards.
+
+Constraint Rule: "{constraint}"
+Column Name: "{column}"
+Data Type: "{dtype}"
+Semantic Type: "{semantic_type}"
+Formatting: "{formatting}"
+
+Values to Check (Unique Samples):
+{values}
+
+Validation Criteria:
+1. **Constraint Check**: Does the value satisfy the rule? (e.g. "Year 2000-2010", "Name starts with A")
+2. **Type/Format Check**: Is the value consistent with the expected Data Type and Formatting? (e.g. integer, YYYY-MM-DD)
+3. **Semantic Check**: Is the value relevant to the Semantic Type? (e.g. "City" cannot be "123")
+4. **Null Check**: Is the value a placeholder for missing data? (e.g. "N/A", "None", "null", "")
+
+Return JSON object with a SINGLE list of invalid values:
+{{
+    "invalid_values": ["val1", "val2", "N/A"]
+}}
+If all values are valid, return "invalid_values": [].
+"""
+
 DATA_EXTRACTION_COLUMNS_SUFFIX = """
 Extract the following columns: {cols}.
 Return as JSON object with key "items": {{"items": [...]}}.
+"""
+
+# --- COMPLETENESS & RESOLUTION ---
+
+COMPLETENESS_CHECK_PROMPT = """
+Task: Determine if the extracted data is "Complete Enough" compared to the expected estimation.
+
+Query: "{query}"
+Expected Row Count (Estimate): {estimated_rows}
+Actual Extracted Count: {actual_rows}
+
+Context:
+- The estimate might be rough (e.g. 1000 for "Pokemon", 50 for "States").
+- The extraction might be partial due to pagination limits or model refusal.
+- If Actual is very close to Expected (e.g. 150 vs 151), it is COMPLETE.
+- If Actual is significantly lower (e.g. 10 vs 100), it is INCOMPLETE.
+- If Actual is higher, it is likely COMPLETE (or duplicate/hallucinated, but completeness is satisfied).
+
+Decision:
+Returns JSON:
+{{
+    "is_complete": true/false,
+    "reason": "..."
+}}
+"""
+
+FORMAT_NORMALIZATION_PROMPT = """
+Task: Normalize values in column "{column}" to match the target type "{dtype}" and format "{formatting}".
+
+Values to Normalize (Unique Samples):
+{values}
+
+Instructions:
+1. **Integers**: Strip non-numeric text. (e.g. "Generation 1" -> 1, "ID: 5" -> 5).
+2. **Dates**: Convert to requested format (e.g. "January 1st, 2020" -> "2020-01-01").
+3. **Strings**: Fix casing if specified, but usually keep as is unless it looks like a list extraction artifact.
+4. **Clean**: Remove quotes if strictly numeric column.
+
+Return JSON mapping ONLY for values that need changing:
+{{
+    "corrections": {{
+        "Generation 1": 1,
+        "ID: 5": 5
+    }}
+}}
+"""
+
+ENTITY_RESOLUTION_DECISION_PROMPT = """
+Task: Resolve potential duplicates for Entity "{entity_name}".
+
+Conflict Details:
+{conflicts}
+
+Context:
+- We found multiple records for "{entity_name}" that differ in Primary Key or other attributes.
+- Use the "Constraints" to determine which one is likely correct.
+- If one looks like a hallucination (e.g. ID doesn't match known pattern), discard it.
+- If strictly ambiguous, keep the most detailed one.
+
+Decision:
+Return JSON:
+{{
+    "keep_index": <int> // 0-based index from the conflict list, or the ID if easier. We used list index in code.
+}}
 """

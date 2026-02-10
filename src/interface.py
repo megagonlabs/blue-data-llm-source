@@ -64,8 +64,8 @@ class PKDB:
         from src.dataplan import DataPlanBuilder # Re-import for clarity, though already there
         from src.engine import MapReduceEngine # Re-import for clarity, though already there
         from src.schema import SchemaDefinition # Needed for new extract_table signature
-        self.map_validator = GlobalValidator(self.llm, strategies=getattr(self.config, 'map_validators', ["ChunkConstraints"]))
-        self.global_validator = GlobalValidator(self.llm, strategies=getattr(self.config, 'global_validators', ["Deduplication", "Code"]))
+        self.map_validator = GlobalValidator(self.llm, strategies=getattr(self.config, 'map_validators', ["ChunkConstraints", "FormatNormalization"]))
+        self.global_validator = GlobalValidator(self.llm, strategies=getattr(self.config, 'global_validators', ["Deduplication", "EntityResolution", "PrimaryKeyValidation", "Completeness", "FormatNormalization"]))
         
         self.schema_generator = SchemaGenerator(
             self.llm, 
@@ -129,8 +129,9 @@ class PKDB:
         strategy: str = "llm_rank",
         schema: Optional[SchemaDefinition] = None,
         context: dict = None,
-        execution_mode: Optional[str] = None
-    ) -> Tuple[pd.DataFrame, LLMMetrics]:
+        execution_mode: Optional[str] = None,
+        validator = None
+    ) -> Tuple[pd.DataFrame, LLMMetrics, int]:
         """
         Main API: Extracts a table from the LLM's parametric knowledge.
         
@@ -140,6 +141,7 @@ class PKDB:
             context: Context dictionary (e.g. output_dir for artifacts)
             schema: Optional strict SchemaDefinition to enforce (skips inference)
             execution_mode: "batch" or "row_by_row" (defaults to self.default_execution_mode)
+            validator: Optional GlobalValidator instance.
             
         Returns:
             (pd.DataFrame, LLMMetrics, int): The extracted table, usage metrics, and subquery count.
@@ -150,19 +152,38 @@ class PKDB:
         # 1. Plan
         plan = await self.planner.create_plan(
             query, 
-            decomposition_strategy=self.decomposition_strategy,
-            partitioning_method=self.partitioning_method,
+            decomposition_strategy=self.config.decomposition_strategy, # Fixed attribute access
+            partitioning_method=self.config.partitioning_method,
             context=context,
             schema=schema,
             execution_mode=mode,
-            row_threshold=self.row_threshold,
+            row_threshold=self.config.row_threshold,
             max_depth=self.config.max_depth
         )
         
         # 2. Execute
-        raw_df, metrics = await self.engine.execute(plan, context=context)
-        # 2. Schema Gen
-        # V5: Pass 'schema' to infer_schema for bypass/enrichment
+        val = validator if validator else self.map_validator
+
+        # Re-instantiate engine with validator? 
+        # Or just use the existing self.engine if no validator passed?
+        # But self.engine was init with self.map_validator.
+        # If validator is passed, we MUST create a new engine instance or update it.
+        # Creating new lightweight engine is safer.
+        
+        engine = MapReduceEngine(
+            self.llm, 
+            planner=self.planner, 
+            max_partitions=self.config.max_partitions,
+            map_validator=val,
+            global_validator=self.global_validator
+        )
+        
+        df, metrics = await engine.execute(plan, context=context)
+        
+        # 3. Schema Inference is implicit in Plan or done after?
+        # In this version, Plan includes Schema.
+        
+        return df, metrics, len(plan.map_tasks)
         target_schema = await self.schema_generator.infer_schema(
              query, 
              strategy=strategy,
