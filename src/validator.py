@@ -298,37 +298,139 @@ class ChunkValidator(BaseValidator):
 
 
 class DeduplicationValidator(BaseValidator):
-    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> List[int]:
-        # DeduplicationValidator is a placeholder if semantics are handled by GlobalValidator or others.
-        # But here we implement strict PK-based deduplication if needed as a strategy.
-        # Actually, let's make DeduplicationValidator the one used in GlobalValidator.
+    def __init__(self, llm_client=None, strategy: str = "first"):
+        super().__init__(llm_client)
+        self.strategy = strategy
+        from src.prompts import DEDUPLICATION_RESOLUTION_PROMPT
+        self.prompt_template = DEDUPLICATION_RESOLUTION_PROMPT
+
+    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> Any:
+        # Returns:
+        # - List[int] (indices to drop) if strategy="first"
+        # - List[List[int]] (groups of duplicates) if strategy="llm-based"
         
         schema = context.get('schema')
         primary_keys = schema.primary_keys if schema else []
         
-        invalid_indices = []
-        
-        if primary_keys:
-            is_dup = df.duplicated(subset=primary_keys, keep='first')
-            invalid_indices.extend(df[is_dup].index.tolist())
-            if any(is_dup):
-                logger.info(f"DeduplicationValidator: Found {sum(is_dup)} duplicates based on PK: {primary_keys}")
-        else:
-            try:
-                is_dup = df.astype(str).duplicated(keep='first')
+        if self.strategy == "first":
+            # Original Logic: Return indices to drop
+            invalid_indices = []
+            if primary_keys:
+                is_dup = df.duplicated(subset=primary_keys, keep='first')
                 invalid_indices.extend(df[is_dup].index.tolist())
                 if any(is_dup):
-                    logger.info(f"DeduplicationValidator: Found {sum(is_dup)} exact duplicates (No PK).")
-            except Exception as e:
+                    logger.info(f"DeduplicationValidator (first): Found {sum(is_dup)} duplicates based on PK: {primary_keys}")
+            else:
+                try:
+                    is_dup = df.astype(str).duplicated(keep='first')
+                    invalid_indices.extend(df[is_dup].index.tolist())
+                    if any(is_dup):
+                        logger.info(f"DeduplicationValidator (first): Found {sum(is_dup)} exact duplicates (No PK).")
+                except:
+                    pass
+            return sorted(list(set(invalid_indices)))
+            
+        elif self.strategy == "llm-based":
+            # New Logic: Return clusters of duplicates
+            duplicate_groups = []
+            if primary_keys:
+                # Find all duplicates (mark all)
+                dup_mask = df.duplicated(subset=primary_keys, keep=False)
+                if any(dup_mask):
+                    # Group by PK
+                    dups = df[dup_mask]
+                    grouped = dups.groupby(primary_keys)
+                    for _, group in grouped:
+                        duplicate_groups.append(group.index.tolist())
+                    logger.info(f"DeduplicationValidator (llm-based): Found {len(duplicate_groups)} duplicate groups based on PK.")
+            else:
+                # Fallback to exact match? Exact match doesn't need LLM usually.
+                # Only strictly identical rows.
+                # If rows are strictly identical, LLM can't distinguish.
+                # So we fallback to 'first' logic for non-PK duplicates if they are identical content.
+                # But if we want to be safe, let's just return nothing or use 'first' logic.
                 pass
-                
-        return sorted(list(set(invalid_indices)))
+            return duplicate_groups
+            
+        return []
 
-    async def fix(self, df: pd.DataFrame, report: List[int], context: Dict[str, Any] = None) -> pd.DataFrame:
+    async def fix(self, df: pd.DataFrame, report: Any, context: Dict[str, Any] = None) -> pd.DataFrame:
         if not report:
             return df
-        logger.info(f"DeduplicationValidator: Dropping {len(report)} rows.")
-        return df.drop(report)
+            
+        if self.strategy == "first":
+            # Report is List[int]
+            logger.info(f"DeduplicationValidator: Dropping {len(report)} rows (Strategy: first).")
+            return df.drop(report)
+            
+        elif self.strategy == "llm-based":
+            # Report is List[List[int]]
+            indices_to_drop = []
+            
+            for group_indices in report:
+                if len(group_indices) < 2: 
+                    continue
+                    
+                group = df.loc[group_indices]
+                
+                # optimization: if rows are identical content-wise, pick first
+                # Check for strict equality
+                # Convert to dicts hashable?
+                # Just check if all rows equal first row
+                first_row = group.iloc[0]
+                all_equal = True
+                for i in range(1, len(group)):
+                    if not group.iloc[i].equals(first_row):
+                        all_equal = False
+                        break
+                        
+                if all_equal:
+                    # No need for LLM
+                    indices_to_drop.extend(group.index[1:].tolist())
+                    continue
+                    
+                # Content differs -> Conflict Resolution via LLM
+                conflicts = group.to_dict(orient='records')
+                # Map local index
+                labeled_conflicts = [{**row, "_local_idx": i} for i, row in enumerate(conflicts)]
+                
+                entity_desc = f"PK: {group_indices}" # Or better valid description if possible
+                
+                prompt = self.prompt_template.format(
+                    entity=entity_desc,
+                    conflicts=json.dumps(labeled_conflicts, indent=2, default=str)
+                )
+                
+                try:
+                    response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
+                    content = response.content
+                    if "```json" in content:
+                        content = content.split("```json")[1].split("```")[0]
+                    data = json.loads(content)
+                    
+                    keep_idx = data.get("keep_index", 0)
+                    
+                    # Map back to DF index
+                    # keep_idx is index in 'conflicts' list
+                    if 0 <= keep_idx < len(group):
+                         df_keep_idx = group.index[keep_idx]
+                         # Drop others
+                         for idx in group.index:
+                             if idx != df_keep_idx:
+                                 indices_to_drop.append(idx)
+                    else:
+                        # Fallback
+                        indices_to_drop.extend(group.index[1:].tolist())
+                        
+                except Exception as e:
+                    logger.warning(f"DeduplicationValidator Resolution Failed: {e}")
+                    indices_to_drop.extend(group.index[1:].tolist())
+                    
+            if indices_to_drop:
+                logger.info(f"DeduplicationValidator: Dropping {len(indices_to_drop)} rows (Strategy: llm-based).")
+                return df.drop(indices_to_drop)
+                
+        return df
 
 
 class CodeValidator(BaseValidator):

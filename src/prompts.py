@@ -459,3 +459,25 @@ Return JSON:
     "keep_index": <int> // 0-based index from the conflict list, or the ID if easier. We used list index in code.
 }}
 """
+
+DEDUPLICATION_RESOLUTION_PROMPT = """
+Task: Resolve metadata conflicts for the same Primary Key Entity.
+
+Entity:
+{entity}
+
+Conflicting Records:
+{conflicts}
+
+Context:
+- Multiple records claim to be the same Entity (same ID/PK) but have different attributes.
+- Your job is to select the BEST record to keep.
+- "Best" means: Most complete, most consistent with constraints (if any), and least likely to be a hallucination.
+- If all are similar, pick the most detailed one.
+
+Decision:
+Return JSON:
+{{
+    "keep_index": <int> // 0-based index from the Conflicting Records list to KEEP.
+}}
+"""
