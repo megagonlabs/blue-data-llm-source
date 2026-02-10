@@ -5,10 +5,11 @@
 PKDB is an **Agentic Data Extraction Framework** that transforms high-level natural language queries into structured datasets (DataFrames) by leveraging LLM Parametric Knowledge. Unlike traditional RAG (Retrieval Augmented Generation), PKDB extracts information directly from the model's internal knowledge base, optimizing for high-recall, structured output using techniques like Map-Reduce decomposition and Chain-of-Thought (CoT) schema generation.
 
 **Key Features:**
-*   **Auto-Partitioning:** Automatically decomposes broad queries (e.g., "List all US Cities") into parallelizable sub-tasks (by Region, State, etc.) to overcome LLM context limits.
-*   **Dynamic Schema Generation:** Infers the optimal table structure (Columns, Types, Primary Keys) on the fly, or adapts to a user-provided schema.
-*   **Interactive Planning:** Uses a multi-step planning process to estimate result size (`DistributionEstimator`) and select the best execution strategy.
-*   **Robust Validation:** Includes a built-in validation pipeline (`GlobalValidator`) for deduplication, consistency checking, and code-based verification.
+*   **Auto-Partitioning:** Automatically decomposes broad queries (e.g., "List all US Cities") into parallelizable sub-tasks using **LLM-based decomposition**.
+*   **Dynamic Schema Generation:** Infers optimal table structures (Columns, Types, Primary Keys) on the fly.
+*   **Joint Optimization:** Planner simultaneously evaluates Schema and Partitioning strategies to minimize fan-out and maximize relevance.
+*   **Robust Validation:** Includes a built-in `GlobalValidator` pipeline with strategies for **Entity Resolution**, **Deduplication**, and **Code-Based Verification**.
+*   **Smart Pagination:** Runtime engine uses probability estimates to detect truncation and autonomously fetch remaining pages.
 *   **Agentic Interface:** Designed to run autonomously or as a tool for other agents.
 
 ## Installation
@@ -55,7 +56,7 @@ async def main():
 
     print(f"Extracted {len(df)} rows.")
     print(df.head())
-    print(f"Cost: ${metrics.total_cost:.4f}")
+    print(f"Cost: ${metrics.cost:.4f}")
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -68,10 +69,11 @@ You can customize the execution behavior using `PKDBConfig`.
 ```python
 config = PKDBConfig(
     model="gpt-4o",
-    max_partitions=50,       # Max number of parallel tasks
-    row_threshold=120,       # Threshold to trigger decomposition
-    decomposition_strategy="llm_based", # 'llm_based' or 'rule_based'
-    partitioning_method="smart" # 'smart' (Joint Optimization) or 'greedy'
+    max_partitions=200,      # Max partitions per split
+    row_threshold=120,       # Optimization threshold for decomposition
+    decomposition_strategy="llm_based", # 'llm_based' (Recommended) or 'rule_based'
+    partitioning_method="smart", # 'smart' (Joint Optimization) or 'greedy'
+    max_concurrent=20        # Concurrency limit
 )
 
 pkdb = PKDB(config)
@@ -91,13 +93,15 @@ python experiments/run_mini_dataset.py
 
 ## Architecture
 
-The system is composed of several modular components:
+For a detailed deep dive into the system design, please refer to [framework_design_v4.md](framework_design_v4.md).
 
-*   **`src/interface.py`**: Main entry point (`PKDB` class).
-*   **`src/analysis.py`**: `QueryAnalyzer` for intent understanding and row estimation.
-*   **`src/schema.py`**: `SchemaGenerator` for inferring table structures.
-*   **`src/dataplan.py`**: `DataPlanBuilder` for recursive task decomposition.
-*   **`src/engine.py`**: `MapReduceEngine` for async execution management.
-*   **`src/validator.py`**: `GlobalValidator` for data cleaning and verification.
-
-For a detailed deep dive into the system design, please refer to [system_design_detailed.md](system_design_detailed.md).
+*   **`src/interface.py`**: Main entry point (`PKDB` class). Handles configuration and component wiring.
+*   **`src/analysis.py`**: `QueryAnalyzer` for intent understanding and initial row estimation.
+*   **`src/schema.py`**: `SchemaGenerator` for inferring optimal table structures (Columns, Types, Primary Keys).
+*   **`src/dataplan.py`**: `DataPlanBuilder` (Planner). Implements **Joint Optimization** to simultaneously evaluate Schema and Partitioning strategies. Recursively decomposes queries into a task graph.
+*   **`src/engine.py`**: `MapReduceEngine`. Manages async execution of the task graph, handling concurrency, rate limits, and **Smart Pagination**.
+*   **`src/validator.py`**: `GlobalValidator`. Orchestrates a pipeline of cleaning strategies:
+    *   **`ChunkValidator`**: Verifies partition integrity (e.g., Year=2020).
+    *   **`FormatNormalizationValidator`**: Standardizes values (e.g., "Generation 1" -> 1).
+    *   **`EntityResolutionValidator`**: Deduplicates entities based on content similarity and constraints.
+    *   **`CodeValidator`**: Generates and executes Python assertions for data constraints.

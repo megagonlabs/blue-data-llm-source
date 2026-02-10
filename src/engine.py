@@ -30,7 +30,7 @@ class MapReduceEngine:
         self.default_execution_mode = default_execution_mode
         self.default_execution_mode = default_execution_mode
         self.map_validator = map_validator # Runs on each partition (Map side)
-        self.global_validator = None # [NEW] Runs on final result (Reduce side)
+        self.global_validator = global_validator # [NEW] Runs on final result (Reduce side)
         self.completeness_strategy = completeness_strategy
         # self.validator = Validator(llm_client) # Old validator deprecated
         
