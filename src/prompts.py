@@ -183,7 +183,9 @@ Guidelines:
    - Pay attention to the query scope and constrains. If the query implies a specific scope or constrains (e.g. "US Cities"), corresponding partition keys like "Country" could be limited (e.g. only "USA").
    - **Scope Enforcement**: If the query limits the scope, only list values within the scope of the query. Verify each value against the constraints.
      - Example: If constraints have "Year": "2020", do NOT list years like "2019" or "2021".
-   - **Sub-ranging**: If the current partition is already a range (e.g. 1-100) and is too large, prefer sub-dividing this range (e.g. 1-50, 51-100) over switching to a new key, as this preserves orthogonality.
+   - **Sub-ranging**: If the current partition is already a range (e.g. 1-100) and is too large, prefer sub-dividing this range (e.g. 1-10, 11-20, etc.) over switching to a new key, as this preserves orthogonality.
+   - **Avoid Noise**: Do NOT select high-cardinality "ID-like" keys like "Zip Code", "Phone Number", "Coordinates", or "Lat/Lon" unless the query EXPLICITLY asks for them. For general demographics or political data, prefer "State", "Region", or "Year".
+   - **Avoid Placeholders**: Do NOT use generic placeholders like "Player1", "Team A", "Item 1" unless they are the actual data values. If you do not know the specific entities, do not partition by this key.
    - Do NOT hallucinate values outside the query scope.
 
 Return only JSON Code in the following format:
@@ -212,8 +214,10 @@ Constraints: {constraints}
 
 CRITICAL RULES:
 1. **Partitions**: List the most suitable partitions to divide the target data for the data query into chunks that mutually exclusive and cover the entire data. Please note that partition keys are not always categorical, you might also use interval (e.g. year 2003-2009, ID from 11 to 20, etc.) as partitions if it makes sense.
-2. **Scope Enforcement**: If the query limits the scope, only list values within the scope of the query. Verify each value against the constraints.
-3. **Completeness**: List ALL possible partition values according to factual common sense, query context, and constraints.
+2. **Relevance Check**: Do NOT output values for keys like "Zip Code" or "Phone Number" unless the query is explicitly about them. If the key seems irrelevant to the query (e.g. asking for "Zip Code" for a list of Presidents), return an empty list or a single "All" partition.
+3. **Scope Enforcement**: If the query limits the scope, only list values within the scope of the query. Verify each value against the constraints.
+4. **Avoid Placeholders**: Do NOT use generic placeholders like "Player1", "Team A", "Item 1" unless they are the actual data values.
+4. **Completeness**: List ALL possible partition values according to factual common sense, query context, and constraints.
 4. **Relevance**: Following for completeness, only list partition values that actually contain data for this query.
 
 Format: Return ONLY a simple list of strings, one per line. No numbering, no bullets.
@@ -256,9 +260,15 @@ Target Scope:
 You must be as comprehensive as possible. If the table usually has many rows, return MANY rows.
 
 **OUTPUT FORMAT**:
-Return ONLY the raw JSON list (or CSV) containing the data. 
-DO NOT include any text like "Here is the table" or markdown code blocks.
-Just the raw data.
+Return a valid JSON Object with a single key "items" containing the list of rows.
+Example:
+{{
+    "items": [
+        {{"Column1": "Value1", ...}},
+        ...
+    ]
+}}
+DO NOT return a raw list. DO NOT return Markdown.
 """
 
 DATA_EXTRACTION_PARTITION_CONTEXT = """
@@ -393,7 +403,7 @@ If all values are valid, return "invalid_values": [].
 
 DATA_EXTRACTION_COLUMNS_SUFFIX = """
 Extract the following columns: {cols}.
-Return as JSON object with key "items": {{"items": [...]}}.
+Return a valid JSON Object with key "items": {{"items": [...]}}.
 """
 
 # --- COMPLETENESS & RESOLUTION ---

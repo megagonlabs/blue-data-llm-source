@@ -20,6 +20,7 @@ print(f"DEBUG: src imported from: {src.__file__}")
 from src.interface import PKDB
 from src.schema import SchemaDefinition, Column
 from experiments.run_mini_dataset import setup_global_logging, query_logging_context
+from utils.llm_utils import SharedCostTracker # [NEW]
 
 # --- METRIC UTILS (Ported from WikiTabGen/example_notebooks/Metrics_calculation.ipynb) ---
 
@@ -256,8 +257,14 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
     cfg_items = [cfg[k] for k in sorted(cfg.keys(), key=lambda x: int(x))]
     
     # Filter
-    limit = args.limit if args and args.limit > 0 else len(cfg_items)
-    target_items = cfg_items[:limit]
+    if args and args.table:
+        target_items = [item for item in cfg_items if item['name'] == args.table]
+        if not target_items:
+            print(f"Table {args.table} not found in config.")
+            return
+    else:
+        limit = args.limit if args and args.limit > 0 else len(cfg_items)
+        target_items = cfg_items[:limit]
     
     print(f"Selected {len(target_items)} tables for evaluation.")
     
@@ -265,7 +272,8 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
     run_config = {
         "timestamp": timestamp,
         "model": args.model if args else "gpt-4o",
-        "limit": limit,
+        "limit": len(target_items),
+        "table_filter": args.table if args else None,
         "use_cache": args.use_cache if args else False,
         "max_concurrent": args.max_concurrent if args else 10,
         "row_threshold": args.row_threshold if args else 50,
@@ -283,7 +291,8 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
     shared_state = {
         "rate_limit_times": [],
         "rate_limit_lock": asyncio.Lock(),
-        "semaphore": asyncio.Semaphore(100) # Global concurrency limit for LLM calls implies max_concurrent * tables
+        "semaphore": asyncio.Semaphore(100), # Global concurrency limit for LLM calls implies max_concurrent * tables
+        "cost_tracker": SharedCostTracker(max_total_requests=10000, max_total_cost=100.0)
     }
     
     results = []
@@ -315,8 +324,11 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                 shared_state=shared_state
             )
             
+            table_dir = os.path.join(run_dir, table_name)
+            os.makedirs(table_dir, exist_ok=True)
+            
             # [RESUME] Check if result already exists
-            out_file = os.path.join(run_dir, f"{table_name}.csv")
+            out_file = os.path.join(table_dir, f"{table_name}.csv")
             df = None
             if os.path.exists(out_file):
                 print(f"LOAD {table_name}: Result already exists. Re-calculating metrics.")
@@ -351,8 +363,9 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                 print(f"\n--- Processing: {table_name} ---")
                 start = time.time()
                 try:
-                    with query_logging_context(run_dir, table_name):
-                        df, metrics, subqueries = await pkdb.extract_table(task_query, schema=target_schema)
+                    # Log to table_dir with separate log file
+                    with query_logging_context(table_dir, "process"):
+                        df, metrics, subqueries = await pkdb.extract_table(task_query, schema=target_schema, context={"output_dir": table_dir})
                         duration = time.time() - start
                 except Exception as e:
                     print(f"-> Failed {table_name}: {e}")
@@ -365,6 +378,11 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                 # We need to recreate metrics object or just mock cost
                 class MockMetrics:
                     cost = 0.0
+                    total_tokens = 0
+                    input_tokens = 0
+                    output_tokens = 0
+                    request_count = 0
+                    max_tokens_per_request = 0
                 metrics = MockMetrics()
 
             # [COMMON PATH] Metrics Calculation
@@ -387,6 +405,25 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                 if not os.path.exists(out_file):
                     df.to_csv(out_file, index=False)
                 
+                # [NEW] Artifact Persistence: Cost & Metrics (Standardized)
+                req_count = metrics.request_count if hasattr(metrics, 'request_count') and metrics.request_count > 0 else 1
+                avg_tokens = metrics.total_tokens / req_count if hasattr(metrics, 'total_tokens') else 0
+                
+                cost_artifact = {
+                    "query_id": table_name,
+                    "duration_seconds": duration,
+                    "total_cost_usd": metrics.cost if hasattr(metrics, 'cost') else 0.0,
+                    "total_tokens": metrics.total_tokens if hasattr(metrics, 'total_tokens') else 0,
+                    "input_tokens": metrics.input_tokens if hasattr(metrics, 'input_tokens') else 0,
+                    "output_tokens": metrics.output_tokens if hasattr(metrics, 'output_tokens') else 0,
+                    "request_count": metrics.request_count if hasattr(metrics, 'request_count') else 0,
+                    "avg_tokens_per_prompt": avg_tokens,
+                    "max_tokens_per_prompt": metrics.max_tokens_per_request if hasattr(metrics, 'max_tokens_per_request') else 0
+                }
+                
+                with open(os.path.join(table_dir, "cost.json"), "w") as f:
+                    json.dump(cost_artifact, f, indent=2)
+
                 msg = (f"-> {table_name}: Extracted {extracted_rows} rows. Time: {duration:.2f}s\n"
                        f"   Cell F1: {f1:.4f} (Prec: {p:.4f}, Rec: {r:.4f})\n"
                        f"   Key F1: {kf1:.4f} (Prec: {kp:.4f}, Rec: {kr:.4f})")
@@ -409,11 +446,17 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                     "Subqueries": subqueries,
                     "Time_s": duration,
                     "Cost_USD": metrics.cost,
+                    "Total_Tokens": metrics.total_tokens if hasattr(metrics, 'total_tokens') else 0,
+                    "Input_Tokens": metrics.input_tokens if hasattr(metrics, 'input_tokens') else 0,
+                    "Output_Tokens": metrics.output_tokens if hasattr(metrics, 'output_tokens') else 0,
+                    "Request_Count": metrics.request_count if hasattr(metrics, 'request_count') else 0,
                     "Status": "Success"
                 }
                     
             except Exception as e:
                 print(f"-> Failed Metrics {table_name}: {e}")
+                import traceback
+                traceback.print_exc()
                 return {
                     "Table": table_name,
                     "Category": item.get('category', 'Unknown'),
@@ -443,20 +486,39 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
         
         # Calculate Averages and Totals
         numeric_cols = ["Cell_F1", "Key_F1", "Non_Key_F1", "Cell_Precision", "Cell_Recall", "Key_Precision", "Key_Recall", "Non_Key_Precision", "Non_Key_Recall", "Time_s", "Cost_USD"]
-        means = summary_df[numeric_cols].mean()
+        valid_numeric = [c for c in numeric_cols if c in summary_df.columns]
+        means = summary_df[valid_numeric].mean()
         print("\n--- Averages ---")
         print(means)
         
         # Save detailed metrics JSON
         metrics_path = os.path.join(run_dir, "metrics.json")
         metrics_dict = means.to_dict()
-        metrics_dict["Total_Cost_USD"] = summary_df['Cost_USD'].sum()
+        
+        # Add Totals
+        metrics_dict["Model"] = args.model if args else "gpt-4o"
+        metrics_dict["Total_Time_s"] = summary_df['Time_s'].sum() if 'Time_s' in summary_df.columns else 0.0
+        
+        if 'Cost_USD' in summary_df.columns:
+            metrics_dict["Total_Cost_USD"] = summary_df['Cost_USD'].sum()
+        
+        # Add Token Totals
+        if 'Total_Tokens' in summary_df.columns:
+            metrics_dict["Total_Tokens"] = int(summary_df['Total_Tokens'].sum())
+        if 'Input_Tokens' in summary_df.columns:
+            metrics_dict["Total_Input_Tokens"] = int(summary_df['Input_Tokens'].sum())
+        if 'Output_Tokens' in summary_df.columns:
+            metrics_dict["Total_Output_Tokens"] = int(summary_df['Output_Tokens'].sum())
+        if 'Request_Count' in summary_df.columns:
+            metrics_dict["Total_Request_Count"] = int(summary_df['Request_Count'].sum())
+
         with open(metrics_path, "w") as f:
             json.dump(metrics_dict, f, indent=2)
         print(f"Saved aggregate metrics to {metrics_path}")
 
-        print("\n--- Totals ---")
-        print(f"Total Cost: ${summary_df['Cost_USD'].sum():.4f}")
+        if 'Cost_USD' in summary_df.columns:
+            print("\n--- Totals ---")
+            print(f"Total Cost: ${summary_df['Cost_USD'].sum():.4f}")
     else:
         print("No results to summarize.")
 
@@ -475,6 +537,7 @@ if __name__ == "__main__":
     parser.add_argument("--table_concurrent", type=int, default=5, help="Number of tables to process concurrently")
     parser.add_argument("--resume_dir", type=str, default=None, help="Directory to resume run from")
     parser.add_argument("--execution_mode", type=str, default="batch", choices=["batch", "row_by_row"], help="Execution mode")
+    parser.add_argument("--table", type=str, help="Specific table name to run (overrides limit)")
     
     args = parser.parse_args()
     

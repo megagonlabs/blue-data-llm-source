@@ -69,6 +69,16 @@ class StrategyEvaluator:
             # Prefer 5-20 partitions
             if 5 <= stats.num_partitions <= 20:
                 score += 10
+            
+            # [NEW] Heuristic Penalties
+            key_lower = cand.partition_key.lower()
+            if "zip" in key_lower and "code" in key_lower:
+                score -= 80
+                stats.reasoning += " [Penalty: Zip Code is poor for summaries]"
+            
+            if key_lower in ["id", "rowid", "index", "uuid"]:
+                score -= 60
+                stats.reasoning += " [Penalty: Avoid generic IDs]"
                 
             cand.score = score
             cand.reasoning = stats.reasoning

@@ -137,6 +137,37 @@ class LLMResponse:
         }
 
 
+@dataclass
+class SharedCostTracker:
+    """
+    Thread-safe tracker for global cost and request limits across multiple LLMClient instances.
+    """
+    max_total_requests: int = 1000
+    max_total_cost: float = 10.0
+    _current_requests: int = 0
+    _current_cost: float = 0.0
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    
+    async def check_and_update(self, cost_delta: float = 0.0, request_delta: int = 0):
+        async with self._lock:
+            # Pre-flight check
+            if request_delta > 0:
+                if self._current_requests + request_delta > self.max_total_requests:
+                    raise SafetyLimitExceededError(
+                        f"Global max total requests limit ({self.max_total_requests}) exceeded. "
+                        f"Current: {self._current_requests}"
+                    )
+            
+            # Post-flight check (accumulate and check cost)
+            self._current_requests += request_delta
+            self._current_cost += cost_delta
+            
+            if self._current_cost > self.max_total_cost:
+                raise SafetyLimitExceededError(
+                    f"Global max total cost limit (${self.max_total_cost:.2f}) exceeded. "
+                    f"Current: ${self._current_cost:.2f}"
+                )
+
 class LLMClient:
     """
     LLM client with async/sync support, caching, and metrics.
@@ -200,8 +231,8 @@ class LLMClient:
                 Pass directly to avoid setting env vars. LiteLLM handles provider detection.
             organization: Optional organization ID (for OpenAI and other providers)
             default_use_cache: Default value for use_cache in generate calls.
-            shared_state: Dict containing 'semaphore', 'rate_limit_times', 'rate_limit_lock' 
-                        to share constraints across multiple client instances.
+            shared_state: Dict containing 'semaphore', 'rate_limit_times', 'rate_limit_lock',
+                         and optionally 'cost_tracker' to share constraints across multiple client instances.
         """
         # Use provided values or fall back to environment variables or defaults
         self.model = model or DEFAULT_MODEL
@@ -216,10 +247,13 @@ class LLMClient:
             self.semaphore = shared_state.get("semaphore") or asyncio.Semaphore(self.max_concurrent)
             self._rate_limit_times = shared_state.get("rate_limit_times", [])
             self._rate_limit_lock = shared_state.get("rate_limit_lock") or asyncio.Lock()
+            # [NEW] Shared Cost Tracking
+            self._shared_cost_tracker = shared_state.get("cost_tracker")
         else:
             self.semaphore = asyncio.Semaphore(self.max_concurrent)
             self._rate_limit_times = []
             self._rate_limit_lock = asyncio.Lock()
+            self._shared_cost_tracker = None
         
         # Cache retry decorator (created once, reused for all API calls)
         self._retry_decorator = self._create_retry_decorator()
@@ -235,11 +269,11 @@ class LLMClient:
         self.organization = organization
         self.default_use_cache = default_use_cache
 
-        # Global Safety Limits
+        # Global Safety Limits (Local)
         self.max_total_requests = max_total_requests or DEFAULT_MAX_TOTAL_REQUESTS
         self.max_total_cost = max_total_cost or DEFAULT_MAX_TOTAL_COST
         
-        # Safety State Tracking
+        # Safety State Tracking (Local)
         self._total_requests_made = 0
         self._total_cost_incurred = 0.0
         self._safety_lock = asyncio.Lock()
@@ -247,7 +281,7 @@ class LLMClient:
         logger.info(
             f"Initialized LLMClient: model={self.model}, max_concurrent={self.max_concurrent}, "
             f"max_requests_per_minute={self.max_requests_per_minute}, cache_dir={self.cache_dir}, "
-            f"retry_enabled={enable_retry}"
+            f"retry_enabled={enable_retry}, shared_tracker={self._shared_cost_tracker is not None}"
         )
 
     def _get_cache_key(self, messages: List[Dict], **kwargs) -> str:
@@ -433,6 +467,11 @@ class LLMClient:
         Raises:
             SafetyLimitExceededError: If limits are exceeded
         """
+        # [NEW] Use Shared Tracker if available
+        if self._shared_cost_tracker:
+            await self._shared_cost_tracker.check_and_update(cost_delta, request_delta)
+            return
+
         async with self._safety_lock:
             # Check Limits (Pre-flight)
             if request_delta > 0:
@@ -455,6 +494,14 @@ class LLMClient:
 
     def _check_safety_limits_sync(self, cost_delta: float = 0.0, request_delta: int = 0):
         """Sync version of safety check (no lock, assumes single thread or acceptable race)."""
+        # [NEW] Sync not supported for shared tracker (limitations of sync context)
+        # If shared tracker exists, we can't easily await it in sync context without loop.
+        # Ideally, use async client for shared limits. 
+        # For now, we fall back to local limits or warn? 
+        # Actually, let's just warn if shared tracker is ignored in sync mode.
+        if self._shared_cost_tracker:
+            logger.warning("SharedCostTracker ignored in sync mode. Use async mode for global limits.")
+
         # Check Limits
         if request_delta > 0:
             if self._total_requests_made + request_delta > self.max_total_requests:

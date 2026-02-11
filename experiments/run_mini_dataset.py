@@ -16,6 +16,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.interface import PKDB
 
+from utils.llm_utils import SharedCostTracker # [NEW]
+
 @contextlib.contextmanager
 def query_logging_context(run_dir: str, uid: str):
     log_file = os.path.join(run_dir, f"{uid}.log")
@@ -92,6 +94,12 @@ async def evaluate_dataset(dataset_path: str, base_output_dir: str, args=None):
         dataset = json.load(f)
 
     print(f"Initializing PKDB with config: {config}...")
+    
+    # [NEW] Shared State for Global Limits
+    shared_state = {
+        "cost_tracker": SharedCostTracker(max_total_requests=10000, max_total_cost=50.0)
+    }
+
     pkdb = PKDB(
         model=config["model"], 
         cache_dir=".cache_pkdb",
@@ -104,7 +112,8 @@ async def evaluate_dataset(dataset_path: str, base_output_dir: str, args=None):
         decomposition_strategy=config["decomposition_strategy"],
         row_threshold=config["row_threshold"],
         max_depth=config["max_depth"],
-        partitioning_method=config["partitioning_method"]
+        partitioning_method=config["partitioning_method"],
+        shared_state=shared_state
     )
     
     results = []
@@ -231,6 +240,23 @@ async def evaluate_dataset(dataset_path: str, base_output_dir: str, args=None):
     summary_path = os.path.join(run_dir, "benchmark_results.csv")
     summary_df.to_csv(summary_path, index=False)
     print(f"\nSummary saved to {summary_path}")
+
+    # [NEW] Save detailed metrics/config JSON
+    metrics_path = os.path.join(run_dir, "metrics.json")
+    
+    metrics_dict = {
+        "Model": config.get("model", "unknown"),
+        "Total_Time_s": summary_df['Time_s'].sum() if 'Time_s' in summary_df.columns else 0.0,
+        "Total_Cost_USD": summary_df['Cost_USD'].sum() if 'Cost_USD' in summary_df.columns else 0.0,
+        "Total_Tokens": int(summary_df['Total_Tokens'].sum()) if 'Total_Tokens' in summary_df.columns else 0,
+        "Total_Input_Tokens": int(summary_df['Input_Tokens'].sum()) if 'Input_Tokens' in summary_df.columns else 0,
+        "Total_Output_Tokens": int(summary_df['Output_Tokens'].sum()) if 'Output_Tokens' in summary_df.columns else 0,
+        "Total_Request_Count": int(summary_df['Request_Count'].sum()) if 'Request_Count' in summary_df.columns else 0
+    }
+    
+    with open(metrics_path, 'w') as f:
+        json.dump(metrics_dict, f, indent=2)
+    print(f"Saved aggregate metrics to {metrics_path}")
 
 if __name__ == "__main__":
     import argparse

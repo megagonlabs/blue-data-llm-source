@@ -119,7 +119,7 @@ class MapReduceEngine:
                     temperature=temperature, 
                     response_format={"type": "json_object"}
                 )
-                content = response.content
+                content = response.content or ""
                 
                 # Accumulate Metrics (Cost of all attempts)
                 if response.metrics:
