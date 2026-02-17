@@ -93,8 +93,6 @@ python experiments/run_mini_dataset.py
 
 ## Architecture
 
-For a detailed deep dive into the system design, please refer to [framework_design_v4.md](framework_design_v4.md).
-
 *   **`src/interface.py`**: Main entry point (`PKDB` class). Handles configuration and component wiring.
 *   **`src/analysis.py`**: `QueryAnalyzer` for intent understanding and initial row estimation.
 *   **`src/schema.py`**: `SchemaGenerator` for inferring optimal table structures (Columns, Types, Primary Keys).
