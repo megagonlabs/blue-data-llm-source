@@ -227,7 +227,8 @@ class MapReduceEngine:
                     val_context = {
                         "constraints": task.constraints or {},
                         "schema": task.schema, # If available
-                        "output_dir": context.get("output_dir") # [NEW] Pass output_dir for logging
+                        "output_dir": context.get("output_dir"), # [NEW] Pass output_dir for logging
+                        "source": getattr(task, 'source', 'Wikipedia') # [NEW] Pass source
                     }
                     logger.info(f"Running Map Validator for task query: {task.query[:50]}...")
                     df = await self.map_validator.run(df, context=val_context)
@@ -468,7 +469,8 @@ class MapReduceEngine:
             check_prompt = COMPLETENESS_CHECK_PROMPT.format(
                 query=task.query,
                 estimated_rows=est_rows,
-                actual_rows=current_count
+                actual_rows=current_count,
+                source=getattr(task, 'source', 'Wikipedia')
             )
             
             try:

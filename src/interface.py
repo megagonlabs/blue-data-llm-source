@@ -22,11 +22,12 @@ class PKDBConfig:
     schema_temperature: float = 0.7
     extraction_temperature: float = 0.0
     decomposition_strategy: str = "rule_based"
-    row_threshold: int = 120 # [Optimized Default V4.2: Reverted to 120 for best F1/Cost balance]
+    row_threshold: int = 120 # Reverted to 120 for best F1/Cost balance
     max_depth: int = 2
     partitioning_method: str = "smart"
     max_total_requests: int = 10000
     default_execution_mode: str = "batch"
+    source: str = "Wikipedia" # Configurable Data Source
 
 class PKDB:
     """
@@ -83,7 +84,7 @@ class PKDB:
             partitioning_method=self.config.partitioning_method
         )
         
-        # V5: Unified GlobalValidator
+        # Unified GlobalValidator
         # We can configure sub-validators here
         self.validator = self.global_validator
         
@@ -152,13 +153,14 @@ class PKDB:
         # 1. Plan
         plan = await self.planner.create_plan(
             query, 
-            decomposition_strategy=self.config.decomposition_strategy, # Fixed attribute access
+            decomposition_strategy=self.config.decomposition_strategy,
             partitioning_method=self.config.partitioning_method,
             context=context,
             schema=schema,
             execution_mode=mode,
             row_threshold=self.config.row_threshold,
-            max_depth=self.config.max_depth
+            max_depth=self.config.max_depth,
+            source=self.config.source # [NEW] Pass source to planner
         )
         
         # 2. Execute

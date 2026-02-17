@@ -398,7 +398,8 @@ class DeduplicationValidator(BaseValidator):
                 
                 prompt = self.prompt_template.format(
                     entity=entity_desc,
-                    conflicts=json.dumps(labeled_conflicts, indent=2, default=str)
+                    conflicts=json.dumps(labeled_conflicts, indent=2, default=str),
+                    source=context.get('source', 'Wikipedia')
                 )
                 
                 try:
@@ -886,7 +887,8 @@ class EntityResolutionValidator(BaseValidator):
             prompt = self.prompt_template.format(
                 entity_name=name,
                 conflicts=json.dumps(conflicts, indent=2, default=str),
-                constraints=context.get('constraints', {})
+                constraints=context.get('constraints', {}),
+                source=context.get('source', 'Wikipedia')
             )
             
             try:

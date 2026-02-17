@@ -158,8 +158,8 @@ Columns: {columns_str}
 
 For each column, determine:
 1. Semantic Type (categorical, numerical, time, entity, text, etc.)
-2. Data Type (int, float, date, str, bool, etc.)
-3. Formatting (if applicable, e.g. "YYYY-MM-DD")
+2. Data Type (int, float, date, str, bool, list, etc.)
+3. Formatting (REQUIRED for Time/Date/Currency, e.g. "YYYY-MM-DD", "$", "%.2f"). If none applies, use empty string.
    
 Return JSON:
 {{
@@ -256,7 +256,7 @@ Target Scope:
 {constraint_str}
 {estimate_str}
 
-**CRITICAL INSTRUCTION**: Extract ALL data matching the request.
+**CRITICAL INSTRUCTION**: According to {source}, extract ALL data matching the request.
 You must be as comprehensive as possible. If the table usually has many rows, return MANY rows.
 
 **OUTPUT FORMAT**:
@@ -278,8 +278,8 @@ You MUST ONLY return items where "{partition_key}" is equal to "{partition_value
 
 ROW_BY_ROW_KEYS_PROMPT = """
     You are a retriever of facts.
-    We want to create a table with the detailed information about {query}.
-    {key_desc}.
+    We want to create a table with the detailed information about {query} according to {source}
+    {key_desc}. 
     List all {key_col} entities for the table. 
     Never shorten the list with ellipsis (...) in the middle. List every single entity found.
     The response will be formatted as JSON object shown below.
@@ -296,7 +296,7 @@ ROW_BY_ROW_KEYS_PROMPT = """
 
 ROW_BY_ROW_FETCH_PROMPT = """
     You are a retriever of facts.
-    We want to create a table with the detailed information about {query}.
+    We want to create a table with the detailed information about {query} according to {source}.
     Columns in the table are {columns}.
     {key_desc}.     
     Retrieve a single row whose key is {key_val}.
@@ -409,7 +409,7 @@ Return a valid JSON Object with key "items": {{"items": [...]}}.
 # --- COMPLETENESS & RESOLUTION ---
 
 COMPLETENESS_CHECK_PROMPT = """
-Task: Determine if the extracted data is "Complete Enough" compared to the expected estimation.
+Task: Determine if the extracted data is "Complete Enough" compared to the expected estimation according to {source}.
 
 Query: "{query}"
 Expected Row Count (Estimate): {estimated_rows}
@@ -452,7 +452,7 @@ Return JSON mapping ONLY for values that need changing:
 """
 
 ENTITY_RESOLUTION_DECISION_PROMPT = """
-Task: Resolve potential duplicates for Entity "{entity_name}".
+Task: Resolve potential duplicates for Entity "{entity_name}" according to {source}.
 
 Conflict Details:
 {conflicts}
@@ -471,7 +471,7 @@ Return JSON:
 """
 
 DEDUPLICATION_RESOLUTION_PROMPT = """
-Task: Resolve metadata conflicts for the same Primary Key Entity.
+Task: Resolve metadata conflicts for the same Primary Key Entity according to {source}.
 
 Entity:
 {entity}

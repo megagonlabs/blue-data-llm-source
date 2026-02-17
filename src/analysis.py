@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DataTask:
     """
-    Architecture V3: A Unified structured representation of an extraction goal (Node in Execution Graph).
+    Architecture: A Unified structured representation of an extraction goal (Node in Execution Graph).
     """
     # 1. Goal Definition
     query: str  # Natural language query
@@ -30,8 +30,8 @@ class DataTask:
     collection_strategy: str = "ALL"  # ALL, LIMIT <N>, MOST_COMMON
     
     # 2. Context & Lineage
-    schema: Optional[SchemaDefinition] = None  # The expected output structure (V3)
-    parent: Optional["DataTask"] = None        # Pointer to creator task (V3)
+    schema: Optional[SchemaDefinition] = None  # The expected output structure
+    parent: Optional["DataTask"] = None        # Pointer to creator task
     trace_id: str = field(default_factory=lambda: hashlib.md5(str(time.time()).encode()).hexdigest())
     
     # 3. Partitioning Context (If this is a leaf/partition node)
@@ -41,6 +41,7 @@ class DataTask:
     
     # 4. Execution Config
     execution_mode: str = "batch" # "batch" or "row_by_row"
+    source: str = "Wikipedia" # Data source for the query
     
     def get_full_context(self) -> str:
         """Returns lineage string for debugging constraints"""
@@ -53,7 +54,22 @@ class DataTask:
         # Check if we have a schema to guide extraction
         cols = "*"
         if self.schema:
-            cols = ", ".join([c.name for c in self.schema.columns])
+            col_descs = []
+            for c in self.schema.columns:
+                desc = c.name
+                details = []
+                if c.data_type and c.data_type != "text":
+                    details.append(c.data_type)
+                if c.formatting:
+                    details.append(f"formatting: {c.formatting}")
+                if c.description:
+                    # Access description - keep it brief if needed
+                    pass 
+                
+                if details:
+                    desc += f" ({', '.join(details)})"
+                col_descs.append(desc)
+            cols = ", ".join(col_descs)
             
         # Build constraint string for prompt
         constraint_str = ""
@@ -67,7 +83,8 @@ class DataTask:
         prompt = DATA_EXTRACTION_PROMPT.format(
             query=self.query,
             constraint_str=constraint_str,
-            estimate_str=estimate_str
+            estimate_str=estimate_str,
+            source=self.source
         )
         
         if self.partition_key and self.partition_value:
@@ -85,7 +102,7 @@ class QueryAnalysisResult:
     estimated_rows: int
     requires_decomposition: bool
     reasoning: str
-    task: Optional["DataTask"] = None # V2
+    task: Optional["DataTask"] = None
 
 class QueryAnalyzer:
     """

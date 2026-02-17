@@ -316,7 +316,8 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                 decomposition_strategy=args.decomposition_strategy, 
                 partitioning_method="smart",
                 max_total_requests=1000,
-                default_execution_mode=args.execution_mode if args else "batch"
+                default_execution_mode=args.execution_mode if args else "batch",
+                source=args.source if args else "Wikipedia" # [NEW]
             )
             
             pkdb = PKDB(
@@ -538,6 +539,7 @@ if __name__ == "__main__":
     parser.add_argument("--resume_dir", type=str, default=None, help="Directory to resume run from")
     parser.add_argument("--execution_mode", type=str, default="batch", choices=["batch", "row_by_row"], help="Execution mode")
     parser.add_argument("--table", type=str, help="Specific table name to run (overrides limit)")
+    parser.add_argument("--source", type=str, default="Wikipedia", help="Data source for the extraction")
     
     args = parser.parse_args()
     

@@ -196,7 +196,7 @@ class DistributionEstimator:
 class DataPlanRequest:
     task: DataTask # The Root Task
     schema: SchemaDefinition
-    map_tasks: List[DataTask] # V3: List of DataTasks (Leaf Nodes)
+    map_tasks: List[DataTask] # List of DataTasks (Leaf Nodes)
     validation_policy: str = "cross_consistency"
 
 class DataPlanBuilder:
@@ -212,7 +212,6 @@ class DataPlanBuilder:
         max_partitions: int = 50,
         num_candidates: int = 3,
         temperature: float = 0.7,
-        # [NEW] V5 Configs
         row_threshold: int = 100,
         max_depth: int = 3,
         partitioning_method: str = "smart",
@@ -246,6 +245,7 @@ class DataPlanBuilder:
         schema: Optional[SchemaDefinition] = None,
         execution_mode: str = "batch",
         max_depth: Optional[int] = None,
+        source: str = "Wikipedia",
         **kwargs
     ) -> DataPlanRequest:
         
@@ -268,7 +268,7 @@ class DataPlanBuilder:
         )
         logger.info(f"Query Analysis: {analysis}")
         
-        # [NEW] V5: Decomposition Logic (Moved from Analyzer)
+        # Decomposition Logic
         requires_decomposition = False
         reasoning = "Rule-based check"
         
@@ -300,7 +300,8 @@ class DataPlanBuilder:
             constraints=analysis.task.constraints if analysis.task else {},
             collection_strategy=analysis.task.collection_strategy if analysis.task else "ALL",
             execution_mode=execution_mode,
-            estimated_rows=analysis.estimated_rows
+            estimated_rows=analysis.estimated_rows,
+            source=source
         )
         root_task.schema = None # Will be set below
         
@@ -308,10 +309,11 @@ class DataPlanBuilder:
         final_schema = None
         best_strategy = None
         
-        # [NEW] 1. Check for Strict Schema
+        # 1. Check for Strict Schema
         if schema:
             logger.info(f"Using provided strict Schema: {schema.table_name}")
-            final_schema = schema
+            # Enrich schema if metadata is missing (formatting/descriptions)
+            final_schema = await self.schema_gen.infer_schema(rewritten_query, input_schema=schema)
             # If a schema is provided, we skip Joint Optimization for the *schema* part.
             # However, we still might need to pick a partition key from this provided schema if decomposition is required.
             
@@ -321,7 +323,7 @@ class DataPlanBuilder:
                 logger.info("Evaluating provided schema for best partition key...")
                 
                 strategy_candidates: List[StrategyCandidate] = []
-                # [FIX]: Schema is decoupled. Scan all columns as potential partition keys.
+                # Schema is decoupled. Scan all columns as potential partition keys.
                 # In strict mode, we don't have a "strategy" list, so we treat all columns as candidates.
                 pk_candidates = [c.name for c in final_schema.columns]
                 
@@ -354,7 +356,7 @@ class DataPlanBuilder:
             for raw_cand in raw_candidates:
                 # Infer types/keys to find *potential* strategies for this schema
                 schema_def = await self.schema_gen.infer_enrichment(rewritten_query, raw_cand)
-                # [FIX]: Schema is decoupled. Get strategy from the raw candidate dict.
+                # Schema is decoupled. Get strategy from the raw candidate dict.
                 partition_keys = raw_cand.get("partition_strategy", [])
                 
                 if not partition_keys:
@@ -400,7 +402,8 @@ class DataPlanBuilder:
                 parent=root_task,
                 partition_key="All",
                 partition_value="All",
-                execution_mode=root_task.execution_mode
+                execution_mode=root_task.execution_mode,
+                source=source
             )
             map_tasks.append(flat_task)
         else:
@@ -416,8 +419,9 @@ class DataPlanBuilder:
                 partitioning_method=partitioning_method,
                 row_threshold=row_threshold,
                 max_chunks=max_chunks,
-                suggested_key=pass_key, # [NEW]
-                suggested_stats=pass_stats # [NEW]
+                suggested_key=pass_key,
+                suggested_stats=pass_stats,
+                source=source
             )
             
         # Artifact Persistence
@@ -448,18 +452,19 @@ class DataPlanBuilder:
         task: DataTask, 
         schema: SchemaDefinition, 
         depth: int = 0,
-        max_depth: int = 2, # V5 Default
+        max_depth: int = 2,
         partitioning_method: str = "smart",
         row_threshold: int = 100,
         max_chunks: int = 100,
         subquery_style: str = "natural",
         used_keys: Optional[set] = None,
-        suggested_key: Optional[str] = None, # [NEW] V3
-        suggested_stats: Optional[DistributionStats] = None # [NEW] V5
+        suggested_key: Optional[str] = None,
+        suggested_stats: Optional[DistributionStats] = None,
+        source: str = "Wikipedia"
     ) -> List[DataTask]:
         
         used_keys = used_keys or set()
-        # [FIX] Treat constrained keys as 'used' to prevent redundant partitioning
+        # Treat constrained keys as 'used' to prevent redundant partitioning
         if task.constraints:
             used_keys = used_keys | set(task.constraints.keys())
         
@@ -476,7 +481,8 @@ class DataPlanBuilder:
                 schema=schema,
                 parent=task,
                 partition_key="Filter",
-                partition_value="Remaining"
+                partition_value="Remaining",
+                source=source
             )]
         
         # If too deep, fallback to flat
@@ -490,7 +496,8 @@ class DataPlanBuilder:
                 partition_key="Filter",
                 partition_value="Remaining",
                 execution_mode=getattr(task, 'execution_mode', 'batch'),
-                estimated_rows=task.estimated_rows if depth == 0 else None
+                estimated_rows=task.estimated_rows if depth == 0 else None,
+                source=source
             )]
             
         # 2. Identify Assignments (Partition Strategy)
@@ -498,7 +505,7 @@ class DataPlanBuilder:
         selected_stats = None
         
         if suggested_key and depth == 0:
-            # V3 Joint Optimization: Use pre-selected strategy
+            # Joint Optimization: Use pre-selected strategy
             candidates = [c for c in schema.columns if c.name == suggested_key]
             if candidates:
                 partition_keys = candidates
@@ -565,7 +572,8 @@ class DataPlanBuilder:
                     parent=task,
                     partition_key="All",
                     partition_value="All",
-                    estimated_rows=task.estimated_rows if depth == 0 else None
+                    estimated_rows=task.estimated_rows if depth == 0 else None,
+                    source=source
                 )]
             selected_stats = best_stats
 
@@ -581,7 +589,7 @@ class DataPlanBuilder:
 
         logger.info(f"Selected Key: {pkey.name}. Values: {len(values)}. Counts Keys: {list(counts.keys())}, Counts Values: {list(counts.values())}")
 
-        # [FIX] Zero-Value Fallback: If no values generated (e.g. too many, or unknown), revert to flat task
+        # Zero-Value Fallback: If no values generated (e.g. too many, or unknown), revert to flat task
         if not values:
             logger.warning(f"Partition key {pkey.name} generated NO values. Falling back to FLAT execution.")
             return [DataTask(
@@ -593,10 +601,11 @@ class DataPlanBuilder:
                 partition_key="All", # Fallback
                 partition_value="Fallback",
                 execution_mode=getattr(task, 'execution_mode', 'batch'),
-                estimated_rows=task.estimated_rows
+                estimated_rows=task.estimated_rows,
+                source=source
             )]
 
-        # [NEW] Smart Quota Allocation Setup
+        # Smart Quota Allocation Setup
         limit_n = None
         if task.collection_strategy and task.collection_strategy.startswith("LIMIT "):
             try:
@@ -622,7 +631,7 @@ class DataPlanBuilder:
             new_constraints = task.constraints.copy()
             new_constraints[pkey.name] = val
             
-            # [NEW] Calculate Child Quota
+            # Calculate Child Quota
             child_strategy = task.collection_strategy
             child_limit = None
             
@@ -657,10 +666,10 @@ class DataPlanBuilder:
                     query=sub_query,
                     collection_strategy=child_strategy,
                     constraints=new_constraints,
-
                     parent=task,
                     execution_mode=getattr(task, 'execution_mode', 'batch'),
-                    estimated_rows=effective_count # [FIX] Pass down partition estimate
+                    estimated_rows=effective_count, # Pass down partition estimate
+                    source=source
                 )
                 
                 sub_tasks = await self._create_plan_recursive(
@@ -672,11 +681,12 @@ class DataPlanBuilder:
                     row_threshold=row_threshold,
                     max_chunks=max_chunks,
                     subquery_style=subquery_style,
-                    used_keys=used_keys | {pkey.name}
+                    used_keys=used_keys | {pkey.name},
+                    source=source
                 )
                 map_tasks.extend(sub_tasks)
             else:
-                # [FIX]: Generate Natural Language Subquery for Leaf Nodes too
+                # Generate Natural Language Subquery for Leaf Nodes too
                 if subquery_style == "natural":
                     sub_query = await self._construct_natural_language_subquery(
                         base_query=query, 
@@ -697,7 +707,8 @@ class DataPlanBuilder:
                     partition_key=pkey.name,
                     partition_value=val,
                     execution_mode=getattr(task, 'execution_mode', 'batch'),
-                    estimated_rows=effective_count # [FIX] Use partition estimate
+                    estimated_rows=effective_count, # Use partition estimate
+                    source=source
                 ))
                 self.current_chunk_count += 1
         
