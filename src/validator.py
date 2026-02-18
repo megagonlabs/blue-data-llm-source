@@ -163,7 +163,7 @@ class ChunkValidator(BaseValidator):
                 response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
                 content = response.content
                 
-                # [LOGGING] Save I/O
+                # Save I/O
                 if context and "output_dir" in context:
                     self._log_val_io(context["output_dir"], "ChunkValidator.detect_val", prompt, content, len(unique_values))
                 
@@ -188,9 +188,9 @@ class ChunkValidator(BaseValidator):
         unique_invalid = sorted(list(invalid_indices))
         
         if context and "output_dir" in context:
-            # [LOGGING] Log actual content of invalid rows
+            # Log actual content of invalid rows
             try:
-                invalid_rows_data = df.iloc[unique_invalid].to_dict(orient='records')
+                invalid_rows_data = df.loc[unique_invalid].to_dict(orient='records')
             except Exception as e:
                 invalid_rows_data = str(e)
 
@@ -211,7 +211,7 @@ class ChunkValidator(BaseValidator):
         try:
             invalid_rows = df.loc[report].to_dict('records')
         except:
-             invalid_rows = []
+            invalid_rows = []
 
         if not self.llm:
             return df.drop(report)
@@ -227,7 +227,7 @@ class ChunkValidator(BaseValidator):
             response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
             content = response.content
             
-            # [LOGGING] Save LLM I/O for Validation
+            # Save LLM I/O for Validation
             if context and "output_dir" in context:
                 self._log_val_io(
                     output_dir=context["output_dir"],
@@ -250,14 +250,16 @@ class ChunkValidator(BaseValidator):
             else:
                 final_df = df_dropped
 
-            # [LOGGING]
+            # Log Event
             if context and "output_dir" in context:
                 self._log_event(context["output_dir"], "fix", {
                     "validator": "ChunkValidator",
                     "attempted_fix_count": len(report),
                     "successfully_fixed_count": len(fixed_rows),
                     "dropped_count": len(report) - len(fixed_rows),
-                    "fixed_rows": fixed_rows
+                    "fixed_rows": fixed_rows,
+                    "prompt": prompt,
+                    "llm_output": content
                 })
 
             return final_df
@@ -414,11 +416,11 @@ class DeduplicationValidator(BaseValidator):
                     # Map back to DF index
                     # keep_idx is index in 'conflicts' list
                     if 0 <= keep_idx < len(group):
-                         df_keep_idx = group.index[keep_idx]
-                         # Drop others
-                         for idx in group.index:
-                             if idx != df_keep_idx:
-                                 indices_to_drop.append(idx)
+                        df_keep_idx = group.index[keep_idx]
+                        # Drop others
+                        for idx in group.index:
+                            if idx != df_keep_idx:
+                                indices_to_drop.append(idx)
                     else:
                         # Fallback
                         indices_to_drop.extend(group.index[1:].tolist())
@@ -454,7 +456,7 @@ class CodeValidator(BaseValidator):
             schema_desc = str(schema) # Or formatted string
             # Use columns metadata
             if hasattr(schema, 'columns'):
-                 schema_desc = ", ".join([f"{c.name} ({c.semantic_type}): {c.description}" for c in schema.columns])
+                schema_desc = ", ".join([f"{c.name} ({c.semantic_type}): {c.description}" for c in schema.columns])
             
             assertions = await self._generate_assertions(schema_desc, df.iloc[0].to_dict())
             logger.info(f"Generated Assertions: {assertions}")
@@ -641,8 +643,8 @@ class EmbeddingValidator(BaseValidator):
         # If not, we can guess or use table name?
         query = context.get('query', "Unknown Query") 
         if 'schema' in context and context['schema']:
-             query = f"Extract {context['schema'].table_name}"
-             
+            query = f"Extract {context['schema'].table_name}"
+            
         # Batching (chunk of 10)
         final_valid_params = []
         
@@ -749,8 +751,8 @@ class FormatNormalizationValidator(BaseValidator):
                     for v in unique_values:
                         s = str(v)
                         if not s.replace('.', '', 1).isdigit() and not (s.startswith('-') and s[1:].isdigit()):
-                             needs_fix = True
-                             break
+                            needs_fix = True
+                            break
                 except:
                     needs_fix = True
             elif formatting:

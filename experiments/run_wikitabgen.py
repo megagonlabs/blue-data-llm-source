@@ -280,6 +280,7 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
         "decomposition_strategy": args.decomposition_strategy,
         "partition_selection_mode": args.partition_selection_mode if args else "auto", # Added this line
         "execution_mode": args.execution_mode if args else "batch",
+        "plan_only": args.plan_only if args else False, # [NEW]
         "generated_by": "experiments/run_wikitabgen.py"
     }
     with open(os.path.join(run_dir, "run_config.json"), "w") as f:
@@ -367,7 +368,12 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                 try:
                     # Log to table_dir with separate log file
                     with query_logging_context(table_dir, "process"):
-                        df, metrics, subqueries = await pkdb.extract_table(task_query, schema=target_schema, context={"output_dir": table_dir})
+                        df, metrics, subqueries = await pkdb.extract_table(
+                            task_query, 
+                            schema=target_schema, 
+                            context={"output_dir": table_dir},
+                            plan_only=args.plan_only if args else False
+                        )
                         duration = time.time() - start
                 except Exception as e:
                     print(f"-> Failed {table_name}: {e}")
@@ -404,7 +410,7 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                 )
                 
                 # If generated new, save it. If loaded, no need to save unless we refined it (we didn't).
-                if not os.path.exists(out_file):
+                if not os.path.exists(out_file) and not df.empty:
                     df.to_csv(out_file, index=False)
                 
                 # [NEW] Artifact Persistence: Cost & Metrics (Standardized)
@@ -541,7 +547,8 @@ if __name__ == "__main__":
     parser.add_argument("--execution_mode", type=str, default="batch", choices=["batch", "row_by_row"], help="Execution mode")
     parser.add_argument("--table", type=str, help="Specific table name to run (overrides limit)")
     parser.add_argument("--source", type=str, default="Wikipedia", help="Data source for the extraction")
-    parser.add_argument("--partition_selection_mode", type=str, default="scoring", choices=["scoring", "llm"], help="Method for selecting partition key (scoring or llm)")
+    parser.add_argument("--partition_selection_mode", type=str, default="llm", choices=["scoring", "llm"], help="Method for selecting partition key (scoring or llm)")
+    parser.add_argument("--plan_only", action="store_true", help="Only run planning phase (skip data fetching)")
     
     args = parser.parse_args()
     

@@ -157,14 +157,16 @@ Table: {table_name}
 Columns: {columns_str}
 
 For each column, determine:
-1. Semantic Type (categorical, numerical, time, entity, text, etc.)
-2. Data Type (int, float, date, str, bool, list, etc.)
-3. Formatting: a string that describes the format of values in this column, such that the values could have a uniform format across multiple LLM calls. Formatting could be a pattern, a specific format, or just a natural description of the format. If there is no need to specify format of values, use empty string. Examples: "YYYY-MM-DD", "$", "%.2f", "5 digits zip code", "Full name without abbreviation", "Abbreviation only", etc. Please use common sense to determine the unform format for columns that achieve the data query.
+1. Description: A brief description of what this column represents.
+2. Semantic Type (categorical, numerical, time, entity, text, etc.)
+3. Data Type (int, float, date, str, bool, list, etc.)
+4. Formatting: a string that describes the format of values in this column, such that the values could have a uniform format across multiple LLM calls. Formatting could be a pattern, a specific format, or just a natural description of the format. If there is no need to specify format of values, use empty string. Examples: "YYYY-MM-DD", "$", "%.2f", "5 digits zip code", "Full name without abbreviation", "Abbreviation only", etc. Please use common sense to determine the unform format for columns that achieve the data query.
+
 
 Return JSON:
 {{
     "columns": {{
-        "ColumnName": {{"type": "...", "data_type": "...", "formatting": "..."}},
+        "ColumnName": {{"description": "...", "type": "...", "data_type": "...", "formatting": "..."}},
         ...
     }}
 }}
@@ -220,7 +222,8 @@ CRITICAL RULES:
 4. **Completeness**: List ALL possible partition values according to factual common sense, query context, and constraints.
 4. **Relevance**: Following for completeness, only list partition values that actually contain data for this query.
 
-Format: Return ONLY a simple list of strings, one per line. No numbering, no bullets.
+Format: Return a valid JSON object with key "values" containing the list of strings.
+Example: { "values": ["Value1", "Value2"] }
 """
 
 SUBQUERY_REWRITE_PROMPT = """
@@ -253,7 +256,7 @@ I have identified the following candidates for partitioning the data to solve th
 
 {candidates_str}
 
-Task: Select the BEST partition key from the list above.
+Task: Select the BEST partition key from the list above. Please note that target data after this partition could be partited recursively if needed.
 
 Guidelines:
 1. **Mutual Exclusivity** (Primary):
@@ -261,13 +264,13 @@ Guidelines:
    - Avoid overlapping partitions if possible.
 
 2. **Semantic Appropriateness**:
-   - Prefer keys that naturally divide the data into meaningful groups (Time, Category, Location).
-   - AVOID partitioning by numerical measures (e.g. "Population", "Area", "GDP") unless the query explicitly asks to filter/group by them.
+   - Prefer keys that naturally divide the data into meaningful groups (e.g. Time, Category, Location, etc.).
+   - Use the metadata of the column to understand the meaning of the key (e.g. is it a code? a name? a measure? etc.).
+   - AVOID partitioning by numerical measures (e.g. "Population", "Area", "GDP", etc.) unless the query explicitly asks to filter/group by them.
    - AVOID generic IDs if better natural keys exist.
 
 3. **Efficiency**:
    - The goal is to break the large result set into smaller, manageable chunks.
-   - "Dust" (too many tiny partitions) is bad.
    - "Dust" (too many tiny partitions) is bad.
    - "Fat" (one huge partition) is bad.
 

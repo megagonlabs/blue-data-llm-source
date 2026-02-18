@@ -117,7 +117,7 @@ class QueryAnalyzer:
 
     async def analyze_to_task(self, query: str) -> DataTask:
         """
-        Architecture V2: Converts raw query into a structured DataTask.
+        Converts raw query into a structured DataTask.
         """
         prompt = QUERY_ANALYSIS_PROMPT.format(query=query)
         response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
@@ -160,10 +160,9 @@ class QueryAnalyzer:
         estimated_rows = await self._estimate_row_count(rewritten_query)
         logger.info(f"Estimated rows: {estimated_rows}")
         
-        # [REVERTED] Propagate estimate to task for Completeness Check downstream
-        # task.estimated_rows = estimated_rows
+        # Propagate estimate to task for Completeness Check downstream
 
-        # 3. Determine Decomposition (Decoupled in V5)
+        # 3. Determine Decomposition
         # The Analyzer now only provides the estimate. The logic is in DataPlanBuilder.
         # We perform a basic check here just for the 'reasoning' field if needed, or return defaults.
         requires_decomposition = False 

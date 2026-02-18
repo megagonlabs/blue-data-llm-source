@@ -19,8 +19,8 @@ class Column:
     name: str
     description: str = ""
     semantic_type: str = "text" # text, categorical, numerical, time, entity
-    data_type: str = "text" # [NEW] V3: Underlying type (int, float, date, text)
-    formatting: str = "" # [NEW] V3: Format instructions (e.g. "YYYY-MM-DD")
+    data_type: str = "text" # Underlying type (int, float, date, text)
+    formatting: str = "" # Format instructions (e.g. "YYYY-MM-DD")
     
     def to_dict(self):
         return {
@@ -43,8 +43,6 @@ class SchemaDefinition:
             "columns": [c.to_dict() for c in self.columns],
             "primary_keys": self.primary_keys
         }
-
-        
 
 
 class SchemaGenerator:
@@ -173,7 +171,7 @@ class SchemaGenerator:
             info = type_info.get(name, {})
             cols.append(Column(
                 name=name,
-                description=info.get('description', c_dict.get('description', '')), # Prefer LLM enriched
+                description=c_dict.get('description') or info.get('description', ''), # Prefer provided description, fallback to LLM
                 semantic_type=info.get('type', 'text'),
                 data_type=info.get('data_type', 'text'),
                 formatting=info.get('formatting', '')

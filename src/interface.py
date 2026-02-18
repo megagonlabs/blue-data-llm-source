@@ -5,7 +5,7 @@ from utils.llm_utils import LLMClient, LLMMetrics
 from src.dataplan import DataPlanBuilder
 from src.engine import MapReduceEngine
 from src.schema import SchemaDefinition, SchemaGenerator
-
+from src.validator import GlobalValidator
 logger = logging.getLogger(__name__)
 
 from dataclasses import dataclass, field
@@ -22,12 +22,18 @@ class PKDBConfig:
     schema_temperature: float = 0.7
     extraction_temperature: float = 0.0
     decomposition_strategy: str = "rule_based"
-    row_threshold: int = 120 # Reverted to 120 for best F1/Cost balance
+    row_threshold: int = 120
     max_depth: int = 2
-    partitioning_method: str = "smart"
+    partitioning_method: str = "llm_based"
+    partition_selection_mode: str = "llm" # "llm" or "scoring"
+    enable_heuristic_scoring: bool = False
     max_total_requests: int = 10000
     default_execution_mode: str = "batch"
     source: str = "Wikipedia" # Configurable Data Source
+    
+    # Validation
+    map_validators: List[str] = field(default_factory=lambda: ["ChunkConstraints", "FormatNormalization"])
+    global_validators: List[str] = field(default_factory=lambda: ["Deduplication", "EntityResolution", "PrimaryKeyValidation", "Completeness", "FormatNormalization"])
 
 class PKDB:
     """
@@ -60,11 +66,6 @@ class PKDB:
         )
         
         # Validators (Configurable)
-        from src.validator import GlobalValidator
-        from src.schema import SchemaDefinition, SchemaGenerator
-        from src.dataplan import DataPlanBuilder # Re-import for clarity, though already there
-        from src.engine import MapReduceEngine # Re-import for clarity, though already there
-        from src.schema import SchemaDefinition # Needed for new extract_table signature
         self.map_validator = GlobalValidator(self.llm, strategies=getattr(self.config, 'map_validators', ["ChunkConstraints", "FormatNormalization"]))
         self.global_validator = GlobalValidator(self.llm, strategies=getattr(self.config, 'global_validators', ["Deduplication", "EntityResolution", "PrimaryKeyValidation", "Completeness", "FormatNormalization"]))
         
@@ -81,32 +82,19 @@ class PKDB:
             temperature=self.config.schema_temperature,
             row_threshold=self.config.row_threshold,
             decomposition_strategy=self.config.decomposition_strategy, 
-            partitioning_method=self.config.partitioning_method
+            partitioning_method=self.config.partitioning_method,
+            partition_selection_mode=self.config.partition_selection_mode,
+            enable_heuristic_scoring=self.config.enable_heuristic_scoring
         )
-        
-        # Unified GlobalValidator
-        # We can configure sub-validators here
-        self.validator = self.global_validator
-        
-        # Inject map_validator into Engine
-        # For now, map_validator can be the same GlobalValidator instance or a lightweight one
-        # Let's use the same instance, but GlobalValidator logic differentiates based on phase?
-        # Actually, let's create a separate lightweight one if needed, or share.
-        # Sharing is fine as it's stateless mostly.
-        # self.map_validator is already initialized above with 'map_validators' config strategy
-        # Keeping them separate allows different strategies for Map vs Reduce phases.
-        # self.map_validator = self.validator  # REMOVED overwrite 
         
         self.engine = MapReduceEngine(
             llm_client=self.llm, 
             planner=self.planner,
             max_partitions=self.config.max_partitions,
             default_execution_mode=self.config.default_execution_mode,
-            map_validator=self.map_validator
+            map_validator=self.map_validator,
+            global_validator=self.global_validator
         )
-        
-        self.code_validator = None # Deprecated, integrated into GlobalValidator = None # Deprecated
-        self.builder = None # Deprecated
         
     @property
     def row_threshold(self):
@@ -131,7 +119,9 @@ class PKDB:
         schema: Optional[SchemaDefinition] = None,
         context: dict = None,
         execution_mode: Optional[str] = None,
-        validator = None
+        map_validator = None,
+        global_validator = None,
+        plan_only: bool = False # Dry run for planning cost
     ) -> Tuple[pd.DataFrame, LLMMetrics, int]:
         """
         Main API: Extracts a table from the LLM's parametric knowledge.
@@ -142,7 +132,8 @@ class PKDB:
             context: Context dictionary (e.g. output_dir for artifacts)
             schema: Optional strict SchemaDefinition to enforce (skips inference)
             execution_mode: "batch" or "row_by_row" (defaults to self.default_execution_mode)
-            validator: Optional GlobalValidator instance.
+            map_validator: Optional Map Side Validator override.
+            global_validator: Optional Reduce Side Validator override.
             
         Returns:
             (pd.DataFrame, LLMMetrics, int): The extracted table, usage metrics, and subquery count.
@@ -160,51 +151,28 @@ class PKDB:
             execution_mode=mode,
             row_threshold=self.config.row_threshold,
             max_depth=self.config.max_depth,
-            source=self.config.source # [NEW] Pass source to planner
+            source=self.config.source
         )
         
+        if plan_only:
+            logger.info("Plan-only mode enabled. Skipping execution.")
+            # Retrieve metrics from llm client manually since engine won't run
+            metrics = self.llm.get_cumulative_metrics()
+            return pd.DataFrame(), metrics, len(plan.map_tasks)
+        
         # 2. Execute
-        val = validator if validator else self.map_validator
-
-        # Re-instantiate engine with validator? 
-        # Or just use the existing self.engine if no validator passed?
-        # But self.engine was init with self.map_validator.
-        # If validator is passed, we MUST create a new engine instance or update it.
-        # Creating new lightweight engine is safer.
+        m_val = map_validator if map_validator else self.map_validator
+        g_val = global_validator if global_validator else self.global_validator
         
         engine = MapReduceEngine(
             self.llm, 
             planner=self.planner, 
             max_partitions=self.config.max_partitions,
-            map_validator=val,
-            global_validator=self.global_validator
+            map_validator=m_val,
+            global_validator=g_val
         )
         
         df, metrics = await engine.execute(plan, context=context)
         
-        # 3. Schema Inference is implicit in Plan or done after?
-        # In this version, Plan includes Schema.
-        
         return df, metrics, len(plan.map_tasks)
-        target_schema = await self.schema_generator.infer_schema(
-             query, 
-             strategy=strategy,
-             context={"output_dir": "."}, # TODO: handle context better
-             input_schema=schema 
-        )
-        
-        # 3. Validate/Clean
-        # Enrich context for validators
-        val_context = context.copy()
-        if plan.schema:
-            val_context['schema'] = plan.schema
-            val_context['primary_keys'] = plan.schema.primary_keys
-            
-        final_df = await self.validator.run(
-            raw_df, 
-            context=val_context
-        )
-        
-        # 4. Code-Based Validation is now integrated into GlobalValidator
-        
-        return final_df, metrics, len(plan.map_tasks)
+

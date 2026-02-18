@@ -30,7 +30,7 @@ class MapReduceEngine:
         self.default_execution_mode = default_execution_mode
         self.default_execution_mode = default_execution_mode
         self.map_validator = map_validator # Runs on each partition (Map side)
-        self.global_validator = global_validator # [NEW] Runs on final result (Reduce side)
+        self.global_validator = global_validator # Runs on final result (Reduce side)
         self.completeness_strategy = completeness_strategy
         # self.validator = Validator(llm_client) # Old validator deprecated
         
@@ -77,10 +77,10 @@ class MapReduceEngine:
         
         # 3. Global Validation (Deduplication, etc)
         if self.global_validator:
-             logger.info("Running Global Validator (Reduce Side)...")
-             # Pass schema for PK awareness
-             val_context = {**context, "schema": plan.schema}
-             df = await self.global_validator.run(df, context=val_context)
+            logger.info("Running Global Validator (Reduce Side)...")
+            # Pass schema for PK awareness
+            val_context = {**context, "schema": plan.schema}
+            df = await self.global_validator.run(df, context=val_context)
         
         logger.info(f"Execution complete. Generated {len(df)} rows. Total Tokens: {total_metrics.total_tokens}")
         return df, total_metrics
@@ -111,7 +111,7 @@ class MapReduceEngine:
                 attempts += 1
                 
                 # Extract (Map) - First call and subsequent pagination calls
-                # V5: Use temperature from context or default
+                # Use temperature from context or default
                 temperature = context.get('extraction_temperature', 0.0) if context else 0.0
                 
                 response = await self.llm.agenerate(
@@ -227,8 +227,8 @@ class MapReduceEngine:
                     val_context = {
                         "constraints": task.constraints or {},
                         "schema": task.schema, # If available
-                        "output_dir": context.get("output_dir"), # [NEW] Pass output_dir for logging
-                        "source": getattr(task, 'source', 'Wikipedia') # [NEW] Pass source
+                        "output_dir": context.get("output_dir"), # Pass output_dir for logging
+                        "source": getattr(task, 'source', 'Wikipedia') # Pass source
                     }
                     logger.info(f"Running Map Validator for task query: {task.query[:50]}...")
                     df = await self.map_validator.run(df, context=val_context)

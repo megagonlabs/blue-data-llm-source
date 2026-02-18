@@ -24,15 +24,18 @@ class DistributionStats:
     key_name: str
     num_partitions: int
     max_partition_size: int
-    ambiguity_score: float # 0-1, 1 is bad
+    ambiguity_score: float # [0, 1], 1 is highest ambiguity
     reasoning: str
     partition_counts: Dict[str, int] = field(default_factory=dict)
 
 @dataclass
 class StrategyCandidate:
+    """
+    Candidate for (Schema, PartitionKey) pair.
+    """
     schema: SchemaDefinition
     partition_key: str
-    score: float = 0.0
+    score: Optional[float] = None # optional
     stats: Optional[DistributionStats] = None
     reasoning: str = ""
 
@@ -40,9 +43,10 @@ class StrategyEvaluator:
     """
     Jointly evaluates (Schema, PartitionKey) candidates.
     """
-    def __init__(self, llm_client: LLMClient):
+    def __init__(self, llm_client: LLMClient, enable_scoring: bool = False):
         self.estimator = DistributionEstimator(llm_client)
-        
+        self.enable_scoring = enable_scoring
+
     async def evaluate_concurrent(self, query: str, candidates: List[StrategyCandidate], constraints: dict = {}) -> List[StrategyCandidate]:
         """
         Runs distribution estimation in parallel for all candidates.
@@ -50,6 +54,10 @@ class StrategyEvaluator:
         async def evaluate_one(cand: StrategyCandidate) -> StrategyCandidate:
             stats = await self.estimator.estimate(query, cand.partition_key, constraints)
             cand.stats = stats
+            
+            if not self.enable_scoring:
+                 return cand
+
             # Simple Scoring Model
             # Penalty for Ambiguity (0.0 to 1.0) -> high ambiguity is bad
             # Penalty for too many partitions (>50)
@@ -71,7 +79,7 @@ class StrategyEvaluator:
             if 5 <= stats.num_partitions <= 20:
                 score += 10
             
-            # [NEW] Heuristic Penalties
+            # Heuristic Penalties
             key_lower = cand.partition_key.lower()
             if "zip" in key_lower and "code" in key_lower:
                 score -= 80
@@ -81,7 +89,7 @@ class StrategyEvaluator:
                 score -= 60
                 stats.reasoning += " [Penalty: Avoid generic IDs]"
                 
-            # [NEW] Semantic Type Logic
+            # Semantic Type Logic
             # Find the column definition
             if cand.schema:
                 col_def = next((c for c in cand.schema.columns if c.name == cand.partition_key), None)
@@ -101,7 +109,7 @@ class StrategyEvaluator:
                             score -= 50
                             stats.reasoning += f" [Penalty: Avoid numerical measures '{sem_type}']"
                         else:
-                             stats.reasoning += f" [Neutral: Numerical but requested in constraints]"
+                            stats.reasoning += f" [Neutral: Numerical but requested in constraints]"
             
             cand.score = score
             cand.reasoning = stats.reasoning
@@ -118,8 +126,19 @@ class StrategyEvaluator:
             
         candidates_info = []
         for c in candidates:
+            # Lookup semantic type and description
+            sem_type = "Unknown"
+            description = ""
+            if c.schema:
+                col_def = next((col for col in c.schema.columns if col.name == c.partition_key), None)
+                if col_def:
+                    sem_type = col_def.semantic_type
+                    description = col_def.description
+
             info = (
                 f"- Key: {c.partition_key}\n"
+                f"  Semantic Type: {sem_type}\n"
+                f"  Description: {description}\n"
                 f"  Number of Partitions: {c.stats.num_partitions}\n"
                 f"  Max Partition Size: {c.stats.max_partition_size}\n"
                 f"  Ambiguity Score: {c.stats.ambiguity_score} (0=Clear, 1=Ambiguous)\n"
@@ -130,7 +149,7 @@ class StrategyEvaluator:
                 # if there are too many partitions, list the first and last max_partitions_in_prompt/2, use ... to note the middle  
                 if len(c.stats.partition_counts) > max_partitions_in_prompt:
                     c.stats.partition_counts = c.stats.partition_counts[:max_partitions_in_prompt//2] + ["..." for _ in range(len(c.stats.partition_counts) - max_partitions_in_prompt)] + c.stats.partition_counts[-max_partitions_in_prompt//2:]
-                info += f"  Estimated Number of Records in Each Partition: {c.stats.partition_counts}"
+                info += f"\n  Estimated Number of Records in Each Partition: {c.stats.partition_counts}"
             candidates_info.append(info)
         
         candidates_str = "\n\n".join(candidates_info)
@@ -288,9 +307,10 @@ class DataPlanBuilder:
         temperature: float = 0.7,
         row_threshold: int = 100,
         max_depth: int = 3,
-        partitioning_method: str = "smart",
+        partitioning_method: str = "llm_based",  # "llm_based" (evaluates candidates) or "first" (picks first column)
         decomposition_strategy: str = "llm_based",
-        partition_selection_mode: str = "llm"  # scoring or llm
+        partition_selection_mode: str = "llm",  # scoring or llm
+        enable_heuristic_scoring: bool = False
     ):
         self.llm = llm_client
         self.max_partitions = max_partitions
@@ -303,10 +323,11 @@ class DataPlanBuilder:
         self.default_partitioning_method = partitioning_method
         self.default_decomposition_strategy = decomposition_strategy
         self.default_partition_selection_mode = partition_selection_mode
+        self.enable_heuristic_scoring = enable_heuristic_scoring
         
         self.analyzer = QueryAnalyzer(llm_client)
         self.schema_gen = SchemaGenerator(llm_client)
-        self.evaluator = StrategyEvaluator(llm_client)
+        self.evaluator = StrategyEvaluator(llm_client, enable_scoring=enable_heuristic_scoring)
         self.dist_estimator = DistributionEstimator(llm_client)
         
     async def create_plan(
@@ -397,30 +418,47 @@ class DataPlanBuilder:
             
             if requires_decomposition:
                 # We need to find a strategy using the PROVIDED schema
-                # We can reuse the evaluator to find the best key in this schema
-                logger.info("Evaluating provided schema for best partition key...")
-                
-                strategy_candidates: List[StrategyCandidate] = []
-                # Schema is decoupled. Scan all columns as potential partition keys.
-                # In strict mode, we don't have a "strategy" list, so we treat all columns as candidates.
-                pk_candidates = [c.name for c in final_schema.columns]
-                
-                for pk_name in pk_candidates:
-                    strategy_candidates.append(StrategyCandidate(
-                        schema=final_schema,
-                        partition_key=pk_name
-                    ))
-                
-                if strategy_candidates:
-                    # Evaluate concurrent
-                    evaluated_candidates = await self.evaluator.evaluate_concurrent(rewritten_query, strategy_candidates, constraints=root_task.constraints)
-                    best_strategy = self.evaluator.select_best(evaluated_candidates)
-                    if best_strategy:
-                        logger.info(f"Selected Best Partition Key for Strict Schema: {best_strategy.partition_key}")
+                if partitioning_method == "first":
+                    # First mode: just pick first column
+                    if final_schema.columns:
+                        best_strategy = StrategyCandidate(
+                            schema=final_schema,
+                            partition_key=final_schema.columns[0].name,
+                            score=0.0,
+                            reasoning="First mode: using first available column"
+                        )
+                        logger.info(f"First mode: Selected first column '{best_strategy.partition_key}' as partition key")
+                else:
+                    # Evaluated mode: evaluate all columns
+                    logger.info("Evaluating provided schema for best partition key...")
+                    
+                    strategy_candidates: List[StrategyCandidate] = []
+                    # Schema is decoupled. Scan all columns as potential partition keys.
+                    # In strict mode, we don't have a "strategy" list, so we treat all columns as candidates.
+                    pk_candidates = [c.name for c in final_schema.columns]
+                    
+                    for pk_name in pk_candidates:
+                        strategy_candidates.append(StrategyCandidate(
+                            schema=final_schema,
+                            partition_key=pk_name
+                        ))
+                    
+                    if strategy_candidates:
+                        # Evaluate concurrent
+                        evaluated_candidates = await self.evaluator.evaluate_concurrent(rewritten_query, strategy_candidates, constraints=root_task.constraints)
+                        
+                        # Respect partition_selection_mode
+                        if partition_selection_mode == "llm":
+                            best_strategy = await self.evaluator.select_best_llm(rewritten_query, evaluated_candidates, constraints=root_task.constraints)
+                        else:
+                            best_strategy = self.evaluator.select_best(evaluated_candidates)
+                        
+                        if best_strategy:
+                            logger.info(f"Selected Best Partition Key for Strict Schema: {best_strategy.partition_key}")
 
         # 1. Joint Optimization (Schema + Partition Strategy) - ONLY IF NO SCHEMA PROVIDED
-        elif partitioning_method == "smart" and requires_decomposition:
-            logger.info("Running Joint Optimization (Smart Planner)...")
+        elif partitioning_method == "llm_based" and requires_decomposition:
+            logger.info("Running Joint Optimization (LLM-Based Planner)...")
             
             # A. Generate Column Pool
             pool = await self.schema_gen.generate_pool(rewritten_query)
@@ -463,10 +501,23 @@ class DataPlanBuilder:
             else:
                 logger.warning("No strategy candidates found. Falling back to simple schema inference.")
 
-        # Fallback / Non-Smart Path
+        # Fallback / Non-Evaluated Path
         if not final_schema:
-            strategy = "first" if partitioning_method == "greedy" else "llm_rank"
+            strategy = "first" if partitioning_method == "first" else "llm_rank"
             final_schema = await self.schema_gen.infer_schema(rewritten_query, strategy=strategy, context=context)
+        
+        # Handle first mode for partition key selection when no schema provided
+        if partitioning_method == "first" and requires_decomposition and not schema and not best_strategy:
+            # In first mode, just pick first column as partition key
+            if final_schema and final_schema.columns:
+                # Create a dummy best_strategy for first mode
+                best_strategy = StrategyCandidate(
+                    schema=final_schema,
+                    partition_key=final_schema.columns[0].name,
+                    score=0.0,
+                    reasoning="First mode: using first available column"
+                )
+                logger.info(f"First mode: Selected first column '{best_strategy.partition_key}' as partition key")
         
         # Attach schema to root task
         root_task.schema = final_schema
@@ -535,7 +586,7 @@ class DataPlanBuilder:
         schema: SchemaDefinition, 
         depth: int = 0,
         max_depth: int = 2,
-        partitioning_method: str = "smart",
+        partitioning_method: str = "llm_based",  # "llm_based" (evaluates candidates) or "first" (picks first column)
         row_threshold: int = 100,
         max_chunks: int = 100,
         subquery_style: str = "natural",
@@ -627,11 +678,11 @@ class DataPlanBuilder:
             # Use suggested stats if available
             if not selected_stats:
                 selected_stats = None
-        elif partitioning_method == "greedy":
+        elif partitioning_method == "first":
             best_key = partition_keys[0]
             selected_stats = None
         else:
-            # SEMANTIC / SMART MODE (Local Evaluation)
+            # SEMANTIC / EVALUATED MODE (Local Evaluation)
             best_score = float('inf')
             
             for pkey in partition_keys:
@@ -805,21 +856,38 @@ class DataPlanBuilder:
             constraints=json.dumps(constraints, indent=2)
         )
         
-        response = await self.llm.agenerate(prompt, temperature=0.0)
-        
-        # Parse lines
-        values = []
-        for line in response.content.split("\n"):
-            clean = line.strip("-* ").strip()
-            if clean and len(clean) < 100: # Sanity check
-                values.append(clean)
-                
-        # Limit number of partitions to prevent explosion
-        if len(values) > self.max_partitions:
-            logger.warning(f"Capping partition values from {len(values)} to {self.max_partitions}")
-            values = values[:self.max_partitions]
+        try:
+            # Use JSON mode and robust parsing
+            response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
+            data = parse_json_response(response.content)
             
-        return values
+            # Expecting {"values": [...]} or list
+            if isinstance(data, dict):
+                raw_values = data.get("values", [])
+            elif isinstance(data, list):
+                raw_values = data
+            else:
+                logger.warning(f"Unexpected partition values format: {type(data)}")
+                raw_values = []
+                
+            # Filter and Clean
+            values = []
+            for v in raw_values:
+                if isinstance(v, (str, int, float)):
+                    s = str(v).strip()
+                    if s and len(s) < 100:
+                        values.append(s)
+            
+            # Limit number of partitions to prevent explosion
+            if len(values) > self.max_partitions:
+                logger.warning(f"Capping partition values from {len(values)} to {self.max_partitions}")
+                values = values[:self.max_partitions]
+                
+            return values
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch partition values for {key.name}: {e}")
+            return []
 
     async def _construct_natural_language_subquery(self, base_query: str, key: str, value: str, constraints: dict = {}, strategy: str = "ALL") -> str:
         """

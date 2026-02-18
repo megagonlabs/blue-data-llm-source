@@ -16,7 +16,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.interface import PKDB
 
-from utils.llm_utils import SharedCostTracker # [NEW]
+from utils.llm_utils import SharedCostTracker
 
 @contextlib.contextmanager
 def query_logging_context(run_dir: str, uid: str):
@@ -83,7 +83,8 @@ async def evaluate_dataset(dataset_path: str, base_output_dir: str, args=None):
         "decomposition_strategy": args.decomposition_strategy if args else "rule_based",
         "row_threshold": args.row_threshold if args else 50,
         "max_depth": args.max_depth if args else 1,
-        "partitioning_method": args.partitioning_method if args else "semantic"
+        "partitioning_method": args.partitioning_method if args else "semantic",
+        "partition_selection_mode": args.partition_selection_mode if args else "llm"
     }
     
     with open(os.path.join(run_dir, "run_config.json"), 'w') as f:
@@ -95,7 +96,7 @@ async def evaluate_dataset(dataset_path: str, base_output_dir: str, args=None):
 
     print(f"Initializing PKDB with config: {config}...")
     
-    # [NEW] Shared State for Global Limits
+    # Shared State for Global Limits
     shared_state = {
         "cost_tracker": SharedCostTracker(max_total_requests=10000, max_total_cost=50.0)
     }
@@ -113,6 +114,7 @@ async def evaluate_dataset(dataset_path: str, base_output_dir: str, args=None):
         row_threshold=config["row_threshold"],
         max_depth=config["max_depth"],
         partitioning_method=config["partitioning_method"],
+        partition_selection_mode=config["partition_selection_mode"],
         shared_state=shared_state
     )
     
@@ -146,28 +148,26 @@ async def evaluate_dataset(dataset_path: str, base_output_dir: str, args=None):
         with query_logging_context(query_out_dir, "process"):
             try:
                 # Pass output_dir context to PKDB
-                # [NEW] V5: Validator Config
-                # [NEW] V5: Validator Config
+                # Validator Config
                 from src.validator import GlobalValidator
                 
                 # Use new validators for Generic Fixes
-                # Use new validators for Generic Fixes
-                # [FIX] Split validators into Map-side (local) and Global (reduce)
+                # Split validators into Map-side (local) and Global (reduce)
                 map_strategies = ["ChunkConstraints", "FormatNormalization"]
                 global_strategies = ["EntityResolution", "Deduplication"]
                 
                 map_validator = GlobalValidator(pkdb.llm, strategies=map_strategies)
                 global_validator = GlobalValidator(pkdb.llm, strategies=global_strategies)
                 
-                # Inject dependencies into Engine (Runtime Config)
-                pkdb.engine.map_validator = map_validator
-                pkdb.engine.global_validator = global_validator
+                # Inject dependencies via extract_table
                 pkdb.engine.completeness_strategy = args.completeness_strategy if args else "heuristic"
                 
                 df, metrics, subquery_count = await pkdb.extract_table(
                     q, 
                     strategy=config["schema_selection_strategy"],
-                    context={"output_dir": query_out_dir, "dataset_id": uid}
+                    context={"output_dir": query_out_dir, "dataset_id": uid},
+                    map_validator=map_validator,
+                    global_validator=global_validator
                 )
                 duration = time.time() - start
                 count = len(df)
@@ -241,7 +241,7 @@ async def evaluate_dataset(dataset_path: str, base_output_dir: str, args=None):
     summary_df.to_csv(summary_path, index=False)
     print(f"\nSummary saved to {summary_path}")
 
-    # [NEW] Save detailed metrics/config JSON
+    # Save detailed metrics/config JSON
     metrics_path = os.path.join(run_dir, "metrics.json")
     
     metrics_dict = {
@@ -269,7 +269,8 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="gpt-4o", help="LLM model name")
     parser.add_argument("--strategy", type=str, default="llm_rank", help="Schema selection strategy")
     parser.add_argument("--decomposition_strategy", type=str, default="llm_based", choices=["rule_based", "llm_based"], help="Decomposition strategy")
-    parser.add_argument("--partitioning_method", type=str, default="smart", choices=["semantic", "greedy", "smart"], help="Partitioning method (semantic, greedy, smart)")
+    parser.add_argument("--partitioning_method", type=str, default="llm_based", choices=["llm_based", "first", "semantic", "greedy"], help="Partitioning method")
+    parser.add_argument("--partition_selection_mode", type=str, default="llm", choices=["scoring", "llm"], help="Method for selecting partition key (scoring or llm)")
     parser.add_argument("--completeness_strategy", type=str, default="heuristic", choices=["heuristic", "llm"], help="Completeness check strategy")
     
     # Toggles & Thresholds

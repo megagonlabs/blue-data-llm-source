@@ -276,6 +276,8 @@ class LLMClient:
         # Safety State Tracking (Local)
         self._total_requests_made = 0
         self._total_cost_incurred = 0.0
+        self._total_input_tokens = 0
+        self._total_output_tokens = 0
         self._safety_lock = asyncio.Lock()
         
         logger.info(
@@ -521,6 +523,23 @@ class LLMClient:
                 f"Current: ${self._total_cost_incurred:.2f}"
             )
 
+
+    async def _accumulate_metrics(self, metrics: LLMMetrics):
+        """Thread-safe accumulation of metrics."""
+        async with self._safety_lock:
+            self._total_input_tokens += metrics.input_tokens
+            self._total_output_tokens += metrics.output_tokens
+            
+    def get_cumulative_metrics(self) -> LLMMetrics:
+        """Return cumulative metrics for this client instance."""
+        return LLMMetrics(
+            input_tokens=self._total_input_tokens,
+            output_tokens=self._total_output_tokens,
+            total_tokens=self._total_input_tokens + self._total_output_tokens,
+            cost=self._total_cost_incurred,
+            request_count=self._total_requests_made
+        )
+
     async def _acall_api(self, messages: List[Dict], **kwargs):
         """
         Raw async API call protected by semaphore, rate limiting, and retries.
@@ -715,6 +734,10 @@ class LLMClient:
                 f"Generated response: {len(content)} chars, "
                 f"{result.metrics.total_tokens} tokens, ${result.metrics.cost:.6f}"
             )
+
+            # Accumulate Metrics
+            await self._accumulate_metrics(result.metrics)
+
 
             return result
 
@@ -1052,6 +1075,39 @@ def aggregate_responses(responses: List[LLMResponse]) -> Dict[str, Any]:
         "cache_creation_tokens": total_metrics.cache_creation_tokens,
     }
 
+
+def parse_json_response(content: str) -> Any:
+    """
+    Robustly parses JSON from LLM response.
+    1. Strips Markdown code blocks.
+    2. Parses JSON.
+    3. If dict, attempts to extract list from common keys ('items', 'rows', 'data').
+    4. Returns parsed object (list or dict).
+    """
+    content = content.strip()
+    
+    # 1. Strip Markdown
+    if "```json" in content:
+        content = content.split("```json")[1].split("```")[0].strip()
+    elif "```" in content:
+        content = content.split("```")[1].split("```")[0].strip()
+        
+    # 2. Parse
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        # Simple Repair: Check if it's a list that was truncated
+        if content.startswith("[") and not content.endswith("]"):
+            # Try to find last comma
+            last_comma = content.rfind("},")
+            if last_comma != -1:
+                try:
+                    return json.loads(content[:last_comma+1] + "]")
+                except:
+                    pass
+        raise # Re-raise if repair fails
+        
+    return parsed
 
 # --- Example Usage ---
 async def main():
