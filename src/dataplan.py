@@ -11,7 +11,8 @@ from src.analysis import DataTask, QueryAnalyzer, QueryAnalysisResult
 from src.prompts import (
     DISTRIBUTION_ESTIMATION_PROMPT,
     PARTITION_VALUES_PROMPT,
-    SUBQUERY_REWRITE_PROMPT
+    SUBQUERY_REWRITE_PROMPT,
+    PARTITION_SELECTION_PROMPT
 )
 from utils.llm_utils import LLMClient
 
@@ -80,6 +81,28 @@ class StrategyEvaluator:
                 score -= 60
                 stats.reasoning += " [Penalty: Avoid generic IDs]"
                 
+            # [NEW] Semantic Type Logic
+            # Find the column definition
+            if cand.schema:
+                col_def = next((c for c in cand.schema.columns if c.name == cand.partition_key), None)
+                if col_def:
+                    sem_type = col_def.semantic_type.lower()
+                    
+                    # Boost for good types
+                    if sem_type in ["time", "categorical", "location", "entity"]:
+                        score += 20
+                        stats.reasoning += f" [Boost: Good Semantic Type '{sem_type}']"
+                        
+                    # Penalty for numerical measures (unless requested in constraints)
+                    elif sem_type == "numerical":
+                        # Check if this key is strictly required by constraints
+                        is_constraint = cand.partition_key in constraints
+                        if not is_constraint:
+                            score -= 50
+                            stats.reasoning += f" [Penalty: Avoid numerical measures '{sem_type}']"
+                        else:
+                             stats.reasoning += f" [Neutral: Numerical but requested in constraints]"
+            
             cand.score = score
             cand.reasoning = stats.reasoning
             return cand
@@ -88,6 +111,57 @@ class StrategyEvaluator:
         tasks = [evaluate_one(c) for c in candidates]
         results = await asyncio.gather(*tasks)
         return results
+
+    async def select_best_llm(self, query: str, candidates: List[StrategyCandidate], constraints: dict = {}) -> Optional[StrategyCandidate]:
+        if not candidates:
+            return None
+            
+        candidates_info = []
+        for c in candidates:
+            info = (
+                f"- Key: {c.partition_key}\n"
+                f"  Number of Partitions: {c.stats.num_partitions}\n"
+                f"  Max Partition Size: {c.stats.max_partition_size}\n"
+                f"  Ambiguity Score: {c.stats.ambiguity_score} (0=Clear, 1=Ambiguous)\n"
+                f"  Stats Reasoning: {c.stats.reasoning}"
+            )
+            if c.stats.partition_counts:
+                max_partitions_in_prompt = 50
+                # if there are too many partitions, list the first and last max_partitions_in_prompt/2, use ... to note the middle  
+                if len(c.stats.partition_counts) > max_partitions_in_prompt:
+                    c.stats.partition_counts = c.stats.partition_counts[:max_partitions_in_prompt//2] + ["..." for _ in range(len(c.stats.partition_counts) - max_partitions_in_prompt)] + c.stats.partition_counts[-max_partitions_in_prompt//2:]
+                info += f"  Estimated Number of Records in Each Partition: {c.stats.partition_counts}"
+            candidates_info.append(info)
+        
+        candidates_str = "\n\n".join(candidates_info)
+        
+        prompt = PARTITION_SELECTION_PROMPT.format(
+            query=query,
+            constraints=json.dumps(constraints, indent=2),
+            candidates_str=candidates_str
+        )
+        
+        try:
+            response = await self.estimator.llm.agenerate(prompt, response_format={"type": "json_object"})
+            data = json.loads(response.content)
+            selected_key = data.get("selected_key")
+            reasoning = data.get("reasoning", "")
+            
+            logger.info(f"LLM Selected Partition Key: {selected_key} (Reason: {reasoning})")
+            
+            # Find the candidate
+            for c in candidates:
+                if c.partition_key == selected_key:
+                    c.reasoning += f" [LLM Selected: {reasoning}]"
+                    return c
+            
+            # Fallback if name mismatch
+            logger.warning(f"LLM selected key '{selected_key}' not found in candidates. Falling back to score.")
+            return self.select_best(candidates)
+            
+        except Exception as e:
+            logger.error(f"LLM Partition Selection failed: {e}. Falling back to score.")
+            return self.select_best(candidates)
 
     def select_best(self, candidates: List[StrategyCandidate]) -> Optional[StrategyCandidate]:
         if not candidates:
@@ -215,7 +289,8 @@ class DataPlanBuilder:
         row_threshold: int = 100,
         max_depth: int = 3,
         partitioning_method: str = "smart",
-        decomposition_strategy: str = "rule_based"
+        decomposition_strategy: str = "llm_based",
+        partition_selection_mode: str = "llm"  # scoring or llm
     ):
         self.llm = llm_client
         self.max_partitions = max_partitions
@@ -227,6 +302,7 @@ class DataPlanBuilder:
         self.default_max_depth = max_depth
         self.default_partitioning_method = partitioning_method
         self.default_decomposition_strategy = decomposition_strategy
+        self.default_partition_selection_mode = partition_selection_mode
         
         self.analyzer = QueryAnalyzer(llm_client)
         self.schema_gen = SchemaGenerator(llm_client)
@@ -246,6 +322,7 @@ class DataPlanBuilder:
         execution_mode: str = "batch",
         max_depth: Optional[int] = None,
         source: str = "Wikipedia",
+        partition_selection_mode: Optional[str] = None,
         **kwargs
     ) -> DataPlanRequest:
         
@@ -253,6 +330,7 @@ class DataPlanBuilder:
         row_threshold = row_threshold if row_threshold is not None else self.default_row_threshold
         decomposition_strategy = decomposition_strategy or self.default_decomposition_strategy
         partitioning_method = partitioning_method or self.default_partitioning_method
+        partition_selection_mode = partition_selection_mode or self.default_partition_selection_mode
         
         context = context or {}
         self.max_chunks_limit = max_chunks # Store for recursive tracking
@@ -273,7 +351,7 @@ class DataPlanBuilder:
         reasoning = "Rule-based check"
         
         if decomposition_strategy == "llm_based":
-             # Hybrid approach: If rows > threshold, force decomposition to avoid truncation
+            # Hybrid approach: If rows > threshold, force decomposition to avoid truncation
             if analysis.estimated_rows > row_threshold:
                 logger.info(f"Estimated rows ({analysis.estimated_rows}) > {row_threshold}. Forcing Map-Reduce (Safety Catch).")
                 requires_decomposition = True
@@ -281,14 +359,14 @@ class DataPlanBuilder:
             else:
                 requires_decomposition, reasoning = await self.analyzer.should_decompose(analysis.rewritten_query, analysis.estimated_rows)
         else:
-             # Rule based default
-             requires_decomposition = analysis.estimated_rows > row_threshold
-             reasoning = f"Estimated rows ({analysis.estimated_rows}) > Threshold ({row_threshold})"
-             
-             # Heuristic: If Collection Strategy is LIMIT <small>, we might avoid decomposition even if estimate is high?
-             # But commonly estimate accounts for the limit? No, estimate is global.
-             # If LIMIT 5 is requested but global is 1000, we probably don't need to decompose if we can find 5 easily.
-             # But for now, stick to basic rule.
+            # Rule based default
+            requires_decomposition = analysis.estimated_rows > row_threshold
+            reasoning = f"Estimated rows ({analysis.estimated_rows}) > Threshold ({row_threshold})"
+            
+            # Heuristic: If Collection Strategy is LIMIT <small>, we might avoid decomposition even if estimate is high?
+            # But commonly estimate accounts for the limit? No, estimate is global.
+            # If LIMIT 5 is requested but global is 1000, we probably don't need to decompose if we can find 5 easily.
+            # But for now, stick to basic rule.
 
         logger.info(f"Decomposition Decision: {requires_decomposition} ({reasoning})")
 
@@ -374,7 +452,11 @@ class DataPlanBuilder:
                 evaluated_candidates = await self.evaluator.evaluate_concurrent(rewritten_query, strategy_candidates, constraints=root_task.constraints)
                 
                 # E. Selection
-                best_strategy = self.evaluator.select_best(evaluated_candidates)
+                if partition_selection_mode == "llm":
+                    best_strategy = await self.evaluator.select_best_llm(rewritten_query, evaluated_candidates, constraints=root_task.constraints)
+                else:
+                    best_strategy = self.evaluator.select_best(evaluated_candidates)
+
                 if best_strategy:
                     final_schema = best_strategy.schema
                     logger.info(f"Selected Best Strategy: Schema={final_schema.table_name}, Key={best_strategy.partition_key}, Score={best_strategy.score}")

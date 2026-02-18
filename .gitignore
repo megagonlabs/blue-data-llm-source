@@ -91,4 +91,6 @@ Thumbs.db
 # experiments
 exp_results/
 examples/
+datasets/
+exp_*/
 

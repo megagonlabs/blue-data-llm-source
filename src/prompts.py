@@ -152,15 +152,15 @@ Return ONLY the index (0-based) of the best schema.
 """
 
 SCHEMA_TYPE_INFERENCE_PROMPT = """
-Query: "{query}"
+Data Query: "{query}"
 Table: {table_name}
 Columns: {columns_str}
 
 For each column, determine:
 1. Semantic Type (categorical, numerical, time, entity, text, etc.)
 2. Data Type (int, float, date, str, bool, list, etc.)
-3. Formatting (REQUIRED for Time/Date/Currency, e.g. "YYYY-MM-DD", "$", "%.2f"). If none applies, use empty string.
-   
+3. Formatting: a string that describes the format of values in this column, such that the values could have a uniform format across multiple LLM calls. Formatting could be a pattern, a specific format, or just a natural description of the format. If there is no need to specify format of values, use empty string. Examples: "YYYY-MM-DD", "$", "%.2f", "5 digits zip code", "Full name without abbreviation", "Abbreviation only", etc. Please use common sense to determine the unform format for columns that achieve the data query.
+
 Return JSON:
 {{
     "columns": {{
@@ -243,6 +243,43 @@ CRITICAL:
 - Ensure the result is a subset of the Base Query.
 
 Return ONLY the rewritten query text.
+"""
+
+PARTITION_SELECTION_PROMPT = """
+Data Query: "{query}"
+Constraints: {constraints}
+
+I have identified the following candidates for partitioning the data to solve the query:
+
+{candidates_str}
+
+Task: Select the BEST partition key from the list above.
+
+Guidelines:
+1. **Mutual Exclusivity** (Primary):
+   - Prefer keys where each record belongs to ONE and ONLY ONE partition.
+   - Avoid overlapping partitions if possible.
+
+2. **Semantic Appropriateness**:
+   - Prefer keys that naturally divide the data into meaningful groups (Time, Category, Location).
+   - AVOID partitioning by numerical measures (e.g. "Population", "Area", "GDP") unless the query explicitly asks to filter/group by them.
+   - AVOID generic IDs if better natural keys exist.
+
+3. **Efficiency**:
+   - The goal is to break the large result set into smaller, manageable chunks.
+   - "Dust" (too many tiny partitions) is bad.
+   - "Dust" (too many tiny partitions) is bad.
+   - "Fat" (one huge partition) is bad.
+
+4. **Feasibility**:
+   - Can we easily list all values for this key? (e.g. "States" is easy, "every unique population value" is hard).
+
+Selection:
+Return a valid JSON object:
+{{
+    "selected_key": "Name of the key",
+    "reasoning": "Why this key is better than others..."
+}}
 """
 
 # --- EXECUTION & EXTRACTION ---

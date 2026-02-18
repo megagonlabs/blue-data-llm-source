@@ -278,6 +278,7 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
         "max_concurrent": args.max_concurrent if args else 10,
         "row_threshold": args.row_threshold if args else 50,
         "decomposition_strategy": args.decomposition_strategy,
+        "partition_selection_mode": args.partition_selection_mode if args else "auto", # Added this line
         "execution_mode": args.execution_mode if args else "batch",
         "generated_by": "experiments/run_wikitabgen.py"
     }
@@ -540,6 +541,7 @@ if __name__ == "__main__":
     parser.add_argument("--execution_mode", type=str, default="batch", choices=["batch", "row_by_row"], help="Execution mode")
     parser.add_argument("--table", type=str, help="Specific table name to run (overrides limit)")
     parser.add_argument("--source", type=str, default="Wikipedia", help="Data source for the extraction")
+    parser.add_argument("--partition_selection_mode", type=str, default="scoring", choices=["scoring", "llm"], help="Method for selecting partition key (scoring or llm)")
     
     args = parser.parse_args()
     
