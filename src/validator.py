@@ -2,9 +2,11 @@ import logging
 import pandas as pd
 import json
 import asyncio
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from abc import ABC, abstractmethod
 import re
+
+from utils.llm_utils import LLMMetrics, sum_metrics
 
 from src.prompts import (
     CHUNK_REFINEMENT_PROMPT,
@@ -35,26 +37,33 @@ class BaseValidator(ABC):
         pass
 
     @abstractmethod
-    async def fix(self, df: pd.DataFrame, report: Any, context: Dict[str, Any] = None) -> pd.DataFrame:
+    async def fix(self, df: pd.DataFrame, report: Any, context: Dict[str, Any] = None) -> Tuple[pd.DataFrame, LLMMetrics]:
         """
         Fixes the issues identified in the report.
-        Returns the cleaned DataFrame.
+        Returns the cleaned DataFrame and the metrics.
         """
         pass
 
-    async def run(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> pd.DataFrame:
+    async def run(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> Tuple[pd.DataFrame, LLMMetrics]:
         """
         Orchestrates Detect -> Fix.
+        Returns (DataFrame, Metrics).
         """
+        metrics = LLMMetrics()
         if df.empty:
-            return df
+            return df, metrics
             
-        report = await self.detect(df, context)
-        # If report indicates no errors (implementation dependent check), return early
+        report, detect_metrics = await self.detect(df, context)
+        metrics = metrics + detect_metrics
+        
+        # If report indicates no errors, return early
         if not report: 
-            return df
+            return df, metrics
             
-        return await self.fix(df, report, context)
+        fixed_df, fix_metrics = await self.fix(df, report, context)
+        metrics = metrics + fix_metrics
+        
+        return fixed_df, metrics
 
 
 class GlobalValidator:
@@ -87,18 +96,21 @@ class GlobalValidator:
                 logger.warning(f"Unknown validator strategy: {s}")
         return active
 
-    async def run(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> pd.DataFrame:
+    async def run(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> Tuple[pd.DataFrame, LLMMetrics]:
         """
         Sequentially runs all configured validators.
         """
         context = context or {}
+        total_metrics = LLMMetrics()
         for validator in self.validators:
             try:
                 logger.info(f"Running Validator: {validator.__class__.__name__}")
-                df = await validator.run(df, context)
+                df, metrics = await validator.run(df, context)
+                if metrics:
+                    total_metrics = total_metrics + metrics
             except Exception as e:
                 logger.error(f"Validator {validator.__class__.__name__} failed: {e}")
-        return df
+        return df, total_metrics
 
 
 # --- Concrete Strategies ---
@@ -108,8 +120,9 @@ class ChunkValidator(BaseValidator):
     Enforces partition constraints (e.g. Year=2020) and General Data Quality.
     Uses LLM to validate values against constraints, types, and schema.
     """
-    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> List[int]:
+    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> Tuple[List[int], LLMMetrics]:
         """Returns list of indices violating constraints using LLM-based value validation."""
+        metrics = LLMMetrics()
         constraints = context.get('constraints', {})
         
         # Determine columns to validate (Constraints + PKs)
@@ -122,7 +135,7 @@ class ChunkValidator(BaseValidator):
                 columns_to_validate.append(pk)
         
         if not columns_to_validate:
-            return []
+            return [], metrics
             
         invalid_indices = set()
         
@@ -161,6 +174,8 @@ class ChunkValidator(BaseValidator):
             
             try:
                 response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
+                if response.metrics:
+                    metrics = metrics + response.metrics
                 content = response.content
                 
                 # Save I/O
@@ -203,10 +218,11 @@ class ChunkValidator(BaseValidator):
                 "invalid_rows": invalid_rows_data
             })
             
-        return unique_invalid
+        return unique_invalid, metrics
 
-    async def fix(self, df: pd.DataFrame, report: List[int], context: Dict[str, Any] = None) -> pd.DataFrame:
+    async def fix(self, df: pd.DataFrame, report: List[int], context: Dict[str, Any] = None) -> Tuple[pd.DataFrame, LLMMetrics]:
         """Attempts to refine violating rows via LLM, or drops them."""
+        metrics = LLMMetrics()
         constraints = context.get('constraints', {})
         try:
             invalid_rows = df.loc[report].to_dict('records')
@@ -214,7 +230,7 @@ class ChunkValidator(BaseValidator):
             invalid_rows = []
 
         if not self.llm:
-            return df.drop(report)
+            return df.drop(report), metrics
 
         logger.info(f"ChunkValidator: Attempting to refine {len(report)} rows.")
         
@@ -225,6 +241,8 @@ class ChunkValidator(BaseValidator):
         
         try:
             response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
+            if response.metrics:
+                metrics = metrics + response.metrics
             content = response.content
             
             # Save LLM I/O for Validation
@@ -262,11 +280,11 @@ class ChunkValidator(BaseValidator):
                     "llm_output": content
                 })
 
-            return final_df
+            return final_df, metrics
             
         except Exception as e:
             logger.warning(f"ChunkValidator Fix failed: {e}")
-            return df.drop(report)
+            return df.drop(report), metrics
 
     def _log_val_io(self, output_dir: str, task_type: str, prompt: str, response: str, input_count: int):
         import os
@@ -306,11 +324,13 @@ class DeduplicationValidator(BaseValidator):
         from src.prompts import DEDUPLICATION_RESOLUTION_PROMPT
         self.prompt_template = DEDUPLICATION_RESOLUTION_PROMPT
 
-    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> Any:
+    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> Tuple[Any, LLMMetrics]:
         # Returns:
         # - List[int] (indices to drop) if strategy="first"
         # - List[List[int]] (groups of duplicates) if strategy="llm-based"
+        # - LLMMetrics
         
+        metrics = LLMMetrics()
         schema = context.get('schema')
         primary_keys = schema.primary_keys if schema else []
         
@@ -330,7 +350,7 @@ class DeduplicationValidator(BaseValidator):
                         logger.info(f"DeduplicationValidator (first): Found {sum(is_dup)} exact duplicates (No PK).")
                 except:
                     pass
-            return sorted(list(set(invalid_indices)))
+            return sorted(list(set(invalid_indices))), metrics
             
         elif self.strategy == "llm-based":
             # New Logic: Return clusters of duplicates
@@ -352,18 +372,19 @@ class DeduplicationValidator(BaseValidator):
                 # So we fallback to 'first' logic for non-PK duplicates if they are identical content.
                 # But if we want to be safe, let's just return nothing or use 'first' logic.
                 pass
-            return duplicate_groups
+            return duplicate_groups, metrics
             
-        return []
+        return [], metrics
 
-    async def fix(self, df: pd.DataFrame, report: Any, context: Dict[str, Any] = None) -> pd.DataFrame:
+    async def fix(self, df: pd.DataFrame, report: Any, context: Dict[str, Any] = None) -> Tuple[pd.DataFrame, LLMMetrics]:
+        metrics = LLMMetrics()
         if not report:
-            return df
+            return df, metrics
             
         if self.strategy == "first":
             # Report is List[int]
             logger.info(f"DeduplicationValidator: Dropping {len(report)} rows (Strategy: first).")
-            return df.drop(report)
+            return df.drop(report), metrics
             
         elif self.strategy == "llm-based":
             # Report is List[List[int]]
@@ -431,23 +452,23 @@ class DeduplicationValidator(BaseValidator):
                     
             if indices_to_drop:
                 logger.info(f"DeduplicationValidator: Dropping {len(indices_to_drop)} rows (Strategy: llm-based).")
-                return df.drop(indices_to_drop)
+                return df.drop(indices_to_drop), metrics
                 
-        return df
-
+        return df, metrics
 
 class CodeValidator(BaseValidator):
     """
     Gen-T Style Validation: Generate Code -> Execute -> Fix.
     """
-    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> List[Dict]:
+    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> Tuple[List[Dict], LLMMetrics]:
         """
-        Returns list of invalid rows with error messages.
+        Returns list of invalid rows with error messages and metrics.
         Format: [{'index': i, 'row': dict, 'error': str}]
         """
+        metrics = LLMMetrics()
         schema = context.get('schema')
         if not schema:
-            return []
+            return [], metrics
             
         # 1. Generate Assertions (if not active cached?)
         # Ideally we generate once per schema. For now, gen every time or pass in context.
@@ -458,11 +479,13 @@ class CodeValidator(BaseValidator):
             if hasattr(schema, 'columns'):
                 schema_desc = ", ".join([f"{c.name} ({c.semantic_type}): {c.description}" for c in schema.columns])
             
-            assertions = await self._generate_assertions(schema_desc, df.iloc[0].to_dict())
+            assertions, gen_metrics = await self._generate_assertions(schema_desc, df.iloc[0].to_dict())
+            if gen_metrics:
+                metrics = metrics + gen_metrics
             logger.info(f"Generated Assertions: {assertions}")
         except Exception as e:
             logger.error(f"Assertion Generation Failed: {e}")
-            return []
+            return [], metrics
 
         # 2. Execute
         invalid_items = []
@@ -471,7 +494,7 @@ class CodeValidator(BaseValidator):
         try:
             compile(assertions, '<string>', 'exec')
         except:
-            return []
+            return [], metrics
 
         import re
         import datetime
@@ -486,12 +509,13 @@ class CodeValidator(BaseValidator):
             except Exception as e:
                 invalid_items.append({"index": df.index[i], "row": row, "error": str(e)})
                 
-        return invalid_items
+        return invalid_items, metrics
 
-    async def fix(self, df: pd.DataFrame, report: List[Dict], context: Dict[str, Any] = None) -> pd.DataFrame:
+    async def fix(self, df: pd.DataFrame, report: List[Dict], context: Dict[str, Any] = None) -> Tuple[pd.DataFrame, LLMMetrics]:
         """Fixes invalid rows based on error report."""
+        metrics = LLMMetrics()
         if not report:
-            return df
+            return df, metrics
             
         # Limit batch size
         target_errors = report[:20] 
@@ -503,6 +527,8 @@ class CodeValidator(BaseValidator):
         
         try:
             response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
+            if response.metrics:
+                metrics = metrics + response.metrics
             content = response.content
             if "```json" in content:
                 content = content.split("```json")[1].split("```")[0]
@@ -518,7 +544,7 @@ class CodeValidator(BaseValidator):
                         break
             
             if not result_list:
-                return df # Fix failed, keep original? OR drop? Let's keep original for now (Soft Fail)
+                return df, metrics # Fix failed, keep original? OR drop? Let's keep original for now (Soft Fail)
                 
             # Update DataFrame
             # We need to map back to indices. But the fix might not return indices.
@@ -529,24 +555,25 @@ class CodeValidator(BaseValidator):
             df_dropped = df.drop(indices_to_drop)
             
             df_fixed = pd.DataFrame(result_list)
-            return pd.concat([df_dropped, df_fixed], ignore_index=True)
+            return pd.concat([df_dropped, df_fixed], ignore_index=True), metrics
             
         except Exception as e:
             logger.error(f"CodeValidator Fix Failed: {e}")
-            return df
+            return df, metrics
 
-    async def _generate_assertions(self, schema_desc: str, sample_row: Dict) -> str:
+    async def _generate_assertions(self, schema_desc: str, sample_row: Dict) -> Tuple[str, Optional[LLMMetrics]]:
         prompt = GEN_ASSERTION_PROMPT.format(
             schema_desc=schema_desc,
             sample_row=json.dumps(sample_row, default=str)[:500]
         )
         response = await self.llm.agenerate(prompt, temperature=0.0)
         code = response.content
+        metrics = response.metrics
         if "```python" in code:
             code = code.split("```python")[1].split("```")[0]
         elif "```" in code:
             code = code.split("```")[1].split("```")[0]
-        return code
+        return code, metrics
 
 
 class EmbeddingValidator(BaseValidator):
@@ -571,10 +598,11 @@ class EmbeddingValidator(BaseValidator):
                 logger.warning("EmbeddingValidator: sentence-transformers or scikit-learn not installed. Skipping.")
                 self.encoder = False
 
-    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> List[int]:
+    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> Tuple[List[int], LLMMetrics]:
         self._lazy_load()
+        metrics = LLMMetrics()
         if not self.encoder or df.empty:
-            return []
+            return [], metrics
             
         # 1. Serialize rows to text
         # We want to catch rows that are semantically distinct from the majority.
@@ -597,14 +625,15 @@ class EmbeddingValidator(BaseValidator):
         if outlier_indices:
             logger.info(f"EmbeddingValidator: Detected {len(outlier_indices)} outliers: {outlier_indices}")
             
-        return outlier_indices
+        return outlier_indices, metrics
 
-    async def fix(self, df: pd.DataFrame, report: List[int], context: Dict[str, Any] = None) -> pd.DataFrame:
+    async def fix(self, df: pd.DataFrame, report: List[int], context: Dict[str, Any] = None) -> Tuple[pd.DataFrame, LLMMetrics]:
         """
         Asks LLM to verify if the outliers are actually invalid.
         """
+        metrics = LLMMetrics()
         if not report:
-            return df
+            return df, metrics
             
         # Optimization: If too many outliers, maybe just drop? 
         # But maybe the model is wrong. Let's ask LLM for a sample.
@@ -653,7 +682,7 @@ class EmbeddingValidator(BaseValidator):
         
         # If we can't verify easily (no query), we skip dropping to be safe.
         if query == "Unknown Query":
-            return df
+            return df, metrics
             
         batch_size = 10
         import math
@@ -673,6 +702,8 @@ class EmbeddingValidator(BaseValidator):
             prompt = prompt_template.format(query=query, rows=json.dumps(batch, indent=2))
             try:
                 response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
+                if response.metrics:
+                    metrics = metrics + response.metrics
                 content = response.content
                 if "```json" in content:
                     content = content.split("```json")[1].split("```")[0]
@@ -691,9 +722,9 @@ class EmbeddingValidator(BaseValidator):
         # Drop confirmed invalid
         if confirmed_invalid_indices:
             logger.info(f"EmbeddingValidator: Dropping {len(confirmed_invalid_indices)} confirmed invalid rows.")
-            return df.drop(confirmed_invalid_indices)
+            return df.drop(confirmed_invalid_indices), metrics
             
-        return df
+        return df, metrics
 
 
 class FormatNormalizationValidator(BaseValidator):
@@ -705,19 +736,20 @@ class FormatNormalizationValidator(BaseValidator):
         from src.prompts import FORMAT_NORMALIZATION_PROMPT
         self.prompt_template = FORMAT_NORMALIZATION_PROMPT
 
-    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> List[int]:
-        # This validator modifies in-place during fix(), so detect() is a pass-through or identification step.
-        # We identify columns that need normalization.
-        # For simplicity, we just return a "flag" in the report to trigger fix.
-        return [1] if not df.empty else []
+    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> Tuple[List[int], LLMMetrics]:
+        # This validator modifies in-place during fix(),
+        # Detect rows missing primary key value or having a generic entity name?
+        # Actually this is best done as a pass-through detect -> grouping fix.
+        return ([1] if not df.empty else []), LLMMetrics()
 
-    async def fix(self, df: pd.DataFrame, report: List[int], context: Dict[str, Any] = None) -> pd.DataFrame:
+    async def fix(self, df: pd.DataFrame, report: List[int], context: Dict[str, Any] = None) -> Tuple[pd.DataFrame, LLMMetrics]:
+        metrics = LLMMetrics()
         if df.empty or not report:
-            return df
+            return df, metrics
             
         schema = context.get('schema')
         if not schema:
-            return df
+            return df, metrics
 
         # Iterate over columns with specific types
         for col in schema.columns:
@@ -771,6 +803,8 @@ class FormatNormalizationValidator(BaseValidator):
                 
                 try:
                     response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
+                    if response.metrics:
+                        metrics = metrics + response.metrics
                     content = response.content
                     if "```json" in content:
                         content = content.split("```json")[1].split("```")[0]
@@ -792,7 +826,7 @@ class FormatNormalizationValidator(BaseValidator):
                 except Exception as e:
                     logger.warning(f"FormatNormalization failed for {col.name}: {e}")
                     
-        return df
+        return df, metrics
 
 
 class EntityResolutionValidator(BaseValidator):
@@ -805,17 +839,18 @@ class EntityResolutionValidator(BaseValidator):
         from src.prompts import ENTITY_RESOLUTION_DECISION_PROMPT
         self.prompt_template = ENTITY_RESOLUTION_DECISION_PROMPT
 
-    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> List[int]:
+    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> Tuple[List[int], LLMMetrics]:
         # Returns indices of DUPLICATE entities that need resolution.
         # We group by specific "Entity Name" columns.
         
+        metrics = LLMMetrics()
         logger.info("EntityResolution: Starting Detection...")
         logger.info(f"EntityResolution: DF Shape: {df.shape}")
         
         schema = context.get('schema')
         if not schema:
             logger.warning("EntityResolution: No schema found in context.")
-            return []
+            return [], metrics
             
         # 1. Identify "Name" / "Title" column
         name_col = None
@@ -828,8 +863,8 @@ class EntityResolutionValidator(BaseValidator):
                 break
         
         if not name_col or name_col not in df.columns:
-            logger.warning(f"EntityResolution: Name column not found. target='{name_col}'. DF Cols: {list(df.columns)}")
-            return []
+            logger.warning(f"EntityResolution: Name column not found. target='{name_col}'. DF DF Cols: {list(df.columns)}")
+            return [], metrics
             
         # 2. Find duplicates in Name
         # We look for Name duplicates where other fields (like ID) differ.
@@ -838,15 +873,16 @@ class EntityResolutionValidator(BaseValidator):
         logger.info(f"EntityResolution: Duplicates Mask Sum: {num_dups}")
         
         if not any(dup_mask):
-            return []
+            return [], metrics
             
         candidates = df[dup_mask].index.tolist()
         logger.info(f"EntityResolution: Found {len(candidates)} duplicates for resolution in column '{name_col}'.")
-        return candidates
+        return candidates, metrics
 
-    async def fix(self, df: pd.DataFrame, report: List[int], context: Dict[str, Any] = None) -> pd.DataFrame:
+    async def fix(self, df: pd.DataFrame, report: List[int], context: Dict[str, Any] = None) -> Tuple[pd.DataFrame, LLMMetrics]:
+        metrics = LLMMetrics()
         if not report:
-            return df
+            return df, metrics
             
         # Determine Name col again
         schema = context.get('schema')
@@ -902,6 +938,8 @@ class EntityResolutionValidator(BaseValidator):
                 labeled_conflicts = [{**row, "_local_idx": i} for i, row in enumerate(conflicts)]
                 
                 response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
+                if response.metrics:
+                    metrics = metrics + response.metrics
                 content = response.content
                 if "```json" in content:
                     content = content.split("```json")[1].split("```")[0]

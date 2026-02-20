@@ -98,7 +98,7 @@ async def evaluate_dataset(dataset_path: str, base_output_dir: str, args=None):
     
     # Shared State for Global Limits
     shared_state = {
-        "cost_tracker": SharedCostTracker(max_total_requests=10000, max_total_cost=50.0)
+        "cost_tracker": SharedCostTracker(max_total_requests=args.max_total_requests if args else 10000, max_total_cost=50.0)
     }
 
     pkdb = PKDB(
@@ -268,7 +268,7 @@ if __name__ == "__main__":
     # Core Configs
     parser.add_argument("--model", type=str, default="gpt-4o", help="LLM model name")
     parser.add_argument("--strategy", type=str, default="llm_rank", help="Schema selection strategy")
-    parser.add_argument("--decomposition_strategy", type=str, default="llm_based", choices=["rule_based", "llm_based"], help="Decomposition strategy")
+    parser.add_argument("--decomposition_strategy", type=str, default="llm_based", choices=["rule_based", "llm_based", "none"], help="Decomposition strategy")
     parser.add_argument("--partitioning_method", type=str, default="llm_based", choices=["llm_based", "first", "semantic", "greedy"], help="Partitioning method")
     parser.add_argument("--partition_selection_mode", type=str, default="llm", choices=["scoring", "llm"], help="Method for selecting partition key (scoring or llm)")
     parser.add_argument("--completeness_strategy", type=str, default="heuristic", choices=["heuristic", "llm"], help="Completeness check strategy")
@@ -279,6 +279,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_depth", type=int, default=1, help="Max recursion depth")
     parser.add_argument("--max_partitions", type=int, default=200, help="Max partitions per map task")
     parser.add_argument("--max_concurrent", type=int, default=20, help="Max concurrent requests")
+    parser.add_argument("--max_total_requests", type=int, default=10000, help="Global max total LLM requests limit")
     parser.add_argument("--ids", type=str, default=None, help="Comma-separated list of dataset IDs to run (e.g. 'geo_countries,sci_elements')")
     
     args = parser.parse_args()

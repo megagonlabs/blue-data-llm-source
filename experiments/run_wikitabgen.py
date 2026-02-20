@@ -12,7 +12,6 @@ from unidecode import unidecode
 from dateutil import parser as date_parser
 
 # Ensure project root is in path
-# Ensure project root is in path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import src
 print(f"DEBUG: src imported from: {src.__file__}")
@@ -20,7 +19,7 @@ print(f"DEBUG: src imported from: {src.__file__}")
 from src.interface import PKDB
 from src.schema import SchemaDefinition, Column
 from experiments.run_mini_dataset import setup_global_logging, query_logging_context
-from utils.llm_utils import SharedCostTracker # [NEW]
+from utils.llm_utils import SharedCostTracker
 
 # --- METRIC UTILS (Ported from WikiTabGen/example_notebooks/Metrics_calculation.ipynb) ---
 
@@ -126,7 +125,7 @@ def normalize_primary_columns(df, norm_columns, date_columns, primary_columns, k
     return [tuple(r) for r in df[primary_columns].to_numpy()], df
 
 def find_row(df, columns, values):
-    # Robust row finding
+    # row finding according
     # values is a tuple of normalized values
     # We need to match against the normalized columns in df
     
@@ -165,10 +164,7 @@ def evaluate_table_metrics(df_fetched, df_ref, primary_columns, keys_type, date_
     total_matches = 0
     key_matches = 0
     
-    # Convert lists to sets for O(1) lookup? 
-    # But we need row index.
     # Original code iterates list.
-    
     ref_entities_set = set(ref_entities)
 
     for fetched_entity in fetched_entities:
@@ -278,23 +274,22 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
         "max_concurrent": args.max_concurrent if args else 10,
         "row_threshold": args.row_threshold if args else 50,
         "decomposition_strategy": args.decomposition_strategy,
-        "partition_selection_mode": args.partition_selection_mode if args else "auto", # Added this line
+        "partition_selection_mode": args.partition_selection_mode if args else "auto",
         "execution_mode": args.execution_mode if args else "batch",
-        "plan_only": args.plan_only if args else False, # [NEW]
+        "plan_only": args.plan_only if args else False,
         "generated_by": "experiments/run_wikitabgen.py"
     }
     with open(os.path.join(run_dir, "run_config.json"), "w") as f:
         json.dump(run_config, f, indent=4)
     
     # 3. Initialize PKDB
-    # 3. Initialize Shared State for Rate Limiting
     print("Initializing Shared Resources...")
     # These must be shared across all PKDB instances to prevent 429 errors
     shared_state = {
         "rate_limit_times": [],
         "rate_limit_lock": asyncio.Lock(),
         "semaphore": asyncio.Semaphore(100), # Global concurrency limit for LLM calls implies max_concurrent * tables
-        "cost_tracker": SharedCostTracker(max_total_requests=10000, max_total_cost=100.0)
+        "cost_tracker": SharedCostTracker(max_total_requests=args.max_total_requests if args else 100000, max_total_cost=100.0)
     }
     
     results = []
@@ -304,8 +299,6 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
     async def process_table(item):
         async with sim_semaphore:
             table_name = item['name']
-            
-            
             # Create FRESH PKDB instance per table to reset Safety Quotas (max_total_requests)
             # But share the rate limiter (shared_state) to protect the API
             from src.interface import PKDBConfig # Import Config
@@ -330,7 +323,7 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
             table_dir = os.path.join(run_dir, table_name)
             os.makedirs(table_dir, exist_ok=True)
             
-            # [RESUME] Check if result already exists
+            # Check if result already exists
             out_file = os.path.join(table_dir, f"{table_name}.csv")
             df = None
             if os.path.exists(out_file):
@@ -341,9 +334,7 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                     print(f"Error loading {table_name}: {e}. Re-running.")
             
             if df is None:
-                # ... (Normal Generation Logic) ...
                 title = item.get('table_title', table_name)
-                # ...
                 
                 # Construct STRICT SCHEMA
                 cols = []
@@ -541,7 +532,7 @@ if __name__ == "__main__":
     parser.add_argument("--use_cache", action="store_true")
     parser.add_argument("--max_concurrent", type=int, default=10)
     parser.add_argument("--row_threshold", type=int, default=120)
-    parser.add_argument("--decomposition_strategy", type=str, default="rule_based", choices=["rule_based", "llm_based"])
+    parser.add_argument("--decomposition_strategy", type=str, default="rule_based", choices=["rule_based", "llm_based", "none"], help="Decomposition strategy")
     parser.add_argument("--table_concurrent", type=int, default=5, help="Number of tables to process concurrently")
     parser.add_argument("--resume_dir", type=str, default=None, help="Directory to resume run from")
     parser.add_argument("--execution_mode", type=str, default="batch", choices=["batch", "row_by_row"], help="Execution mode")
@@ -549,6 +540,7 @@ if __name__ == "__main__":
     parser.add_argument("--source", type=str, default="Wikipedia", help="Data source for the extraction")
     parser.add_argument("--partition_selection_mode", type=str, default="llm", choices=["scoring", "llm"], help="Method for selecting partition key (scoring or llm)")
     parser.add_argument("--plan_only", action="store_true", help="Only run planning phase (skip data fetching)")
+    parser.add_argument("--max_total_requests", type=int, default=20000, help="Global max total LLM requests limit")
     
     args = parser.parse_args()
     

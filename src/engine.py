@@ -80,7 +80,9 @@ class MapReduceEngine:
             logger.info("Running Global Validator (Reduce Side)...")
             # Pass schema for PK awareness
             val_context = {**context, "schema": plan.schema}
-            df = await self.global_validator.run(df, context=val_context)
+            df, val_metrics = await self.global_validator.run(df, context=val_context)
+            if val_metrics:
+                total_metrics = total_metrics + val_metrics
         
         logger.info(f"Execution complete. Generated {len(df)} rows. Total Tokens: {total_metrics.total_tokens}")
         return df, total_metrics
@@ -231,7 +233,9 @@ class MapReduceEngine:
                         "source": getattr(task, 'source', 'Wikipedia') # Pass source
                     }
                     logger.info(f"Running Map Validator for task query: {task.query[:50]}...")
-                    df = await self.map_validator.run(df, context=val_context)
+                    df, val_metrics = await self.map_validator.run(df, context=val_context)
+                    if val_metrics:
+                        metrics = metrics + val_metrics
 
                 # 5. Completeness Check & Pagination (if batch mode)
                 # Note: Validated rows might be fewer. We check count against estimate.

@@ -56,7 +56,7 @@ class StrategyEvaluator:
             cand.stats = stats
             
             if not self.enable_scoring:
-                 return cand
+                return cand
 
             # Simple Scoring Model
             # Penalty for Ambiguity (0.0 to 1.0) -> high ambiguity is bad
@@ -371,7 +371,11 @@ class DataPlanBuilder:
         requires_decomposition = False
         reasoning = "Rule-based check"
         
-        if decomposition_strategy == "llm_based":
+        if decomposition_strategy == "none":
+            logger.info("Forcing flat execution (none strategy).")
+            requires_decomposition = False
+            reasoning = "Forced flat execution by 'none' strategy."
+        elif decomposition_strategy == "llm_based":
             # Hybrid approach: If rows > threshold, force decomposition to avoid truncation
             if analysis.estimated_rows > row_threshold:
                 logger.info(f"Estimated rows ({analysis.estimated_rows}) > {row_threshold}. Forcing Map-Reduce (Safety Catch).")
@@ -906,9 +910,9 @@ class DataPlanBuilder:
         
         # [Validation] If rewrite is identical to base (failed to rewrite), force structured format
         if rewritten.lower() == base_query.lower() or len(rewritten) < len(base_query) * 0.5:
-             logger.warning(f"Subquery rewrite validation failed/same as parent. Falling back to template. ('{rewritten}')")
-             return f"{base_query}, specifically where {key} is '{value}'"
-             
+            logger.warning(f"Subquery rewrite validation failed/same as parent. Falling back to template. ('{rewritten}')")
+            return f"{base_query}, specifically where {key} is '{value}'"
+            
         logger.info(f"Subquery Rewrite: '{base_query}' + ({key}={value}) -> '{rewritten}'")
         return rewritten
 
