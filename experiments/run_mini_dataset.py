@@ -149,15 +149,15 @@ async def evaluate_dataset(dataset_path: str, base_output_dir: str, args=None):
             try:
                 # Pass output_dir context to PKDB
                 # Validator Config
-                from src.validator import GlobalValidator
+                from src.validator import DataValidator
                 
                 # Use new validators for Generic Fixes
                 # Split validators into Map-side (local) and Global (reduce)
                 map_strategies = ["ChunkConstraints", "FormatNormalization"]
                 global_strategies = ["EntityResolution", "Deduplication"]
                 
-                map_validator = GlobalValidator(pkdb.llm, strategies=map_strategies)
-                global_validator = GlobalValidator(pkdb.llm, strategies=global_strategies)
+                map_validator = DataValidator(pkdb.llm, strategies=map_strategies)
+                global_validator = DataValidator(pkdb.llm, strategies=global_strategies)
                 
                 # Inject dependencies via extract_table
                 pkdb.engine.completeness_strategy = args.completeness_strategy if args else "heuristic"

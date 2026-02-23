@@ -357,43 +357,14 @@ class DataPlanBuilder:
         self.max_chunks_limit = max_chunks # Store for recursive tracking
         self.current_chunk_count = 0
         
-        # 0. Analyze Query & Decompose
-        # If strict schema is provided, we might still want analysis for estimation/decomposition, 
-        # but the query rewrite might need to be careful not to drift from the schema.
+        # 0. Analyze Query
+        # Get rewritten query and constraints, but defer decomposition decision until after schema generation
         analysis = await self.analyzer.analyze(
             query, 
-            decomposition_strategy=decomposition_strategy, # Passed for context/compatibility, though logic is moved
+            decomposition_strategy=decomposition_strategy,
             row_threshold=row_threshold
         )
         logger.info(f"Query Analysis: {analysis}")
-        
-        # Decomposition Logic
-        requires_decomposition = False
-        reasoning = "Rule-based check"
-        
-        if decomposition_strategy == "none":
-            logger.info("Forcing flat execution (none strategy).")
-            requires_decomposition = False
-            reasoning = "Forced flat execution by 'none' strategy."
-        elif decomposition_strategy == "llm_based":
-            # Hybrid approach: If rows > threshold, force decomposition to avoid truncation
-            if analysis.estimated_rows > row_threshold:
-                logger.info(f"Estimated rows ({analysis.estimated_rows}) > {row_threshold}. Forcing Map-Reduce (Safety Catch).")
-                requires_decomposition = True
-                reasoning = "Forced decomposition due to high row count (Safety)."
-            else:
-                requires_decomposition, reasoning = await self.analyzer.should_decompose(analysis.rewritten_query, analysis.estimated_rows)
-        else:
-            # Rule based default
-            requires_decomposition = analysis.estimated_rows > row_threshold
-            reasoning = f"Estimated rows ({analysis.estimated_rows}) > Threshold ({row_threshold})"
-            
-            # Heuristic: If Collection Strategy is LIMIT <small>, we might avoid decomposition even if estimate is high?
-            # But commonly estimate accounts for the limit? No, estimate is global.
-            # If LIMIT 5 is requested but global is 1000, we probably don't need to decompose if we can find 5 easily.
-            # But for now, stick to basic rule.
-
-        logger.info(f"Decomposition Decision: {requires_decomposition} ({reasoning})")
 
         # Use the structured task
         # root_task = analysis.task or DataTask(query=analysis.rewritten_query)
@@ -411,117 +382,135 @@ class DataPlanBuilder:
         rewritten_query = root_task.query
         final_schema = None
         best_strategy = None
+        requires_decomposition = False
         
-        # 1. Check for Strict Schema
+        # 1. EARLY SCHEMA GENERATION (Before decomposition decision)
+        # Generate schema options that we'll evaluate for decomposition
+        schema_options = []
+        
         if schema:
+            # User provided schema - use it
             logger.info(f"Using provided strict Schema: {schema.table_name}")
-            # Enrich schema if metadata is missing (formatting/descriptions)
             final_schema = await self.schema_gen.infer_schema(rewritten_query, input_schema=schema)
-            # If a schema is provided, we skip Joint Optimization for the *schema* part.
-            # However, we still might need to pick a partition key from this provided schema if decomposition is required.
+            schema_options = [(final_schema, "provided")]
             
-            if requires_decomposition:
-                # We need to find a strategy using the PROVIDED schema
+        elif partitioning_method == "llm_based":
+            # Generate multiple schema candidates for joint optimization
+            logger.info("Generating schema candidates for joint optimization...")
+            try:
+                pool = await self.schema_gen.generate_pool(rewritten_query)
+                raw_candidates = await self.schema_gen.generate_candidates(rewritten_query, k=3, column_pool=pool)
+                
+                for i, raw_cand in enumerate(raw_candidates):
+                    schema_def = await self.schema_gen.infer_enrichment(rewritten_query, raw_cand)
+                    schema_options.append((schema_def, f"candidate_{i}"))
+                    logger.info(f"Generated schema candidate {i}: {schema_def.table_name} with {len(schema_def.columns)} columns")
+            except Exception as e:
+                logger.warning(f"Schema candidate generation failed: {e}. Falling back to single schema.")
+                strategy = "llm_rank"
+                fallback_schema = await self.schema_gen.infer_schema(rewritten_query, strategy=strategy, context=context)
+                schema_options = [(fallback_schema, "fallback")]
+        else:
+            # Generate single schema with first mode
+            strategy = "first" if partitioning_method == "first" else "llm_rank"
+            single_schema = await self.schema_gen.infer_schema(rewritten_query, strategy=strategy, context=context)
+            schema_options = [(single_schema, "single")]
+        
+        # 2. FOR EACH SCHEMA, MAKE DECOMPOSITION DECISION (Schema-aware)
+        # Evaluate all schema options and select the best one
+        best_overall_score = float('inf')
+        best_final_schema = None
+        best_selected_strategy = None
+        best_requires_decomposition = False
+        
+        for schema_candidate, source_label in schema_options:
+            # Make decomposition decision for THIS schema
+            schema_requires_decomposition = False
+            schema_reasoning = "No decomposition"
+            
+            if decomposition_strategy == "none":
+                schema_requires_decomposition = False
+                schema_reasoning = "Forced flat execution by 'none' strategy"
+            else:
+                # For llm_based or rule_based, use generic estimate as baseline
+                # (In future, could enhance to estimate rows per this specific schema)
+                if analysis.estimated_rows > row_threshold:
+                    schema_requires_decomposition = True
+                    schema_reasoning = f"Rows ({analysis.estimated_rows}) > threshold ({row_threshold})"
+                elif decomposition_strategy == "llm_based":
+                    schema_requires_decomposition, schema_reasoning = await self.analyzer.should_decompose(rewritten_query, analysis.estimated_rows)
+            
+            logger.info(f"Schema {source_label}: requires_decomposition={schema_requires_decomposition} ({schema_reasoning})")
+            
+            # Evaluate partition keys if decomposition needed for this schema
+            selected_strategy = None
+            if schema_requires_decomposition:
                 if partitioning_method == "first":
                     # First mode: just pick first column
-                    if final_schema.columns:
-                        best_strategy = StrategyCandidate(
-                            schema=final_schema,
-                            partition_key=final_schema.columns[0].name,
+                    if schema_candidate.columns:
+                        selected_strategy = StrategyCandidate(
+                            schema=schema_candidate,
+                            partition_key=schema_candidate.columns[0].name,
                             score=0.0,
                             reasoning="First mode: using first available column"
                         )
-                        logger.info(f"First mode: Selected first column '{best_strategy.partition_key}' as partition key")
+                        logger.info(f"[{source_label}] First mode: Selected '{selected_strategy.partition_key}' as partition key")
                 else:
-                    # Evaluated mode: evaluate all columns
-                    logger.info("Evaluating provided schema for best partition key...")
+                    # Evaluated mode: evaluate all columns for this schema
+                    logger.info(f"[{source_label}] Evaluating partition keys...")
+                    strategy_candidates = []
                     
-                    strategy_candidates: List[StrategyCandidate] = []
-                    # Schema is decoupled. Scan all columns as potential partition keys.
-                    # In strict mode, we don't have a "strategy" list, so we treat all columns as candidates.
-                    pk_candidates = [c.name for c in final_schema.columns]
-                    
-                    for pk_name in pk_candidates:
+                    for col in schema_candidate.columns:
                         strategy_candidates.append(StrategyCandidate(
-                            schema=final_schema,
-                            partition_key=pk_name
+                            schema=schema_candidate,
+                            partition_key=col.name
                         ))
                     
                     if strategy_candidates:
-                        # Evaluate concurrent
-                        evaluated_candidates = await self.evaluator.evaluate_concurrent(rewritten_query, strategy_candidates, constraints=root_task.constraints)
+                        # Evaluate concurrently
+                        evaluated = await self.evaluator.evaluate_concurrent(rewritten_query, strategy_candidates, constraints=root_task.constraints)
                         
-                        # Respect partition_selection_mode
+                        # Select best
                         if partition_selection_mode == "llm":
-                            best_strategy = await self.evaluator.select_best_llm(rewritten_query, evaluated_candidates, constraints=root_task.constraints)
+                            selected_strategy = await self.evaluator.select_best_llm(rewritten_query, evaluated, constraints=root_task.constraints)
                         else:
-                            best_strategy = self.evaluator.select_best(evaluated_candidates)
+                            selected_strategy = self.evaluator.select_best(evaluated)
                         
-                        if best_strategy:
-                            logger.info(f"Selected Best Partition Key for Strict Schema: {best_strategy.partition_key}")
-
-        # 1. Joint Optimization (Schema + Partition Strategy) - ONLY IF NO SCHEMA PROVIDED
-        elif partitioning_method == "llm_based" and requires_decomposition:
-            logger.info("Running Joint Optimization (LLM-Based Planner)...")
-            
-            # A. Generate Column Pool
-            pool = await self.schema_gen.generate_pool(rewritten_query)
-            
-            # B. Generate Schema Candidates
-            raw_candidates = await self.schema_gen.generate_candidates(rewritten_query, k=3, column_pool=pool)
-            
-            # C. Formulate Strategy Candidates
-            strategy_candidates: List[StrategyCandidate] = []
-            
-            for raw_cand in raw_candidates:
-                # Infer types/keys to find *potential* strategies for this schema
-                schema_def = await self.schema_gen.infer_enrichment(rewritten_query, raw_cand)
-                # Schema is decoupled. Get strategy from the raw candidate dict.
-                partition_keys = raw_cand.get("partition_strategy", [])
-                
-                if not partition_keys:
-                    # Fallback: Use all columns if no strategy proposed
-                    partition_keys = [c.name for c in schema_def.columns]
-                    
-                for pk_name in partition_keys:
-                    strategy_candidates.append(StrategyCandidate(
-                        schema=schema_def,
-                        partition_key=pk_name
-                    ))
-            
-            if strategy_candidates:
-                # D. Concurrent Evaluation
-                evaluated_candidates = await self.evaluator.evaluate_concurrent(rewritten_query, strategy_candidates, constraints=root_task.constraints)
-                
-                # E. Selection
-                if partition_selection_mode == "llm":
-                    best_strategy = await self.evaluator.select_best_llm(rewritten_query, evaluated_candidates, constraints=root_task.constraints)
-                else:
-                    best_strategy = self.evaluator.select_best(evaluated_candidates)
-
-                if best_strategy:
-                    final_schema = best_strategy.schema
-                    logger.info(f"Selected Best Strategy: Schema={final_schema.table_name}, Key={best_strategy.partition_key}, Score={best_strategy.score}")
+                        if selected_strategy:
+                            logger.info(f"[{source_label}] Selected partition key: {selected_strategy.partition_key} (score: {selected_strategy.score})")
             else:
-                logger.warning("No strategy candidates found. Falling back to simple schema inference.")
-
-        # Fallback / Non-Evaluated Path
-        if not final_schema:
-            strategy = "first" if partitioning_method == "first" else "llm_rank"
-            final_schema = await self.schema_gen.infer_schema(rewritten_query, strategy=strategy, context=context)
-        
-        # Handle first mode for partition key selection when no schema provided
-        if partitioning_method == "first" and requires_decomposition and not schema and not best_strategy:
-            # In first mode, just pick first column as partition key
-            if final_schema and final_schema.columns:
-                # Create a dummy best_strategy for first mode
-                best_strategy = StrategyCandidate(
-                    schema=final_schema,
-                    partition_key=final_schema.columns[0].name,
+                # No decomposition for this schema - create dummy strategy
+                selected_strategy = StrategyCandidate(
+                    schema=schema_candidate,
+                    partition_key="All",
                     score=0.0,
-                    reasoning="First mode: using first available column"
+                    reasoning="No decomposition needed"
                 )
-                logger.info(f"First mode: Selected first column '{best_strategy.partition_key}' as partition key")
+            
+            # Score this (schema, decomposition, strategy) combination
+            # Prefer: no decomposition (simpler) > fewer partitions > better partition score
+            combo_score = 0.0
+            if schema_requires_decomposition:
+                combo_score += 100  # Penalty for decomposition needed
+                if selected_strategy and selected_strategy.stats:
+                    combo_score += selected_strategy.stats.num_partitions * 5  # Penalty for many partitions
+            
+            logger.info(f"[{source_label}] Combination score: {combo_score}")
+            
+            # Update best if this is better
+            if combo_score < best_overall_score:
+                best_overall_score = combo_score
+                best_final_schema = schema_candidate
+                best_requires_decomposition = schema_requires_decomposition
+                best_selected_strategy = selected_strategy
+                logger.info(f"[{source_label}] New best schema selected (score: {combo_score})")
+        
+        # 3. USE THE BEST SCHEMA + DECOMPOSITION DECISION
+        final_schema = best_final_schema or schema_options[0][0]  # Fallback to first if none selected
+        requires_decomposition = best_requires_decomposition
+        best_strategy = best_selected_strategy
+        
+        logger.info(f"FINAL DECISION: Schema={final_schema.table_name}, requires_decomposition={requires_decomposition}, partition_key={best_strategy.partition_key if best_strategy else 'None'}")
         
         # Attach schema to root task
         root_task.schema = final_schema

@@ -8,7 +8,7 @@ PKDB is an **Agentic Data Extraction Framework** that transforms high-level natu
 *   **Auto-Partitioning:** Automatically decomposes broad queries (e.g., "List all US Cities") into parallelizable sub-tasks using **LLM-based decomposition**.
 *   **Dynamic Schema Generation:** Infers optimal table structures (Columns, Types, Primary Keys) on the fly.
 *   **Joint Optimization:** Planner simultaneously evaluates Schema and Partitioning strategies to minimize fan-out and maximize relevance.
-*   **Robust Validation:** Includes a built-in `GlobalValidator` pipeline with strategies for **Entity Resolution**, **Deduplication**, and **Code-Based Verification**.
+*   **Robust Validation:** Includes a built-in `DataValidator` pipeline with strategies for **Entity Resolution**, **Deduplication**, and **Code-Based Verification**.
 *   **Smart Pagination:** Runtime engine uses probability estimates to detect truncation and autonomously fetch remaining pages.
 *   **Agentic Interface:** Designed to run autonomously or as a tool for other agents.
 
@@ -69,11 +69,16 @@ You can customize the execution behavior using `PKDBConfig`.
 ```python
 config = PKDBConfig(
     model="gpt-4o",
-    max_partitions=200,      # Max partitions per split
-    row_threshold=120,       # Optimization threshold for decomposition
-    decomposition_strategy="llm_based", # 'llm_based' (Recommended) or 'rule_based'
-    partitioning_method="smart", # 'smart' (Joint Optimization) or 'greedy'
-    max_concurrent=20        # Concurrency limit
+    max_partitions=200,           # Max partitions per split
+    row_threshold=120,            # Row estimate threshold to trigger decomposition
+    decomposition_strategy="rule_based",  # 'rule_based' or 'llm_based'
+    partitioning_method="llm_based",      # 'llm_based', 'first', or 'semantic'
+    partition_selection_mode="llm",       # 'llm' or 'scoring'
+    default_execution_mode="batch",       # 'batch' or 'row_by_row'
+    dedup_strategy="llm_based",           # 'first' or 'llm_based'
+    source="Wikipedia",                   # Configurable data source label
+    max_concurrent=15,                     # Async concurrency limit
+    max_depth=2                           # Max recursive decomposition depth
 )
 
 pkdb = PKDB(config)
@@ -91,6 +96,22 @@ python experiments/run_pokemon.py
 python experiments/run_mini_dataset.py
 ```
 
+**Available Arguments:**
+
+| Argument | Default | Description |
+| :--- | :--- | :--- |
+| `--model` | `gpt-4o` | The LLM capability model to use. |
+| `--limit` | `3` | Max number of tables to evaluate (use `0` for all). |
+| `--table` | `None` | Run a specific table by name (overrides limit). |
+| `--decomposition_strategy` | `rule_based` | Strategy for query decomposition: `rule_based` or `llm_based`. |
+| `--row_threshold` | `120` | Threshold of estimated rows to trigger verification/partitioning. |
+| `--execution_mode` | `batch` | Execution mode: `batch` (parallel) or `row_by_row` (sequential). |
+| `--partition_selection_mode` | `llm` | Method for selecting partition keys: `scoring` or `llm`. |
+| `--plan_only` | `False` | Run only the planning phase (skip data fetching). |
+| `--use_cache` | `False` | Enable caching for LLM responses. |
+| `--resume_dir` | `None` | Directory to resume a previous interrupted run from. |
+
+
 ## Architecture
 
 *   **`src/interface.py`**: Main entry point (`PKDB` class). Handles configuration and component wiring.
@@ -98,7 +119,7 @@ python experiments/run_mini_dataset.py
 *   **`src/schema.py`**: `SchemaGenerator` for inferring optimal table structures (Columns, Types, Primary Keys).
 *   **`src/dataplan.py`**: `DataPlanBuilder` (Planner). Implements **Joint Optimization** to simultaneously evaluate Schema and Partitioning strategies. Recursively decomposes queries into a task graph.
 *   **`src/engine.py`**: `MapReduceEngine`. Manages async execution of the task graph, handling concurrency, rate limits, and **Smart Pagination**.
-*   **`src/validator.py`**: `GlobalValidator`. Orchestrates a pipeline of cleaning strategies:
+*   **`src/validator.py`**: `DataValidator`. Orchestrates a pipeline of cleaning strategies:
     *   **`ChunkValidator`**: Verifies partition integrity (e.g., Year=2020).
     *   **`FormatNormalizationValidator`**: Standardizes values (e.g., "Generation 1" -> 1).
     *   **`EntityResolutionValidator`**: Deduplicates entities based on content similarity and constraints.

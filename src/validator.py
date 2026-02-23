@@ -66,25 +66,26 @@ class BaseValidator(ABC):
         return fixed_df, metrics
 
 
-class GlobalValidator:
+class DataValidator:
     """
     Unified Orchestrator for Validation Pipelines.
     """
-    def __init__(self, llm_client, strategies: List[str] = None):
+    def __init__(self, llm_client, strategies: List[str] = None, dedup_strategy: str = "first"):
         self.llm = llm_client
         self.strategies = strategies or []
+        self.dedup_strategy = dedup_strategy
         self.validators = self._initialize_validators()
 
     def _initialize_validators(self) -> List[BaseValidator]:
         params = {"llm_client": self.llm}
         validator_map = {
             "ChunkConstraints": ChunkValidator(**params),
-            "Deduplication": DeduplicationValidator(**params),
+            "Deduplication": DeduplicationValidator(llm_client=self.llm, strategy=self.dedup_strategy),
             "Code": CodeValidator(**params),
             "Embedding": EmbeddingValidator(**params),
             "FormatNormalization": FormatNormalizationValidator(**params),
             "EntityResolution": EntityResolutionValidator(**params),
-            "PrimaryKeyValidation": DeduplicationValidator(**params), # Alias for now
+            "PrimaryKeyValidation": DeduplicationValidator(llm_client=self.llm, strategy=self.dedup_strategy),
             "Completeness": ChunkValidator(**params) # Placeholder, logic in Engine
         }
         
@@ -327,7 +328,7 @@ class DeduplicationValidator(BaseValidator):
     async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> Tuple[Any, LLMMetrics]:
         # Returns:
         # - List[int] (indices to drop) if strategy="first"
-        # - List[List[int]] (groups of duplicates) if strategy="llm-based"
+        # - List[List[int]] (groups of duplicates) if strategy="llm_based"
         # - LLMMetrics
         
         metrics = LLMMetrics()
@@ -352,7 +353,7 @@ class DeduplicationValidator(BaseValidator):
                     pass
             return sorted(list(set(invalid_indices))), metrics
             
-        elif self.strategy == "llm-based":
+        elif self.strategy == "llm_based":
             # New Logic: Return clusters of duplicates
             duplicate_groups = []
             if primary_keys:
@@ -364,7 +365,7 @@ class DeduplicationValidator(BaseValidator):
                     grouped = dups.groupby(primary_keys)
                     for _, group in grouped:
                         duplicate_groups.append(group.index.tolist())
-                    logger.info(f"DeduplicationValidator (llm-based): Found {len(duplicate_groups)} duplicate groups based on PK.")
+                    logger.info(f"DeduplicationValidator (llm_based): Found {len(duplicate_groups)} duplicate groups based on PK.")
             else:
                 # Fallback to exact match? Exact match doesn't need LLM usually.
                 # Only strictly identical rows.
@@ -386,7 +387,7 @@ class DeduplicationValidator(BaseValidator):
             logger.info(f"DeduplicationValidator: Dropping {len(report)} rows (Strategy: first).")
             return df.drop(report), metrics
             
-        elif self.strategy == "llm-based":
+        elif self.strategy == "llm_based":
             # Report is List[List[int]]
             indices_to_drop = []
             
@@ -451,7 +452,7 @@ class DeduplicationValidator(BaseValidator):
                     indices_to_drop.extend(group.index[1:].tolist())
                     
             if indices_to_drop:
-                logger.info(f"DeduplicationValidator: Dropping {len(indices_to_drop)} rows (Strategy: llm-based).")
+                logger.info(f"DeduplicationValidator: Dropping {len(indices_to_drop)} rows (Strategy: llm_based).")
                 return df.drop(indices_to_drop), metrics
                 
         return df, metrics
@@ -512,54 +513,60 @@ class CodeValidator(BaseValidator):
         return invalid_items, metrics
 
     async def fix(self, df: pd.DataFrame, report: List[Dict], context: Dict[str, Any] = None) -> Tuple[pd.DataFrame, LLMMetrics]:
-        """Fixes invalid rows based on error report."""
+        """Fixes invalid rows based on error report, processing all errors in batches of 20."""
         metrics = LLMMetrics()
         if not report:
             return df, metrics
-            
-        # Limit batch size
-        target_errors = report[:20] 
-        error_lines = [f"Row {item['index']}: {item['row']} => Error: {item['error']}" for item in target_errors]
-        
-        logger.info(f"CodeValidator: Attempting to fix {len(target_errors)} rows.")
-        
-        prompt = FIX_DATA_PROMPT.format(error_report="\n".join(error_lines))
-        
-        try:
-            response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
-            if response.metrics:
-                metrics = metrics + response.metrics
-            content = response.content
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0]
-            data = json.loads(content)
-            
-            # robust extraction
-            result_list = []
-            if isinstance(data, list): result_list = data
-            elif isinstance(data, dict):
-                 for k, v in data.items():
-                    if isinstance(v, list):
-                        result_list = v
-                        break
-            
-            if not result_list:
-                return df, metrics # Fix failed, keep original? OR drop? Let's keep original for now (Soft Fail)
-                
-            # Update DataFrame
-            # We need to map back to indices. But the fix might not return indices.
-            # Assuming the LLM returns fixed rows in order or we replace by matching content? 
-            # Simple approach: Drop invalid indices, Append fixed.
-            
-            indices_to_drop = [item['index'] for item in target_errors]
-            df_dropped = df.drop(indices_to_drop)
-            
-            df_fixed = pd.DataFrame(result_list)
-            return pd.concat([df_dropped, df_fixed], ignore_index=True), metrics
-            
-        except Exception as e:
-            logger.error(f"CodeValidator Fix Failed: {e}")
-            return df, metrics
+
+        BATCH_SIZE = 20
+        all_indices_to_drop = []
+        all_fixed_rows = []
+
+        for batch_start in range(0, len(report), BATCH_SIZE):
+            batch = report[batch_start : batch_start + BATCH_SIZE]
+            error_lines = [
+                f"Row {item['index']}: {item['row']} => Error: {item['error']}"
+                for item in batch
+            ]
+            logger.info(f"CodeValidator: Fixing batch {batch_start // BATCH_SIZE + 1} "
+                        f"({len(batch)} rows, total errors={len(report)}).")
+
+            prompt = FIX_DATA_PROMPT.format(error_report="\n".join(error_lines))
+
+            try:
+                response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
+                if response.metrics:
+                    metrics = metrics + response.metrics
+                content = response.content
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0]
+                data = json.loads(content)
+
+                result_list = []
+                if isinstance(data, list):
+                    result_list = data
+                elif isinstance(data, dict):
+                    for k, v in data.items():
+                        if isinstance(v, list):
+                            result_list = v
+                            break
+
+                all_indices_to_drop.extend([item['index'] for item in batch])
+                all_fixed_rows.extend(result_list)
+
+            except Exception as e:
+                logger.error(f"CodeValidator Fix Failed for batch starting at {batch_start}: {e}")
+                # Drop the invalid rows even if the fix call failed (soft fail)
+                all_indices_to_drop.extend([item['index'] for item in batch])
+
+        if all_indices_to_drop:
+            df_dropped = df.drop(all_indices_to_drop)
+            if all_fixed_rows:
+                df_fixed = pd.DataFrame(all_fixed_rows)
+                return pd.concat([df_dropped, df_fixed], ignore_index=True), metrics
+            return df_dropped, metrics
+
+        return df, metrics
 
     async def _generate_assertions(self, schema_desc: str, sample_row: Dict) -> Tuple[str, Optional[LLMMetrics]]:
         prompt = GEN_ASSERTION_PROMPT.format(
@@ -730,102 +737,100 @@ class EmbeddingValidator(BaseValidator):
 class FormatNormalizationValidator(BaseValidator):
     """
     Normalizes column formats (e.g., "Generation 1" -> 1).
+    detect() identifies which columns need normalization; fix() calls LLM only for those.
     """
     def __init__(self, llm_client=None, model_name="all-MiniLM-L6-v2"):
         super().__init__(llm_client)
         from src.prompts import FORMAT_NORMALIZATION_PROMPT
         self.prompt_template = FORMAT_NORMALIZATION_PROMPT
 
-    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> Tuple[List[int], LLMMetrics]:
-        # This validator modifies in-place during fix(),
-        # Detect rows missing primary key value or having a generic entity name?
-        # Actually this is best done as a pass-through detect -> grouping fix.
-        return ([1] if not df.empty else []), LLMMetrics()
-
-    async def fix(self, df: pd.DataFrame, report: List[int], context: Dict[str, Any] = None) -> Tuple[pd.DataFrame, LLMMetrics]:
+    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> Tuple[List[tuple], LLMMetrics]:
+        """
+        Returns a list of (col_name, target_type, formatting, unique_values) tuples
+        for every column whose values don't match the declared type/format.
+        An empty list means nothing needs normalization and fix() will be skipped entirely.
+        """
         metrics = LLMMetrics()
-        if df.empty or not report:
-            return df, metrics
-            
-        schema = context.get('schema')
-        if not schema:
-            return df, metrics
+        schema = context.get('schema') if context else None
+        if not schema or df.empty:
+            return [], metrics
 
-        # Iterate over columns with specific types
+        needs_normalization = []
         for col in schema.columns:
             if col.name not in df.columns:
                 continue
-                
-            # Heuristic: Check if column content matches type
-            # If INT but has strings -> Normalize
-            # If DATE but has raw text -> Normalize
-            
+
             target_type = col.data_type.lower() if col.data_type else "string"
             formatting = col.formatting
-            
-            # Skip if explicitly string/text and no specific format
+
+            # Plain text columns with no special format never need normalization
             if target_type in ["string", "text", "str"] and not formatting:
                 continue
-                
-            # Sample values
+
             unique_values = df[col.name].dropna().unique().tolist()
             if not unique_values:
                 continue
-                
-            # Quick check: Are they already valid?
-            # e.g. if target is INT, are all values integers?
+
             needs_fix = False
             if target_type in ["int", "integer"]:
-                try:
-                    # check if any value is not convertible to clean int or has extra text
-                    # "5" is fine. "Gen 5" is not. 
-                    # We look for non-digit chars (ignoring dot for float-int)
-                    for v in unique_values:
-                        s = str(v)
-                        if not s.replace('.', '', 1).isdigit() and not (s.startswith('-') and s[1:].isdigit()):
-                            needs_fix = True
-                            break
-                except:
-                    needs_fix = True
+                for v in unique_values:
+                    s = str(v)
+                    if not s.replace('.', '', 1).isdigit() and not (s.startswith('-') and s[1:].isdigit()):
+                        needs_fix = True
+                        break
             elif formatting:
-                needs_fix = True # Always check formatted columns
-                
+                needs_fix = True  # Formatted columns always get checked
+
             if needs_fix:
-                logger.info(f"FormatValidator: Normalizing column '{col.name}' for type '{target_type}'...")
-                
-                # LLM Call
-                prompt = self.prompt_template.format(
-                    column=col.name,
-                    dtype=target_type,
-                    formatting=formatting or "Standard",
-                    values=json.dumps(unique_values[:50], default=str) # Limit samples
-                )
-                
-                try:
-                    response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
-                    if response.metrics:
-                        metrics = metrics + response.metrics
-                    content = response.content
-                    if "```json" in content:
-                        content = content.split("```json")[1].split("```")[0]
-                    data = json.loads(content)
-                    corrections = data.get("corrections", {})
-                    
-                    if corrections:
-                        # Apply mapping
-                        # Use map with fallback to original
-                        df[col.name] = df[col.name].map(lambda x: corrections.get(str(x), x))
-                        
-                        # Post-process: Attempt cast
-                        if target_type in ["int", "integer"]:
-                            try:
-                                df[col.name] = pd.to_numeric(df[col.name], errors='ignore')
-                            except:
-                                pass
-                                
-                except Exception as e:
-                    logger.warning(f"FormatNormalization failed for {col.name}: {e}")
-                    
+                needs_normalization.append((col.name, target_type, formatting, unique_values[:50]))
+
+        if needs_normalization:
+            logger.info(f"FormatNormalizationValidator: {len(needs_normalization)} column(s) need normalization: "
+                        f"{[t[0] for t in needs_normalization]}")
+        return needs_normalization, metrics
+
+    async def fix(self, df: pd.DataFrame, report: List[tuple], context: Dict[str, Any] = None) -> Tuple[pd.DataFrame, LLMMetrics]:
+        """
+        Calls LLM once per column in the report to produce a value-correction mapping,
+        then applies corrections in-place.
+        """
+        metrics = LLMMetrics()
+        if df.empty or not report:
+            return df, metrics
+
+        for (col_name, target_type, formatting, unique_values) in report:
+            if col_name not in df.columns:
+                continue
+
+            logger.info(f"FormatValidator: Normalizing '{col_name}' for type '{target_type}'...")
+            prompt = self.prompt_template.format(
+                column=col_name,
+                dtype=target_type,
+                formatting=formatting or "Standard",
+                values=json.dumps(unique_values, default=str)
+            )
+
+            try:
+                response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
+                if response.metrics:
+                    metrics = metrics + response.metrics
+                content = response.content
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0]
+                data = json.loads(content)
+                corrections = data.get("corrections", {})
+
+                if corrections:
+                    df[col_name] = df[col_name].map(lambda x: corrections.get(str(x), x))
+                    if target_type in ["int", "integer"]:
+                        try:
+                            df[col_name] = pd.to_numeric(df[col_name], errors='ignore')
+                        except:
+                            pass
+
+            except Exception as e:
+                logger.warning(f"FormatNormalization failed for {col_name}: {e}")
+
         return df, metrics
 
 
@@ -903,7 +908,7 @@ class EntityResolutionValidator(BaseValidator):
                 continue
                 
             # If they are EXACT duplicates in all columns, standard dedup (pandas) handles it.
-            # We assume GlobalValidator calls DeduplicationValidator first or after.
+            # We assume DataValidator calls DeduplicationValidator first or after.
             # But let's check if rows are identical.
             # if group.iloc[0].equals(group.iloc[1]): ...
             
@@ -976,6 +981,6 @@ class EntityResolutionValidator(BaseValidator):
 
         if indices_to_drop:
             logger.info(f"EntityResolution: Dropping {len(indices_to_drop)} resolved duplicates.")
-            return df.drop(indices_to_drop)
-            
-        return df
+            return df.drop(indices_to_drop), metrics
+
+        return df, metrics

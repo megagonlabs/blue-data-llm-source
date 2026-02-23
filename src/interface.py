@@ -5,7 +5,7 @@ from utils.llm_utils import LLMClient, LLMMetrics
 from src.dataplan import DataPlanBuilder
 from src.engine import MapReduceEngine
 from src.schema import SchemaDefinition, SchemaGenerator
-from src.validator import GlobalValidator
+from src.validator import DataValidator
 logger = logging.getLogger(__name__)
 
 from dataclasses import dataclass, field
@@ -15,7 +15,7 @@ class PKDBConfig:
     """Centralized Configuration for PKDB."""
     model: str = "gpt-4o"
     cache_dir: str = ".cache_pkdb"
-    max_concurrent: int = 5
+    max_concurrent: int = 15
     use_cache: bool = True
     max_partitions: int = 200
     num_schema_candidates: int = 3
@@ -30,10 +30,11 @@ class PKDBConfig:
     max_total_requests: int = 10000
     default_execution_mode: str = "batch"
     source: str = "Wikipedia" # Configurable Data Source
-    
+
     # Validation
     map_validators: List[str] = field(default_factory=lambda: ["ChunkConstraints", "FormatNormalization"])
     global_validators: List[str] = field(default_factory=lambda: ["Deduplication", "EntityResolution", "PrimaryKeyValidation", "Completeness", "FormatNormalization"])
+    dedup_strategy: str = "llm_based"  # "first" or "llm_based" (conflict resolution for duplicate rows)
 
 class PKDB:
     """
@@ -66,8 +67,16 @@ class PKDB:
         )
         
         # Validators (Configurable)
-        self.map_validator = GlobalValidator(self.llm, strategies=getattr(self.config, 'map_validators', ["ChunkConstraints", "FormatNormalization"]))
-        self.global_validator = GlobalValidator(self.llm, strategies=getattr(self.config, 'global_validators', ["Deduplication", "EntityResolution", "PrimaryKeyValidation", "Completeness", "FormatNormalization"]))
+        self.map_validator = DataValidator(
+            self.llm,
+            strategies=getattr(self.config, 'map_validators', ["ChunkConstraints", "FormatNormalization"]),
+            dedup_strategy=self.config.dedup_strategy
+        )
+        self.global_validator = DataValidator(
+            self.llm,
+            strategies=getattr(self.config, 'global_validators', ["Deduplication", "EntityResolution", "PrimaryKeyValidation", "Completeness", "FormatNormalization"]),
+            dedup_strategy=self.config.dedup_strategy
+        )
         
         self.schema_generator = SchemaGenerator(
             self.llm, 
