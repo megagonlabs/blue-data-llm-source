@@ -88,9 +88,14 @@ class DataTask:
         )
         
         if self.partition_key and self.partition_value:
+            partition_estimate_str = (
+                f"Expected rows in this partition: ~{self.estimated_rows}.\n"
+                if self.estimated_rows else ""
+            )
             prompt += DATA_EXTRACTION_PARTITION_CONTEXT.format(
                 partition_key=self.partition_key,
-                partition_value=self.partition_value
+                partition_value=self.partition_value,
+                partition_estimate_str=partition_estimate_str
             )
         
         prompt += DATA_EXTRACTION_COLUMNS_SUFFIX.format(cols=cols)

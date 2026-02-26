@@ -663,23 +663,36 @@ class EmbeddingValidator(BaseValidator):
         # Safer: Verified Drop.
         
         # Let's perform a bulk check
-        prompt_template = """
-        I have a list of rows extracted for the query: "{query}".
-        I suspect these might be outliers or irrelevant.
-        
-        Rows:
-        {rows}
-        
-        For each row, determine if it is a VALID extraction for the query.
-        Return JSON: {{ "valid_indices": [0, 2], "invalid_indices": [1] }}
-        Indices correspond to the list above.
-        """
-        
-        # We need the query. It might be in context.
-        # If not, we can guess or use table name?
-        query = context.get('query', "Unknown Query") 
-        if 'schema' in context and context['schema']:
-            query = f"Extract {context['schema'].table_name}"
+        prompt_template = """Task: Filter invalid rows from an extraction result.
+
+Query: "{query}"
+{schema_context}
+
+Candidate Rows (may contain errors, hallucinations, or off-topic entries):
+{rows}
+
+For each row, mark it INVALID if ANY of:
+- The row is clearly about a different topic than the query
+- A key field is hallucinated (e.g. a name that doesn't exist for this query)
+- The row violates a hard constraint (e.g. wrong year, wrong country)
+- The row is a duplicate of another in the list (keep the first occurrence)
+
+Mark it VALID if the row is plausibly a real extraction for this query.
+When uncertain, default to VALID (false positives are safer than false negatives).
+
+Return JSON: {{ "valid_indices": [0, 2], "invalid_indices": [1] }}
+Indices correspond to the list above."""
+
+        # Use real query; fall back to table name only if query is absent.
+        query = context.get('query') or (
+            f"Extract {context['schema'].table_name}" if context.get('schema') else "Unknown Query"
+        )
+        schema_context = ""
+        if context.get('schema'):
+            cols = ", ".join(c.name for c in context['schema'].columns)
+            schema_context = f"Table schema: {context['schema'].table_name} ({cols})."
+        if context.get('constraints'):
+            schema_context += f" Constraints: {context['constraints']}."
             
         # Batching (chunk of 10)
         final_valid_params = []
@@ -706,7 +719,7 @@ class EmbeddingValidator(BaseValidator):
             batch = rows_list[i:i+batch_size]
             batch_real_indices = real_indices[i:i+batch_size]
             
-            prompt = prompt_template.format(query=query, rows=json.dumps(batch, indent=2))
+            prompt = prompt_template.format(query=query, schema_context=schema_context, rows=json.dumps(batch, indent=2))
             try:
                 response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
                 if response.metrics:

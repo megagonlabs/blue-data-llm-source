@@ -69,16 +69,15 @@ You can customize the execution behavior using `PKDBConfig`.
 ```python
 config = PKDBConfig(
     model="gpt-4o",
-    max_partitions=200,           # Max partitions per split
-    row_threshold=120,            # Row estimate threshold to trigger decomposition
-    decomposition_strategy="rule_based",  # 'rule_based' or 'llm_based'
-    partitioning_method="llm_based",      # 'llm_based', 'first', or 'semantic'
+    decomposition_strategy="llm_based",  # 'rule_based', 'llm_based' 
+    row_threshold=120,            # Rows above this triggers partitioning
+    default_execution_mode="batch",       # 'batch' (default) or 'row_by_row' (higher recall)
     partition_selection_mode="llm",       # 'llm' or 'scoring'
-    default_execution_mode="batch",       # 'batch' or 'row_by_row'
-    dedup_strategy="llm_based",           # 'first' or 'llm_based'
-    source="Wikipedia",                   # Configurable data source label
-    max_concurrent=15,                     # Async concurrency limit
-    max_depth=2                           # Max recursive decomposition depth
+    max_partitions=200,           # Hard cap on leaf tasks
+    dedup_strategy="llm_based",           # 'first' (fast) or 'llm_based' (accurate)
+    source="Wikipedia",                   # Injected into extraction prompts
+    max_concurrent=15,
+    max_depth=2
 )
 
 pkdb = PKDB(config)
@@ -86,30 +85,33 @@ pkdb = PKDB(config)
 
 ### Running Benchmarks
 
-The `experiments/` directory contains scripts to reproduce research benchmarks (WikiTabGen, etc.).
-
 ```bash
-# Run the Pokemon debug script
-python experiments/run_pokemon.py
+# Mini benchmark (6 free-form queries, qualitative inspection)
+python experiments/run_mini_dataset.py --model gpt-4o --limit 3
 
-# Run a mini benchmark
-python experiments/run_mini_dataset.py
+# WikiTabGen benchmark (100 Wikipedia tables, F1 scoring) — best config
+python experiments/run_wikitabgen.py --model gpt-4o --limit 10 \
+    --decomposition_strategy llm_based --row_threshold 120
+
+# Regression suite (5-table subset, fast sanity check after code changes) — best config
+python scripts/run_regression.py --model gpt-4o \
+    --decomposition_strategy llm_based --row_threshold 120
 ```
 
-**Available Arguments:**
+**Key arguments:**
 
-| Argument | Default | Description |
+| Argument | Best value | Description |
 | :--- | :--- | :--- |
-| `--model` | `gpt-4o` | The LLM capability model to use. |
-| `--limit` | `3` | Max number of tables to evaluate (use `0` for all). |
-| `--table` | `None` | Run a specific table by name (overrides limit). |
-| `--decomposition_strategy` | `rule_based` | Strategy for query decomposition: `rule_based` or `llm_based`. |
-| `--row_threshold` | `120` | Threshold of estimated rows to trigger verification/partitioning. |
-| `--execution_mode` | `batch` | Execution mode: `batch` (parallel) or `row_by_row` (sequential). |
-| `--partition_selection_mode` | `llm` | Method for selecting partition keys: `scoring` or `llm`. |
-| `--plan_only` | `False` | Run only the planning phase (skip data fetching). |
-| `--use_cache` | `False` | Enable caching for LLM responses. |
-| `--resume_dir` | `None` | Directory to resume a previous interrupted run from. |
+| `--model` | `gpt-4o` | Any LiteLLM-supported model string |
+| `--decomposition_strategy` | `rule_based` | `rule_based` (threshold-based) or `llm_based` |
+| `--row_threshold` | `120` | Estimated rows above this triggers partitioning |
+| `--execution_mode` | `batch` | `batch` (default) or `row_by_row` (higher recall, slower) |
+| `--partition_selection_mode` | `llm` | `llm` or `scoring` for partition key selection |
+| `--limit` | — | Max tables to run (`0` = all) |
+| `--table` | — | Run a single table by name (overrides `--limit`) |
+| `--plan_only` | — | Dry-run: plan only, skip extraction |
+| `--use_cache` | — | Disk cache for LLM responses (`.cache_pkdb/`) |
+| `--resume_dir` | — | Resume an interrupted run |
 
 
 ## Architecture

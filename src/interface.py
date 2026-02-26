@@ -21,7 +21,7 @@ class PKDBConfig:
     num_schema_candidates: int = 3
     schema_temperature: float = 0.7
     extraction_temperature: float = 0.0
-    decomposition_strategy: str = "rule_based"
+    decomposition_strategy: str = "llm_based"
     row_threshold: int = 120
     max_depth: int = 2
     partitioning_method: str = "llm_based"
@@ -30,6 +30,9 @@ class PKDBConfig:
     max_total_requests: int = 10000
     default_execution_mode: str = "batch"
     source: str = "Wikipedia" # Configurable Data Source
+
+    # Continuation / Completeness
+    continuation_pk_str_limit: int = 50  # Max chars per PK value in continuation prompt
 
     # Validation
     map_validators: List[str] = field(default_factory=lambda: ["ChunkConstraints", "FormatNormalization"])
@@ -97,12 +100,13 @@ class PKDB:
         )
         
         self.engine = MapReduceEngine(
-            llm_client=self.llm, 
+            llm_client=self.llm,
             planner=self.planner,
             max_partitions=self.config.max_partitions,
             default_execution_mode=self.config.default_execution_mode,
             map_validator=self.map_validator,
-            global_validator=self.global_validator
+            global_validator=self.global_validator,
+            continuation_pk_str_limit=self.config.continuation_pk_str_limit
         )
         
     @property

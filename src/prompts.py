@@ -30,7 +30,7 @@ Goal: Rewrite the user query to be:
 
 Guidelines:
 - Clarify ambiguous terms.
-- Specify that where the query want a "complete list" / "all items" or just some (like 100).
+- Specify whether the query wants a "complete list" / "all items" or just some (like 100).
 - Mention including key attributes if implied.
 
 Output Requirements: 
@@ -48,6 +48,7 @@ Think about the comprehensive nature of the request.
 - If it asks for "US States", that's naturally ~50.
 - If it asks for "Pokemon", that's ~1000.
 - If it asks for "Movies", "Cities", "People", or "Events" over a long time range, the number could be LARGE (100+ or 1000+).
+- If it asks for rankings, tournament results, competition participants, championship entries, episode lists, or any enumeration across multiple rounds or years, it could be LARGE (100-500+). Lean toward the higher end.
 - Do NOT underestimate. It is safer to overestimate for robustness.
 
 Return ONLY a single integer number representing the expected row count.
@@ -160,8 +161,12 @@ For each column, determine:
 1. Description: A brief description of what this column represents.
 2. Semantic Type (categorical, numerical, time, entity, text, etc.)
 3. Data Type (int, float, date, str, bool, list, etc.)
-4. Formatting: a string that describes the format of values in this column, such that the values could have a uniform format across multiple LLM calls. Formatting could be a pattern, a specific format, or just a natural description of the format. If there is no need to specify format of values, use empty string. Examples: "YYYY-MM-DD", "$", "%.2f", "5 digits zip code", "Full name without abbreviation", "Abbreviation only", etc. Please use common sense to determine the unform format for columns that achieve the data query.
-
+4. Formatting: A format string that ensures uniform values across multiple LLM calls.
+   Use empty string if no specific format is needed.
+   Examples: "YYYY-MM-DD", "Full name (no abbreviation)", "Abbreviation only",
+   "Numeric with commas (e.g. 35,552)", "Season as YYYY-YY (e.g. 2000-01)".
+   Specify exact separator characters for range-style keys to prevent mismatch
+   between parallel extraction calls.
 
 Return JSON:
 {{
@@ -189,6 +194,12 @@ Guidelines:
    - **Avoid Noise**: Do NOT select high-cardinality "ID-like" keys like "Zip Code", "Phone Number", "Coordinates", or "Lat/Lon" unless the query EXPLICITLY asks for them. For general demographics or political data, prefer "State", "Region", or "Year".
    - **Avoid Placeholders**: Do NOT use generic placeholders like "Player1", "Team A", "Item 1" unless they are the actual data values. If you do not know the specific entities, do not partition by this key.
    - Do NOT hallucinate values outside the query scope.
+5. **Cardinality Calibration**:
+   - Estimate the distinct-value count for this key within the query scope.
+   - If distinct values >> expected total rows, this key is too granular.
+   - Prefer range/interval partitions (e.g. group 1-20, 21-40) if it helps reduce granularity while maintaining orthogonality.
+   - If you cannot enumerate a finite, known set with confidence,
+     raise ambiguity_score toward 1.0 and explain in reasoning.
 
 Return only JSON Code in the following format:
 {{
@@ -212,18 +223,23 @@ Task: List ALL possible partition values for partition key "{key_name}" that are
 Data Query: "{query}"
 Partition Key: "{key_name}"
 Partition Key Description: "{key_description}"
+Primary Key of the final table: "{primary_key}"
 Constraints: {constraints}
 
 CRITICAL RULES:
-1. **Partitions**: List the most suitable partitions to divide the target data for the data query into chunks that mutually exclusive and cover the entire data. Please note that partition keys are not always categorical, you might also use interval (e.g. year 2003-2009, ID from 11 to 20, etc.) as partitions if it makes sense.
-2. **Relevance Check**: Do NOT output values for keys like "Zip Code" or "Phone Number" unless the query is explicitly about them. If the key seems irrelevant to the query (e.g. asking for "Zip Code" for a list of Presidents), return an empty list or a single "All" partition.
+1. **Partitions**: List the most suitable partitions to divide the target data for the data query into chunks that are mutually exclusive and cover the entire data. Partition keys are not always categorical — you may also use intervals (e.g. year 2003-2009, ID from 11 to 20, etc.) when it makes sense.
+2. **Relevance Check**: Do NOT output values for keys like "Zip Code" or "Phone Number" unless the query is explicitly about them. If the key seems irrelevant to the query (e.g. asking for "Zip Code" for a list of Presidents), return an empty list.
 3. **Scope Enforcement**: If the query limits the scope, only list values within the scope of the query. Verify each value against the constraints.
 4. **Avoid Placeholders**: Do NOT use generic placeholders like "Player1", "Team A", "Item 1" unless they are the actual data values.
-4. **Completeness**: List ALL possible partition values according to factual common sense, query context, and constraints.
-4. **Relevance**: Following for completeness, only list partition values that actually contain data for this query.
+5. **Completeness**: List ALL possible partition values according to factual common sense, query context, and constraints.
+6. **Relevance**: Only list partition values that actually contain data for this query.
+7. **Limit**: Return at most {max_partitions} partition values.
+   If the natural cardinality exceeds this limit, prefer range/interval groupings
+   (e.g., "Years 2000-2005", "IDs 1-50") over a flat list of individual values.
+   If you cannot enumerate a finite, known set, return an empty list [].
 
 Format: Return a valid JSON object with key "values" containing the list of strings.
-Example: { "values": ["Value1", "Value2"] }
+Example: {{ "values": ["Value1", "Value2"] }}
 """
 
 SUBQUERY_REWRITE_PROMPT = """
@@ -252,36 +268,31 @@ PARTITION_SELECTION_PROMPT = """
 Data Query: "{query}"
 Constraints: {constraints}
 
-I have identified the following candidates for partitioning the data to solve the query:
-
+Candidates (schema columns evaluated for partitioning):
 {candidates_str}
 
-Task: Select the BEST partition key from the list above. Please note that target data after this partition could be partited recursively if needed.
+Task: Select the BEST partitioning strategy from the candidates above.
 
-Guidelines:
-1. **Mutual Exclusivity** (Primary):
-   - Prefer keys where each record belongs to ONE and ONLY ONE partition.
-   - Avoid overlapping partitions if possible.
+**Option A — Schema Column Partitioning (preferred)**
+Select one of the schema candidates above. Use when a column cleanly divides the data
+with manageable, known distinct values (categorical, temporal, or location type).
 
-2. **Semantic Appropriateness**:
-   - Prefer keys that naturally divide the data into meaningful groups (e.g. Time, Category, Location, etc.).
-   - Use the metadata of the column to understand the meaning of the key (e.g. is it a code? a name? a measure? etc.).
-   - AVOID partitioning by numerical measures (e.g. "Population", "Area", "GDP", etc.) unless the query explicitly asks to filter/group by them.
-   - AVOID generic IDs if better natural keys exist.
+**Option B — Interval/Range Partitioning**
+Use an existing schema candidate column but partition it into ordered ranges rather than
+individual values (e.g., "Year 2000-2005" / "Year 2006-2010"). Use when cardinality is
+too high for Option A but the data has a natural ordering.
 
-3. **Efficiency**:
-   - The goal is to break the large result set into smaller, manageable chunks.
-   - "Dust" (too many tiny partitions) is bad.
-   - "Fat" (one huge partition) is bad.
+**Option C — Latent Dimension (last resort)**
+ONLY use this if ALL schema column candidates have ambiguity_score >= 0.7.
+Introduce a well-known external categorization not in the schema that naturally organizes
+the data (e.g., partitioning by Genre for a music table that lacks a Genre column).
+Requirement: the dimension must have finite, well-known, enumerable values.
 
-4. **Feasibility**:
-   - Can we easily list all values for this key? (e.g. "States" is easy, "every unique population value" is hard).
-
-Selection:
-Return a valid JSON object:
+Return JSON:
 {{
-    "selected_key": "Name of the key",
-    "reasoning": "Why this key is better than others..."
+    "option": "A" | "B" | "C",
+    "selected_key": "column name (Options A/B) or new dimension name (Option C)",
+    "reasoning": "Why this partitioning strategy is best..."
 }}
 """
 
@@ -297,7 +308,11 @@ Target Scope:
 {estimate_str}
 
 **CRITICAL INSTRUCTION**: According to {source}, extract ALL data matching the request.
-You must be as comprehensive as possible. If the table usually has many rows, return MANY rows.
+- Extract the COMPLETE set of items. Do NOT limit yourself to "the most famous",
+  "the most common", or any arbitrary top-N selection.
+- Do NOT stop early because you have reached a convenient stopping point.
+  Continue until you genuinely have no more entries to add.
+- When in doubt, include more rows rather than fewer. Missing rows are worse than extras.
 
 **OUTPUT FORMAT**:
 Return a valid JSON Object with a single key "items" containing the list of rows.
@@ -314,41 +329,41 @@ DO NOT return a raw list. DO NOT return Markdown.
 DATA_EXTRACTION_PARTITION_CONTEXT = """
 You are processing a PARTITION: "{partition_key}" = "{partition_value}".
 You MUST ONLY return items where "{partition_key}" is equal to "{partition_value}".
-"""
+{partition_estimate_str}"""
 
 ROW_BY_ROW_KEYS_PROMPT = """
-    You are a retriever of facts.
-    We want to create a table with the detailed information about {query} according to {source}
-    {key_desc}. 
-    List all {key_col} entities for the table. 
-    Never shorten the list with ellipsis (...) in the middle. List every single entity found.
-    The response will be formatted as JSON object shown below.
-    
-    RESPONSE FORMAT:
-    {{
-        "keys": [
-            {{
-                "{key_col}": "value"
-            }}
-        ]
-    }}
-    """
+You are a retriever of facts.
+We want to create a table with the detailed information about {query} according to {source}
+{key_desc}.
+List all {key_col} entities for the table.
+Never shorten the list with ellipsis (...) in the middle. List every single entity found.
+The response will be formatted as JSON object shown below.
+
+RESPONSE FORMAT:
+{{
+    "keys": [
+        {{
+            "{key_col}": "value"
+        }}
+    ]
+}}
+"""
 
 ROW_BY_ROW_FETCH_PROMPT = """
-    You are a retriever of facts.
-    We want to create a table with the detailed information about {query} according to {source}.
-    Columns in the table are {columns}.
-    {key_desc}.     
-    Retrieve a single row whose key is {key_val}.
-    The response will be formatted as JSON dictionary shown below.
-    Pay special attention to wrap all property names and values in double quotes!
-    
-    RESPONSE FORMAT:
-    {{
-        "{key_col}": "{key_val}",
-        ...
-    }}
-    """
+You are a retriever of facts.
+We want to create a table with the detailed information about {query} according to {source}.
+Columns in the table are {columns}.
+{key_desc}.
+Retrieve a single row whose key is {key_val}.
+The response will be formatted as JSON dictionary shown below.
+Pay special attention to wrap all property names and values in double quotes!
+
+RESPONSE FORMAT:
+{{
+    "{key_col}": "{key_val}",
+    ...
+}}
+"""
 
 # --- VALIDATION ---
 
@@ -360,7 +375,7 @@ Invalid Rows:
 {rows}
 
 YOUR TASK:
-1. Correct the data in these rows to satisfy the constraint IF POSSIBlE (e.g. fix year, normalize name).
+1. Correct the data in these rows to satisfy the constraint IF POSSIBLE (e.g. fix year, normalize name).
 2. If a row is completely irrelevant or cannot be fixed, DROP it.
 3. Return ONLY the fixed rows in JSON format.
 
@@ -413,7 +428,8 @@ Error Report:
 Instructions:
 1. Fix the values in the rows to satisfy the assertions. 
 2. If a value is unfixable (e.g. clearly garbage), set it to None or empty string.
-3. Return corrected rows as a JSON list.
+3. Return corrected rows as a JSON object:
+   {{ "fixed_rows": [{{"Column1": "Value1", ...}}, ...] }}
 """
 
 VALUE_VALIDATION_PROMPT = """
@@ -460,7 +476,8 @@ Context:
 - The extraction might be partial due to pagination limits or model refusal.
 - If Actual is very close to Expected (e.g. 150 vs 151), it is COMPLETE.
 - If Actual is significantly lower (e.g. 10 vs 100), it is INCOMPLETE.
-- If Actual is higher, it is likely COMPLETE (or duplicate/hallucinated, but completeness is satisfied).
+- If Actual > Expected, it is likely COMPLETE (possibly with duplicates).
+- If Actual = 0 and Expected > 0, it is INCOMPLETE (extraction failed entirely).
 
 Decision:
 Returns JSON:

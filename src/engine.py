@@ -23,15 +23,15 @@ class MapReduceEngine:
     """
     
     
-    def __init__(self, llm_client: LLMClient, planner=None, max_partitions: int = 50, default_execution_mode: str = "batch", map_validator=None, global_validator=None, completeness_strategy: str = "heuristic"):
+    def __init__(self, llm_client: LLMClient, planner=None, max_partitions: int = 50, default_execution_mode: str = "batch", map_validator=None, global_validator=None, completeness_strategy: str = "heuristic", continuation_pk_str_limit: int = 50):
         self.llm = llm_client
         self.planner = planner
         self.max_partitions = max_partitions
         self.default_execution_mode = default_execution_mode
-        self.default_execution_mode = default_execution_mode
         self.map_validator = map_validator # Runs on each partition (Map side)
         self.global_validator = global_validator # Runs on final result (Reduce side)
         self.completeness_strategy = completeness_strategy
+        self.continuation_pk_str_limit = continuation_pk_str_limit
         # self.validator = Validator(llm_client) # Old validator deprecated
         
     async def execute(self, plan: DataPlanRequest, context: dict = None) -> Tuple[pd.DataFrame, LLMMetrics]:
@@ -138,6 +138,7 @@ class MapReduceEngine:
                 
                 # ... [Parsing Logic Reuse] ...
                 chunk_data = []
+                was_truncated = False
                 try:
                     # 1. Fast path: Valid JSON
                     parsed = json.loads(content)
@@ -146,21 +147,23 @@ class MapReduceEngine:
                             if key in parsed and isinstance(parsed[key], list):
                                 parsed = parsed[key]
                                 break
-                                
+
                     if isinstance(parsed, list):
                         chunk_data = parsed
                     else:
                         logger.warning(f"Task {task.trace_id} returned non-list JSON: {type(parsed)}")
-                        
-                except json.JSONDecodeError:
+
+                except json.JSONDecodeError as e:
                     # 2. Robust path: Handle Truncation (Common with "List ALL" prompt)
+                    if "Unterminated string" in str(e):
+                        was_truncated = True
                     logger.warning(f"Task {task.trace_id} JSON Decode Error (likely truncation). Attempting repair...")
-                    
+
                     s = content.strip()
                     if s.startswith("{") and '"items":' in s:
                         last_comma = s.rfind("},")
                         if last_comma != -1:
-                            fixed = s[:last_comma+1] + "]}" 
+                            fixed = s[:last_comma+1] + "]}"
                             try:
                                 parsed = json.loads(fixed)
                                 if isinstance(parsed, dict) and "items" in parsed:
@@ -189,17 +192,42 @@ class MapReduceEngine:
                         context=context
                     )
 
+                # M2: Diminishing returns — stop if new batch adds < 10% of what we already have
+                if all_data and chunk_data and len(chunk_data) < 0.1 * len(all_data):
+                    logger.info(f"Task {task.trace_id}: Diminishing returns ({len(chunk_data)} new vs {len(all_data)} existing). Stopping.")
+                    if chunk_data:
+                        all_data.extend(chunk_data)
+                    break
+
                 if chunk_data:
                     all_data.extend(chunk_data)
-                
+
+                # #9: If response was truncated, skip completeness check and reprompt immediately
+                if was_truncated:
+                    logger.info(f"Task {task.trace_id}: Truncated response detected. Continuing extraction.")
+                    pk_col = task.schema.primary_keys[0] if task.schema and task.schema.primary_keys else None
+                    if pk_col and all_data:
+                        seen_keys = [str(row.get(pk_col, ""))[:self.continuation_pk_str_limit] for row in all_data if row.get(pk_col)]
+                        seen_str = f"Already extracted {pk_col} values (do NOT repeat these):\n{json.dumps(seen_keys)}"
+                    else:
+                        seen_str = f"Already extracted {len(all_data)} rows."
+                    current_prompt = prompt + f"\n\nCONTINUATION REQUEST:\n{seen_str}\nReturn ONLY rows not in the list above."
+                    continue
+
                 # COMPLETENESS CHECK
                 # Only check if we have an estimate and it's substantial
                 if getattr(task, 'estimated_rows', 0) and task.estimated_rows > 10:
                     is_complete = await self._check_completeness(task, len(all_data), current_prompt, context)
                     if not is_complete:
                         logger.info(f"Task {task.trace_id}: Incomplete Result ({len(all_data)}/{task.estimated_rows}). Reprompting...")
-                        # Construct Reprompt
-                        current_prompt = prompt + f"\n\nPREVIOUSLY EXTRACTED: {len(all_data)} rows. We expected {task.estimated_rows}.\nCONTINUE extraction from where you left off. Do not repeat previous items. Return next batch."
+                        # Construct Reprompt with all extracted PK values (#4)
+                        pk_col = task.schema.primary_keys[0] if task.schema and task.schema.primary_keys else None
+                        if pk_col and all_data:
+                            seen_keys = [str(row.get(pk_col, ""))[:self.continuation_pk_str_limit] for row in all_data if row.get(pk_col)]
+                            seen_str = f"Already extracted {pk_col} values (do NOT repeat these):\n{json.dumps(seen_keys)}"
+                        else:
+                            seen_str = f"Already extracted {len(all_data)} rows."
+                        current_prompt = prompt + f"\n\nCONTINUATION REQUEST:\n{seen_str}\nReturn ONLY rows not in the list above."
                         continue # Loop again
                     else:
                         break # Good enough

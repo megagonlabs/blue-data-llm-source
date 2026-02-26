@@ -163,21 +163,41 @@ class StrategyEvaluator:
         try:
             response = await self.estimator.llm.agenerate(prompt, response_format={"type": "json_object"})
             data = json.loads(response.content)
+            option = data.get("option", "A")
             selected_key = data.get("selected_key")
             reasoning = data.get("reasoning", "")
-            
-            logger.info(f"LLM Selected Partition Key: {selected_key} (Reason: {reasoning})")
-            
-            # Find the candidate
+
+            logger.info(f"LLM Selected Partition Option {option}: key='{selected_key}' (Reason: {reasoning})")
+
+            # Option C: latent dimension (gated by ambiguity threshold)
+            if option == "C":
+                all_ambiguous = all(
+                    (c.stats.ambiguity_score >= 0.7 if c.stats else False)
+                    for c in candidates
+                )
+                if not all_ambiguous:
+                    logger.warning("Option C requested but not all candidates have ambiguity_score >= 0.7. Falling back to best schema candidate.")
+                    option = "A"  # fall through to schema candidate selection below
+                else:
+                    # Return a synthetic candidate for the latent dimension
+                    synthetic = StrategyCandidate(
+                        schema=candidates[0].schema,
+                        partition_key=selected_key,
+                        score=0.5,
+                        reasoning=f"Option C latent dimension [{reasoning}]"
+                    )
+                    return synthetic
+
+            # Options A and B: find matching schema candidate
             for c in candidates:
                 if c.partition_key == selected_key:
-                    c.reasoning += f" [LLM Selected: {reasoning}]"
+                    c.reasoning += f" [LLM Option {option}: {reasoning}]"
                     return c
-            
+
             # Fallback if name mismatch
             logger.warning(f"LLM selected key '{selected_key}' not found in candidates. Falling back to score.")
             return self.select_best(candidates)
-            
+
         except Exception as e:
             logger.error(f"LLM Partition Selection failed: {e}. Falling back to score.")
             return self.select_best(candidates)
@@ -529,6 +549,7 @@ class DataPlanBuilder:
                 partition_key="All",
                 partition_value="All",
                 execution_mode=root_task.execution_mode,
+                estimated_rows=root_task.estimated_rows,
                 source=source
             )
             map_tasks.append(flat_task)
@@ -640,7 +661,14 @@ class DataPlanBuilder:
                     selected_stats = suggested_stats
                     logger.info("Using Cached Distribution Stats from Joint Optimization.")
             else:
-                logger.warning(f"Suggested key {suggested_key} not found in schema. Fallback to search.")
+                # Option C latent dimension: not in schema — create a synthetic Column for partitioning
+                synth_col = Column(
+                    name=suggested_key,
+                    description=f"Latent dimension: {suggested_key}",
+                    semantic_type="categorical"
+                )
+                partition_keys = [synth_col]
+                logger.info(f"Using latent dimension '{suggested_key}' for partitioning (Option C).")
         
         if not partition_keys:
             # Standard Search
@@ -710,10 +738,31 @@ class DataPlanBuilder:
             values = list(selected_stats.partition_counts.keys())
             counts = selected_stats.partition_counts
         else:
-            values = await self._fetch_partition_values(query, pkey, task.constraints)
+            pk_hint = schema.primary_keys[0] if schema and schema.primary_keys else ""
+            values = await self._fetch_partition_values(
+                query, pkey, task.constraints,
+                primary_key=pk_hint,
+                estimated_rows=task.estimated_rows or 0
+            )
             counts = {}
 
         logger.info(f"Selected Key: {pkey.name}. Values: {len(values)}. Counts Keys: {list(counts.keys())}, Counts Values: {list(counts.values())}")
+
+        # Degenerate-Partition Fallback: 1 value = no benefit from partitioning (adds confusing constraint)
+        if len(values) == 1:
+            logger.warning(f"Partition key {pkey.name} yielded only 1 value '{values[0]}'. Falling back to FLAT execution.")
+            return [DataTask(
+                query=query,
+                constraints=task.constraints,
+                collection_strategy=task.collection_strategy,
+                schema=schema,
+                parent=task,
+                partition_key="All",
+                partition_value="All",
+                execution_mode=getattr(task, 'execution_mode', 'batch'),
+                estimated_rows=task.estimated_rows,
+                source=source
+            )]
 
         # Zero-Value Fallback: If no values generated (e.g. too many, or unknown), revert to flat task
         if not values:
@@ -840,20 +889,22 @@ class DataPlanBuilder:
         
         return map_tasks
         
-    async def _fetch_partition_values(self, query: str, key: Column, constraints: dict = {}) -> List[str]:
+    async def _fetch_partition_values(self, query: str, key: Column, constraints: dict = {}, primary_key: str = "", estimated_rows: int = 0) -> List[str]:
         """Ask LLM to list all values for the partition key."""
         prompt = PARTITION_VALUES_PROMPT.format(
-            query=query, 
-            key_name=key.name, 
+            query=query,
+            key_name=key.name,
             key_description=key.description,
+            primary_key=primary_key,
+            max_partitions=self.max_partitions,
             constraints=json.dumps(constraints, indent=2)
         )
-        
+
         try:
             # Use JSON mode and robust parsing
             response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
             data = parse_json_response(response.content)
-            
+
             # Expecting {"values": [...]} or list
             if isinstance(data, dict):
                 raw_values = data.get("values", [])
@@ -862,7 +913,7 @@ class DataPlanBuilder:
             else:
                 logger.warning(f"Unexpected partition values format: {type(data)}")
                 raw_values = []
-                
+
             # Filter and Clean
             values = []
             for v in raw_values:
@@ -870,12 +921,15 @@ class DataPlanBuilder:
                     s = str(v).strip()
                     if s and len(s) < 100:
                         values.append(s)
-            
-            # Limit number of partitions to prevent explosion
-            if len(values) > self.max_partitions:
+
+            # Ratio check: if values >> estimated rows, likely an explosion — fall back to flat
+            if estimated_rows and len(values) > 2 * estimated_rows:
+                logger.warning(f"Partition explosion: {len(values)} values for ~{estimated_rows} estimated rows. Falling back to flat.")
+                return []
+            elif len(values) > self.max_partitions:
                 logger.warning(f"Capping partition values from {len(values)} to {self.max_partitions}")
                 values = values[:self.max_partitions]
-                
+
             return values
 
         except Exception as e:
