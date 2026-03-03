@@ -199,6 +199,25 @@ class MapReduceEngine:
                         all_data.extend(chunk_data)
                     break
 
+                # R7-1: Degenerate response detection — abort early to avoid costly retries
+                if not chunk_data and content:
+                    # (a) Whitespace fill: LLM has no data, fills output with spaces
+                    total_chars = len(content)
+                    ws_chars = sum(1 for c in content if c in ' \t\n\r')
+                    if total_chars > 500 and ws_chars / total_chars > 0.90:
+                        logger.warning(f"Task {task.trace_id}: Near-empty response ({ws_chars}/{total_chars} whitespace). LLM has no data — aborting retries.")
+                        break
+
+                    # (b) Loop JSON: LLM repeats same field names to fill row quota
+                    import re as _re
+                    key_matches = _re.findall(r'"(\w[^"]{0,40})":', content)
+                    if key_matches:
+                        from collections import Counter as _Counter
+                        top_key, top_count = _Counter(key_matches).most_common(1)[0]
+                        if top_count > 8:
+                            logger.warning(f"Task {task.trace_id}: Loop JSON detected ('{top_key}' repeated {top_count}x). LLM is looping — aborting retries.")
+                            break
+
                 if chunk_data:
                     all_data.extend(chunk_data)
 
@@ -211,12 +230,13 @@ class MapReduceEngine:
                         seen_str = f"Already extracted {pk_col} values (do NOT repeat these):\n{json.dumps(seen_keys)}"
                     else:
                         seen_str = f"Already extracted {len(all_data)} rows."
-                    current_prompt = prompt + f"\n\nCONTINUATION REQUEST:\n{seen_str}\nReturn ONLY rows not in the list above."
+                    # Limit chunk size to avoid hitting output token cap again (R6-3)
+                    current_prompt = prompt + f"\n\nCONTINUATION REQUEST:\n{seen_str}\nReturn ONLY rows not in the list above. Return AT MOST 25 rows in this response."
                     continue
 
                 # COMPLETENESS CHECK
-                # Only check if we have an estimate and it's substantial
-                if getattr(task, 'estimated_rows', 0) and task.estimated_rows > 10:
+                # Only check if we have a non-trivial estimate (>= 5 rows expected)
+                if getattr(task, 'estimated_rows', 0) and task.estimated_rows >= 5:
                     is_complete = await self._check_completeness(task, len(all_data), current_prompt, context)
                     if not is_complete:
                         logger.info(f"Task {task.trace_id}: Incomplete Result ({len(all_data)}/{task.estimated_rows}). Reprompting...")
@@ -227,7 +247,8 @@ class MapReduceEngine:
                             seen_str = f"Already extracted {pk_col} values (do NOT repeat these):\n{json.dumps(seen_keys)}"
                         else:
                             seen_str = f"Already extracted {len(all_data)} rows."
-                        current_prompt = prompt + f"\n\nCONTINUATION REQUEST:\n{seen_str}\nReturn ONLY rows not in the list above."
+                        # R6-3b: Limit rows in completeness reprompt to prevent 16K-token overflow
+                        current_prompt = prompt + f"\n\nCONTINUATION REQUEST:\n{seen_str}\nReturn ONLY rows not in the list above. Return AT MOST 25 rows in this response."
                         continue # Loop again
                     else:
                         break # Good enough
@@ -333,9 +354,15 @@ class MapReduceEngine:
         columns_str = ", ".join(all_cols)
 
         # B. Step 1: Generate Keys
+        # If this is a partition task, narrow the query for key enumeration
+        rbr_query = task.query
+        if task.partition_key and task.partition_key != "All" and task.partition_value:
+            rbr_query = f"{task.query} (only include rows where {task.partition_key} = {task.partition_value})"
+
         # Build prompt using SOTA template
         keys_prompt = ROW_BY_ROW_KEYS_PROMPT.format(
-            query=task.query,
+            query=rbr_query,
+            source=task.source,
             key_desc=key_desc,
             key_col=keys[0] # Focusing on primary key for list generation
         )
@@ -343,8 +370,10 @@ class MapReduceEngine:
         keys_resp = await self.llm.agenerate(keys_prompt, temperature=0.0, response_format={"type": "json_object"})
         keys_content = keys_resp.content
         total_metrics = keys_resp.metrics
-        
-        self._save_trace(task, keys_prompt, keys_content, keys_resp.metrics.total_tokens, context)
+
+        if "output_dir" in context:
+            self._save_task_io(task=task, prompt=keys_prompt, response=keys_content,
+                               parsed_count=0, tokens=keys_resp.metrics.total_tokens if keys_resp.metrics else 0, context=context)
         
         keys_data = [] # List of dicts
         try:
@@ -399,7 +428,8 @@ class MapReduceEngine:
             # "Retrieve a single row whose key is %s" -> "(Name = Foo)"
             
             row_prompt = ROW_BY_ROW_FETCH_PROMPT.format(
-                query=task.query,
+                query=rbr_query,
+                source=task.source,
                 columns=columns_str,
                 key_desc=key_desc,
                 key_col=keys[0], # Not strictly used in new template logic but passed for safety
@@ -407,6 +437,9 @@ class MapReduceEngine:
             )
             
             resp = await self.llm.agenerate(row_prompt, temperature=0.0, response_format={"type": "json_object"})
+            if "output_dir" in context:
+                self._save_task_io(task=task, prompt=row_prompt, response=resp.content,
+                                   parsed_count=1, tokens=resp.metrics.total_tokens if resp.metrics else 0, context=context)
             return resp, row_prompt, key_instance
         
         row_tasks = [fetch_row(k) for k in keys_data]
@@ -421,8 +454,7 @@ class MapReduceEngine:
             resp, prompt, key_inst = res
             if resp.metrics:
                 total_metrics = total_metrics + resp.metrics
-            self._save_trace(task, prompt, resp.content, resp.metrics.total_tokens, context)
-            
+
             try:
                 row_obj = json.loads(resp.content)
                 # Handle wrapping

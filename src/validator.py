@@ -105,8 +105,18 @@ class DataValidator:
         total_metrics = LLMMetrics()
         for validator in self.validators:
             try:
-                logger.info(f"Running Validator: {validator.__class__.__name__}")
+                rows_before = len(df)
+                logger.info(f"Running Validator: {validator.__class__.__name__} ({rows_before} rows in)")
                 df, metrics = await validator.run(df, context)
+                rows_after = len(df)
+                if rows_before != rows_after:
+                    logger.warning(
+                        f"Validator {validator.__class__.__name__}: "
+                        f"dropped {rows_before - rows_after} rows "
+                        f"({rows_before} → {rows_after})"
+                    )
+                else:
+                    logger.info(f"Validator {validator.__class__.__name__}: no rows dropped ({rows_after} rows out)")
                 if metrics:
                     total_metrics = total_metrics + metrics
             except Exception as e:

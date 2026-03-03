@@ -28,6 +28,7 @@ class PKDBConfig:
     partition_selection_mode: str = "llm" # "llm" or "scoring"
     enable_heuristic_scoring: bool = False
     max_total_requests: int = 10000
+    max_cost_per_table: float = 0.0  # Per-table cost cap in USD (0 = disabled)
     default_execution_mode: str = "batch"
     source: str = "Wikipedia" # Configurable Data Source
 
@@ -62,10 +63,11 @@ class PKDB:
             
         # 2. Initialize Components
         self.llm = LLMClient(
-            model=self.config.model, 
-            cache_dir=self.config.cache_dir, 
-            default_use_cache=self.config.use_cache, 
+            model=self.config.model,
+            cache_dir=self.config.cache_dir,
+            default_use_cache=self.config.use_cache,
             max_total_requests=self.config.max_total_requests,
+            max_total_cost=self.config.max_cost_per_table if self.config.max_cost_per_table > 0 else None,
             shared_state=kwargs.get('shared_state') # Special case: Runtime object, not config
         )
         

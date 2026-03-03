@@ -27,13 +27,21 @@ Goal: Rewrite the user query to be:
 - **Precise**: Resolve ambiguities.
 - **Comprehensive**: Clearly state the intent to retrieve a complete structured dataset.
 - **Constraint-Aware**: Preserve all filters and constraints (e.g. "US Cities" -> "The cities' country is USA").
+- **Unit-Clear**: Explicitly state what ONE ROW represents in the result table.
 
 Guidelines:
 - Clarify ambiguous terms.
 - Specify whether the query wants a "complete list" / "all items" or just some (like 100).
 - Mention including key attributes if implied.
+- **Identify the unit of analysis**: Ask yourself — what entity does each row describe?
+  - If the query asks for statistics/measurements/data FOR a set of named entities (states, countries, years, categories), add "one row per [entity]" to make the granularity explicit.
+  - Example: "poverty statistics in India" → append "one row per Indian state/union territory"
+  - Example: "demographics of Russia 1946–2012" → append "one row per year"
+  - Example: "tournament results" → append "one row per participant/team"
+  - **CRITICAL — demographic/census/vital statistics time series**: ALWAYS write "one row per year", regardless of how many years/decades the query spans. Do NOT write "one row per decade". Wikipedia stores these tables at yearly granularity. Correct: "vital statistics of Liechtenstein 1901–2011, one row per year (1901, 1902, …, 2011)."
+  - If the granularity is genuinely unclear, mention both interpretations and pick the most specific.
 
-Output Requirements: 
+Output Requirements:
 - Return ONLY the rewritten query text.
 - NO quotes, NO explanation, NO JSON.
 
@@ -44,12 +52,22 @@ ROW_ESTIMATION_PROMPT = """
 Query: "{query}"
 
 Estimate the total number of rows (items) that would be in the FULL result table for this query.
-Think about the comprehensive nature of the request.
-- If it asks for "US States", that's naturally ~50.
-- If it asks for "Pokemon", that's ~1000.
-- If it asks for "Movies", "Cities", "People", or "Events" over a long time range, the number could be LARGE (100+ or 1000+).
-- If it asks for rankings, tournament results, competition participants, championship entries, episode lists, or any enumeration across multiple rounds or years, it could be LARGE (100-500+). Lean toward the higher end.
-- Do NOT underestimate. It is safer to overestimate for robustness.
+Think carefully about what ONE ROW represents before estimating.
+
+Bounded sets — use the actual count:
+- "US States" → ~50, "world countries" → ~195, "Indian states/union territories" → ~36
+- If the query asks for statistics/indicators/data FOR administrative divisions of a region (states, provinces, prefectures, countries), the row count = number of those divisions — NOT the total population or number of measurements.
+- A bounded time series (e.g., "year X to year Y") → number of YEARS in that range. Example: 1900–2010 = 111 rows, NOT 11 rows (decades).
+- CRITICAL for multi-decade demographic/census/population tables: Wikipedia stores these year-by-year, one row per year. Even if the rewritten query says "one row per decade," estimate the number of YEARS in the span. A query covering 1900–2010 should return ~111, not ~11.
+
+Open-ended entity lists — lean toward the higher end:
+- "Pokemon" → ~1000, "Movies", "Cities", "People", or "Events" over a long time range → LARGE (100+, possibly 1000+).
+- Rankings, tournament results, competition participants, championship entries, episode lists, or enumerations across multiple rounds or years → LARGE (100-500+).
+
+Balance:
+- For well-defined bounded sets, use the actual known count.
+- For open-ended entity lists, lean toward the higher end.
+- Do NOT conflate "comprehensive statistics" for a bounded set with a large row count.
 
 Return ONLY a single integer number representing the expected row count.
 """
@@ -186,7 +204,7 @@ Guidelines:
 1. **Partitions**: List the most suitable partitions to divide large data into chunks that mutually exclusive and cover the entire data. Please note that partition keys are not always categorical, you might use interval (e.g. year 2003-2009, ID from 11 to 20, etc.) as partitions if it makes sense.
 2. **Estimate Rows**: List the likely partitions and estimate the number of rows (entities) in each partition.
 3. **Assess Ambiguity**: Is this partition key clear and mutually exclusive? (0.0=Clear, 1.0=Ambiguous).
-4. **Common Sense Scope**: 
+4. **Common Sense Scope**:
    - Pay attention to the query scope and constrains. If the query implies a specific scope or constrains (e.g. "US Cities"), corresponding partition keys like "Country" could be limited (e.g. only "USA").
    - **Scope Enforcement**: If the query limits the scope, only list values within the scope of the query. Verify each value against the constraints.
      - Example: If constraints have "Year": "2020", do NOT list years like "2019" or "2021".
@@ -200,6 +218,12 @@ Guidelines:
    - Prefer range/interval partitions (e.g. group 1-20, 21-40) if it helps reduce granularity while maintaining orthogonality.
    - If you cannot enumerate a finite, known set with confidence,
      raise ambiguity_score toward 1.0 and explain in reasoning.
+6. **No Continuous Metric Partitioning**: Do NOT partition by continuous numeric measurements — scores, rates, percentages, index values, float measurements, or any column that varies on a continuous scale. Such keys produce arbitrary or unbounded cardinality and meaningless partition boundaries. If the best candidate key is a continuous metric, set ambiguity_score >= 0.8 and explain in reasoning.
+7. **Partition-Total Consistency**: The total estimated rows for this query is approximately **{total_rows}**.
+   - For **categorical keys** (teams, countries, names, categories, etc.): List ALL known distinct values relevant to the query scope. If Σ(partition_estimates) >> {total_rows}, **reduce per-value row estimates** proportionally — do NOT drop partition values to meet the cap. Every named entity must appear as its own partition.
+   - For **range/interval keys** (year ranges, rank ranges, ID ranges): Adjust the interval width or per-interval estimate so Σ stays near {total_rows}. Omitting intervals outside the query scope is acceptable.
+   - Flag any large inconsistency in reasoning.
+8. **No Catch-All Partitions**: Do NOT include partition values like "Other", "Miscellaneous", "Unknown", "Remaining", or any vague catch-all that cannot be specifically queried. A catch-all partition is unextractable — the LLM cannot retrieve "results for countries classified as Other". If the data has a natural "other" overflow that cannot be specifically named, raise ambiguity_score >= 0.7.
 
 Return only JSON Code in the following format:
 {{
@@ -215,6 +239,7 @@ Return only JSON Code in the following format:
 Query: "{query}"
 Potential Partition Key: "{key_name}"
 Constraints: {constraints}
+Total Estimated Rows: {total_rows}
 """
 
 PARTITION_VALUES_PROMPT = """

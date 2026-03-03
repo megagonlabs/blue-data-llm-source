@@ -47,12 +47,12 @@ class StrategyEvaluator:
         self.estimator = DistributionEstimator(llm_client)
         self.enable_scoring = enable_scoring
 
-    async def evaluate_concurrent(self, query: str, candidates: List[StrategyCandidate], constraints: dict = {}) -> List[StrategyCandidate]:
+    async def evaluate_concurrent(self, query: str, candidates: List[StrategyCandidate], constraints: dict = {}, total_rows: int = 0) -> List[StrategyCandidate]:
         """
         Runs distribution estimation in parallel for all candidates.
         """
         async def evaluate_one(cand: StrategyCandidate) -> StrategyCandidate:
-            stats = await self.estimator.estimate(query, cand.partition_key, constraints)
+            stats = await self.estimator.estimate(query, cand.partition_key, constraints, total_rows=total_rows)
             cand.stats = stats
             
             if not self.enable_scoring:
@@ -146,10 +146,17 @@ class StrategyEvaluator:
             )
             if c.stats.partition_counts:
                 max_partitions_in_prompt = 50
-                # if there are too many partitions, list the first and last max_partitions_in_prompt/2, use ... to note the middle  
-                if len(c.stats.partition_counts) > max_partitions_in_prompt:
-                    c.stats.partition_counts = c.stats.partition_counts[:max_partitions_in_prompt//2] + ["..." for _ in range(len(c.stats.partition_counts) - max_partitions_in_prompt)] + c.stats.partition_counts[-max_partitions_in_prompt//2:]
-                info += f"\n  Estimated Number of Records in Each Partition: {c.stats.partition_counts}"
+                partition_items = c.stats.partition_counts
+                if len(partition_items) > max_partitions_in_prompt:
+                    # partition_counts is a dict; slice by converting to list of keys
+                    half = max_partitions_in_prompt // 2
+                    keys = list(partition_items.keys())
+                    truncated = {k: partition_items[k] for k in keys[:half]}
+                    truncated["..."] = "..."
+                    truncated.update({k: partition_items[k] for k in keys[-half:]})
+                    info += f"\n  Estimated Number of Records in Each Partition (truncated, {len(partition_items)} total): {truncated}"
+                else:
+                    info += f"\n  Estimated Number of Records in Each Partition: {partition_items}"
             candidates_info.append(info)
         
         candidates_str = "\n\n".join(candidates_info)
@@ -169,24 +176,22 @@ class StrategyEvaluator:
 
             logger.info(f"LLM Selected Partition Option {option}: key='{selected_key}' (Reason: {reasoning})")
 
-            # Option C: latent dimension (gated by ambiguity threshold)
+            # Option C: latent dimension
             if option == "C":
-                all_ambiguous = all(
+                any_ambiguous = any(
                     (c.stats.ambiguity_score >= 0.7 if c.stats else False)
                     for c in candidates
                 )
-                if not all_ambiguous:
-                    logger.warning("Option C requested but not all candidates have ambiguity_score >= 0.7. Falling back to best schema candidate.")
-                    option = "A"  # fall through to schema candidate selection below
-                else:
-                    # Return a synthetic candidate for the latent dimension
-                    synthetic = StrategyCandidate(
-                        schema=candidates[0].schema,
-                        partition_key=selected_key,
-                        score=0.5,
-                        reasoning=f"Option C latent dimension [{reasoning}]"
-                    )
-                    return synthetic
+                if not any_ambiguous:
+                    logger.warning("Option C requested but no candidates have ambiguity_score >= 0.7. Proceeding with latent dimension anyway (LLM's explicit choice).")
+                # Trust the LLM's Option C decision — return synthetic candidate for the latent dimension
+                synthetic = StrategyCandidate(
+                    schema=candidates[0].schema,
+                    partition_key=selected_key,
+                    score=0.5,
+                    reasoning=f"Option C latent dimension [{reasoning}]"
+                )
+                return synthetic
 
             # Options A and B: find matching schema candidate
             for c in candidates:
@@ -205,8 +210,8 @@ class StrategyEvaluator:
     def select_best(self, candidates: List[StrategyCandidate]) -> Optional[StrategyCandidate]:
         if not candidates:
             return None
-        # Sort by score descending
-        sorted_cands = sorted(candidates, key=lambda x: x.score, reverse=True)
+        # Sort by score descending; treat None scores as 0 to avoid comparison crash
+        sorted_cands = sorted(candidates, key=lambda x: x.score or 0, reverse=True)
         return sorted_cands[0]
 
 class DistributionEstimator:
@@ -217,11 +222,12 @@ class DistributionEstimator:
     def __init__(self, llm_client: LLMClient):
         self.llm = llm_client
 
-    async def estimate(self, query: str, key_name: str, constraints: dict = {}) -> DistributionStats:
+    async def estimate(self, query: str, key_name: str, constraints: dict = {}, total_rows: int = 0) -> DistributionStats:
         prompt = DISTRIBUTION_ESTIMATION_PROMPT.format(
-            query=query, 
+            query=query,
             key_name=key_name,
-            constraints=json.dumps(constraints, indent=2)
+            constraints=json.dumps(constraints, indent=2),
+            total_rows=total_rows if total_rows else "unknown"
         )
         try:
             response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
@@ -457,7 +463,9 @@ class DataPlanBuilder:
                 if analysis.estimated_rows > row_threshold:
                     schema_requires_decomposition = True
                     schema_reasoning = f"Rows ({analysis.estimated_rows}) > threshold ({row_threshold})"
-                elif decomposition_strategy == "llm_based":
+                elif decomposition_strategy == "llm_based" and analysis.estimated_rows is None:
+                    # Only consult LLM when row count is unknown; if we have a reliable
+                    # estimate below the threshold, trust it and go flat.
                     schema_requires_decomposition, schema_reasoning = await self.analyzer.should_decompose(rewritten_query, analysis.estimated_rows)
             
             logger.info(f"Schema {source_label}: requires_decomposition={schema_requires_decomposition} ({schema_reasoning})")
@@ -488,7 +496,7 @@ class DataPlanBuilder:
                     
                     if strategy_candidates:
                         # Evaluate concurrently
-                        evaluated = await self.evaluator.evaluate_concurrent(rewritten_query, strategy_candidates, constraints=root_task.constraints)
+                        evaluated = await self.evaluator.evaluate_concurrent(rewritten_query, strategy_candidates, constraints=root_task.constraints, total_rows=analysis.estimated_rows or 0)
                         
                         # Select best
                         if partition_selection_mode == "llm":
@@ -707,7 +715,7 @@ class DataPlanBuilder:
             best_score = float('inf')
             
             for pkey in partition_keys:
-                stats = await self.dist_estimator.estimate(query, pkey.name, constraints=task.constraints)
+                stats = await self.dist_estimator.estimate(query, pkey.name, constraints=task.constraints, total_rows=task.estimated_rows or 0)
                 # ... Simplified Scoring ...
                 score = (stats.ambiguity_score * 1000)
                 if stats.num_partitions > 50: score += 10000
@@ -903,7 +911,7 @@ class DataPlanBuilder:
         try:
             # Use JSON mode and robust parsing
             response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
-            data = parse_json_response(response.content)
+            data = json.loads(response.content)
 
             # Expecting {"values": [...]} or list
             if isinstance(data, dict):

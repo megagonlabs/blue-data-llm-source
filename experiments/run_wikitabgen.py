@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import sys
 import pandas as pd
 import time
@@ -11,20 +12,18 @@ from typing import List, Dict, Tuple
 from unidecode import unidecode
 from dateutil import parser as date_parser
 
-# Ensure project root is in path
+# Ensure project root is in sys.path for absolute imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import src
-print(f"DEBUG: src imported from: {src.__file__}")
+import src  # noqa: F401  (imported to ensure package is discoverable)
 
 from src.interface import PKDB
 from src.schema import SchemaDefinition, Column
 from experiments.run_mini_dataset import setup_global_logging, query_logging_context
-from utils.llm_utils import SharedCostTracker
 
-# --- METRIC UTILS (Ported from WikiTabGen/example_notebooks/Metrics_calculation.ipynb) ---
+# --- Metric utilities (ported from WikiTabGen/example_notebooks/Metrics_calculation.ipynb) ---
 
-def normalize_value(value, is_date=False):
-    if value != value: # NaN check
+def normalize_value(value, is_date: bool = False):
+    if value != value:  # NaN check
         return ''
 
     if is_date:
@@ -36,20 +35,19 @@ def normalize_value(value, is_date=False):
             except:
                 pass    
         
-    # Handle numpy types
     if hasattr(value, 'item'):
         value = value.item()
 
-    if isinstance(value, str):            
+    if isinstance(value, str):
         clean_val = value.replace(',', '').replace('.', '')
         # Negative numbers
         if value.startswith('-') and clean_val.replace('-', '').isdigit():
             return float(value.replace(',', ''))
         # Integers
-        if value.replace(',', '').isdigit():                
+        if value.replace(',', '').isdigit():
             return int(value.replace(',', ''))
         # Equals sign prefix?
-        if value.startswith('=') and value[1:].isdigit():                
+        if value.startswith('=') and value[1:].isdigit():
             return int(value.replace('=', ''))
         # Float
         if clean_val.isdigit():
@@ -58,7 +56,7 @@ def normalize_value(value, is_date=False):
         value = value.strip().lower()
 
         if value in ('none', 'n/a', 'nan', '-'):
-            return '' 
+            return ''
 
         value = value.replace('&', 'and')
 
@@ -66,14 +64,14 @@ def normalize_value(value, is_date=False):
             return 'usa'
         if value == 'united kingdom':
             return 'uk'
-        
-        value = unidecode(value)        
-        value = ''.join(c for c in value if c.isalnum()) 
+
+        value = unidecode(value)
+        value = ''.join(c for c in value if c.isalnum())
         return value
 
     return value
 
-def normalize_key(value, is_date=False):
+def normalize_key(value, is_date: bool = False):
     if value != value:
         return ''
 
@@ -86,11 +84,17 @@ def normalize_key(value, is_date=False):
             except:
                 pass  
 
-    if isinstance(value, str):  
+    if isinstance(value, str):
+        # Normalize en-dash / em-dash to hyphen before any other processing
+        value = value.replace('\u2013', '-').replace('\u2014', '-')
+        # Normalize "YYYY-YYYY" season format to "YYYY-YY"
+        # e.g. "2000-2001" → "2000-01" so it matches GT "2000-01"
+        value = re.sub(r'\b(\d{4})-(\d{4})\b', lambda m: f"{m.group(1)}-{m.group(2)[2:]}", value)
+
         value = value.strip().lower()
 
         if value in ('none', 'n/a', 'nan', '-', '--', 'unknown'):
-            return '' 
+            return ''
 
         value = value.replace('&', 'and')
 
@@ -99,14 +103,14 @@ def normalize_key(value, is_date=False):
         if value == 'united kingdom':
             return 'uk'
 
-        value = unidecode(value)        
-        value = ''.join(c for c in value if c.isalnum()) 
+        value = unidecode(value)
+        value = ''.join(c for c in value if c.isalnum())
         return value
 
     return str(value)
 
 def normalize_primary_columns(df, norm_columns, date_columns, primary_columns, keys_type):
-    # Create copy to avoid SettingWithCopy warnings
+    # Work on a copy to avoid SettingWithCopy warnings
     df = df.copy()
     
     for col in norm_columns:
@@ -125,14 +129,7 @@ def normalize_primary_columns(df, norm_columns, date_columns, primary_columns, k
     return [tuple(r) for r in df[primary_columns].to_numpy()], df
 
 def find_row(df, columns, values):
-    # row finding according
-    # values is a tuple of normalized values
-    # We need to match against the normalized columns in df
-    
-    # We assume df has already been normalized in `evaluate_table` wrapper
-    # But wait, find_row in original code uses query builder string construction which is fragile
-    # Let's do logical indexing manually
-    
+    # Robust row finding on normalized columns via boolean masking
     mask = pd.Series(True, index=df.index)
     for col, val in zip(columns, values):
         mask &= (df[col] == val)
@@ -150,10 +147,10 @@ def evaluate_table_metrics(df_fetched, df_ref, primary_columns, keys_type, date_
         # For now assume strict schema worked
         pass
     
-    df_fetched.columns = columns # Align headers
-    df_fetched = df_fetched.drop_duplicates(subset=primary_columns)   
+    df_fetched.columns = columns  # Align headers
+    df_fetched = df_fetched.drop_duplicates(subset=primary_columns)
 
-    norm_columns = set(primary_columns)        
+    norm_columns = set(primary_columns)
     for pc in primary_columns:
         df_fetched = df_fetched[df_fetched[pc].notna()]    
     
@@ -164,7 +161,10 @@ def evaluate_table_metrics(df_fetched, df_ref, primary_columns, keys_type, date_
     total_matches = 0
     key_matches = 0
     
+    # Convert lists to sets for O(1) lookup? 
+    # But we need row index.
     # Original code iterates list.
+    
     ref_entities_set = set(ref_entities)
 
     for fetched_entity in fetched_entities:
@@ -253,43 +253,44 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
     cfg_items = [cfg[k] for k in sorted(cfg.keys(), key=lambda x: int(x))]
     
     # Filter
-    if args and args.table:
-        target_items = [item for item in cfg_items if item['name'] == args.table]
+    limit = args.limit if args and args.limit > 0 else len(cfg_items)
+    target_items = cfg_items[:limit]
+
+    # Filter to a single table if --table is specified
+    if args and getattr(args, 'table', None):
+        target_items = [item for item in target_items if item['name'] == args.table]
         if not target_items:
-            print(f"Table {args.table} not found in config.")
+            print(f"ERROR: Table '{args.table}' not found in config. Aborting.")
             return
-    else:
-        limit = args.limit if args and args.limit > 0 else len(cfg_items)
-        target_items = cfg_items[:limit]
-    
+
     print(f"Selected {len(target_items)} tables for evaluation.")
     
     # Save Run Config
     run_config = {
         "timestamp": timestamp,
         "model": args.model if args else "gpt-4o",
-        "limit": len(target_items),
-        "table_filter": args.table if args else None,
+        "limit": limit,
         "use_cache": args.use_cache if args else False,
         "max_concurrent": args.max_concurrent if args else 10,
-        "row_threshold": args.row_threshold if args else 50,
+        "row_threshold": args.row_threshold if args else 120,
         "decomposition_strategy": args.decomposition_strategy,
-        "partition_selection_mode": args.partition_selection_mode if args else "auto",
         "execution_mode": args.execution_mode if args else "batch",
-        "plan_only": args.plan_only if args else False,
+        "max_cost_per_table": getattr(args, 'max_cost_per_table', 2.0) if args else 2.0,
+        "source": getattr(args, 'source', 'Wikipedia') if args else 'Wikipedia',
+        "partition_selection_mode": getattr(args, 'partition_selection_mode', 'llm') if args else 'llm',
         "generated_by": "experiments/run_wikitabgen.py"
     }
     with open(os.path.join(run_dir, "run_config.json"), "w") as f:
         json.dump(run_config, f, indent=4)
     
     # 3. Initialize PKDB
+    # 3. Initialize Shared State for Rate Limiting
     print("Initializing Shared Resources...")
     # These must be shared across all PKDB instances to prevent 429 errors
     shared_state = {
         "rate_limit_times": [],
         "rate_limit_lock": asyncio.Lock(),
-        "semaphore": asyncio.Semaphore(100), # Global concurrency limit for LLM calls implies max_concurrent * tables
-        "cost_tracker": SharedCostTracker(max_total_requests=args.max_total_requests if args else 100000, max_total_cost=100.0)
+        "semaphore": asyncio.Semaphore(100) # Global concurrency limit for LLM calls implies max_concurrent * tables
     }
     
     results = []
@@ -299,6 +300,7 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
     async def process_table(item):
         async with sim_semaphore:
             table_name = item['name']
+
             # Create FRESH PKDB instance per table to reset Safety Quotas (max_total_requests)
             # But share the rate limiter (shared_state) to protect the API
             from src.interface import PKDBConfig # Import Config
@@ -308,22 +310,25 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                 use_cache=args.use_cache if args else True,
                 max_concurrent=args.max_concurrent if args else 10,
                 row_threshold=args.row_threshold if args else 120,
-                decomposition_strategy=args.decomposition_strategy, 
+                decomposition_strategy=args.decomposition_strategy,
                 partitioning_method="smart",
-                max_total_requests=1000,
+                max_total_requests=getattr(args, 'max_total_requests', 1000) if args else 1000,
                 default_execution_mode=args.execution_mode if args else "batch",
-                source=args.source if args else "Wikipedia" # [NEW]
+                max_cost_per_table=getattr(args, 'max_cost_per_table', 0.0) if args else 0.0,
+                source=getattr(args, 'source', 'Wikipedia') if args else 'Wikipedia',
+                partition_selection_mode=getattr(args, 'partition_selection_mode', 'llm') if args else 'llm',
             )
             
             pkdb = PKDB(
                 config=cfg,
                 shared_state=shared_state
             )
-            
+
+            # Each table gets its own subdirectory under the run dir (per-table artifacts)
             table_dir = os.path.join(run_dir, table_name)
             os.makedirs(table_dir, exist_ok=True)
-            
-            # Check if result already exists
+
+            # [RESUME] Check if result already exists inside the table-specific directory
             out_file = os.path.join(table_dir, f"{table_name}.csv")
             df = None
             if os.path.exists(out_file):
@@ -334,7 +339,9 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                     print(f"Error loading {table_name}: {e}. Re-running.")
             
             if df is None:
+                # ... (Normal Generation Logic) ...
                 title = item.get('table_title', table_name)
+                # ...
                 
                 # Construct STRICT SCHEMA
                 cols = []
@@ -343,7 +350,6 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                 
                 for c_name in item['columns']:
                     sem_type = "numerical" if c_name in numeric_cols else "text"
-                    is_pk = c_name in keys
                     cols.append(Column(name=c_name, semantic_type=sem_type))
                 
                 target_schema = SchemaDefinition(
@@ -357,13 +363,13 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                 print(f"\n--- Processing: {table_name} ---")
                 start = time.time()
                 try:
-                    # Log to table_dir with separate log file
+                    # Log and write artifacts into the per-table directory
                     with query_logging_context(table_dir, "process"):
                         df, metrics, subqueries = await pkdb.extract_table(
-                            task_query, 
-                            schema=target_schema, 
+                            task_query,
+                            schema=target_schema,
                             context={"output_dir": table_dir},
-                            plan_only=args.plan_only if args else False
+                            plan_only=getattr(args, 'plan_only', False)
                         )
                         duration = time.time() - start
                 except Exception as e:
@@ -377,11 +383,6 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                 # We need to recreate metrics object or just mock cost
                 class MockMetrics:
                     cost = 0.0
-                    total_tokens = 0
-                    input_tokens = 0
-                    output_tokens = 0
-                    request_count = 0
-                    max_tokens_per_request = 0
                 metrics = MockMetrics()
 
             # [COMMON PATH] Metrics Calculation
@@ -401,28 +402,9 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                 )
                 
                 # If generated new, save it. If loaded, no need to save unless we refined it (we didn't).
-                if not os.path.exists(out_file) and not df.empty:
+                if not os.path.exists(out_file):
                     df.to_csv(out_file, index=False)
                 
-                # [NEW] Artifact Persistence: Cost & Metrics (Standardized)
-                req_count = metrics.request_count if hasattr(metrics, 'request_count') and metrics.request_count > 0 else 1
-                avg_tokens = metrics.total_tokens / req_count if hasattr(metrics, 'total_tokens') else 0
-                
-                cost_artifact = {
-                    "query_id": table_name,
-                    "duration_seconds": duration,
-                    "total_cost_usd": metrics.cost if hasattr(metrics, 'cost') else 0.0,
-                    "total_tokens": metrics.total_tokens if hasattr(metrics, 'total_tokens') else 0,
-                    "input_tokens": metrics.input_tokens if hasattr(metrics, 'input_tokens') else 0,
-                    "output_tokens": metrics.output_tokens if hasattr(metrics, 'output_tokens') else 0,
-                    "request_count": metrics.request_count if hasattr(metrics, 'request_count') else 0,
-                    "avg_tokens_per_prompt": avg_tokens,
-                    "max_tokens_per_prompt": metrics.max_tokens_per_request if hasattr(metrics, 'max_tokens_per_request') else 0
-                }
-                
-                with open(os.path.join(table_dir, "cost.json"), "w") as f:
-                    json.dump(cost_artifact, f, indent=2)
-
                 msg = (f"-> {table_name}: Extracted {extracted_rows} rows. Time: {duration:.2f}s\n"
                        f"   Cell F1: {f1:.4f} (Prec: {p:.4f}, Rec: {r:.4f})\n"
                        f"   Key F1: {kf1:.4f} (Prec: {kp:.4f}, Rec: {kr:.4f})")
@@ -445,17 +427,11 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                     "Subqueries": subqueries,
                     "Time_s": duration,
                     "Cost_USD": metrics.cost,
-                    "Total_Tokens": metrics.total_tokens if hasattr(metrics, 'total_tokens') else 0,
-                    "Input_Tokens": metrics.input_tokens if hasattr(metrics, 'input_tokens') else 0,
-                    "Output_Tokens": metrics.output_tokens if hasattr(metrics, 'output_tokens') else 0,
-                    "Request_Count": metrics.request_count if hasattr(metrics, 'request_count') else 0,
                     "Status": "Success"
                 }
                     
             except Exception as e:
                 print(f"-> Failed Metrics {table_name}: {e}")
-                import traceback
-                traceback.print_exc()
                 return {
                     "Table": table_name,
                     "Category": item.get('category', 'Unknown'),
@@ -470,54 +446,29 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
     print("\n=== WIKITABGEN EVALUATION SUMMARY ===")
     summary_df = pd.DataFrame(results)
     if not summary_df.empty:
-        cols_show = ["Table", "GT_Rows", "Extracted_Rows", "Cell_F1", "Key_F1", "Non_Key_F1", "Time_s", "Status"]
+        cols_show = ["Table", "GT_Rows", "Extracted_Rows", "Cell_F1", "Key_F1", "Time_s", "Status"]
         print(summary_df[[c for c in cols_show if c in summary_df.columns]])
         
         summary_path = os.path.join(run_dir, "summary.csv")
         summary_df.to_csv(summary_path, index=False)
         print(f"\nSaved summary to {summary_path}")
         
-        # Also save a version with Non_Key_F1 included
-        if "Non_Key_F1" in summary_df.columns:
-            summary_with_nonkey_path = os.path.join(run_dir, "summary_with_nonkey.csv")
-            summary_df.to_csv(summary_with_nonkey_path, index=False)
-            print(f"Saved summary with Non-Key F1 to {summary_with_nonkey_path}")
-        
         # Calculate Averages and Totals
         numeric_cols = ["Cell_F1", "Key_F1", "Non_Key_F1", "Cell_Precision", "Cell_Recall", "Key_Precision", "Key_Recall", "Non_Key_Precision", "Non_Key_Recall", "Time_s", "Cost_USD"]
-        valid_numeric = [c for c in numeric_cols if c in summary_df.columns]
-        means = summary_df[valid_numeric].mean()
+        means = summary_df[numeric_cols].mean()
         print("\n--- Averages ---")
         print(means)
         
         # Save detailed metrics JSON
         metrics_path = os.path.join(run_dir, "metrics.json")
         metrics_dict = means.to_dict()
-        
-        # Add Totals
-        metrics_dict["Model"] = args.model if args else "gpt-4o"
-        metrics_dict["Total_Time_s"] = summary_df['Time_s'].sum() if 'Time_s' in summary_df.columns else 0.0
-        
-        if 'Cost_USD' in summary_df.columns:
-            metrics_dict["Total_Cost_USD"] = summary_df['Cost_USD'].sum()
-        
-        # Add Token Totals
-        if 'Total_Tokens' in summary_df.columns:
-            metrics_dict["Total_Tokens"] = int(summary_df['Total_Tokens'].sum())
-        if 'Input_Tokens' in summary_df.columns:
-            metrics_dict["Total_Input_Tokens"] = int(summary_df['Input_Tokens'].sum())
-        if 'Output_Tokens' in summary_df.columns:
-            metrics_dict["Total_Output_Tokens"] = int(summary_df['Output_Tokens'].sum())
-        if 'Request_Count' in summary_df.columns:
-            metrics_dict["Total_Request_Count"] = int(summary_df['Request_Count'].sum())
-
+        metrics_dict["Total_Cost_USD"] = summary_df['Cost_USD'].sum()
         with open(metrics_path, "w") as f:
             json.dump(metrics_dict, f, indent=2)
         print(f"Saved aggregate metrics to {metrics_path}")
 
-        if 'Cost_USD' in summary_df.columns:
-            print("\n--- Totals ---")
-            print(f"Total Cost: ${summary_df['Cost_USD'].sum():.4f}")
+        print("\n--- Totals ---")
+        print(f"Total Cost: ${summary_df['Cost_USD'].sum():.4f}")
     else:
         print("No results to summarize.")
 
@@ -526,22 +477,23 @@ if __name__ == "__main__":
     # Paths adjusted to assume running from project root
     parser.add_argument("--cfg_path", type=str, default="third_parties/WikiTabGen/benchmark/cfg.json")
     parser.add_argument("--tables_dir", type=str, default="third_parties/WikiTabGen/benchmark/tables")
-    parser.add_argument("--base_output_dir", type=str, default="exp_results/runs_wikitabgen")
+    parser.add_argument("--base_output_dir", type=str, default="experiments/runs_wikitabgen")
     parser.add_argument("--model", type=str, default="gpt-4o")
     parser.add_argument("--limit", type=int, default=3, help="Max number of tables to evaluate")
     parser.add_argument("--use_cache", action="store_true")
     parser.add_argument("--max_concurrent", type=int, default=10)
     parser.add_argument("--row_threshold", type=int, default=120)
-    parser.add_argument("--decomposition_strategy", type=str, default="rule_based", choices=["rule_based", "llm_based", "none"], help="Decomposition strategy")
+    parser.add_argument("--decomposition_strategy", type=str, default="rule_based", choices=["rule_based", "llm_based", "none"])
     parser.add_argument("--table_concurrent", type=int, default=5, help="Number of tables to process concurrently")
     parser.add_argument("--resume_dir", type=str, default=None, help="Directory to resume run from")
     parser.add_argument("--execution_mode", type=str, default="batch", choices=["batch", "row_by_row"], help="Execution mode")
-    parser.add_argument("--table", type=str, help="Specific table name to run (overrides limit)")
-    parser.add_argument("--source", type=str, default="Wikipedia", help="Data source for the extraction")
-    parser.add_argument("--partition_selection_mode", type=str, default="llm", choices=["scoring", "llm"], help="Method for selecting partition key (scoring or llm)")
-    parser.add_argument("--plan_only", action="store_true", help="Only run planning phase (skip data fetching)")
-    parser.add_argument("--max_total_requests", type=int, default=20000, help="Global max total LLM requests limit")
-    
+    parser.add_argument("--table", type=str, default=None, help="Run only this specific table by name")
+    parser.add_argument("--max_cost_per_table", type=float, default=2.0, help="Per-table cost cap in USD (0 = disabled)")
+    parser.add_argument("--max_total_requests", type=int, default=1000, help="Max LLM requests per table")
+    parser.add_argument("--source", type=str, default="Wikipedia", help="Knowledge source label injected into prompts")
+    parser.add_argument("--partition_selection_mode", type=str, default="llm", choices=["scoring", "llm"])
+    parser.add_argument("--plan_only", action="store_true", help="Dry-run: plan only, skip extraction calls")
+
     args = parser.parse_args()
     
     asyncio.run(evaluate_wikitabgen(
