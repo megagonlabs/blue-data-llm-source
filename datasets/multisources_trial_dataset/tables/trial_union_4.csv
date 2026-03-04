@@ -1,0 +1,163 @@
+City,Building,Height (ft),Floors,Year Completed
+Chicago,1000M,805,73,2024
+Chicago,110 North Wacker,814,51,2020
+Chicago,111 South Wacker Drive,681,51,2005
+Chicago,150 North Riverside,724,54,2017
+Chicago,181 West Madison Street,680,50,1990
+Chicago,300 North LaSalle,784,60,2008
+Chicago,311 South Wacker Drive,961,65,1990
+Chicago,330 North Wabash,695,52,1972
+Chicago,340 on the Park,672,64,2007
+Chicago,71 South Wacker,679,48,2005
+Chicago,77 West Wacker Drive,668,49,1992
+Chicago,875 North Michigan Avenue,1127,100,1969
+Chicago,900 North Michigan,871,66,1989
+Chicago,Aon Center,1136,83,1973
+Chicago,Aqua,860,82,2009
+Chicago,BMO Tower,729,51,2021
+Chicago,Blue Cross Blue Shield Tower,744,54,2010
+Chicago,Chase Tower,850,60,1969
+Chicago,Franklin Center,1007,61,1989
+Chicago,Grant Thornton Tower,755,50,1992
+Chicago,NEMA Chicago,896,76,2019
+Chicago,Olympia Centre,731,63,1986
+Chicago,One Bennett Park,837,69,2018
+Chicago,One Chicago East Tower,973,78,2022
+Chicago,One Magnificent Mile,673,57,1983
+Chicago,One Museum Park,726,62,2009
+Chicago,One North Wacker,652,50,2001
+Chicago,Park Tower,844,67,2000
+Chicago,River Point,732,52,2017
+Chicago,Salesforce Tower Chicago,835,60,2023
+Chicago,St. Regis Chicago,1198,101,2020
+Chicago,The Legacy at Millennium Park,822,73,2010
+Chicago,Three First National Plaza,767,57,1981
+Chicago,Trump International Hotel and Tower,1388,98,2009
+Chicago,Two Prudential Plaza,995,64,1990
+Chicago,Waldorf Astoria Chicago,686,60,2009
+Chicago,Water Tower Place,860,74,1976
+Chicago,Willis Tower,1451,110,1974
+Chicago,Wolf Point East Tower,668,60,2020
+Los Angeles,777 Tower,725,53,1991
+Los Angeles,Aon Center,858,62,1974
+Los Angeles,Bank of America Plaza,735,55,1975
+Los Angeles,City National Tower,699,52,1971
+Los Angeles,Figueroa at Wilshire,717,52,1989
+Los Angeles,Gas Company Tower,749,52,1991
+Los Angeles,Paul Hastings Tower,699,52,1971
+Los Angeles,The Beaudry,695,64,2023
+Los Angeles,The Ritz-Carlton Los Angeles,667,54,2010
+Los Angeles,Two California Plaza,750,52,1992
+Los Angeles,U.S. Bank Tower,1018,73,1990
+Los Angeles,Wells Fargo Tower,740,54,1983
+Los Angeles,Wilshire Grand Center,1100,73,2017
+New York City,1 Wall Street,654,50,1932
+New York City,10 Hudson Yards,878,52,2016
+New York City,111 Murray Street,788,60,2018
+New York City,111 West 57th Street,1428,85,2021
+New York City,1221 Avenue of the Americas,674,51,1972
+New York City,125 Greenwich Street,912,72,2025
+New York City,1251 Avenue of the Americas,750,54,1972
+New York City,130 William,800,66,2022
+New York City,140 Broadway,688,52,1967
+New York City,15 Hudson Yards,914,70,2019
+New York City,1540 Broadway,733,42,1990
+New York City,1717 Broadway,753,68,2013
+New York City,19 Dutch,758,63,2018
+New York City,20 Exchange Place,741,57,1931
+New York City,200 Amsterdam Avenue,668,55,2021
+New York City,200 Vesey Street,739,51,1986
+New York City,200 West Street,750,44,2010
+New York City,220 Central Park South,950,67,2019
+New York City,25 Park Row,702,54,2020
+New York City,252 East 57th Street,712,65,2016
+New York City,262 Fifth Avenue,860,56,2025
+New York City,270 Park Avenue,1388,60,2025
+New York City,277 Fifth Avenue,673,55,2018
+New York City,277 Park Avenue,687,50,1963
+New York City,28 Liberty Street,813,60,1961
+New York City,3 World Trade Center,1079,80,2018
+New York City,30 Hudson Yards,1270,73,2019
+New York City,30 Rockefeller Plaza,850,70,1933
+New York City,35 Hudson Yards,1000,72,2019
+New York City,383 Madison Avenue,755,47,2001
+New York City,4 Times Square,809,48,1999
+New York City,4 World Trade Center,977,72,2014
+New York City,40 Wall Street,927,71,1930
+New York City,425 Park Avenue,860,44,2021
+New York City,432 Park Avenue,1397,85,2015
+New York City,5 Beekman Street,687,47,2017
+New York City,50 Hudson Yards,981,58,2022
+New York City,50 West 66th Street,775,52,2025
+New York City,50 West Street,779,64,2018
+New York City,500 Fifth Avenue,697,59,1931
+New York City,520 Fifth Avenue,1002,76,2026
+New York City,520 Park Avenue,781,54,2018
+New York City,53W53,1050,77,2019
+New York City,55 Hudson Yards,779,51,2018
+New York City,55 Water Street,687,53,1972
+New York City,56 Leonard Street,821,57,2016
+New York City,599 Lexington Avenue,653,51,1986
+New York City,60 Wall Street,745,55,1989
+New York City,7 World Trade Center,743,49,2006
+New York City,70 Pine Street,952,67,1932
+New York City,712 Fifth Avenue,650,53,1990
+New York City,731 Lexington Avenue,806,54,2004
+New York City,8 Spruce Street,870,76,2011
+New York City,ARO,738,54,2018
+New York City,Americas Tower,692,48,1992
+New York City,Axa Equitable Center,752,51,1985
+New York City,Bank of America Tower,1200,55,2009
+New York City,Barclay Tower,673,56,2007
+New York City,Brooklyn Point,723,57,2020
+New York City,Brooklyn Tower,1066,74,2022
+New York City,Carnegie Hall Tower,757,60,1991
+New York City,Casoni,743,68,2026
+New York City,Central Park Tower,1550,98,2020
+New York City,Chrysler Building,1046,77,1930
+New York City,Citigroup Center,915,59,1977
+New York City,CitySpire,814,75,1987
+New York City,Deutsche Bank Center North Tower,750,55,2004
+New York City,Deutsche Bank Center South Tower,750,55,2004
+New York City,Empire State Building,1250,102,1931
+New York City,Four Seasons Hotel New York,682,52,1993
+New York City,Four Seasons Hotel New York Downtown,926,67,2016
+New York City,General Motors Building,705,50,1968
+New York City,Lumen,731,66,2025
+New York City,Madison Square Park Tower,778,61,2017
+New York City,MetLife Building,808,59,1963
+New York City,Metropolitan Life Insurance Company Tower,700,50,1909
+New York City,Metropolitan Tower,716,68,1985
+New York City,Morgan Stanley Building,685,42,1989
+New York City,One Astor Plaza,745,54,1972
+New York City,One Court Square,673,50,1990
+New York City,One Grand Central Place,673,53,1930
+New York City,One Liberty Plaza,743,54,1972
+New York City,One Manhattan Square,847,72,2019
+New York City,One Manhattan West,996,67,2019
+New York City,One Penn Plaza,750,57,1972
+New York City,One Vanderbilt,1401,62,2020
+New York City,One World Trade Center,1776,104,2014
+New York City,One Worldwide Plaza,778,47,1989
+New York City,One57,1004,75,2014
+New York City,Paramount Plaza,670,48,1970
+New York City,Random House Tower,684,52,2003
+New York City,Selene,711,61,2018
+New York City,Silver Towers I,653,58,2009
+New York City,Silver Towers II,653,58,2009
+New York City,Sky,676,61,2015
+New York City,Skyline Tower,763,67,2021
+New York City,Solow Building,689,49,1974
+New York City,Sutton Tower,847,65,2022
+New York City,Sven,755,67,2021
+New York City,The Centrale,803,64,2019
+New York City,The Eugene,730,64,2017
+New York City,The Madison,805,56,2021
+New York City,The New York Times Building,1046,52,2007
+New York City,The Orchard,823,69,2026
+New York City,The Spiral,1031,66,2022
+New York City,Times Square Tower,726,47,2004
+New York City,Trump Tower,664,58,1982
+New York City,Trump World Tower,861,72,2001
+New York City,Two Manhattan West,935,58,2024
+New York City,Woolworth Building,792,58,1913

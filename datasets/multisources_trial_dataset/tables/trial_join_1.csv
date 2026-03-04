@@ -1,0 +1,197 @@
+Country,"GDP (IMF 2026, USD millions)",Population (UN 2023),UN Region,UN Subregion
+United States,31821293,343477335,Americas,Northern America
+China,20650754,1422584933,Asia,Eastern Asia
+Germany,5328184,84548231,Europe,Western Europe
+India,4515629,1438069596,Asia,Southern Asia
+Japan,4463634,124370947,Asia,Eastern Asia
+United Kingdom,4225639,68682962,Europe,Northern Europe
+France,3558562,66438822,Europe,Western Europe
+Italy,2701544,59499453,Europe,Southern Europe
+Russia,2509421,145440500,Europe,Eastern Europe
+Canada,2420837,39299105,Americas,Northern America
+Brazil,2292690,211140729,Americas,South America
+Spain,2041830,47911579,Europe,Southern Europe
+Mexico,2030999,129739759,Americas,Central America
+Australia,1948227,26451124,Oceania,Australia and New Zealand
+South Korea,1936617,51748739,Asia,Eastern Asia
+Turkey,1576110,87270501,Asia,Western Asia
+Indonesia,1550236,281190067,Asia,South-eastern Asia
+Netherlands,1413076,18092524,Europe,Western Europe
+Saudi Arabia,1316250,32264292,Asia,Western Asia
+Poland,1109962,38762844,Europe,Eastern Europe
+Switzerland,1074588,8870561,Europe,Western Europe
+Taiwan,971448,23317145,Asia,Eastern Asia
+Belgium,761174,11712893,Europe,Western Europe
+Ireland,750112,5196630,Europe,Northern Europe
+Sweden,711503,10551494,Europe,Northern Europe
+Argentina,667922,45538401,Americas,South America
+Israel,666407,9256314,Asia,Western Asia
+Singapore,606225,5789090,Asia,South-eastern Asia
+Austria,604198,9130429,Europe,Western Europe
+United Arab Emirates,601163,10642081,Asia,Western Asia
+Thailand,561509,71702435,Asia,South-eastern Asia
+Norway,547693,5519167,Europe,Northern Europe
+Philippines,533922,114891199,Asia,South-eastern Asia
+Bangladesh,519288,171466990,Asia,Southern Asia
+Vietnam,511059,100352192,Asia,South-eastern Asia
+Malaysia,505364,35126298,Asia,South-eastern Asia
+Denmark,500051,5948136,Europe,Northern Europe
+Colombia,462251,52321152,Americas,South America
+Romania,444807,19118479,Europe,Eastern Europe
+South Africa,443643,63212384,Africa,Southern Africa
+Pakistan,410495,247504495,Asia,Southern Asia
+Egypt,399508,114535772,Africa,Northern Africa
+Iran,375644,90608707,Asia,Southern Asia
+Portugal,364527,10430738,Europe,Southern Europe
+Chile,363299,19658835,Americas,South America
+Finland,335534,5601185,Europe,Northern Europe
+Nigeria,334341,227882945,Africa,Western Africa
+Peru,326608,33845617,Americas,South America
+Kazakhstan,319770,20330104,Asia,Central Asia
+Greece,304838,10242908,Europe,Southern Europe
+Algeria,284984,46164219,Africa,Northern Africa
+New Zealand,280553,5172836,Oceania,Australia and New Zealand
+Iraq,273912,45074049,Asia,Western Asia
+Hungary,269916,9686463,Europe,Eastern Europe
+Cuba,—N/a,11019931,Americas,Caribbean
+Qatar,239142,2979082,Asia,Western Asia
+Ukraine,224259,37732836,Europe,Eastern Europe
+Morocco,196121,37712505,Africa,Northern Africa
+Slovakia,167730,5518055,Europe,Eastern Europe
+Kuwait,162895,4838782,Asia,Western Asia
+Uzbekistan,159199,35652307,Asia,Central Asia
+Bulgaria,142203,6795803,Europe,Eastern Europe
+Kenya,140871,55339003,Africa,Eastern Africa
+Dominican Republic,138340,11331265,Americas,Caribbean
+Ecuador,134711,17980083,Americas,South America
+Guatemala,129466,18124838,Americas,Central America
+Ethiopia,125744,128691692,Africa,Eastern Africa
+Ghana,113494,33787914,Africa,Western Africa
+Croatia,113132,3896023,Europe,Southern Europe
+Serbia,112108,6773201,Europe,Southern Europe
+Ivory Coast,111446,31165654,Africa,Western Africa
+Angola,109855,36749906,Africa,Middle Africa
+Costa Rica,109135,5105525,Americas,Central America
+Oman,108913,5049269,Asia,Western Asia
+Luxembourg,107758,665098,Europe,Western Europe
+Lithuania,104651,2854099,Europe,Northern Europe
+Sri Lanka,"98,964 (2024)",22971617,Asia,Southern Asia
+Panama,95905,4458759,Americas,Central America
+Tanzania,95349,66617606,Africa,Eastern Africa
+Uruguay,90640,3388081,Americas,South America
+Belarus,90556,9115680,Europe,Eastern Europe
+DR Congo,88126,105789731,Africa,Middle Africa
+Slovenia,85738,2118396,Europe,Southern Europe
+Azerbaijan,80024,10318207,Asia,Western Asia
+Venezuela,79916,28300854,Americas,South America
+Turkmenistan,76897,7364438,Asia,Central Asia
+Uganda,72456,48656601,Africa,Eastern Africa
+Cameroon,67517,28372687,Africa,Middle Africa
+Myanmar,65171,54133798,Asia,South-eastern Asia
+Tunisia,60434,12200431,Africa,Northern Africa
+Jordan,59288,11439213,Asia,Western Asia
+Bolivia,57086,12244159,Americas,South America
+Zimbabwe,55434,16340822,Africa,Eastern Africa
+Latvia,52248,1882396,Europe,Northern Europe
+Paraguay,51669,6844146,Americas,South America
+Cambodia,51506,17423880,Asia,South-eastern Asia
+Estonia,51036,1367196,Europe,Northern Europe
+Bahrain,49194,1569666,Asia,Western Asia
+Libya,49164,7305659,Africa,Northern Africa
+Nepal,49112,29964614,Asia,Southern Asia
+Iceland,43404,387558,Europe,Northern Europe
+Cyprus,43158,1344976,Asia,Western Asia
+Honduras,40821,10644851,Americas,Central America
+Georgia,40177,3807492,Asia,Western Asia
+Senegal,39986,18077573,Africa,Western Africa
+Sudan,39474,50042791,Africa,Northern Africa
+El Salvador,37981,6309624,Americas,Central America
+Bosnia and Herzegovina,36239,3185073,Europe,Southern Europe
+Zambia,33945,20723965,Africa,Eastern Africa
+Papua New Guinea,33463,10389635,Oceania,Melanesia
+Albania,32411,2811655,Europe,Southern Europe
+Haiti,31097,11637398,Americas,Caribbean
+Guinea,30922,14405465,Africa,Western Africa
+Burkina Faso,30705,23025776,Africa,Western Africa
+Malta,30437,532956,Europe,Southern Europe
+Armenia,29082,2943393,Asia,Western Asia
+Mali,28478,23769127,Africa,Western Africa
+Lebanon,"28,280 (2024)",5733493,Asia,Western Asia
+Guyana,27486,826353,Americas,South America
+Benin,27453,14111034,Africa,Western Africa
+Trinidad and Tobago,26758,1502932,Americas,Caribbean
+Mongolia,26520,3431932,Asia,Eastern Asia
+Mozambique,26512,33635160,Africa,Eastern Africa
+Niger,26110,26159867,Africa,Western Africa
+Jamaica,24132,2839786,Americas,Caribbean
+Chad,23556,19319064,Africa,Middle Africa
+Gabon,22726,2484789,Africa,Middle Africa
+Nicaragua,21860,6823613,Americas,Central America
+Kyrgyzstan,21563,7073516,Asia,Central Asia
+Madagascar,21091,31195932,Africa,Eastern Africa
+Moldova,21024,3067070,Europe,Eastern Europe
+North Macedonia,20751,1831802,Europe,Southern Europe
+Botswana,20708,2480244,Africa,Southern Africa
+Tajikistan,18941,10389799,Asia,Central Asia
+Afghanistan,"18,080 (2024)",41454761,Asia,Southern Asia
+Malawi,17855,21104482,Africa,Eastern Africa
+Laos,17781,7664993,Asia,South-eastern Asia
+Syria,—N/a,23594623,Asia,Western Asia
+Yemen,17240,39390799,Asia,Western Asia
+North Korea,—N/a,26418204,Asia,Eastern Asia
+Congo,16952,6182885,Africa,Middle Africa
+Bahamas,16841,399440,Americas,Caribbean
+Mauritius,16756,1273588,Africa,Eastern Africa
+Brunei,16457,458949,Asia,South-eastern Asia
+Namibia,16100,2963095,Africa,Southern Africa
+Rwanda,15472,13954471,Africa,Eastern Africa
+Equatorial Guinea,14103,1847549,Africa,Middle Africa
+Kosovo,14097,1700031,Europe,Southern Europe
+Somalia,13912,18358615,Africa,Eastern Africa
+Palestine,"13,711 (2024)",5409202,Asia,Western Asia
+Mauritania,12854,5022441,Africa,Western Africa
+Togo,12176,9304337,Africa,Western Africa
+Monaco,—N/a,38956,Europe,Western Europe
+Montenegro,10229,633552,Europe,Southern Europe
+Liechtenstein,10116,39598,Europe,Western Europe
+Sierra Leone,9302,8460512,Africa,Western Africa
+Burundi,9212,13689450,Africa,Eastern Africa
+Maldives,8221,525994,Asia,Southern Asia
+Barbados,7944,282336,Americas,Caribbean
+Fiji,6696,924145,Oceania,Melanesia
+South Sudan,6033,11483374,Africa,Eastern Africa
+Liberia,5594,5493031,Africa,Western Africa
+Eswatini,5495,1230506,Africa,Southern Africa
+Djibouti,5003,1152944,Africa,Eastern Africa
+Suriname,4870,628886,Americas,South America
+Andorra,4715,80856,Europe,Southern Europe
+Bhutan,3771,786385,Asia,Southern Asia
+Central African Republic,3708,5152421,Africa,Middle Africa
+Belize,3442,411106,Americas,Central America
+Cape Verde,3138,522331,Africa,Western Africa
+Saint Lucia,2770,179285,Americas,Caribbean
+Guinea-Bissau,2764,2153339,Africa,Western Africa
+Gambia,2672,2697845,Africa,Western Africa
+Lesotho,2474,2311472,Africa,Southern Africa
+Antigua and Barbuda,2456,93316,Americas,Caribbean
+San Marino,2393,33733,Europe,Southern Europe
+Seychelles,2249,127951,Africa,Eastern Africa
+Timor-Leste,2208,1384286,Asia,South-eastern Asia
+Solomon Islands,2051,800005,Oceania,Melanesia
+Eritrea,—N/a,3470390,Africa,Eastern Africa
+Comoros,1770,850387,Africa,Eastern Africa
+Grenada,1524,117081,Americas,Caribbean
+Samoa,1333,216663,Oceania,Polynesia
+Saint Vincent and the Grenadines,1299,101323,Americas,Caribbean
+Saint Kitts and Nevis,1190,46758,Americas,Caribbean
+Vanuatu,1176,320409,Oceania,Melanesia
+São Tomé and Príncipe,1125,230871,Africa,Middle Africa
+Dominica,791,66510,Americas,Caribbean
+Tonga,616,104597,Oceania,Polynesia
+Micronesia,519,112630,Oceania,Micronesia
+Cook Islands,—N/a,14222,Oceania,Polynesia
+Palau,362,17727,Oceania,Micronesia
+Kiribati,343,132530,Oceania,Micronesia
+Marshall Islands,332,38827,Oceania,Micronesia
+Nauru,183,11875,Oceania,Micronesia
+Tuvalu,61,9816,Oceania,Polynesia
