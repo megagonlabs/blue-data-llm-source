@@ -33,6 +33,61 @@ class MapReduceEngine:
         self.completeness_strategy = completeness_strategy
         self.continuation_pk_str_limit = continuation_pk_str_limit
         # self.validator = Validator(llm_client) # Old validator deprecated
+
+    def _truncate_continuation_value(self, value: Any) -> str:
+        """Keep continuation prompts compact while preserving enough PK signal."""
+        return str(value)[:self.continuation_pk_str_limit]
+
+    def _build_seen_rows_str(self, task: DataTask, rows: List[Dict[str, Any]]) -> str:
+        """
+        Build the continuation exclusion list from the FULL primary key, not just the
+        first PK column. This matters for composite-key tables like (Year, Rank).
+        """
+        primary_keys = task.schema.primary_keys if task.schema and task.schema.primary_keys else []
+        if not primary_keys or not rows:
+            return f"Already extracted {len(rows)} rows."
+
+        seen_payload = []
+        seen_signatures = set()
+
+        for row in rows:
+            pk_parts = {}
+            missing_pk = False
+            for pk_col in primary_keys:
+                value = row.get(pk_col)
+                if value in (None, ""):
+                    missing_pk = True
+                    break
+                pk_parts[pk_col] = self._truncate_continuation_value(value)
+
+            if missing_pk:
+                continue
+
+            signature = tuple((pk, pk_parts[pk]) for pk in primary_keys)
+            if signature in seen_signatures:
+                continue
+
+            seen_signatures.add(signature)
+            if len(primary_keys) == 1:
+                seen_payload.append(pk_parts[primary_keys[0]])
+            else:
+                seen_payload.append(pk_parts)
+
+        if not seen_payload:
+            return f"Already extracted {len(rows)} rows."
+
+        if len(primary_keys) == 1:
+            pk_label = primary_keys[0]
+            return (
+                f"Already extracted {pk_label} values (do NOT repeat these):\n"
+                f"{json.dumps(seen_payload)}"
+            )
+
+        pk_label = ", ".join(primary_keys)
+        return (
+            f"Already extracted primary key combinations for ({pk_label}) "
+            f"(do NOT repeat these exact rows):\n{json.dumps(seen_payload)}"
+        )
         
     async def execute(self, plan: DataPlanRequest, context: dict = None) -> Tuple[pd.DataFrame, LLMMetrics]:
         context = context or {}
@@ -224,12 +279,7 @@ class MapReduceEngine:
                 # #9: If response was truncated, skip completeness check and reprompt immediately
                 if was_truncated:
                     logger.info(f"Task {task.trace_id}: Truncated response detected. Continuing extraction.")
-                    pk_col = task.schema.primary_keys[0] if task.schema and task.schema.primary_keys else None
-                    if pk_col and all_data:
-                        seen_keys = [str(row.get(pk_col, ""))[:self.continuation_pk_str_limit] for row in all_data if row.get(pk_col)]
-                        seen_str = f"Already extracted {pk_col} values (do NOT repeat these):\n{json.dumps(seen_keys)}"
-                    else:
-                        seen_str = f"Already extracted {len(all_data)} rows."
+                    seen_str = self._build_seen_rows_str(task, all_data)
                     # Limit chunk size to avoid hitting output token cap again (R6-3)
                     current_prompt = prompt + f"\n\nCONTINUATION REQUEST:\n{seen_str}\nReturn ONLY rows not in the list above. Return AT MOST 25 rows in this response."
                     continue
@@ -241,12 +291,7 @@ class MapReduceEngine:
                     if not is_complete:
                         logger.info(f"Task {task.trace_id}: Incomplete Result ({len(all_data)}/{task.estimated_rows}). Reprompting...")
                         # Construct Reprompt with all extracted PK values (#4)
-                        pk_col = task.schema.primary_keys[0] if task.schema and task.schema.primary_keys else None
-                        if pk_col and all_data:
-                            seen_keys = [str(row.get(pk_col, ""))[:self.continuation_pk_str_limit] for row in all_data if row.get(pk_col)]
-                            seen_str = f"Already extracted {pk_col} values (do NOT repeat these):\n{json.dumps(seen_keys)}"
-                        else:
-                            seen_str = f"Already extracted {len(all_data)} rows."
+                        seen_str = self._build_seen_rows_str(task, all_data)
                         # R6-3b: Limit rows in completeness reprompt to prevent 16K-token overflow
                         current_prompt = prompt + f"\n\nCONTINUATION REQUEST:\n{seen_str}\nReturn ONLY rows not in the list above. Return AT MOST 25 rows in this response."
                         continue # Loop again

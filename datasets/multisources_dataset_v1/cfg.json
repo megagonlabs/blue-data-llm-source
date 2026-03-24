@@ -1,0 +1,234 @@
+{
+    "trial_join_1": {
+        "id": "trial_join_1",
+        "category": "Geography",
+        "table_title": "List all countries with their GDP from the IMF for 2026 and their population from the United Nations in 2023.",
+        "columns": [
+            "Country",
+            "GDP (IMF 2026, USD millions)",
+            "Population (UN 2023)",
+            "UN Region",
+            "UN Subregion"
+        ],
+        "primary_key": [
+            "Country"
+        ],
+        "column_types": {
+            "Country": "key",
+            "GDP (IMF 2026, USD millions)": "numeric",
+            "Population (UN 2023)": "numeric",
+            "UN Region": "categorical",
+            "UN Subregion": "categorical"
+        }
+    },
+    "trial_join_2": {
+        "id": "trial_join_2",
+        "category": "Sports",
+        "table_title": "List each NOC with its rank and medal counts (gold, silver, bronze, and total) in the Summer Olympics in 2020 and 2024.",
+        "columns": [
+            "NOC",
+            "Rank (2024)",
+            "Gold (2024)",
+            "Silver (2024)",
+            "Bronze (2024)",
+            "Total Medals (2024)",
+            "Rank (2020)",
+            "Gold (2020)",
+            "Silver (2020)",
+            "Bronze (2020)",
+            "Total Medals (2020)"
+        ],
+        "primary_key": [
+            "NOC"
+        ],
+        "column_types": {
+            "NOC": "key",
+            "Rank (2024)": "rank",
+            "Gold (2024)": "numeric",
+            "Silver (2024)": "numeric",
+            "Bronze (2024)": "numeric",
+            "Total Medals (2024)": "numeric",
+            "Rank (2020)": "rank",
+            "Gold (2020)": "numeric",
+            "Silver (2020)": "numeric",
+            "Bronze (2020)": "numeric",
+            "Total Medals (2020)": "numeric"
+        }
+    },
+    "trial_join_3": {
+        "id": "trial_join_3",
+        "category": "Geography",
+        "table_title": "List all U.S. states with their Total Area (sq mi), Census population (2020), and House seats (2020).",
+        "columns": [
+            "State or Territory",
+            "Total Area (sq mi)",
+            "Census population (2020)",
+            "House seats (2020)"
+        ],
+        "primary_key": [
+            "State or Territory"
+        ],
+        "column_types": {
+            "State or Territory": "key",
+            "Total Area (sq mi)": "numeric",
+            "Census population (2020)": "numeric",
+            "House seats (2020)": "numeric"
+        }
+    },
+    "trial_join_4": {
+        "id": "trial_join_4",
+        "category": "Entertainment",
+        "table_title": "Return the films that appear in both the all-time top 50 highest-grossing films worldwide and the top 50 most expensive films by production budget, including Film Title, Rank (Highest-Grossing), Worldwide gross (USD), Rank (Most Expensive), and Production Budget (USD millions).",
+        "columns": [
+            "Film Title",
+            "Rank (Highest-Grossing)",
+            "Worldwide gross (USD)",
+            "Rank (Most Expensive)",
+            "Production Budget (USD millions)"
+        ],
+        "primary_key": [
+            "Film Title"
+        ],
+        "column_types": {
+            "Film Title": "key",
+            "Rank (Highest-Grossing)": "rank",
+            "Worldwide gross (USD)": "numeric",
+            "Rank (Most Expensive)": "rank",
+            "Production Budget (USD millions)": "numeric"
+        }
+    },
+    "trial_join_5": {
+        "id": "trial_join_5",
+        "category": "Science",
+        "table_title": "For all countries, list life expectancy at birth in 2024 (all sexes, male, female) and the 2024 median age, according to the CIA World Factbook.",
+        "columns": [
+            "Country",
+            "Life Expectancy (All 2024)",
+            "Life Expectancy (Male 2024)",
+            "Life Expectancy (Female 2024)",
+            "Median Age (2024)"
+        ],
+        "primary_key": [
+            "Country"
+        ],
+        "column_types": {
+            "Country": "key",
+            "Life Expectancy (All 2024)": "numeric",
+            "Life Expectancy (Male 2024)": "numeric",
+            "Life Expectancy (Female 2024)": "numeric",
+            "Median Age (2024)": "numeric"
+        }
+    },
+    "trial_union_1": {
+        "id": "trial_union_1",
+        "category": "Entertainment",
+        "table_title": "List all winners of the Academy Award for Best Actor and Best Actress from the 1st Academy Awards (1927/28) to the 97th Academy Awards (2024).",
+        "columns": [
+            "Academy Awards Edition",
+            "Category",
+            "Winner Name",
+            "Film Name"
+        ],
+        "primary_key": [
+            "Academy Awards Edition",
+            "Category"
+        ],
+        "column_types": {
+            "Academy Awards Edition": "key",
+            "Category": "key",
+            "Winner Name": "text",
+            "Film Name": "text"
+        }
+    },
+    "trial_union_2": {
+        "id": "trial_union_2",
+        "category": "Entertainment",
+        "table_title": "List the Billboard Year-End Hot 100 singles in 2022, 2023, 2024, and 2025.",
+        "columns": [
+            "Chart Year",
+            "Rank",
+            "Song Title",
+            "Artist"
+        ],
+        "primary_key": [
+            "Chart Year",
+            "Rank"
+        ],
+        "column_types": {
+            "Chart Year": "key",
+            "Rank": "key",
+            "Song Title": "text",
+            "Artist": "text"
+        }
+    },
+    "trial_union_3": {
+        "id": "trial_union_3",
+        "category": "Science",
+        "table_title": "List all Nobel Prize laureates in Physics, Chemistry, and Physiology or Medicine from 1945 through 2025 (inclusive), including their year, prize category, laureate name, and nationality.",
+        "columns": [
+            "Year",
+            "Prize Category",
+            "Laureate",
+            "Nationality"
+        ],
+        "primary_key": [
+            "Year",
+            "Prize Category",
+            "Laureate"
+        ],
+        "column_types": {
+            "Year": "key",
+            "Prize Category": "key",
+            "Laureate": "key",
+            "Nationality": "categorical"
+        }
+    },
+    "trial_union_4": {
+        "id": "trial_union_4",
+        "category": "Geography",
+        "table_title": "Show City, Building, Height (ft), Floors, and Year Completed for buildings in New York City, Chicago, and Los Angeles with Height (ft) at least 650 (standard height), sorted by Height (ft) in descending order.",
+        "columns": [
+            "City",
+            "Building",
+            "Height (ft)",
+            "Floors",
+            "Year Completed"
+        ],
+        "primary_key": [
+            "City",
+            "Building"
+        ],
+        "column_types": {
+            "City": "key",
+            "Building": "key",
+            "Height (ft)": "numeric",
+            "Floors": "numeric",
+            "Year Completed": "date"
+        }
+    },
+    "trial_union_5": {
+        "id": "trial_union_5",
+        "category": "Entertainment",
+        "table_title": "List all games for the PlayStation 4, Nintendo Switch, and Xbox One consoles with Copies sold (million) >= 1.00. If the same game was released on multiple consoles, include a separate row for each console.",
+        "columns": [
+            "Console",
+            "Game",
+            "Copies sold (million)",
+            "Release date",
+            "Developer",
+            "Publisher"
+        ],
+        "primary_key": [
+            "Console",
+            "Game"
+        ],
+        "column_types": {
+            "Console": "key",
+            "Game": "key",
+            "Copies sold (million)": "numeric",
+            "Release date": "date",
+            "Developer": "text",
+            "Publisher": "text"
+        }
+    }
+}

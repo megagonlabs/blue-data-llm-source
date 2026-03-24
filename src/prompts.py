@@ -182,9 +182,10 @@ For each column, determine:
 4. Formatting: A format string that ensures uniform values across multiple LLM calls.
    Use empty string if no specific format is needed.
    Examples: "YYYY-MM-DD", "Full name (no abbreviation)", "Abbreviation only",
-   "Numeric with commas (e.g. 35,552)", "Season as YYYY-YY (e.g. 2000-01)".
+   "Numeric (NO commas, e.g. 35552)", "Season as YYYY-YY (e.g. 2000-01)".
    Specify exact separator characters for range-style keys to prevent mismatch
    between parallel extraction calls.
+   CRITICAL: Do NOT use commas in formatting for 'int' or 'float' data types. Output must be valid JSON numbers.
 
 Return JSON:
 {{

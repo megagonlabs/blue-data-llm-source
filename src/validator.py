@@ -18,6 +18,116 @@ from src.prompts import (
 
 logger = logging.getLogger(__name__)
 
+def _append_validation_log(output_dir: Optional[str], entry: Dict[str, Any]) -> None:
+    import os
+    import time
+
+    if not output_dir:
+        return
+
+    try:
+        with open(os.path.join(output_dir, "validation_log.jsonl"), "a") as f:
+            f.write(json.dumps({"timestamp": time.time(), **entry}) + "\n")
+    except Exception as e:
+        logger.warning(f"Failed to write validation log: {e}")
+
+def _is_blank_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) == 0
+    try:
+        is_na = pd.isna(value)
+        if hasattr(is_na, "all"):
+            return bool(is_na.all())
+        if bool(is_na):
+            return True
+    except Exception:
+        pass
+    if isinstance(value, str) and not value.strip():
+        return True
+    return False
+
+def _label_tokens(label: str) -> List[str]:
+    return [tok for tok in re.split(r'[^a-z0-9]+', str(label).lower()) if tok]
+
+def _normalize_label(label: str) -> str:
+    return "".join(_label_tokens(label))
+
+def _align_row_to_target_columns(row: Dict[str, Any], target_columns: List[str]) -> Dict[str, Any]:
+    """
+    Align LLM-repaired row keys back to schema/dataframe columns.
+
+    This protects against validator repair drift such as returning "Laureate Name"
+    when the actual schema column is "Laureate".
+    """
+    if not row or not target_columns:
+        return row
+
+    exact_targets = {col: col for col in target_columns}
+    lower_targets = {str(col).lower(): col for col in target_columns}
+
+    norm_targets: Dict[str, List[str]] = {}
+    token_targets: Dict[str, set] = {}
+    for col in target_columns:
+        norm_targets.setdefault(_normalize_label(col), []).append(col)
+        token_targets[col] = set(_label_tokens(col))
+
+    aligned: Dict[str, Any] = {}
+    unmatched: List[Tuple[str, Any]] = []
+
+    for key, value in row.items():
+        mapped = None
+        if key in exact_targets:
+            mapped = exact_targets[key]
+        else:
+            lower_key = str(key).lower()
+            if lower_key in lower_targets:
+                mapped = lower_targets[lower_key]
+            else:
+                norm_key = _normalize_label(key)
+                norm_candidates = norm_targets.get(norm_key, [])
+                if len(norm_candidates) == 1:
+                    mapped = norm_candidates[0]
+
+        if mapped and mapped not in aligned:
+            aligned[mapped] = value
+        else:
+            unmatched.append((key, value))
+
+    for key, value in unmatched:
+        key_tokens = set(_label_tokens(key))
+        if not key_tokens:
+            continue
+
+        scored = []
+        for target in target_columns:
+            if target in aligned:
+                continue
+            target_tokens = token_targets[target]
+            overlap = len(key_tokens & target_tokens)
+            if overlap == 0:
+                continue
+            score = (
+                overlap,
+                int(key_tokens <= target_tokens or target_tokens <= key_tokens),
+                -abs(len(key_tokens) - len(target_tokens))
+            )
+            scored.append((score, target))
+
+        if not scored:
+            continue
+
+        scored.sort(reverse=True)
+        best_score, best_target = scored[0]
+        if len(scored) == 1 or best_score > scored[1][0]:
+            aligned[best_target] = value
+
+    return aligned
+
+def _align_rows_to_target_columns(rows: List[Dict[str, Any]], target_columns: List[str]) -> List[Dict[str, Any]]:
+    return [_align_row_to_target_columns(row, target_columns) for row in rows]
+
 # --- Base Interfaces ---
 
 class BaseValidator(ABC):
@@ -85,8 +195,8 @@ class DataValidator:
             "Embedding": EmbeddingValidator(**params),
             "FormatNormalization": FormatNormalizationValidator(**params),
             "EntityResolution": EntityResolutionValidator(**params),
-            "PrimaryKeyValidation": DeduplicationValidator(llm_client=self.llm, strategy=self.dedup_strategy),
-            "Completeness": ChunkValidator(**params) # Placeholder, logic in Engine
+            "PrimaryKeyValidation": PrimaryKeyValidationValidator(**params),
+            "Completeness": CompletenessValidator(**params)
         }
         
         active = []
@@ -117,6 +227,12 @@ class DataValidator:
                     )
                 else:
                     logger.info(f"Validator {validator.__class__.__name__}: no rows dropped ({rows_after} rows out)")
+                _append_validation_log(context.get("output_dir"), {
+                    "event_type": "validator_run",
+                    "validator": validator.__class__.__name__,
+                    "rows_before": rows_before,
+                    "rows_after": rows_after
+                })
                 if metrics:
                     total_metrics = total_metrics + metrics
             except Exception as e:
@@ -234,7 +350,10 @@ class ChunkValidator(BaseValidator):
     async def fix(self, df: pd.DataFrame, report: List[int], context: Dict[str, Any] = None) -> Tuple[pd.DataFrame, LLMMetrics]:
         """Attempts to refine violating rows via LLM, or drops them."""
         metrics = LLMMetrics()
+        context = context or {}
         constraints = context.get('constraints', {})
+        schema = context.get('schema')
+        target_columns = [c.name for c in schema.columns] if schema and getattr(schema, "columns", None) else list(df.columns)
         try:
             invalid_rows = df.loc[report].to_dict('records')
         except:
@@ -249,6 +368,12 @@ class ChunkValidator(BaseValidator):
             constraints=json.dumps(constraints),
             rows=json.dumps(invalid_rows, indent=2)
         )
+        if target_columns:
+            prompt += (
+                "\n\nIMPORTANT: Preserve these exact output column names when returning fixed rows:\n"
+                f"{json.dumps(target_columns)}\n"
+                "Do not invent renamed columns or synonyms."
+            )
         
         try:
             response = await self.llm.agenerate(prompt, temperature=0.0, response_format={"type": "json_object"})
@@ -270,11 +395,12 @@ class ChunkValidator(BaseValidator):
                 content = content.split("```json")[1].split("```")[0]
             data = json.loads(content)
             fixed_rows = data.get("fixed_rows", [])
+            aligned_fixed_rows = _align_rows_to_target_columns(fixed_rows, target_columns)
             
             # Reconstruct DataFrame
             df_dropped = df.drop(report)
-            if fixed_rows:
-                df_fixed = pd.DataFrame(fixed_rows)
+            if aligned_fixed_rows:
+                df_fixed = pd.DataFrame(aligned_fixed_rows)
                 final_df = pd.concat([df_dropped, df_fixed], ignore_index=True)
             else:
                 final_df = df_dropped
@@ -285,6 +411,7 @@ class ChunkValidator(BaseValidator):
                     "validator": "ChunkValidator",
                     "attempted_fix_count": len(report),
                     "successfully_fixed_count": len(fixed_rows),
+                    "aligned_fixed_rows": aligned_fixed_rows,
                     "dropped_count": len(report) - len(fixed_rows),
                     "fixed_rows": fixed_rows,
                     "prompt": prompt,
@@ -467,6 +594,159 @@ class DeduplicationValidator(BaseValidator):
                 
         return df, metrics
 
+class PrimaryKeyValidationValidator(BaseValidator):
+    """
+    Enforces primary-key presence and uniqueness after reduction. This is stricter than
+    plain deduplication because rows with missing PK parts are invalid even if unique.
+    """
+    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> Tuple[Dict[str, Any], LLMMetrics]:
+        metrics = LLMMetrics()
+        context = context or {}
+        schema = context.get('schema')
+        primary_keys = schema.primary_keys if schema else []
+
+        if not primary_keys or df.empty:
+            return {}, metrics
+
+        missing_columns = [pk for pk in primary_keys if pk not in df.columns]
+        if missing_columns:
+            report = {
+                "missing_columns": missing_columns,
+                "missing_pk_rows": [],
+                "duplicate_groups": []
+            }
+            _append_validation_log(context.get("output_dir"), {
+                "event_type": "detect",
+                "validator": "PrimaryKeyValidationValidator",
+                "missing_columns": missing_columns,
+                "total_rows": len(df)
+            })
+            return report, metrics
+
+        missing_pk_rows = []
+        for idx, row in df[primary_keys].iterrows():
+            if any(_is_blank_value(row[pk]) for pk in primary_keys):
+                missing_pk_rows.append(idx)
+
+        dup_mask = df.duplicated(subset=primary_keys, keep=False)
+        duplicate_groups = []
+        if dup_mask.any():
+            dup_df = df[dup_mask]
+            duplicate_groups = [group.index.tolist() for _, group in dup_df.groupby(primary_keys, dropna=False)]
+
+        report = {
+            "missing_columns": [],
+            "missing_pk_rows": sorted(missing_pk_rows),
+            "duplicate_groups": duplicate_groups
+        }
+        _append_validation_log(context.get("output_dir"), {
+            "event_type": "detect",
+            "validator": "PrimaryKeyValidationValidator",
+            "primary_keys": primary_keys,
+            "missing_pk_row_count": len(missing_pk_rows),
+            "duplicate_group_count": len(duplicate_groups)
+        })
+
+        if not missing_pk_rows and not duplicate_groups:
+            return {}, metrics
+        return report, metrics
+
+    async def fix(self, df: pd.DataFrame, report: Dict[str, Any], context: Dict[str, Any] = None) -> Tuple[pd.DataFrame, LLMMetrics]:
+        metrics = LLMMetrics()
+        context = context or {}
+        if not report:
+            return df, metrics
+
+        if report.get("missing_columns"):
+            logger.warning(
+                "PrimaryKeyValidationValidator: missing PK columns %s. Returning empty frame.",
+                report["missing_columns"]
+            )
+            _append_validation_log(context.get("output_dir"), {
+                "event_type": "fix",
+                "validator": "PrimaryKeyValidationValidator",
+                "action": "drop_all_rows_missing_pk_columns",
+                "missing_columns": report["missing_columns"],
+                "rows_before": len(df),
+                "rows_after": 0
+            })
+            return df.iloc[0:0], metrics
+
+        rows_to_drop = set(report.get("missing_pk_rows", []))
+        for group in report.get("duplicate_groups", []):
+            rows_to_drop.update(group[1:])
+
+        if not rows_to_drop:
+            return df, metrics
+
+        cleaned = df.drop(sorted(rows_to_drop))
+        logger.info("PrimaryKeyValidationValidator: Dropping %d invalid PK rows.", len(rows_to_drop))
+        _append_validation_log(context.get("output_dir"), {
+            "event_type": "fix",
+            "validator": "PrimaryKeyValidationValidator",
+            "rows_dropped": len(rows_to_drop),
+            "rows_before": len(df),
+            "rows_after": len(cleaned)
+        })
+        return cleaned, metrics
+
+class CompletenessValidator(BaseValidator):
+    """
+    Drops rows that are structurally incomplete: missing PKs, missing almost all
+    non-key fields, or containing only blank values outside the key.
+    """
+    async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> Tuple[List[int], LLMMetrics]:
+        metrics = LLMMetrics()
+        context = context or {}
+        schema = context.get('schema')
+        if df.empty or not schema or not schema.columns:
+            return [], metrics
+
+        schema_cols = [c.name for c in schema.columns if c.name in df.columns]
+        primary_keys = schema.primary_keys if schema.primary_keys else []
+        non_key_cols = [c for c in schema_cols if c not in primary_keys]
+        invalid_indices = []
+
+        for idx, row in df.iterrows():
+            if primary_keys and any(pk not in df.columns or _is_blank_value(row.get(pk)) for pk in primary_keys):
+                invalid_indices.append(idx)
+                continue
+
+            if non_key_cols:
+                filled_non_keys = sum(0 if _is_blank_value(row.get(col)) else 1 for col in non_key_cols)
+                if filled_non_keys == 0:
+                    invalid_indices.append(idx)
+                    continue
+
+                if len(non_key_cols) >= 3 and filled_non_keys < max(1, len(non_key_cols) // 2):
+                    invalid_indices.append(idx)
+
+        invalid_indices = sorted(set(invalid_indices))
+        _append_validation_log(context.get("output_dir"), {
+            "event_type": "detect",
+            "validator": "CompletenessValidator",
+            "total_rows": len(df),
+            "invalid_count": len(invalid_indices)
+        })
+        return invalid_indices, metrics
+
+    async def fix(self, df: pd.DataFrame, report: List[int], context: Dict[str, Any] = None) -> Tuple[pd.DataFrame, LLMMetrics]:
+        metrics = LLMMetrics()
+        context = context or {}
+        if not report:
+            return df, metrics
+
+        cleaned = df.drop(report)
+        logger.info("CompletenessValidator: Dropping %d incomplete rows.", len(report))
+        _append_validation_log(context.get("output_dir"), {
+            "event_type": "fix",
+            "validator": "CompletenessValidator",
+            "rows_dropped": len(report),
+            "rows_before": len(df),
+            "rows_after": len(cleaned)
+        })
+        return cleaned, metrics
+
 class CodeValidator(BaseValidator):
     """
     Gen-T Style Validation: Generate Code -> Execute -> Fix.
@@ -560,6 +840,10 @@ class CodeValidator(BaseValidator):
                         if isinstance(v, list):
                             result_list = v
                             break
+
+                schema = context.get('schema') if context else None
+                target_columns = [c.name for c in schema.columns] if schema and getattr(schema, "columns", None) else list(df.columns)
+                result_list = _align_rows_to_target_columns(result_list, target_columns)
 
                 all_indices_to_drop.extend([item['index'] for item in batch])
                 all_fixed_rows.extend(result_list)
@@ -867,6 +1151,44 @@ class EntityResolutionValidator(BaseValidator):
         from src.prompts import ENTITY_RESOLUTION_DECISION_PROMPT
         self.prompt_template = ENTITY_RESOLUTION_DECISION_PROMPT
 
+    def _find_entity_identity_column(self, schema, df: pd.DataFrame) -> Optional[str]:
+        preferred_exact = {"name", "title", "entity", "pokemon"}
+        preferred_keywords = [
+            "name", "title", "entity", "author", "artist", "composer", "country",
+            "team", "song", "game", "book", "work", "city", "state", "console"
+        ]
+
+        scored_candidates = []
+        for col in schema.columns:
+            if col.name not in df.columns:
+                continue
+
+            name_lower = col.name.lower()
+            desc_lower = (col.description or "").lower()
+            sem_type = (col.semantic_type or "").lower()
+            data_type = (col.data_type or "").lower()
+
+            if sem_type not in {"entity", "text", "categorical"} and data_type not in {"str", "string", "text"}:
+                continue
+
+            score = 0
+            if name_lower in preferred_exact:
+                score += 100
+            if any(k in name_lower for k in preferred_keywords):
+                score += 40
+            if any(k in desc_lower for k in preferred_keywords):
+                score += 20
+            if sem_type == "entity":
+                score += 10
+
+            scored_candidates.append((score, col.name))
+
+        if not scored_candidates:
+            return None
+
+        scored_candidates.sort(reverse=True)
+        return scored_candidates[0][1]
+
     async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> Tuple[List[int], LLMMetrics]:
         # Returns indices of DUPLICATE entities that need resolution.
         # We group by specific "Entity Name" columns.
@@ -879,19 +1201,24 @@ class EntityResolutionValidator(BaseValidator):
         if not schema:
             logger.warning("EntityResolution: No schema found in context.")
             return [], metrics
+        primary_keys = schema.primary_keys if schema.primary_keys else []
             
-        # 1. Identify "Name" / "Title" column
-        name_col = None
         schema_cols = [c.name for c in schema.columns]
         logger.info(f"EntityResolution: Schema Columns: {schema_cols}")
-        
-        for col in schema.columns:
-            if col.name.lower() in ["name", "title", "entity", "pokemon"]:
-                name_col = col.name
-                break
+        name_col = self._find_entity_identity_column(schema, df)
         
         if not name_col or name_col not in df.columns:
             logger.warning(f"EntityResolution: Name column not found. target='{name_col}'. DF DF Cols: {list(df.columns)}")
+            return [], metrics
+
+        # If the inferred identity column is already part of the PK, duplicates in this
+        # column are often legitimate rows for a composite key (e.g. Game across Consoles).
+        if name_col in primary_keys:
+            logger.info(
+                "EntityResolution: Skipping because identity column '%s' is part of primary key %s.",
+                name_col,
+                primary_keys
+            )
             return [], metrics
             
         # 2. Find duplicates in Name
@@ -914,11 +1241,9 @@ class EntityResolutionValidator(BaseValidator):
             
         # Determine Name col again
         schema = context.get('schema')
-        name_col = None
-        for col in schema.columns:
-            if col.name.lower() in ["name", "title", "entity", "pokemon"]:
-                name_col = col.name
-                break
+        name_col = self._find_entity_identity_column(schema, df)
+        if not name_col:
+            return df, metrics
                 
         # Group duplicates
         subset = df.loc[report]
