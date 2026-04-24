@@ -1627,14 +1627,19 @@ def render_chatbot(instance_id: str, ctx) -> None:
     latest_user_text, latest_assistant_text = latest_chat_exchange(history)
 
     utility_cols = panel.columns([2, 1])
+    handoff_payload = ""
     if latest_assistant_text:
         handoff_payload = format_latest_exchange_for_agentic(instance_id, latest_user_text, latest_assistant_text)
-        render_copy_exchange_widget(utility_cols[0], instance_id, handoff_payload)
+        if utility_cols[0].button("Copy latest prompt + response", key=f"show_handoff::{instance_id}"):
+            st.session_state[f"show_handoff_preview::{instance_id}"] = not st.session_state.get(f"show_handoff_preview::{instance_id}", False)
     else:
         utility_cols[0].caption("No assistant response yet to copy.")
     if utility_cols[1].button("Clear chat", key=f"clear_chat::{instance_id}"):
         clear_chat(instance_id)
         st.rerun()
+
+    if st.session_state.get(f"show_handoff_preview::{instance_id}") and handoff_payload:
+        panel.code(handoff_payload, language="text")
 
     history_box = panel.container(height=340)
     if history:
