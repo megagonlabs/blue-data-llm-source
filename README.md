@@ -31,6 +31,8 @@ PKDB is an **Agentic Data Extraction Framework** that transforms high-level natu
     pip install -r requirements.txt
     ```
 
+    > **⚠️ Security notice (2026-03-24):** litellm **1.82.7** and **1.82.8** on PyPI are compromised — they contain a credential-stealing `.pth` file that exfiltrates SSH keys, API keys, and cloud credentials on every Python startup. **Do not upgrade past 1.82.6.** This repo pins to 1.82.6 (safe). Verify with `pip show litellm | grep Version`. See [BerriAI/litellm#24518](https://github.com/BerriAI/litellm/issues/24518).
+
 4.  Set up your OpenAI API Key:
     ```bash
     export OPENAI_API_KEY="sk-..."

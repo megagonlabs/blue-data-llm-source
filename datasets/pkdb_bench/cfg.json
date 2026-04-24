@@ -1,0 +1,309 @@
+{
+    "trial_join_1": {
+        "id": "trial_join_1",
+        "table_title": "List all countries with their GDP from the IMF for 2026 and their population from the United Nations in 2023.",
+        "columns": [
+            "Country",
+            "GDP (IMF 2026, USD millions)",
+            "Population (UN 2023)",
+            "UN Region",
+            "UN Subregion"
+        ],
+        "primary_key": ["Country"],
+        "column_types": {
+            "Country": "key",
+            "GDP (IMF 2026, USD millions)": "numeric",
+            "Population (UN 2023)": "numeric",
+            "UN Region": "categorical",
+            "UN Subregion": "categorical"
+        },
+        "query_category": "implicit_join",
+        "db_analog": "SELECT country, gdp, population, region, subregion FROM imf_gdp JOIN un_population JOIN un_regions ON country",
+        "operation_type": "join",
+        "source_count": 2,
+        "domain": "Geography/Economics",
+        "temporal_sensitivity": "medium",
+        "temporal_note": "GDP updated annually; population updated per UN estimate cycle",
+        "gt_construction": "manual_wikipedia",
+        "source_urls": [
+            "https://en.wikipedia.org/wiki/List_of_countries_by_GDP_(nominal)",
+            "https://en.wikipedia.org/wiki/List_of_countries_by_population_(United_Nations)"
+        ]
+    },
+    "trial_join_2": {
+        "id": "trial_join_2",
+        "table_title": "List each NOC with its rank and medal counts (gold, silver, bronze, and total) in the Summer Olympics in 2020 and 2024.",
+        "columns": [
+            "NOC",
+            "Rank (2024)", "Gold (2024)", "Silver (2024)", "Bronze (2024)", "Total Medals (2024)",
+            "Rank (2020)", "Gold (2020)", "Silver (2020)", "Bronze (2020)", "Total Medals (2020)"
+        ],
+        "primary_key": ["NOC"],
+        "column_types": {
+            "NOC": "key",
+            "Rank (2024)": "rank", "Gold (2024)": "numeric", "Silver (2024)": "numeric",
+            "Bronze (2024)": "numeric", "Total Medals (2024)": "numeric",
+            "Rank (2020)": "rank", "Gold (2020)": "numeric", "Silver (2020)": "numeric",
+            "Bronze (2020)": "numeric", "Total Medals (2020)": "numeric"
+        },
+        "query_category": "implicit_join",
+        "db_analog": "SELECT noc, rank, gold, silver, bronze, total FROM olympics_2024 JOIN olympics_2020 ON noc",
+        "operation_type": "join",
+        "source_count": 2,
+        "domain": "Sports",
+        "temporal_sensitivity": "stable",
+        "temporal_note": "Past Olympic Games results are fixed",
+        "gt_construction": "manual_wikipedia",
+        "source_urls": [
+            "https://en.wikipedia.org/wiki/2024_Summer_Olympics_medal_table",
+            "https://en.wikipedia.org/wiki/2020_Summer_Olympics_medal_table"
+        ]
+    },
+    "trial_join_3": {
+        "id": "trial_join_3",
+        "table_title": "List all U.S. states with their Total Area (sq mi), Census population (2020), and House seats (2020).",
+        "columns": [
+            "State or Territory",
+            "Total Area (sq mi)",
+            "Census population (2020)",
+            "House seats (2020)"
+        ],
+        "primary_key": ["State or Territory"],
+        "column_types": {
+            "State or Territory": "key",
+            "Total Area (sq mi)": "numeric",
+            "Census population (2020)": "numeric",
+            "House seats (2020)": "numeric"
+        },
+        "query_category": "multi_attribute_projection",
+        "db_analog": "SELECT state, area, population, house_seats FROM us_states_area JOIN us_census_2020 JOIN us_apportionment ON state",
+        "operation_type": "join",
+        "source_count": 2,
+        "domain": "Geography/Politics",
+        "temporal_sensitivity": "stable",
+        "temporal_note": "2020 census and apportionment are fixed historical values",
+        "gt_construction": "manual_wikipedia",
+        "source_urls": [
+            "https://en.wikipedia.org/wiki/List_of_U.S._states_and_territories_by_area",
+            "https://en.wikipedia.org/wiki/2020_United_States_census"
+        ]
+    },
+    "trial_join_4": {
+        "id": "trial_join_4",
+        "table_title": "Return the films that appear in both the all-time top 50 highest-grossing films worldwide and the top 50 most expensive films by production budget, including Film Title, Rank (Highest-Grossing), Worldwide gross (USD), Rank (Most Expensive), and Production Budget (USD millions).",
+        "columns": [
+            "Film Title",
+            "Rank (Highest-Grossing)",
+            "Worldwide gross (USD)",
+            "Rank (Most Expensive)",
+            "Production Budget (USD millions)"
+        ],
+        "primary_key": ["Film Title"],
+        "column_types": {
+            "Film Title": "key",
+            "Rank (Highest-Grossing)": "rank",
+            "Worldwide gross (USD)": "numeric",
+            "Rank (Most Expensive)": "rank",
+            "Production Budget (USD millions)": "numeric"
+        },
+        "query_category": "set_operation",
+        "db_analog": "SELECT * FROM top50_grossing INTERSECT SELECT * FROM top50_expensive ON film_title",
+        "operation_type": "intersect",
+        "source_count": 2,
+        "domain": "Entertainment",
+        "temporal_sensitivity": "low",
+        "temporal_note": "All-time rankings shift slowly; rare new entries displace existing ones",
+        "gt_construction": "manual_wikipedia",
+        "source_urls": [
+            "https://en.wikipedia.org/wiki/List_of_highest-grossing_films",
+            "https://en.wikipedia.org/wiki/List_of_most_expensive_films"
+        ]
+    },
+    "trial_join_5": {
+        "id": "trial_join_5",
+        "table_title": "For all countries, list life expectancy at birth in 2024 (all sexes, male, female) and the 2024 median age, according to the CIA World Factbook.",
+        "columns": [
+            "Country",
+            "Life Expectancy (All 2024)",
+            "Life Expectancy (Male 2024)",
+            "Life Expectancy (Female 2024)",
+            "Median Age (2024)"
+        ],
+        "primary_key": ["Country"],
+        "column_types": {
+            "Country": "key",
+            "Life Expectancy (All 2024)": "numeric",
+            "Life Expectancy (Male 2024)": "numeric",
+            "Life Expectancy (Female 2024)": "numeric",
+            "Median Age (2024)": "numeric"
+        },
+        "query_category": "multi_attribute_projection",
+        "db_analog": "SELECT country, life_exp_all, life_exp_male, life_exp_female, median_age FROM cia_factbook_2024",
+        "operation_type": "projection",
+        "source_count": 1,
+        "domain": "Science/Health",
+        "temporal_sensitivity": "medium",
+        "temporal_note": "CIA Factbook updated annually; 2024 edition values are fixed as reference",
+        "gt_construction": "manual_wikipedia",
+        "source_urls": [
+            "https://en.wikipedia.org/wiki/List_of_countries_by_life_expectancy",
+            "https://en.wikipedia.org/wiki/List_of_countries_by_median_age"
+        ]
+    },
+    "trial_union_1": {
+        "id": "trial_union_1",
+        "table_title": "List all winners of the Academy Award for Best Actor and Best Actress from the 1st Academy Awards (1927/28) to the 97th Academy Awards (2024).",
+        "columns": [
+            "Academy Awards Edition",
+            "Category",
+            "Winner Name",
+            "Film Name"
+        ],
+        "primary_key": ["Academy Awards Edition", "Category"],
+        "column_types": {
+            "Academy Awards Edition": "key",
+            "Category": "key",
+            "Winner Name": "text",
+            "Film Name": "text"
+        },
+        "query_category": "set_operation",
+        "db_analog": "SELECT edition, 'Best Actor', winner, film FROM aa_best_actor UNION SELECT edition, 'Best Actress', winner, film FROM aa_best_actress",
+        "operation_type": "union",
+        "source_count": 2,
+        "domain": "Entertainment",
+        "temporal_sensitivity": "stable",
+        "temporal_note": "Historical Academy Award results up to 97th ceremony are fixed",
+        "gt_construction": "manual_wikipedia",
+        "source_urls": [
+            "https://en.wikipedia.org/wiki/Academy_Award_for_Best_Actor",
+            "https://en.wikipedia.org/wiki/Academy_Award_for_Best_Actress"
+        ]
+    },
+    "trial_union_2": {
+        "id": "trial_union_2",
+        "table_title": "List the Billboard Year-End Hot 100 singles in 2022, 2023, 2024, and 2025.",
+        "columns": [
+            "Chart Year",
+            "Rank",
+            "Song Title",
+            "Artist"
+        ],
+        "primary_key": ["Chart Year", "Rank"],
+        "column_types": {
+            "Chart Year": "key",
+            "Rank": "key",
+            "Song Title": "text",
+            "Artist": "text"
+        },
+        "query_category": "set_operation",
+        "db_analog": "SELECT 2022, rank, song, artist FROM billboard_2022 UNION ... UNION SELECT 2025, rank, song, artist FROM billboard_2025",
+        "operation_type": "union",
+        "source_count": 4,
+        "domain": "Entertainment/Music",
+        "temporal_sensitivity": "stable",
+        "temporal_note": "Year-end charts for completed years are fixed",
+        "gt_construction": "manual_wikipedia",
+        "source_urls": [
+            "https://en.wikipedia.org/wiki/Billboard_Year-End_Hot_100_singles_of_2022",
+            "https://en.wikipedia.org/wiki/Billboard_Year-End_Hot_100_singles_of_2023",
+            "https://en.wikipedia.org/wiki/Billboard_Year-End_Hot_100_singles_of_2024",
+            "https://en.wikipedia.org/wiki/Billboard_Year-End_Hot_100_singles_of_2025"
+        ]
+    },
+    "trial_union_3": {
+        "id": "trial_union_3",
+        "table_title": "List all Nobel Prize laureates in Physics, Chemistry, and Physiology or Medicine from 1945 through 2025 (inclusive), including their year, prize category, laureate name, and nationality.",
+        "columns": [
+            "Year",
+            "Prize Category",
+            "Laureate",
+            "Nationality"
+        ],
+        "primary_key": ["Year", "Prize Category", "Laureate"],
+        "column_types": {
+            "Year": "key",
+            "Prize Category": "key",
+            "Laureate": "key",
+            "Nationality": "categorical"
+        },
+        "query_category": "set_operation",
+        "db_analog": "SELECT year, 'Physics', laureate, nationality FROM nobel_physics WHERE year BETWEEN 1945 AND 2025 UNION SELECT year, 'Chemistry', ... UNION SELECT year, 'Medicine', ...",
+        "operation_type": "union",
+        "source_count": 3,
+        "domain": "Science/Academia",
+        "temporal_sensitivity": "stable",
+        "temporal_note": "Historical Nobel Prizes are fixed; 2025 laureates are included as of cutoff",
+        "gt_construction": "manual_wikipedia",
+        "source_urls": [
+            "https://en.wikipedia.org/wiki/List_of_Nobel_laureates_in_Physics",
+            "https://en.wikipedia.org/wiki/List_of_Nobel_laureates_in_Chemistry",
+            "https://en.wikipedia.org/wiki/List_of_Nobel_laureates_in_Physiology_or_Medicine"
+        ]
+    },
+    "trial_union_4": {
+        "id": "trial_union_4",
+        "table_title": "Show City, Building, Height (ft), Floors, and Year Completed for buildings in New York City, Chicago, and Los Angeles with Height (ft) at least 650 (standard height), sorted by Height (ft) in descending order.",
+        "columns": [
+            "City",
+            "Building",
+            "Height (ft)",
+            "Floors",
+            "Year Completed"
+        ],
+        "primary_key": ["City", "Building"],
+        "column_types": {
+            "City": "key",
+            "Building": "key",
+            "Height (ft)": "numeric",
+            "Floors": "numeric",
+            "Year Completed": "date"
+        },
+        "query_category": "set_operation",
+        "db_analog": "SELECT 'NYC', building, height, floors, year FROM nyc_buildings WHERE height >= 650 UNION SELECT 'Chicago', ... UNION SELECT 'LA', ...",
+        "operation_type": "union+filter",
+        "source_count": 3,
+        "domain": "Geography/Architecture",
+        "temporal_sensitivity": "low",
+        "temporal_note": "New skyscrapers are rare; list is mostly stable",
+        "gt_construction": "manual_wikipedia",
+        "source_urls": [
+            "https://en.wikipedia.org/wiki/List_of_tallest_buildings_in_New_York_City",
+            "https://en.wikipedia.org/wiki/List_of_tallest_buildings_in_Chicago",
+            "https://en.wikipedia.org/wiki/List_of_tallest_buildings_in_Los_Angeles"
+        ]
+    },
+    "trial_union_5": {
+        "id": "trial_union_5",
+        "table_title": "List all games for the PlayStation 4, Nintendo Switch, and Xbox One consoles with Copies sold (million) >= 1.00. If the same game was released on multiple consoles, include a separate row for each console.",
+        "columns": [
+            "Console",
+            "Game",
+            "Copies sold (million)",
+            "Release date",
+            "Developer",
+            "Publisher"
+        ],
+        "primary_key": ["Console", "Game"],
+        "column_types": {
+            "Console": "key",
+            "Game": "key",
+            "Copies sold (million)": "numeric",
+            "Release date": "date",
+            "Developer": "text",
+            "Publisher": "text"
+        },
+        "query_category": "set_operation",
+        "db_analog": "SELECT 'PS4', game, copies, date, dev, pub FROM ps4_games WHERE copies >= 1 UNION SELECT 'Switch', ... UNION SELECT 'XboxOne', ...",
+        "operation_type": "union+filter",
+        "source_count": 3,
+        "domain": "Entertainment/Gaming",
+        "temporal_sensitivity": "medium",
+        "temporal_note": "Sales figures updated as new data is reported; older titles are mostly stable",
+        "gt_construction": "manual_wikipedia",
+        "source_urls": [
+            "https://en.wikipedia.org/wiki/List_of_best-selling_PlayStation_4_video_games",
+            "https://en.wikipedia.org/wiki/List_of_best-selling_Nintendo_Switch_video_games",
+            "https://en.wikipedia.org/wiki/List_of_best-selling_Xbox_One_video_games"
+        ]
+    }
+}
