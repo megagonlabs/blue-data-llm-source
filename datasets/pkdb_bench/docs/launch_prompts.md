@@ -120,11 +120,14 @@ Cover ALL of the following in one structured response:
     under current policy from NON-BLOCKING upgrade suggestions, and
     listing the minimal exact fixes needed.
 
-For each finding, classify as factual / structural / scope-related and
-cite the source URL + locator (page section, list position, table cell)
-that the finding rests on. If you would propose table edits, describe
-them as a recommendation in the audit report — do NOT write them to the
-CSV (that would violate append-only ownership).
+For each finding, classify on **both axes**: issue type (factual /
+structural / scope-related) AND severity (BLOCKING / NON-BLOCKING
+HYGIENE / SUGGESTION). Tag every finding with one value from each axis,
+e.g. `(structural, BLOCKING)` or `(scope-related, NON-BLOCKING
+HYGIENE)`. Cite the source URL + locator (page section, list position,
+table cell) that the finding rests on. If you would propose table
+edits, describe them as a recommendation in the audit report — do NOT
+write them to the CSV (that would violate append-only ownership).
 
 ## Output: append to <id>.comments.json
 
@@ -163,10 +166,11 @@ field if you add one (otherwise leave the schema unchanged).
 
 A condensed verdict block:
 
-1. Ready / Not ready
-2. Number of blocking issues, by classification
-3. The 3–5 minimal fixes needed (if any)
-4. The path you wrote to
+1. Ready / Not ready (Ready requires zero BLOCKING findings)
+2. Counts by severity: BLOCKING / NON-BLOCKING HYGIENE / SUGGESTION
+3. Counts by issue type: factual / structural / scope-related
+4. The 3–5 minimal fixes needed (if any)
+5. The path you wrote to
 ```
 
 ### Codex (auditor)
@@ -215,11 +219,14 @@ Cover ALL of the following in one structured response:
     under current policy from NON-BLOCKING upgrade suggestions, and
     listing the minimal exact fixes needed.
 
-For each finding, classify as factual / structural / scope-related and
-cite the source URL + locator (page section, list position, table cell)
-that the finding rests on. If you would propose table edits, describe
-them as a recommendation in the audit report — do NOT write them to the
-CSV (that would violate append-only ownership).
+For each finding, classify on **both axes**: issue type (factual /
+structural / scope-related) AND severity (BLOCKING / NON-BLOCKING
+HYGIENE / SUGGESTION). Tag every finding with one value from each axis,
+e.g. `(structural, BLOCKING)` or `(scope-related, NON-BLOCKING
+HYGIENE)`. Cite the source URL + locator (page section, list position,
+table cell) that the finding rests on. If you would propose table
+edits, describe them as a recommendation in the audit report — do NOT
+write them to the CSV (that would violate append-only ownership).
 
 ## Output: append to <id>.comments.json
 
@@ -258,10 +265,11 @@ you add one (otherwise leave the schema unchanged).
 
 A condensed verdict block:
 
-1. Ready / Not ready
-2. Number of blocking issues, by classification
-3. The 3–5 minimal fixes needed (if any)
-4. The path you wrote to
+1. Ready / Not ready (Ready requires zero BLOCKING findings)
+2. Counts by severity: BLOCKING / NON-BLOCKING HYGIENE / SUGGESTION
+3. Counts by issue type: factual / structural / scope-related
+4. The 3–5 minimal fixes needed (if any)
+5. The path you wrote to
 ```
 
 Replace `<id>` with the instance id from Step 1.

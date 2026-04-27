@@ -313,16 +313,19 @@ Every registered instance requires a complete entry in `datasets/pkdb_bench/cfg.
     "db_analog": "SELECT ... FROM ... WHERE ...", // SQL representation of the query
 
     // ── Structure ─────────────────────────────────────────────────────────
-    // operation_type — use exactly one of these values.
-    // Values currently in cfg.json (use these for new seed instances):
-    //   "join"         — implicit join across two or more source tables
-    //   "union"        — row-wise union of two or more source tables
-    //   "intersect"    — intersection of two source sets
+    // operation_type — use exactly one of these allowed values:
+    //   "join"         — implicit join across two or more source tables, or chained joins
+    //                    (implicit_join, multi_hop)
+    //   "union"        — row-wise union of two or more source tables (set_operation)
+    //   "intersect"    — intersection of two source sets (set_operation)
     //   "projection"   — single-source multi-column SELECT, no filter
-    //   "union+filter" — union combined with a filter predicate
-    // Planned values for future query categories (not yet in cfg.json):
-    //   "filter"       — single-source with a WHERE predicate (set_filter, geographic)
-    //   "aggregation"  — GROUP BY / COUNT / MAX over a source (aggregation category)
+    //                    (multi_attribute_projection)
+    //   "union+filter" — union combined with a filter predicate (set_operation variants)
+    //   "filter"       — single-source with a WHERE predicate
+    //                    (set_filter, temporal, geographic)
+    //   "aggregation"  — GROUP BY / COUNT / MAX / MIN over a source (aggregation)
+    // Mirrored in `.claude/skills/pkdb-bench-curation/references/artifact-contract.md`;
+    // keep the two lists in sync.
     "operation_type": "<one of the values above>",
     "source_count": 1,                // number of implicit source tables required
 
