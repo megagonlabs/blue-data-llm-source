@@ -54,11 +54,15 @@ datasets/pkdb_bench/docs/
 `datasets/pkdb_bench/` is the authoritative benchmark package.
 `cfg.json` and `tables/` are synchronized: every registered entry has a co-located CSV.
 
-The 12 currently registered instances are:
+The 11 currently registered instances are:
 
 - 10 `trial_*` tables from the `multisources_dataset_v1` seed split
-- `landlocked_countries` — Wikidata SPARQL, `set_filter`
-- `nobel_counts_per_country` — Wikidata SPARQL, `aggregation`
+- `us_presidents_count_by_birth_state` — manual Wikipedia, `aggregation`
+
+`set_filter` and other categories beyond `implicit_join`, `multi_attribute_projection`,
+`set_operation`, and `aggregation` have no registered instance yet, although staged candidates
+exist (e.g., `transboundary_rivers_by_continent_*` for `set_filter`,
+`landlocked_africa_neighbor_languages` for `multi_hop`).
 
 Four additional SPARQL prototype CSVs exist in `tables/` but are **not yet registered** because
 they require remediation before they meet the quality criteria in Section 5:

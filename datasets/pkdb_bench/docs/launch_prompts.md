@@ -53,23 +53,120 @@ Two agents, two passes. Agent A stages; Agent B audits without editing.
 
 **Step 1.** Use a solo prompt from §1 with Agent A.
 
-**Step 2.** Audit the result with Agent B using one of:
+**Step 2.** Audit the result with Agent B. Pick the audit bundle that
+matches the risk you most want to surface — the four bundles below
+mirror the ones the UI exposes in `curation_ui/app.py`
+(`CHAT_PROMPT_BUNDLES`). The default is **Full pre-registration sweep**.
+
+### Audit bundles (pick one)
+
+- **Data integrity sweep** — best first pass after staging or major
+  edits. Row correctness, duplicates, normalization, table-shape, and
+  cardinality, in one run.
+- **Source and scope sweep** — when the main risk is whether the cited
+  sources actually support the query wording and intended scope.
+- **Metadata and registration sweep** — near the end, to verify cfg
+  metadata, benchmark fit, and whether the instance is ready to register.
+- **Full pre-registration sweep** — broadest single pass; covers data
+  integrity, scope, metadata, benchmark fit, and a final
+  Ready / Not ready verdict. Use this if you can only run one.
 
 ### Claude Code (auditor)
 
 ```text
-/pkdb-bench-curation
+/pkdb-bench-audit
 
 Audit the staged instance datasets/pkdb_bench/staging/<id>.* using the
-audit-instance workflow in references/workflows.md.
+audit bundles in references/audit-bundles.md, the comments-file schema
+in references/comments-schema.md, and the "Agent Collaboration Patterns"
+section of datasets/pkdb_bench/docs/agent_handoff_bundle.md.
 
-Audit writes are append-only. Do NOT edit the CSV, draft.json, or
-curation.json. Append findings to
-datasets/pkdb_bench/staging/<id>.comments.json (or create it if missing).
+## Ownership (append-only)
 
-Return a short audit report classifying each issue as factual,
-structural, or scope-related. See "Agent Collaboration Patterns" in
-datasets/pkdb_bench/docs/agent_handoff_bundle.md for the full rule.
+Audit writes are append-only. Do NOT edit
+datasets/pkdb_bench/staging/<id>.csv,
+datasets/pkdb_bench/staging/<id>.draft.json, or
+datasets/pkdb_bench/staging/<id>.curation.json. You may only append to
+datasets/pkdb_bench/staging/<id>.comments.json (or create it if missing,
+following the schema below).
+
+## Audit task — Full pre-registration sweep
+
+Perform a full pre-registration review of this staged instance using
+the cited source set and current benchmark policy. Be policy-faithful,
+not perfectionist: if the source tier is allowed and honestly declared,
+do not block registration only because stronger sources could exist.
+At the same time, keep coverage checking strict and assess whether the
+cited sources truly support the rows and claimed scope.
+
+Cover ALL of the following in one structured response:
+
+1. row-level correctness and unsupported / missing rows relative to the
+   cited source set,
+2. duplicates and primary-key problems,
+3. normalization, table-shape quality, and column-type consistency,
+4. expected row-count / cardinality estimate, partition sanity, and
+   unique-key sanity,
+5. source quality, source tier, and source-to-query scope match,
+6. table completeness for the intended scope,
+7. cfg metadata correctness (table_title, query_category, db_analog,
+   operation_type, primary_key, column_types, source_count, domain,
+   temporal_sensitivity, gt_construction, temporal_note, source_urls),
+8. LLM-knowable fit (would a closed-book pre-2025 model plausibly know
+   these rows from pretraining?),
+9. whether this instance helps the benchmark's intended multi-source /
+   structured extraction story,
+10. final Ready / Not ready judgment, clearly separating BLOCKING issues
+    under current policy from NON-BLOCKING upgrade suggestions, and
+    listing the minimal exact fixes needed.
+
+For each finding, classify as factual / structural / scope-related and
+cite the source URL + locator (page section, list position, table cell)
+that the finding rests on. If you would propose table edits, describe
+them as a recommendation in the audit report — do NOT write them to the
+CSV (that would violate append-only ownership).
+
+## Output: append to <id>.comments.json
+
+Append a chat_events entry AND a chat_history user/assistant pair using
+the existing schema. If the file does not exist, create it with this
+shape:
+
+{
+  "doubts": [],
+  "comments": [],
+  "chat_events": [
+    {
+      "at": "<ISO 8601 UTC timestamp>",
+      "action": "assistant_response",
+      "summary": "<first 200 chars of your audit, followed by '...'>",
+      "source_cited": "",
+      "source_fetch_enabled": false
+    }
+  ],
+  "chat_summary": "<same as summary above>",
+  "chat_history": [
+    {"role": "user", "content": "<the audit prompt you were given, verbatim>"},
+    {"role": "assistant", "content": "<your full audit report>"}
+  ]
+}
+
+If the file already exists: append the new chat_events entry to the
+existing chat_events list, append the user/assistant pair to the existing
+chat_history list, and update chat_summary to point at the new summary.
+Do not delete or rewrite any existing entries.
+
+Set _audited_by = "claude-code" in any new top-level audit metadata
+field if you add one (otherwise leave the schema unchanged).
+
+## Return to me
+
+A condensed verdict block:
+
+1. Ready / Not ready
+2. Number of blocking issues, by classification
+3. The 3–5 minimal fixes needed (if any)
+4. The path you wrote to
 ```
 
 ### Codex (auditor)
@@ -79,15 +176,104 @@ Read datasets/pkdb_bench/docs/agent_handoff_bundle.md (especially the
 "Agent Collaboration Patterns" section) and audit the staged instance
 datasets/pkdb_bench/staging/<id>.*.
 
-Audit writes are append-only. Do NOT edit the CSV, draft.json, or
-curation.json. Append findings to
-datasets/pkdb_bench/staging/<id>.comments.json (or create it if missing).
+## Ownership (append-only)
 
-Return a short audit report classifying each issue as factual,
-structural, or scope-related.
+Audit writes are append-only. Do NOT edit
+datasets/pkdb_bench/staging/<id>.csv,
+datasets/pkdb_bench/staging/<id>.draft.json, or
+datasets/pkdb_bench/staging/<id>.curation.json. You may only append to
+datasets/pkdb_bench/staging/<id>.comments.json (or create it if missing,
+following the schema below).
+
+## Audit task — Full pre-registration sweep
+
+Perform a full pre-registration review of this staged instance using
+the cited source set and current benchmark policy. Be policy-faithful,
+not perfectionist: if the source tier is allowed and honestly declared,
+do not block registration only because stronger sources could exist.
+At the same time, keep coverage checking strict and assess whether the
+cited sources truly support the rows and claimed scope.
+
+Cover ALL of the following in one structured response:
+
+1. row-level correctness and unsupported / missing rows relative to the
+   cited source set,
+2. duplicates and primary-key problems,
+3. normalization, table-shape quality, and column-type consistency,
+4. expected row-count / cardinality estimate, partition sanity, and
+   unique-key sanity,
+5. source quality, source tier, and source-to-query scope match,
+6. table completeness for the intended scope,
+7. cfg metadata correctness (table_title, query_category, db_analog,
+   operation_type, primary_key, column_types, source_count, domain,
+   temporal_sensitivity, gt_construction, temporal_note, source_urls),
+8. LLM-knowable fit (would a closed-book pre-2025 model plausibly know
+   these rows from pretraining?),
+9. whether this instance helps the benchmark's intended multi-source /
+   structured extraction story,
+10. final Ready / Not ready judgment, clearly separating BLOCKING issues
+    under current policy from NON-BLOCKING upgrade suggestions, and
+    listing the minimal exact fixes needed.
+
+For each finding, classify as factual / structural / scope-related and
+cite the source URL + locator (page section, list position, table cell)
+that the finding rests on. If you would propose table edits, describe
+them as a recommendation in the audit report — do NOT write them to the
+CSV (that would violate append-only ownership).
+
+## Output: append to <id>.comments.json
+
+Append a chat_events entry AND a chat_history user/assistant pair using
+the existing schema. If the file does not exist, create it with this
+shape:
+
+{
+  "doubts": [],
+  "comments": [],
+  "chat_events": [
+    {
+      "at": "<ISO 8601 UTC timestamp>",
+      "action": "assistant_response",
+      "summary": "<first 200 chars of your audit, followed by '...'>",
+      "source_cited": "",
+      "source_fetch_enabled": false
+    }
+  ],
+  "chat_summary": "<same as summary above>",
+  "chat_history": [
+    {"role": "user", "content": "<the audit prompt you were given, verbatim>"},
+    {"role": "assistant", "content": "<your full audit report>"}
+  ]
+}
+
+If the file already exists: append the new chat_events entry to the
+existing chat_events list, append the user/assistant pair to the existing
+chat_history list, and update chat_summary to point at the new summary.
+Do not delete or rewrite any existing entries.
+
+Set _audited_by = "codex" in any new top-level audit metadata field if
+you add one (otherwise leave the schema unchanged).
+
+## Return to me
+
+A condensed verdict block:
+
+1. Ready / Not ready
+2. Number of blocking issues, by classification
+3. The 3–5 minimal fixes needed (if any)
+4. The path you wrote to
 ```
 
 Replace `<id>` with the instance id from Step 1.
+
+### Swapping in a narrower audit bundle
+
+To run **Data integrity sweep**, **Source and scope sweep**, or
+**Metadata and registration sweep** instead of the full pre-registration
+sweep, replace the `## Audit task` block in either prompt above with the
+corresponding bundle content from `curation_ui/app.py` →
+`CHAT_PROMPT_BUNDLES`. Everything else (ownership rule, output schema,
+return format) stays the same.
 
 ---
 

@@ -1,10 +1,16 @@
 # PKDB-Bench Agent Handoff Bundle
 
-Use this when handing off a new benchmark-instance creation task to an
-agentic workflow such as Claude Code or Codex. This file is the
-canonical, agent-agnostic handoff. The Claude Code skill at
-`.claude/skills/pkdb-bench-curation/` is a parallel, Claude-Code-native
-variant of the same content.
+Use this when handing off a benchmark-instance task (creation, audit,
+repair, reconciliation) to an agentic workflow such as Claude Code or
+Codex. This file is the canonical, agent-agnostic handoff.
+
+Claude Code has two parallel, native skills that mirror this content:
+
+- `.claude/skills/pkdb-bench-curation/` — for creating, repairing,
+  reconciling, or preparing instances (writes canonical staged files).
+- `.claude/skills/pkdb-bench-audit/` — for audit-only work (reads staged
+  files, appends findings to `<id>.comments.json`, never edits the
+  canonical artifacts).
 
 ## Goal
 
@@ -49,19 +55,34 @@ Optional context (give when relevant):
 
 ## If you're using Claude Code
 
-Invoke the skill at the start of the conversation:
+Pick the skill that matches the task ownership profile:
 
-```text
-/pkdb-bench-curation
-```
+- For **creating** a new instance, **repairing** an existing one,
+  **reconciling** a same-query duel, or **preparing for registration**:
 
-This preloads the workflow rules (`references/workflows.md`) and artifact
-contract (`references/artifact-contract.md`). After that, paste the
-"Standard agent prompt" below — the skill content covers the same hard
-rules, so the prompt acts as the task spec.
+  ```text
+  /pkdb-bench-curation
+  ```
 
-For other agents (Codex, etc.), the prompt below is fully self-contained
-once the agent reads the files listed above.
+  Preloads `references/workflows.md` and `references/artifact-contract.md`.
+
+- For **auditing only** (read staged files, append findings to
+  `<id>.comments.json`, do not edit canonical files):
+
+  ```text
+  /pkdb-bench-audit
+  ```
+
+  Preloads `references/audit-bundles.md` and `references/comments-schema.md`.
+
+Do not invoke both in the same conversation — pick the one that matches
+your ownership model. After invoking the skill, paste the "Standard
+agent prompt" (§Standard agent prompt) for creation tasks, or the audit
+prompts in `datasets/pkdb_bench/docs/launch_prompts.md` §2 for audits.
+
+For other agents (Codex, etc.), there is no skill mechanism — the agent
+reads the files listed above and the prompts in `launch_prompts.md`
+directly. The contract is the same.
 
 ## Identify category gaps before choosing
 

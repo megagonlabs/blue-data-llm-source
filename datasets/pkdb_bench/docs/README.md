@@ -25,19 +25,19 @@ The design docs live in this directory. Ground-truth data and metadata live in `
 `datasets/pkdb_bench/` is the **consolidated benchmark package**. The `cfg.json` and `tables/`
 directory are synchronized: every registered entry has a co-located CSV.
 
-The benchmark currently has **12 registered instances** across 5 query categories:
+The benchmark currently has **11 registered instances** across 4 query categories:
 
 | Table set | Count | Query categories |
 | --- | ---: | --- |
 | `trial_join_*` | 5 | `implicit_join`, `multi_attribute_projection`, `set_operation` |
 | `trial_union_*` | 5 | `set_operation` |
-| `landlocked_countries` | 1 | `set_filter` |
-| `nobel_counts_per_country` | 1 | `aggregation` |
-| **Total** | **12** | 5 categories covered |
+| `us_presidents_count_by_birth_state` | 1 | `aggregation` |
+| **Total** | **11** | 4 categories covered |
 
-Four additional SPARQL prototype CSVs exist in `tables/` but are **not registered** due to data
-quality issues (see `curation_protocol.md` Section 2 for details). The taxonomy targets 15
-categories with **82 instances total** — curation is ongoing.
+`set_filter` has no registered instance yet, although staged candidates exist
+(`transboundary_rivers_by_continent_*`). Four additional SPARQL prototype CSVs exist in `tables/`
+but are **not registered** due to data quality issues (see `curation_protocol.md` Section 2 for
+details). The taxonomy targets 15 categories with **82 instances total** — curation is ongoing.
 
 Target per category: 8 for the three primary multi-source categories (`set_operation`,
 `implicit_join`, `multi_attribute_projection`); 5 for all others; 3 for `factual_lookup` (baseline).
@@ -197,6 +197,6 @@ From `papers.md`:
 - [x] Add confidence output support to the extraction pipeline
 - [x] Run ECE-style evaluation on `multisources_dataset_v1`
 - [ ] Fix and register 4 unregistered SPARQL prototype CSVs (see `curation_protocol.md` §2)
-- [ ] Expand table coverage beyond the 12 registered instances
-- [ ] Instantiate more of the 15 query categories (currently 5 of 15 covered)
+- [ ] Expand table coverage beyond the 11 registered instances
+- [ ] Instantiate more of the 15 query categories (currently 4 of 15 covered)
 - [ ] Add a dedicated `experiments/evaluate_pkdb_bench.py` entry point
