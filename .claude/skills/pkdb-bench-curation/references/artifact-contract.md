@@ -46,6 +46,35 @@ Populate at least:
 - `_staged_at` — ISO 8601 timestamp of initial staging
 - `_extraction_notes` — one paragraph explaining how the row set was derived, what was supplemented, and what was excluded
 
+## Operation Type Vocabulary
+
+`draft.json::operation_type` must be **exactly one** of these values.
+The list mirrors `datasets/pkdb_bench/docs/curation_protocol.md` §7
+(cfg.json schema) and must stay in sync with what the curation UI
+accepts. If you find yourself wanting a value that is not listed, do
+**not** invent one — either pick the closest match and document the
+choice in `curation.json::decision_log`, or stop and propose an
+extension to the protocol.
+
+Allowed values:
+
+| Value | When to use | Typical `query_category` |
+| --- | --- | --- |
+| `join` | implicit join across two or more source tables, or chained joins | `implicit_join`, `multi_hop` |
+| `union` | row-wise union of two or more source tables | `set_operation` |
+| `intersect` | intersection of two source sets | `set_operation` |
+| `projection` | single-source multi-column SELECT, no filter | `multi_attribute_projection` |
+| `union+filter` | union combined with a filter predicate | `set_operation` (filtered variants) |
+| `filter` | single-source with a WHERE predicate | `set_filter`, `temporal`, `geographic` |
+| `aggregation` | GROUP BY / COUNT / MAX / MIN over a source | `aggregation` |
+
+Common wrong values that have shipped and were caught in audit:
+
+- `multi_join` — **not in the vocabulary.** Use `join` for chained joins
+  (the `multi_hop` query category uses `join` because the structural
+  primitive is the same — chained joins are still joins).
+- `aggregate` (without the `-ion`) — use `aggregation`.
+
 ## Curation Record Minimum
 
 Populate at least:

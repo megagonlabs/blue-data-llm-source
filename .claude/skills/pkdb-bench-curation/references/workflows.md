@@ -11,7 +11,7 @@ Steps:
 1. Read benchmark docs and choose one category.
 2. Find source-grounded rows from approved sources.
    Source tier order (prefer higher tiers): Wikidata SPARQL > manual Wikipedia > web search.
-   See `md_claude_code/pkdb_bench/curation_protocol.md` §4 for the full tier rules.
+   See `datasets/pkdb_bench/docs/curation_protocol.md` §4 for the full tier rules.
 3. Decide the claim type:
    - exhaustive
    - source_defined
@@ -62,27 +62,97 @@ Steps:
 5. Write the staged CSV.
 6. Write `draft.json` with a truthful query/title and metadata.
 7. Write `curation.json` with why the row set is what it is.
+8. **Run the creator preflight** (next subsection) before reporting
+   `ready`. Auditors will catch most things that slip through, but
+   preflight catches a class of bug that an auditor's existence does
+   not justify shipping.
 
 Do not register directly.
 
+### Creator preflight (run before reporting `ready`)
+
+This is **lightweight pre-stage validation**, not a full audit. The goal
+is to surface bugs that the create-instance flow itself would miss
+because the agent and the validator are the same person. Run every
+applicable check; if any fails, fix or document before reporting.
+
+1. **Source rerun matches CSV** (Tier A only)
+   For Tier A (Wikidata SPARQL): re-run the `.sparql` file via the
+   pipeline and confirm the row set is identical to what is staged.
+   The staged CSV must be reproducible from the cited query alone.
+
+2. **PK uniqueness**
+   `csv.duplicated(subset=draft["primary_key"]).sum() == 0`. A
+   duplicate composite PK is always a structural bug, never an
+   intentional choice.
+
+3. **Schema consistency**
+   - `list(csv.columns) == draft["columns"]`
+   - `set(draft["column_types"]) == set(draft["columns"])`
+   - `draft["source_count"] == len(draft["source_urls"])`
+   - `draft["query_category"]` is a valid 15-category id; not `null`
+   - `draft["operation_type"]` is a value listed in
+     `references/artifact-contract.md` "Operation Type Vocabulary"
+
+4. **Category ↔ operation compatibility**
+   Mismatch is allowed but should be deliberate. Common pairings:
+   `implicit_join`/`multi_hop` → `join`; `set_filter`/`temporal`/
+   `geographic` → `filter`; `set_operation` → `union` /
+   `intersect` / `union+filter`; `aggregation` → `aggregation`;
+   `multi_attribute_projection` → `projection`. If your pairing is
+   not on this list, document the reason in
+   `curation.json::decision_log`.
+
+5. **Universe-size sanity check** (when applicable)
+   When the universe is named in the query (e.g., "landlocked
+   countries in Africa", "G7 countries", "EU member states"), compare
+   the count against an authoritative cited source. The
+   `wdt:`-vs-`p:/ps:` rank bug, the most expensive bug this benchmark
+   has shipped, is caught here. See `references/sparql-gotchas.md` §1.
+
+6. **No QID-shaped values in label columns**
+   Tier A only. A row with `Q\d+` in a label column means the
+   `wikibase:label` service failed to resolve and the bug must be
+   fixed in the SPARQL, not patched in the CSV.
+
+7. **`claim_type` is recorded in `curation.json`**
+   One of `exhaustive` / `source_defined` / `partially_supplemented`
+   / `candidate_rebuild`. Match the language in `table_title`,
+   `db_analog`, and `_extraction_notes` to the chosen claim.
+
+8. **`proposed_supplements` consistency**
+   If `claim_type` is `partially_supplemented`,
+   `curation.json::proposed_supplements` must be a non-empty list
+   with `applied: true` on every entry that produced a row in the
+   CSV. If `claim_type` is **not** `partially_supplemented`,
+   `proposed_supplements` should be absent or empty.
+
+9. **Row count within protocol bounds**
+   `len(csv) >= 10` (per protocol §5.2). Tables over 500 rows must
+   be justified in `_extraction_notes` (usually only for
+   `hierarchical_decomposition` or `scaled_enumeration`).
+
+If any check surfaces an issue, **fix or document it before reporting
+ready** — do not punt to the auditor. The auditor's job is to catch
+what preflight cannot, not to do preflight's job.
+
 ## 2. audit-instance
 
-Use when checking a staged instance for factual or structural problems.
+**Audit work has moved to the sibling skill `pkdb-bench-audit`.**
 
-Check:
+Audit is append-only (reads staged files, writes only to
+`<id>.comments.json`). Reconciling an audit into canonical edits is a
+different ownership profile and stays in this skill as `repair-instance`
+(apply the fixes an auditor recommended). The sibling skill exists so
+audit and repair can be triggered independently without one skill having
+to know both ownership models.
 
-- unsupported rows
-- missing rows relative to the stated source set
-- duplicate primary keys
-- normalization mismatches
-- row count / cardinality plausibility
-- metadata vs table mismatches
-
-Classify each issue as:
-
-- factual
-- structural
-- scope-related
+If the user asked for an audit, switch to `pkdb-bench-audit` and read
+its `references/audit-bundles.md` and `references/comments-schema.md`.
+If the user asked you to apply fixes that an auditor identified, stay
+here and follow `repair-instance` (treat it as `create-instance` applied
+to existing staged files; preserve `comments.json` and prior audit
+history).
 
 ## 3. challenge-scope
 
@@ -145,3 +215,10 @@ Compare:
 - different claim types
 
 Do not merge silently. Record the reconciliation logic in `curation.json`.
+
+For multi-agent collaboration patterns (default Stage→Audit ownership rule,
+parallel-staging ID rule, experimental same-query duel layout, and the
+reconciliation persistence rule), see the "Agent Collaboration Patterns"
+section of `datasets/pkdb_bench/docs/agent_handoff_bundle.md`. That file is
+the agent-agnostic source of truth — this skill mirrors it but does not
+restate it.
