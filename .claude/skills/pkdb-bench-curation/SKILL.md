@@ -23,6 +23,16 @@ Read the core benchmark docs first:
 - `datasets/pkdb_bench/docs/README.md`
 - `datasets/pkdb_bench/docs/curation_protocol.md`
 - `datasets/pkdb_bench/docs/categories.txt`
+- `datasets/pkdb_bench/docs/example_questions.txt`
+  The human-curated seed working set for the benchmark — not loose
+  examples, not rigid templates per category. Treat these questions
+  as the pool to draw from when creating new instances. The
+  load-bearing principle from the file's framing is that *"queries
+  should be expected to return multiple attributes with varying
+  degrees of scale and accuracy"* — this describes the benchmark's
+  confidence-calibration goal, not a mandatory shape every instance
+  must match. Some seed questions fit cleanly into one category;
+  others span two or more or are loose enough to adapt.
 
 Then load only the reference file you need:
 

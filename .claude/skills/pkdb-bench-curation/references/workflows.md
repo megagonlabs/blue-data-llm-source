@@ -8,11 +8,52 @@ Use when starting a new staged instance.
 
 Steps:
 
-1. Read benchmark docs and choose one category.
-2. Find source-grounded rows from approved sources.
+1. **Choose an under-covered category** by checking current
+   coverage against the per-category targets in `README.md`.
+2. **Choose the question.** Walk this priority:
+
+   a. **First, look at `datasets/pkdb_bench/docs/example_questions.txt`** —
+      the human-curated seed working set. The seed questions are not
+      pre-labeled per category; some fit cleanly into one category,
+      others span two or more, some are loose enough to adapt. Pick a
+      seed question that matches the under-covered category — verbatim
+      or as a close sourceable equivalent.
+
+   b. **If no seed question fits**, the agent may adapt a seed
+      question or propose an original category-targeted question.
+      "No fit" means the seed is unsuitable (e.g., post-cutoff,
+      sources unstable), already labeled in this benchmark,
+      duplicates existing coverage, or doesn't actually exercise the
+      chosen category's DB analog.
+
+   c. **Document the choice** in `curation.json::decision_log`:
+      state whether you used a seed verbatim, adapted a seed (and
+      what changed), or proposed an original (and why no seed fit).
+
+   **Logical decomposition is separate from URL count.** Keep
+   `source_count` consistent with the current UI/protocol contract
+   (`source_count == len(source_urls)`); document any logical
+   joins/unions/intersections/chained-traversals in `db_analog` and
+   `decision_log` regardless of how many distinct URLs the instance
+   cites.
+   - `implicit_join`, `set_operation`, `multi_hop` require a logical
+     join / union / intersection / chained-traversal **shape**. A
+     single SPARQL endpoint or single Wikipedia URL can still be
+     acceptable for these categories if the logical decomposition is
+     explicit in `db_analog` and documented in `decision_log` — but
+     `source_count` still reflects `len(source_urls)`, not the
+     number of logical legs.
+   - Other categories may prefer multi-source / multi-page evidence
+     when it improves the benchmark (e.g., per-entity Wikipedia pages
+     for `multi_attribute_projection` exercise per-cell confidence
+     better), but single-source instances are acceptable when they
+     honestly match the category's DB analog and produce a useful
+     table.
+
+3. Find source-grounded rows from approved sources.
    Source tier order (prefer higher tiers): Wikidata SPARQL > manual Wikipedia > web search.
    See `datasets/pkdb_bench/docs/curation_protocol.md` §4 for the full tier rules.
-3. Decide the claim type:
+4. Decide the claim type:
    - exhaustive
    - source_defined
    - partially_supplemented
@@ -49,7 +90,7 @@ Steps:
      (c) you can cite a stable Wikipedia URL for it. Do not supplement from parametric
      knowledge alone — every added entity needs its own cited URL in `source_urls`.
 
-4. If `source_count > 1` (join / union / intersect queries), decompose first:
+5. If `source_count > 1` (join / union / intersect queries), decompose first:
    - Collect each source table independently before combining.
    - Use the `db_analog` field as the assembly blueprint.
    - For **join**: collect both tables, identify the shared key, merge on that key.
@@ -59,10 +100,10 @@ Steps:
    - For **intersect**: collect each source, then intersect on the primary key;
      only rows present in every source survive.
    - Record each source's row contribution in `curation.json` under `source_coverage_notes`.
-5. Write the staged CSV.
-6. Write `draft.json` with a truthful query/title and metadata.
-7. Write `curation.json` with why the row set is what it is.
-8. **Run the creator preflight** (next subsection) before reporting
+6. Write the staged CSV.
+7. Write `draft.json` with a truthful query/title and metadata.
+8. Write `curation.json` with why the row set is what it is.
+9. **Run the creator preflight** (next subsection) before reporting
    `ready`. Auditors will catch most things that slip through, but
    preflight catches a class of bug that an auditor's existence does
    not justify shipping.
@@ -131,6 +172,45 @@ applicable check; if any fails, fix or document before reporting.
    `len(csv) >= 10` (per protocol §5.2). Tables over 500 rows must
    be justified in `_extraction_notes` (usually only for
    `hierarchical_decomposition` or `scaled_enumeration`).
+
+10. **Question selection and shape (soft check, document don't block)**
+    Verify and briefly document each of these in `decision_log`:
+
+    a. **Seed provenance.** Did the instance come from a seed
+       question (`example_questions.txt`) verbatim, an adaptation,
+       or an original? If adapted or original, the reason should be
+       documented (no seed fit / seed already labeled / duplicates
+       coverage / etc.).
+
+    b. **Category fit.** Does the question match the selected
+       category's DB analog (per `categories.txt`)? A query whose
+       `db_analog` doesn't structurally match the category's analog
+       is in the wrong category, not a wrong query.
+
+    c. **Calibration capacity.** Does the table provide enough
+       non-key attributes to exercise per-cell confidence /
+       calibration where the category calls for it? Naturally narrow
+       categories (`factual_lookup`, `set_filter`, `top_k`,
+       `aggregation`, `temporal`, `geographic`, `qualitative`) are
+       exempt; categories that exist to test multi-attribute
+       confidence (`multi_attribute_projection`,
+       `hierarchical_decomposition`, `scaled_enumeration`) should
+       not collapse to a single non-key column without a documented
+       reason.
+
+    d. **Logical decomposition for join-shape categories.** If the
+       instance is single-source AND the chosen category is
+       `implicit_join`, `set_operation`, or `multi_hop`, is the
+       logical join / union / intersection / chained-traversal shape
+       still explicit in `db_analog` and `decision_log`? A
+       single-source query for one of these categories needs a
+       visible logical decomposition; if the decomposition isn't
+       there, the category is wrong.
+
+    A soft failure on any of these means: document the situation in
+    `decision_log` and stage. The audit classifies findings on its
+    own merits using the two-axis severity taxonomy — do not
+    pre-declare a classification for the auditor.
 
 If any check surfaces an issue, **fix or document it before reporting
 ready** — do not punt to the auditor. The auditor's job is to catch
