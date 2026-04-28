@@ -52,10 +52,18 @@ def setup_global_logging(output_dir: str):
     )
     print(f"Logging detailed execution traces to {log_file}")
 
+
+def _normalize_model_name(model: str) -> str:
+    return model.replace("/", "_").replace(" ", "_")
+
 async def evaluate_dataset(dataset_path: str, base_output_dir: str, args=None):
     # 1. Create Independent Run Directory
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = os.path.join(base_output_dir, f"run_{timestamp}")
+    now = datetime.datetime.now()
+    timestamp = now.strftime("%Y%m%d_%H%M%S")
+    run_dir = os.path.join(
+        base_output_dir,
+        f"pkdb_{_normalize_model_name(args.model if args else 'gpt-4o')}_{now.strftime('%Y%m%d')}_{now.strftime('%H%M%S')}",
+    )
     os.makedirs(run_dir, exist_ok=True)
     print(f"Starting new experiment run at: {run_dir}")
     
@@ -84,7 +92,8 @@ async def evaluate_dataset(dataset_path: str, base_output_dir: str, args=None):
         "row_threshold": args.row_threshold if args else 50,
         "max_depth": args.max_depth if args else 1,
         "partitioning_method": args.partitioning_method if args else "semantic",
-        "partition_selection_mode": args.partition_selection_mode if args else "llm"
+        "partition_selection_mode": args.partition_selection_mode if args else "llm",
+        "entity_resolution_mode": args.entity_resolution_mode if args else "llm",
     }
     
     with open(os.path.join(run_dir, "run_config.json"), 'w') as f:
@@ -115,6 +124,7 @@ async def evaluate_dataset(dataset_path: str, base_output_dir: str, args=None):
         max_depth=config["max_depth"],
         partitioning_method=config["partitioning_method"],
         partition_selection_mode=config["partition_selection_mode"],
+        entity_resolution_mode=config["entity_resolution_mode"],
         shared_state=shared_state
     )
     
@@ -162,8 +172,8 @@ async def evaluate_dataset(dataset_path: str, base_output_dir: str, args=None):
                 # Inject dependencies via extract_table
                 pkdb.engine.completeness_strategy = args.completeness_strategy if args else "heuristic"
                 
-                df, metrics, subquery_count = await pkdb.extract_table(
-                    q, 
+                df, _, metrics, subquery_count = await pkdb.extract_table(
+                    q,
                     strategy=config["schema_selection_strategy"],
                     context={"output_dir": query_out_dir, "dataset_id": uid},
                     map_validator=map_validator,
@@ -263,7 +273,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Run Mini Dataset Benchmark")
     parser.add_argument("--dataset_path", type=str, default="datasets/mini_dataset.json", help="Path to input dataset JSON")
-    parser.add_argument("--base_output_dir", type=str, default="exp_results/runs_mini", help="Base directory for output runs")
+    parser.add_argument("--base_output_dir", type=str, default="exp_results/mini_dataset", help="Base directory for output runs")
     
     # Core Configs
     parser.add_argument("--model", type=str, default="gpt-4o", help="LLM model name")
@@ -271,6 +281,9 @@ if __name__ == "__main__":
     parser.add_argument("--decomposition_strategy", type=str, default="llm_based", choices=["rule_based", "llm_based", "none"], help="Decomposition strategy")
     parser.add_argument("--partitioning_method", type=str, default="llm_based", choices=["llm_based", "first", "semantic", "greedy"], help="Partitioning method")
     parser.add_argument("--partition_selection_mode", type=str, default="llm", choices=["scoring", "llm"], help="Method for selecting partition key (scoring or llm)")
+    parser.add_argument("--entity_resolution_mode", type=str, default="llm",
+                        choices=["semantic_type", "keyword", "llm"],
+                        help="How to identify the entity identity column for EntityResolutionValidator")
     parser.add_argument("--completeness_strategy", type=str, default="heuristic", choices=["heuristic", "llm"], help="Completeness check strategy")
     
     # Toggles & Thresholds

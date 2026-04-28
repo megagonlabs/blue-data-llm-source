@@ -136,100 +136,153 @@ def find_row(df, columns, values):
         
     return df[mask]
 
-def evaluate_table_metrics(df_fetched, df_ref, primary_columns, keys_type, date_columns, epsilons):
+def _f1(p, r):
+    return 2 * p * r / (p + r) if (p + r) > 0 else 0.0
+
+
+def evaluate_table_metrics(df_fetched, df_ref, primary_columns, keys_type, date_columns, epsilons, numeric_non_keys=None):
     if df_fetched.empty:
-        return 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-        
+        return 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, {}
+
     columns = df_ref.columns
-    # Ensure columns match (strict schema enforcement should guarantee this, but safety check)
-    if len(df_fetched.columns) != len(columns):
-        # Allow column renaming if count matches? Or intersection?
-        # For now assume strict schema worked
-        pass
-    
-    df_fetched.columns = columns  # Align headers
+    df_fetched.columns = columns
     df_fetched = df_fetched.drop_duplicates(subset=primary_columns)
 
     norm_columns = set(primary_columns)
     for pc in primary_columns:
-        df_fetched = df_fetched[df_fetched[pc].notna()]    
-    
-    # helper returns (tuples_list, normalized_df)
+        df_fetched = df_fetched[df_fetched[pc].notna()]
+
     fetched_entities, df_fetched_norm = normalize_primary_columns(df_fetched, norm_columns, date_columns, primary_columns, keys_type)
     ref_entities, df_ref_norm = normalize_primary_columns(df_ref, norm_columns, date_columns, primary_columns, keys_type)
 
     total_matches = 0
     key_matches = 0
-    
-    # Convert lists to sets for O(1) lookup? 
-    # But we need row index.
-    # Original code iterates list.
-    
+
+    # Per-type accumulators: {type: [match_f, total_f, match_r, total_r]}
+    numeric_set = set(numeric_non_keys or [])
+    date_set = set(date_columns or [])
+    pk_set = set(primary_columns)
+
+    def _col_type(col):
+        if col in pk_set:
+            return "key"
+        if col in numeric_set:
+            return "numeric"
+        if col in date_set:
+            return "date"
+        return "text"
+
+    type_counts = {}
+
     ref_entities_set = set(ref_entities)
 
     for fetched_entity in fetched_entities:
-        if fetched_entity in ref_entities_set: 
-            # Find the actual rows (normalized)
+        if fetched_entity in ref_entities_set:
             row_fetched = find_row(df_fetched_norm, primary_columns, fetched_entity)
             row_ref = find_row(df_ref_norm, primary_columns, fetched_entity)
-            
+
             if row_fetched.empty or row_ref.empty:
                 continue
-                
+
             key_matches += 1
-            
+
             for column in columns:
                 try:
-                    value_fetched = row_fetched.iloc[0][column] # Use iloc[0]
+                    value_fetched = row_fetched.iloc[0][column]
                     value_ref = row_ref.iloc[0][column]
 
                     norm_value_fetched = normalize_value(value_fetched, column in date_columns)
                     norm_value_ref = normalize_value(value_ref, column in date_columns)
 
-                    if norm_value_fetched == norm_value_ref:    
-                        total_matches += 1
-                    elif column in epsilons and norm_value_ref != '' and norm_value_fetched != '':
-                        # Handle float comparisons
+                    matched = norm_value_fetched == norm_value_ref
+                    if not matched and column in epsilons and norm_value_ref != '' and norm_value_fetched != '':
                         if isinstance(norm_value_ref, (int, float)) and isinstance(norm_value_fetched, (int, float)):
                             if norm_value_ref * 0.999 < norm_value_fetched < norm_value_ref * 1.001:
-                                total_matches += 1   
-                except Exception as e:
+                                matched = True
+
+                    if matched:
+                        total_matches += 1
+
+                    # Track non-key columns by type
+                    if column not in pk_set:
+                        ct = _col_type(column)
+                        if ct not in type_counts:
+                            type_counts[ct] = [0, 0, 0, 0]
+                        type_counts[ct][0] += int(matched)
+                        type_counts[ct][1] += 1
+                        type_counts[ct][2] += int(matched)
+                        type_counts[ct][3] += 1
+                except Exception:
                     pass
-            
-    # Calculations
+
+    # Unmatched ref rows (recall denominator)
+    for r_ent in set(ref_entities) - set(fetched_entities):
+        row_ref = find_row(df_ref_norm, primary_columns, r_ent)
+        if row_ref.empty:
+            continue
+        for column in columns:
+            if column not in pk_set:
+                ct = _col_type(column)
+                if ct not in type_counts:
+                    type_counts[ct] = [0, 0, 0, 0]
+                type_counts[ct][3] += 1
+
+    # Unmatched fetched rows (precision denominator)
+    for f_ent in set(fetched_entities) - set(ref_entities):
+        row_fetched = find_row(df_fetched_norm, primary_columns, f_ent)
+        if row_fetched.empty:
+            continue
+        for column in columns:
+            if column not in pk_set:
+                ct = _col_type(column)
+                if ct not in type_counts:
+                    type_counts[ct] = [0, 0, 0, 0]
+                type_counts[ct][1] += 1
+
+    type_f1 = {}
+    for ct, (mf, tf, mr, tr) in type_counts.items():
+        prec = mf / tf if tf > 0 else 0.0
+        rec = mr / tr if tr > 0 else 0.0
+        type_f1[ct] = {"f1": _f1(prec, rec), "precision": prec, "recall": rec,
+                       "matches": mf, "total_fetched": tf, "total_ref": tr}
+
     n_cells_ref = df_ref.shape[0] * df_ref.shape[1]
     n_cells_fetched = df_fetched.shape[0] * df_fetched.shape[1]
-    
+
     recall = total_matches / n_cells_ref if n_cells_ref > 0 else 0
     precision = total_matches / n_cells_fetched if n_cells_fetched > 0 else 0
-    f1_score = 2*recall*precision/(recall+precision) if (recall + precision) > 0 else 0.0
+    f1_score = _f1(precision, recall)
 
     matches_len = len(ref_entities)
     fetched_len = len(fetched_entities)
-    
+
     keys_recall = key_matches/matches_len if matches_len > 0 else 0
     keys_precision = key_matches/fetched_len if fetched_len > 0 else 0
-    keys_f1_score = 2*keys_recall*keys_precision/(keys_recall+keys_precision) if (keys_recall + keys_precision) > 0 else 0.0
-    
+    keys_f1_score = _f1(keys_precision, keys_recall)
+
     nk = len(primary_columns)
     n_non_key_cells_ref = df_ref.shape[0] * (df_ref.shape[1] - nk)
     n_non_key_cells_fetched = df_fetched.shape[0] * (df_fetched.shape[1] - nk)
-    
+
     non_key_matches = (total_matches - key_matches*nk)
-    
-    non_keys_recall = non_key_matches / n_non_key_cells_ref if n_non_key_cells_ref > 0 else 1.0 # 1 if empty?
+
+    non_keys_recall = non_key_matches / n_non_key_cells_ref if n_non_key_cells_ref > 0 else 1.0
     non_keys_precision = non_key_matches / n_non_key_cells_fetched if n_non_key_cells_fetched > 0 else 1.0
-    non_keys_f1_score = 2*non_keys_recall*non_keys_precision/(non_keys_recall+non_keys_precision) if (non_keys_recall + non_keys_precision) > 0 else 0.0
-    
-    relative_non_key_accuracy = (total_matches - key_matches*nk) / (key_matches * (df_ref.shape[1] - nk)) if (key_matches * (df_ref.shape[1] - nk)) > 0 else 0.0
-        
-    return keys_recall, keys_precision, keys_f1_score, non_keys_recall, non_keys_precision, non_keys_f1_score, recall, precision, f1_score, relative_non_key_accuracy
+    non_keys_f1_score = _f1(non_keys_precision, non_keys_recall)
+
+    relative_non_key_accuracy = non_key_matches / (key_matches * (df_ref.shape[1] - nk)) if (key_matches * (df_ref.shape[1] - nk)) > 0 else 0.0
+
+    return keys_recall, keys_precision, keys_f1_score, non_keys_recall, non_keys_precision, non_keys_f1_score, recall, precision, f1_score, relative_non_key_accuracy, type_f1
 
 # --- MAIN EVALUATION ---
 
+def _normalize_model_name(model: str) -> str:
+    return model.replace("/", "_").replace(" ", "_")
+
 async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: str, args=None):
     # 1. Setup Run Directory
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    now = datetime.datetime.now()
+    timestamp = now.strftime("%Y%m%d_%H%M%S")
     
     if args and args.resume_dir:
         run_dir = args.resume_dir
@@ -237,7 +290,10 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
             os.makedirs(run_dir, exist_ok=True)
         print(f"Resuming WikiTabGen benchmark at: {run_dir}")
     else:
-        run_dir = os.path.join(base_output_dir, f"wikitabgen_{timestamp}")
+        run_dir = os.path.join(
+            base_output_dir,
+            f"pkdb_{_normalize_model_name(args.model if args else 'gpt-4o')}_{now.strftime('%Y%m%d')}_{now.strftime('%H%M%S')}_{now.strftime('%f')[:3]}",
+        )
         os.makedirs(run_dir, exist_ok=True)
         print(f"Starting WikiTabGen benchmark at: {run_dir}")
     
@@ -274,12 +330,19 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
         "max_concurrent": args.max_concurrent if args else 10,
         "row_threshold": args.row_threshold if args else 120,
         "decomposition_strategy": args.decomposition_strategy,
+        "partitioning_method": getattr(args, 'partitioning_method', 'llm_based') if args else 'llm_based',
         "execution_mode": args.execution_mode if args else "batch",
         "max_cost_per_table": getattr(args, 'max_cost_per_table', 2.0) if args else 2.0,
         "source": getattr(args, 'source', 'Wikipedia') if args else 'Wikipedia',
         "partition_selection_mode": getattr(args, 'partition_selection_mode', 'llm') if args else 'llm',
         "generated_by": "experiments/run_wikitabgen.py"
     }
+    if args:
+        run_config["disable_validators"] = getattr(args, 'disable_validators', False)
+        if getattr(args, 'map_validators', None) is not None:
+            run_config["map_validators"] = args.map_validators
+        if getattr(args, 'global_validators', None) is not None:
+            run_config["global_validators"] = args.global_validators
     with open(os.path.join(run_dir, "run_config.json"), "w") as f:
         json.dump(run_config, f, indent=4)
     
@@ -305,19 +368,29 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
             # But share the rate limiter (shared_state) to protect the API
             from src.interface import PKDBConfig # Import Config
             
-            cfg = PKDBConfig(
+            cfg_kwargs = dict(
                 model=args.model if args else "gpt-4o",
                 use_cache=args.use_cache if args else True,
                 max_concurrent=args.max_concurrent if args else 10,
                 row_threshold=args.row_threshold if args else 120,
                 decomposition_strategy=args.decomposition_strategy,
-                partitioning_method="smart",
+                partitioning_method=getattr(args, 'partitioning_method', 'llm_based') if args else 'llm_based',
                 max_total_requests=getattr(args, 'max_total_requests', 1000) if args else 1000,
                 default_execution_mode=args.execution_mode if args else "batch",
                 max_cost_per_table=getattr(args, 'max_cost_per_table', 0.0) if args else 0.0,
                 source=getattr(args, 'source', 'Wikipedia') if args else 'Wikipedia',
                 partition_selection_mode=getattr(args, 'partition_selection_mode', 'llm') if args else 'llm',
+                entity_resolution_mode=getattr(args, 'entity_resolution_mode', 'llm') if args else 'llm',
+                chunk_repair_mode=getattr(args, 'chunk_repair_mode', 'drop') if args else 'drop',
             )
+            if getattr(args, 'disable_validators', False):
+                cfg_kwargs["map_validators"] = []
+                cfg_kwargs["global_validators"] = []
+            if getattr(args, 'map_validators', None) is not None:
+                cfg_kwargs["map_validators"] = args.map_validators
+            if getattr(args, 'global_validators', None) is not None:
+                cfg_kwargs["global_validators"] = args.global_validators
+            cfg = PKDBConfig(**cfg_kwargs)
             
             pkdb = PKDB(
                 config=cfg,
@@ -365,7 +438,7 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                 try:
                     # Log and write artifacts into the per-table directory
                     with query_logging_context(table_dir, "process"):
-                        df, metrics, subqueries = await pkdb.extract_table(
+                        df, _, metrics, subqueries = await pkdb.extract_table(
                             task_query,
                             schema=target_schema,
                             context={"output_dir": table_dir},
@@ -395,22 +468,24 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                 keys_type = item['keys_type']
                 date_columns = item['dateColumns']
                 epsilons = item['epsilons']
-                
-                (kr, kp, kf1, nkr, nkp, nkf1, r, p, f1, rnka) = evaluate_table_metrics(
-                    df, gt_df, 
-                    primary_columns, keys_type, date_columns, epsilons
+                numeric_non_keys = item.get('numericNonKeys', [])
+
+                (kr, kp, kf1, nkr, nkp, nkf1, r, p, f1, rnka, type_f1) = evaluate_table_metrics(
+                    df, gt_df,
+                    primary_columns, keys_type, date_columns, epsilons, numeric_non_keys
                 )
-                
+
                 # If generated new, save it. If loaded, no need to save unless we refined it (we didn't).
                 if not os.path.exists(out_file):
                     df.to_csv(out_file, index=False)
-                
+
+                type_f1_str = "  ".join(f"{t}={v['f1']:.3f}" for t, v in sorted(type_f1.items()))
                 msg = (f"-> {table_name}: Extracted {extracted_rows} rows. Time: {duration:.2f}s\n"
                        f"   Cell F1: {f1:.4f} (Prec: {p:.4f}, Rec: {r:.4f})\n"
-                       f"   Key F1: {kf1:.4f} (Prec: {kp:.4f}, Rec: {kr:.4f})")
+                       f"   Key F1: {kf1:.4f} (Prec: {kp:.4f}, Rec: {kr:.4f})  [{type_f1_str}]")
                 print(msg)
-                
-                return {
+
+                row = {
                     "Table": table_name,
                     "Category": item.get('category', 'Unknown'),
                     "GT_Rows": len(gt_df),
@@ -429,6 +504,11 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
                     "Cost_USD": metrics.cost,
                     "Status": "Success"
                 }
+                for ct, v in type_f1.items():
+                    row[f"F1_{ct}"] = v["f1"]
+                    row[f"Precision_{ct}"] = v["precision"]
+                    row[f"Recall_{ct}"] = v["recall"]
+                return row
                     
             except Exception as e:
                 print(f"-> Failed Metrics {table_name}: {e}")
@@ -458,11 +538,26 @@ async def evaluate_wikitabgen(cfg_path: str, tables_dir: str, base_output_dir: s
         means = summary_df[numeric_cols].mean()
         print("\n--- Averages ---")
         print(means)
-        
+
+        # Per column type summary
+        type_f1_cols = [c for c in summary_df.columns if c.startswith("F1_")]
+        if type_f1_cols:
+            print("\n--- PER COLUMN TYPE F1 (averaged over tables where type is present) ---")
+            for col in sorted(type_f1_cols):
+                ct = col[len("F1_"):]
+                vals = summary_df[col].dropna()
+                prec = summary_df[f"Precision_{ct}"].dropna().mean() if f"Precision_{ct}" in summary_df else float('nan')
+                rec = summary_df[f"Recall_{ct}"].dropna().mean() if f"Recall_{ct}" in summary_df else float('nan')
+                print(f"  {ct:10s}: F1={vals.mean():.4f}  Prec={prec:.4f}  Rec={rec:.4f}  (n={len(vals)} tables)")
+
         # Save detailed metrics JSON
         metrics_path = os.path.join(run_dir, "metrics.json")
         metrics_dict = means.to_dict()
         metrics_dict["Total_Cost_USD"] = summary_df['Cost_USD'].sum()
+        if type_f1_cols:
+            metrics_dict["column_type_f1"] = {
+                col[len("F1_"):]: round(summary_df[col].dropna().mean(), 6) for col in sorted(type_f1_cols)
+            }
         with open(metrics_path, "w") as f:
             json.dump(metrics_dict, f, indent=2)
         print(f"Saved aggregate metrics to {metrics_path}")
@@ -477,13 +572,14 @@ if __name__ == "__main__":
     # Paths adjusted to assume running from project root
     parser.add_argument("--cfg_path", type=str, default="third_parties/WikiTabGen/benchmark/cfg.json")
     parser.add_argument("--tables_dir", type=str, default="third_parties/WikiTabGen/benchmark/tables")
-    parser.add_argument("--base_output_dir", type=str, default="experiments/runs_wikitabgen")
+    parser.add_argument("--base_output_dir", type=str, default="exp_results/wikitabgen_dataset")
     parser.add_argument("--model", type=str, default="gpt-4o")
     parser.add_argument("--limit", type=int, default=3, help="Max number of tables to evaluate")
     parser.add_argument("--use_cache", action="store_true")
     parser.add_argument("--max_concurrent", type=int, default=10)
     parser.add_argument("--row_threshold", type=int, default=120)
     parser.add_argument("--decomposition_strategy", type=str, default="rule_based", choices=["rule_based", "llm_based", "none"])
+    parser.add_argument("--partitioning_method", type=str, default="llm_based", choices=["llm_based", "first"])
     parser.add_argument("--table_concurrent", type=int, default=5, help="Number of tables to process concurrently")
     parser.add_argument("--resume_dir", type=str, default=None, help="Directory to resume run from")
     parser.add_argument("--execution_mode", type=str, default="batch", choices=["batch", "row_by_row"], help="Execution mode")
@@ -492,6 +588,16 @@ if __name__ == "__main__":
     parser.add_argument("--max_total_requests", type=int, default=1000, help="Max LLM requests per table")
     parser.add_argument("--source", type=str, default="Wikipedia", help="Knowledge source label injected into prompts")
     parser.add_argument("--partition_selection_mode", type=str, default="llm", choices=["scoring", "llm"])
+    parser.add_argument("--entity_resolution_mode", type=str, default="llm",
+                        choices=["semantic_type", "keyword", "llm"],
+                        help="How to identify the entity identity column for EntityResolutionValidator")
+    parser.add_argument("--disable_validators", action="store_true", help="Disable all map/global validators")
+    parser.add_argument("--map_validators", type=str, nargs="*", default=None,
+                        help="Override map-side validators (space-separated). Use empty string for none.")
+    parser.add_argument("--global_validators", type=str, nargs="*", default=None,
+                        help="Override global validators (space-separated). Use empty string for none.")
+    parser.add_argument("--chunk_repair_mode", type=str, default="drop", choices=["drop", "repair"],
+                        help="ChunkValidator fix behavior: drop invalid rows or attempt LLM repair")
     parser.add_argument("--plan_only", action="store_true", help="Dry-run: plan only, skip extraction calls")
 
     args = parser.parse_args()
