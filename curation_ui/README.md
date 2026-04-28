@@ -45,7 +45,7 @@ The app also reads:
 
 - `datasets/pkdb_bench/cfg.json`
 - `datasets/pkdb_bench/tables/`
-- `md_claude_code/pkdb_bench/categories.txt`
+- `datasets/pkdb_bench/docs/categories.txt`
 
 Staged schemas may also use boundary-aware text fields when a single
 categorical label would be misleading, for example `Continent(s)` with a value

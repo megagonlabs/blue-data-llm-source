@@ -1,0 +1,15 @@
+{
+  "doubts": [],
+  "comments": [],
+  "chat_events": [
+    {
+      "at": "2026-04-28T03:17:12Z",
+      "action": "repair_applied",
+      "summary": "Applied audit repairs (2 BLOCKING + 1 NON-BLOCKING HYGIENE): (1) draft.operation_type 'filter' → 'projection' to match the UI validator's factual_lookup → projection pairing; the prior 'filter' was a guess because factual_lookup is not in the artifact-contract pairings table, and the validator is the authoritative source. (2) curation.claim_type 'exhaustive' → 'source_defined' because the founders' 1957/1958 year split commits to Wikidata's specific per-country convention; 'exhaustive' would overclaim against the natural-language question's multiple defensible answers. (3) SPARQL hardened with explicit deprecated-rank exclusion (`FILTER NOT EXISTS wikibase:rank wikibase:DeprecatedRank`) per the safer Option B pattern from references/sparql-gotchas.md; audit verified 27-row count is identical before and after the filter. Row data and PK uniqueness unchanged: 27 rows × 2 columns, UK still excluded post-Brexit, 0 duplicate PKs. Decision_log expanded to 7 entries documenting all three changes. open_questions item 5 added flagging the artifact-contract gap (factual_lookup → projection should be in the pairings table) for follow-up.",
+      "source_cited": "",
+      "source_fetch_enabled": false
+    }
+  ],
+  "chat_summary": "Repair applied — register-ready. The original audit found 2 BLOCKING issues (operation_type=filter conflicts with factual_lookup; claim_type=exhaustive overclaims) and 1 NON-BLOCKING HYGIENE (SPARQL didn't exclude deprecated rank). All three are fixed: operation_type now 'projection', claim_type now 'source_defined', SPARQL adds explicit deprecated-rank exclusion. CSV and PK uniqueness unchanged.",
+  "chat_history": []
+}

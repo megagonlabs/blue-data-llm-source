@@ -1,0 +1,33 @@
+{
+  "id": "nato_accessions_1999_2024_capitals",
+  "table_title": "List the countries that joined NATO from 1999 through 2024, including their accession year and capital city.",
+  "columns": [
+    "Country",
+    "Accession Year",
+    "Capital City"
+  ],
+  "primary_key": [
+    "Country"
+  ],
+  "column_types": {
+    "Country": "key",
+    "Accession Year": "numeric",
+    "Capital City": "categorical"
+  },
+  "query_category": "implicit_join",
+  "secondary_category": "temporal",
+  "db_analog": "SELECT n.country, n.accession_year, c.capital_city FROM nato_accessions n JOIN national_capitals c ON n.country = c.country WHERE n.accession_year BETWEEN 1999 AND 2024 ORDER BY n.accession_year, n.country",
+  "operation_type": "join",
+  "source_count": 2,
+  "domain": "Politics/Geography",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia pages accessed on 2026-04-23. The cited NATO enlargement page explicitly names the post-Cold War accessions in 1999 (Czech Republic, Hungary, Poland), 2004 (Bulgaria, Estonia, Latvia, Lithuania, Romania, Slovakia, Slovenia), 2009 (Albania, Croatia), 2017 (Montenegro), 2020 (North Macedonia), 2023 (Finland), and 2024 (Sweden). The capitals were taken from the cited list of national capitals. This instance keeps the full 1999-2024 accession slice.",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/Enlargement_of_NATO",
+    "https://en.wikipedia.org/wiki/List_of_national_capitals"
+  ],
+  "_staged_by": "codex",
+  "_staged_at": "2026-04-23T00:00:00Z",
+  "_extraction_notes": "Built by joining two Wikipedia sources. The accession-year rows come from the historical enlargement summary on 'Enlargement of NATO'. The capital-city values come from 'List of national capitals'. The resulting table is a closed historical slice over NATO accessions from 1999 through 2024, with one capital per country."
+}

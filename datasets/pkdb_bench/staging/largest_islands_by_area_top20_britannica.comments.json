@@ -1,0 +1,13 @@
+{
+  "doubts": [],
+  "comments": [],
+  "chat_events": [
+    {
+      "at": "2026-04-24T00:00:00-07:00",
+      "action": "staged_instance_created",
+      "summary": "Created a top_k staged instance from Britannica's ranked list of the world's largest islands. No supplemental rows were used."
+    }
+  ],
+  "chat_summary": "Initial Codex staging for a source-defined top_k geography instance.",
+  "chat_history": []
+}
