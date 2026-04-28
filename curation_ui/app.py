@@ -133,8 +133,11 @@ CHAT_PROMPT_LIBRARY = {
         "Explain the reasoning behind the estimate rather than giving only a number."
     ),
     "Cardinality and coverage audit": (
-        "Audit cardinality and coverage for this instance. Check row count, unique primary-key count, duplicate rate, missing expected entities, partition balance when relevant, "
-        "and whether the current table appears exhaustive, source-defined but incomplete, or over-expanded beyond the sources. Return both a count-based summary and a plain-language judgment, "
+        "Audit cardinality and coverage for this instance. Check row count, unique primary-key count, duplicate rate, missing expected entities, and partition balance when relevant. "
+        "For partitioned top-k or hierarchical queries, validate both total and per-partition counts plus the ranking/filtering convention used inside each partition. "
+        "Flag omitted higher-ranked or in-scope entities even when the whole table has the expected total row count. "
+        "If the cited source set itself uses partition-specific conventions, assess whether the staged claim type, title, and db_analog honestly describe that source-defined scope. "
+        "Decide whether the current table appears exhaustive, source-defined but incomplete, or over-expanded beyond the sources. Return both a count-based summary and a plain-language judgment, "
         "including whether the current table shape is plausible for a benchmark instance."
     ),
     "Partition coverage audit": (
@@ -217,27 +220,30 @@ CHAT_PROMPT_GUIDANCE = {
 
 CHAT_PROMPT_BUNDLES = {
     "Data integrity sweep": (
-        "Run a data-integrity sweep over this instance using the cited source set only. "
+        "Run a data-integrity sweep over this instance using the cited source set only for row-level correctness. "
         "In one response, do all of the following:\n"
         "1. detect missing, incorrect, duplicate, or unsupported rows relative to the cited source set,\n"
         "2. check whether values are normalized and match the declared column_types,\n"
         "3. flag any near-duplicate entities, primary-key issues, or multi-valued cells that break the intended table shape,\n"
-        "4. estimate whether the current row count and unique-key count look plausible for the stated query and cited source set,\n"
-        "5. say whether problems are factual, structural, or scope-related,\n"
-        "6. propose a corrected table only if changes are actually needed.\n"
+        "4. estimate whether the current total row count, per-partition row count when relevant, and unique-key count look plausible for the stated query and cited source set,\n"
+        "5. note whether the Wiki-family source discovery pass found a missing source that could change scope, coverage, ranking, or provenance,\n"
+        "6. say whether problems are factual, structural, or scope-related,\n"
+        "7. propose a corrected table only if changes are actually needed.\n"
         "If you propose table edits, include a valid source citation block and a full table_update block."
     ),
     "Source and scope sweep": (
         "Review the source grounding and scope of this instance in one pass, using the current benchmark policy rather than an idealized external standard. "
         "Do not equate 'non-authoritative' with 'invalid' if the current source tier is allowed and honestly declared, but keep coverage checks rigorous: assess whether the cited sources actually support every row and the claimed scope. "
+        "Before concluding, run a bounded Wiki-family source discovery pass (linked/sibling Wikipedia pages, individual entity pages, Wikidata pages, or SPARQL sanity checks) and decide whether the staged source set is missing a more direct Wikipedia or Wikidata source. "
         "In one response, do all of the following:\n"
         "1. summarize what each cited source contributes,\n"
         "2. assess whether the table is complete for the stated query scope,\n"
-        "3. estimate the expected coverage or row-count range implied by the sources,\n"
+        "3. estimate the expected coverage or row-count range implied by the sources, including per-partition counts for partitioned queries,\n"
         "4. identify any mismatch between the query wording and what the sources actually support,\n"
-        "5. challenge weak, unstable, or non-authoritative sources,\n"
-        "6. decide whether the instance is exhaustive, source-defined, or under-grounded,\n"
-        "7. recommend whether the query should be kept, narrowed, rebuilt, or rejected, clearly separating blocking issues from non-blocking stronger-source upgrades."
+        "5. identify any missing Wiki-family source that materially affects row universe, ranking rule, partition boundary, or provenance,\n"
+        "6. challenge weak, unstable, or non-authoritative sources,\n"
+        "7. decide whether the instance is exhaustive, source-defined, or under-grounded,\n"
+        "8. recommend whether the query should be kept, narrowed, rebuilt, or rejected, clearly separating blocking issues from non-blocking stronger-source upgrades."
     ),
     "Metadata and registration sweep": (
         "Perform a metadata and registration-readiness sweep using the current benchmark protocol as the decision standard. "
@@ -246,7 +252,7 @@ CHAT_PROMPT_BUNDLES = {
         "In one response, do all of the following:\n"
         "1. validate the benchmark registration draft against the table and sources,\n"
         "2. assess whether db_analog, query_category, operation_type, primary_key, column_types, gt_construction, temporal_note, temporal_sensitivity, source_count, and source_urls are correct,\n"
-        "3. assess whether the current row count / expected cardinality story is documented clearly enough for registration,\n"
+        "3. assess whether the current total and per-partition row count / expected cardinality story is documented clearly enough for registration,\n"
         "4. assess whether the content is appropriate for LLM parametric-knowledge benchmarking,\n"
         "5. check whether the instance would support later per-type and calibration analysis without misleading metadata,\n"
         "6. return Ready / Not ready,\n"
@@ -256,17 +262,19 @@ CHAT_PROMPT_BUNDLES = {
         "Perform a full pre-registration review of this staged instance using the cited source set and current benchmark policy. "
         "Be policy-faithful, not perfectionist: if the source tier is allowed and honestly declared, do not block registration only because stronger sources could exist. "
         "At the same time, keep coverage checking strict and assess whether the cited sources truly support the rows and claimed scope. "
+        "Run a bounded Wiki-family source discovery pass (linked/sibling Wikipedia pages, individual entity pages, Wikidata pages, or SPARQL sanity checks) so missing Wikipedia/Wikidata sources are surfaced before broader web validation. "
         "Cover all of the following in one response:\n"
         "1. row-level correctness and unsupported/missing rows relative to the cited source set,\n"
         "2. duplicates and primary-key problems,\n"
         "3. normalization, table-shape quality, and column-type consistency,\n"
-        "4. expected row-count / cardinality estimate, partition sanity, and unique-key sanity,\n"
-        "5. source quality, source tier, and source-to-query scope match,\n"
-        "6. table completeness for the intended scope,\n"
-        "7. cfg metadata correctness,\n"
-        "8. LLM-knowable fit for the benchmark,\n"
-        "9. whether this instance helps the benchmark's intended multi-source / structured extraction story,\n"
-        "10. final Ready / Not ready judgment, clearly separating blocking issues under current policy from non-blocking upgrade suggestions.\n"
+        "4. expected total and per-partition row-count / cardinality estimate, partition sanity, and unique-key sanity,\n"
+        "5. missing Wiki-family source check: whether a more direct Wikipedia or Wikidata source exists and would change scope, coverage, ranking, or provenance,\n"
+        "6. source quality, source tier, and source-to-query scope match,\n"
+        "7. table completeness for the intended scope,\n"
+        "8. cfg metadata correctness,\n"
+        "9. LLM-knowable fit for the benchmark,\n"
+        "10. whether this instance helps the benchmark's intended multi-source / structured extraction story,\n"
+        "11. final Ready / Not ready judgment, clearly separating blocking issues under current policy from non-blocking upgrade suggestions.\n"
         "If any table corrections are needed, include one valid source citation block and one full table_update block, then separately list the recommended cfg field changes."
     ),
 }
