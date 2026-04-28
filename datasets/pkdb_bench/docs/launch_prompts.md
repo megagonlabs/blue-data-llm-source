@@ -97,7 +97,11 @@ the cited source set and current benchmark policy. Be policy-faithful,
 not perfectionist: if the source tier is allowed and honestly declared,
 do not block registration only because stronger sources could exist.
 At the same time, keep coverage checking strict and assess whether the
-cited sources truly support the rows and claimed scope.
+cited sources truly support the rows and claimed scope. Run a bounded
+Wiki-family source discovery pass (linked/sibling Wikipedia pages,
+individual entity pages, Wikidata pages, or SPARQL sanity checks) so
+missing Wikipedia/Wikidata sources are surfaced before broader web
+validation.
 
 Cover ALL of the following in one structured response:
 
@@ -105,18 +109,21 @@ Cover ALL of the following in one structured response:
    cited source set,
 2. duplicates and primary-key problems,
 3. normalization, table-shape quality, and column-type consistency,
-4. expected row-count / cardinality estimate, partition sanity, and
-   unique-key sanity,
-5. source quality, source tier, and source-to-query scope match,
-6. table completeness for the intended scope,
-7. cfg metadata correctness (table_title, query_category, db_analog,
+4. expected total and per-partition row-count / cardinality estimate,
+   partition sanity, and unique-key sanity,
+5. missing Wiki-family source check: whether a more direct Wikipedia or
+   Wikidata source exists and would change scope, coverage, ranking, or
+   provenance,
+6. source quality, source tier, and source-to-query scope match,
+7. table completeness for the intended scope,
+8. cfg metadata correctness (table_title, query_category, db_analog,
    operation_type, primary_key, column_types, source_count, domain,
    temporal_sensitivity, gt_construction, temporal_note, source_urls),
-8. LLM-knowable fit (would a closed-book pre-2025 model plausibly know
+9. LLM-knowable fit (would a closed-book pre-2025 model plausibly know
    these rows from pretraining?),
-9. whether this instance helps the benchmark's intended multi-source /
+10. whether this instance helps the benchmark's intended multi-source /
    structured extraction story,
-10. final Ready / Not ready judgment, clearly separating BLOCKING issues
+11. final Ready / Not ready judgment, clearly separating BLOCKING issues
     under current policy from NON-BLOCKING upgrade suggestions, and
     listing the minimal exact fixes needed.
 
@@ -125,9 +132,11 @@ structural / scope-related) AND severity (BLOCKING / NON-BLOCKING
 HYGIENE / SUGGESTION). Tag every finding with one value from each axis,
 e.g. `(structural, BLOCKING)` or `(scope-related, NON-BLOCKING
 HYGIENE)`. Cite the source URL + locator (page section, list position,
-table cell) that the finding rests on. If you would propose table
-edits, describe them as a recommendation in the audit report — do NOT
-write them to the CSV (that would violate append-only ownership).
+table cell) that the finding rests on, and say whether the evidence is
+from the staged ground-truth source set or an audit validation/challenge
+source. If you would propose table edits, describe them as a
+recommendation in the audit report — do NOT write them to the CSV (that
+would violate append-only ownership).
 
 ## Output: append to <id>.comments.json
 
@@ -196,7 +205,11 @@ the cited source set and current benchmark policy. Be policy-faithful,
 not perfectionist: if the source tier is allowed and honestly declared,
 do not block registration only because stronger sources could exist.
 At the same time, keep coverage checking strict and assess whether the
-cited sources truly support the rows and claimed scope.
+cited sources truly support the rows and claimed scope. Run a bounded
+Wiki-family source discovery pass (linked/sibling Wikipedia pages,
+individual entity pages, Wikidata pages, or SPARQL sanity checks) so
+missing Wikipedia/Wikidata sources are surfaced before broader web
+validation.
 
 Cover ALL of the following in one structured response:
 
@@ -204,18 +217,21 @@ Cover ALL of the following in one structured response:
    cited source set,
 2. duplicates and primary-key problems,
 3. normalization, table-shape quality, and column-type consistency,
-4. expected row-count / cardinality estimate, partition sanity, and
-   unique-key sanity,
-5. source quality, source tier, and source-to-query scope match,
-6. table completeness for the intended scope,
-7. cfg metadata correctness (table_title, query_category, db_analog,
+4. expected total and per-partition row-count / cardinality estimate,
+   partition sanity, and unique-key sanity,
+5. missing Wiki-family source check: whether a more direct Wikipedia or
+   Wikidata source exists and would change scope, coverage, ranking, or
+   provenance,
+6. source quality, source tier, and source-to-query scope match,
+7. table completeness for the intended scope,
+8. cfg metadata correctness (table_title, query_category, db_analog,
    operation_type, primary_key, column_types, source_count, domain,
    temporal_sensitivity, gt_construction, temporal_note, source_urls),
-8. LLM-knowable fit (would a closed-book pre-2025 model plausibly know
+9. LLM-knowable fit (would a closed-book pre-2025 model plausibly know
    these rows from pretraining?),
-9. whether this instance helps the benchmark's intended multi-source /
+10. whether this instance helps the benchmark's intended multi-source /
    structured extraction story,
-10. final Ready / Not ready judgment, clearly separating BLOCKING issues
+11. final Ready / Not ready judgment, clearly separating BLOCKING issues
     under current policy from NON-BLOCKING upgrade suggestions, and
     listing the minimal exact fixes needed.
 
@@ -224,9 +240,11 @@ structural / scope-related) AND severity (BLOCKING / NON-BLOCKING
 HYGIENE / SUGGESTION). Tag every finding with one value from each axis,
 e.g. `(structural, BLOCKING)` or `(scope-related, NON-BLOCKING
 HYGIENE)`. Cite the source URL + locator (page section, list position,
-table cell) that the finding rests on. If you would propose table
-edits, describe them as a recommendation in the audit report — do NOT
-write them to the CSV (that would violate append-only ownership).
+table cell) that the finding rests on, and say whether the evidence is
+from the staged ground-truth source set or an audit validation/challenge
+source. If you would propose table edits, describe them as a
+recommendation in the audit report — do NOT write them to the CSV (that
+would violate append-only ownership).
 
 ## Output: append to <id>.comments.json
 

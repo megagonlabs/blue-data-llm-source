@@ -75,7 +75,7 @@ currently instantiated tables.
 |------|---------|
 | `README.md` | This file — current status, benchmark framing, and transition notes |
 | `categories.txt` | Taxonomy of 15 query categories with DB analogues and stress notes |
-| `example_questions.txt` | Sample queries per category in the LLM-as-DB framing |
+| `example_questions.txt` | Human-curated seed question working set in the LLM-as-DB framing |
 | `example_output.png` | Confidence grid mockup (per-cell confidence heatmap) |
 | `metrics_notes.txt` | Short metric summary + how to run the implemented ECE evaluator |
 | `calibration_metrics.md` | Literature analysis for confidence / calibration design |

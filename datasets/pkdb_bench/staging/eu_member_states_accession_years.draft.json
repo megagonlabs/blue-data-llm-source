@@ -12,7 +12,7 @@
     "Country": "key",
     "Year of EU Accession": "date"
   },
-  "query_category": "factual_lookup",
+  "query_category": null,
   "secondary_category": "",
   "db_analog": "SELECT country, accession_year FROM eu_member_states WHERE membership_status = 'current' ORDER BY accession_year, country",
   "operation_type": "projection",
@@ -20,11 +20,11 @@
   "domain": "Politics/History",
   "temporal_sensitivity": "low",
   "gt_construction": "sparql_wikidata",
-  "temporal_note": "Wikidata SPARQL endpoint snapshot, accessed 2026-04-27. Universe is the 27 current EU member states — countries with a `P463=Q458` (member of: European Union) statement and no `P582` end-time qualifier on that statement. Excludes the United Kingdom (P582 = 2020-01-31 post-Brexit). Membership year is the `P580` start-time qualifier on the P463 statement; values are stable historical facts and will only change as new countries accede or leave.",
+  "temporal_note": "Wikidata SPARQL endpoint snapshot, accessed 2026-04-27. Universe is the 27 current EU member states \u2014 countries with a `P463=Q458` (member of: European Union) statement and no `P582` end-time qualifier on that statement. Excludes the United Kingdom (P582 = 2020-01-31 post-Brexit). Membership year is the `P580` start-time qualifier on the P463 statement; values are stable historical facts and will only change as new countries accede or leave.",
   "source_urls": [
     "https://query.wikidata.org/sparql"
   ],
   "_staged_by": "claude-code",
   "_staged_at": "2026-04-27T00:00:00Z",
-  "_extraction_notes": "Built via datasets/build_benchmark/sparql_to_csv.py running the SPARQL at datasets/build_benchmark/sparql_queries/eu_member_states_accession_years.sparql. The query uses the statement-node form (p:P463/ps:P463 with pq:P580 and pq:P582) because reading qualifiers (start time, end time) requires the full statement node — the truthy `wdt:P463` shortcut cannot expose qualifiers. Per `references/sparql-gotchas.md` §1 Option B, deprecated-rank statements are explicitly excluded via `FILTER NOT EXISTS wikibase:rank wikibase:DeprecatedRank`. The `FILTER NOT EXISTS pq:P582` clause is the universe filter for current members; Brexit-excluded UK has P582 = 2020-01-31 and is correctly omitted. Result: 27 rows × 2 columns, 0 duplicate primary keys. PK on Country alone is sufficient because each current member has exactly one P463=Q458 statement with a start-time qualifier."
+  "_extraction_notes": "Built via datasets/build_benchmark/sparql_to_csv.py running the SPARQL at datasets/build_benchmark/sparql_queries/eu_member_states_accession_years.sparql. The query uses the statement-node form (p:P463/ps:P463 with pq:P580 and pq:P582) because reading qualifiers (start time, end time) requires the full statement node \u2014 the truthy `wdt:P463` shortcut cannot expose qualifiers. Per `references/sparql-gotchas.md` \u00a71 Option B, deprecated-rank statements are explicitly excluded via `FILTER NOT EXISTS wikibase:rank wikibase:DeprecatedRank`. The `FILTER NOT EXISTS pq:P582` clause is the universe filter for current members; Brexit-excluded UK has P582 = 2020-01-31 and is correctly omitted. Result: 27 rows \u00d7 2 columns, 0 duplicate primary keys. PK on Country alone is sufficient because each current member has exactly one P463=Q458 statement with a start-time qualifier."
 }

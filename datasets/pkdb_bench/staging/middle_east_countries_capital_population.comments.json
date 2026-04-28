@@ -22,6 +22,13 @@
       "summary": "Full pre-registration re-audit: Ready - 0 BLOCKING findings.\n\nI used the pkdb-bench-audit workflow and kept audit ownership append-only. I read the repaired CSV, draft.json, curation.json, prior comme...",
       "source_cited": "",
       "source_fetch_enabled": false
+    },
+    {
+      "at": "2026-04-28T04:18:01Z",
+      "action": "normalization_applied",
+      "summary": "Resolved the lingering SUGGESTION from the re-audit: country_converter spot-check ran via the project's blue-llmsource-py312 env (country_converter v1.3.2 was already installed, despite the previous auditor's report that it was unavailable in their env). Verified all 17 country names against cc.convert(name, to='short_name'). 16 of 17 matched directly; one row updated: 'Turkey' → 'Türkiye' (post-2022 UN-recognized rename adopted by country_converter; Wikipedia source still uses 'Turkey'). The evaluator normalizes both sides through country_converter so LLM output of 'Turkey' still matches GT 'Türkiye' at evaluation time. curation.json::normalization_decisions documents the choice; open_questions item 5 updated to reflect the resolution.",
+      "source_cited": "",
+      "source_fetch_enabled": false
     }
   ],
   "chat_summary": "Full pre-registration re-audit: Ready - 0 BLOCKING findings.\n\nI used the pkdb-bench-audit workflow and kept audit ownership append-only. I read the repaired CSV, draft.json, curation.json, prior comme...",
