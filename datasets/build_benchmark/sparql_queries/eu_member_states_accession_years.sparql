@@ -1,0 +1,33 @@
+# PKDB-Bench: factual_lookup instance
+# In what year did each current EU member state join the European Union?
+#
+# Wikidata model:
+#   ?country -- P463 (member of) --> Q458 (European Union)
+#   The qualifier pq:P580 on the P463 statement records the start time
+#   (accession date). pq:P582 records end time; absence means the
+#   membership is still active.
+#
+# Universe filter: include only current members (no P582 end-time
+# qualifier). This excludes the UK (P582 = 2020-01-31, post-Brexit).
+#
+# Per the SPARQL gotchas guide (references/sparql-gotchas.md §1 Option B):
+# - This query needs the statement-node form (p: / ps: / pq:) because we
+#   read qualifiers (P580 start time, P582 end time). The truthy `wdt:P463`
+#   shortcut cannot expose qualifiers.
+# - Rank handling: the statement-node form would otherwise pick up
+#   deprecated-rank statements too. We exclude deprecated rank explicitly
+#   via FILTER NOT EXISTS on wikibase:DeprecatedRank to use the safer
+#   "preferred + normal rank" subset. The result is the same 27 current
+#   members either way (verified by audit), but excluding deprecated
+#   rank explicitly is the documented safer default.
+# - Universe filter: P582 end-time absence excludes Brexit-departed UK
+#   (UK's P463=Q458 statement has P582 = 2020-01-31).
+SELECT ?countryLabel (YEAR(?startDate) AS ?accessionYear) WHERE {
+  ?country p:P463 ?statement .
+  ?statement ps:P463 wd:Q458 .                                    # member of European Union
+  ?statement pq:P580 ?startDate .                                 # accession (start time)
+  FILTER NOT EXISTS { ?statement pq:P582 ?endDate . }             # current member only
+  FILTER NOT EXISTS { ?statement wikibase:rank wikibase:DeprecatedRank . }  # exclude deprecated rank
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+}
+ORDER BY ?accessionYear ?countryLabel

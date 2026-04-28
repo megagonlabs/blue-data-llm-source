@@ -592,7 +592,7 @@ def validate_operation_query_pair(operation_type: str, query_category: str) -> O
         "multi_hop": {"join", "filter"},
         "temporal": {"filter", "projection", "join"},
         "geographic": {"filter"},
-        "causal": {"projection", "aggregation"},
+        "causal": {"projection", "aggregation", "filter"},
         "comparative": {"projection", "join"},
         "hierarchical_decomposition": {"join", "projection"},
         "scaled_enumeration": {"projection", "union+filter"},

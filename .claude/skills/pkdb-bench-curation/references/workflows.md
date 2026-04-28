@@ -140,8 +140,11 @@ applicable check; if any fails, fix or document before reporting.
    `implicit_join`/`multi_hop` → `join`; `set_filter`/`temporal`/
    `geographic` → `filter`; `set_operation` → `union` /
    `intersect` / `union+filter`; `aggregation` → `aggregation`;
-   `multi_attribute_projection` → `projection`. If your pairing is
-   not on this list, document the reason in
+   `multi_attribute_projection` → `projection`; `factual_lookup` →
+   `projection`; `qualitative` → `filter` / `projection`; `causal` →
+   `filter` / `projection` / `aggregation` (the protocol §4 FSI
+   threshold example uses `filter`). If your pairing is not on this
+   list, document the reason in
    `curation.json::decision_log`.
 
 5. **Universe-size sanity check** (when applicable)

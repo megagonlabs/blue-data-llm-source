@@ -1,0 +1,37 @@
+{
+  "id": "politically_unstable_countries_per_continent_fsi_alert",
+  "table_title": "For each continent, list countries currently classified as politically fragile or unstable.",
+  "columns": [
+    "Continent",
+    "Country",
+    "FSI Tier",
+    "FSI Score 2024"
+  ],
+  "primary_key": [
+    "Continent",
+    "Country"
+  ],
+  "column_types": {
+    "Continent": "key",
+    "Country": "key",
+    "FSI Tier": "categorical",
+    "FSI Score 2024": "numeric"
+  },
+  "query_category": "causal",
+  "secondary_category": "",
+  "db_analog": "SELECT continent, country, fsi_tier, fsi_score_2024 FROM countries WHERE fsi_score_2024 >= 90 ORDER BY continent, country",
+  "operation_type": "filter",
+  "source_count": 3,
+  "domain": "Politics/Geopolitics",
+  "temporal_sensitivity": "medium",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia 'Fragile States Index' article + 'List of countries by Fragile States Index' article + 'List of sovereign states and dependent territories by continent' article, accessed 2026-04-28 (Tier B manual_wikipedia anchor for the FSI data; the underlying primary source is the Fund for Peace Fragile States Index report, but this instance uses Wikipedia's mirror of the FSI 2024 ranking). The Wikipedia FSI list was at the FSI 2024 ranking when this curation was done. The table_title commits to a current-classification framing ('currently classified as politically fragile or unstable') that matches the FSI snapshot — an earlier draft used 'become politically unstable since 2000' which overclaimed because FSI is a current-year snapshot, not a temporal-since-2000 measure. Risk: FSI 2024 was published mid-2024 and may be near or past some LLMs' pretraining cutoffs; the LLM may have stronger recall of FSI 2022/2023 rankings. Score thresholds (Alert category, score ≥ 90): Very High Alert ≥ 110.0; High Alert 100.0–109.9; Alert 90.0–99.9.",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/Fragile_States_Index",
+    "https://en.wikipedia.org/wiki/List_of_countries_by_Fragile_States_Index",
+    "https://en.wikipedia.org/wiki/List_of_sovereign_states_and_dependent_territories_by_continent"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-04-28T00:00:00Z",
+  "_extraction_notes": "Anchored-fuzzy causal instance — Wikipedia (Tier B manual_wikipedia) anchored to the Fragile States Index 2024 ranking. The protocol §4 mentions FSI as a Tier C example; this instance uses Wikipedia's mirror of the same FSI 2024 data (gt_construction='manual_wikipedia') rather than the Fund for Peace primary report. The data is the same; the source-tier framing is honestly Tier B because the cited URLs are Wikipedia. Inclusion criterion: country's FSI 2024 score ≥ 90 (i.e., the country is in one of the three Alert sub-tiers — Alert, High Alert, Very High Alert). 29 countries qualify, partitioned by continent: Africa 20 (Burkina Faso, Burundi, Cameroon, CAR, Chad, DR Congo, Congo Republic, Eritrea, Ethiopia, Guinea, Libya, Mali, Mozambique, Niger, Nigeria, Somalia, South Sudan, Sudan, Uganda, Zimbabwe), Asia 7 (Afghanistan, Lebanon, Myanmar, Pakistan, Palestine, Syria, Yemen), Europe 1 (Ukraine), North America 1 (Haiti). South America, Oceania, and Antarctica have zero countries with FSI 2024 ≥ 90 — those continents have no rows in this CSV. Per-tier distribution: Alert 18, High Alert 10, Very High Alert 1 (Somalia 111.3 is the only country at the Very-High-Alert level). operation_type='filter' — semantically accurate (db_analog has `WHERE fsi_score_2024 >= 90`). Cycle-1 had set this to 'projection' for UI compliance, but cycle-2 audit pushed back: validator should accept the semantically correct value rather than the instance lying. Cycle-2 fix updated `curation_ui/app.py` line 595 to add 'filter' to causal-allowed pairings (now {projection, aggregation, filter}) and updated `references/workflows.md` preflight #4 to document causal → filter/projection/aggregation. Cycle-1 audit found 2 BLOCKING ('since 2000' overclaim and source-tier mismatch) + 1 hygiene; cycle-2 found 1 BLOCKING (operation_type semantic false) + 2 hygiene. All addressed: title softened to 'currently classified as politically fragile or unstable'; tier framing declared as honest Tier B Wikipedia; operation_type back to 'filter' with project-level validator fix; comments.json chat_summary populated. Composite PK is (Continent, Country). Country names follow country_converter v1.3.2 short_name canonical forms: 'DR Congo' (not 'Democratic Republic of the Congo'), 'Congo Republic' (not 'Republic of the Congo'). Continent assignments follow Wikipedia 'List of sovereign states and dependent territories by continent' (UN M49-aligned). Result: 29 rows × 4 columns, 0 duplicate composite PKs."
+}
