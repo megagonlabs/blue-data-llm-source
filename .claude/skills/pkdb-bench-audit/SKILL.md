@@ -20,13 +20,114 @@ source-checking, registration judgment.
 3. Audit findings go in the `chat_events` + `chat_history` lists, matching
    the schema the curation UI uses. See `references/comments-schema.md`.
 4. Cite source URL + locator (page section, list position, table cell)
-   for every finding that rests on the source set.
+   for every finding. Say whether the evidence comes from the cited
+   ground-truth source set or from a validation/challenge source.
 5. Classify each finding as factual, structural, or scope-related.
 6. If the audit identifies fixes, **recommend** them — do not apply them.
    The human or a `pkdb-bench-curation` agent applies fixes.
 7. Be policy-faithful, not perfectionist. If a source tier is allowed by
    the protocol and honestly declared in metadata, do not block
    registration only because stronger sources would be preferable.
+
+## Validation Source Policy
+
+Audits are **cited-source-first and Wiki-primary**.
+
+1. The URLs in `draft.json::source_urls` define the current staged
+   ground truth. Always audit row correctness, row support, and metadata
+   against those cited sources first.
+2. After reading the cited sources, run a bounded **Wiki-family source
+   discovery pass**. The goal is to detect whether the staged instance is
+   missing a Wikipedia or Wikidata source that is necessary to answer the
+   natural-language query.
+3. Prefer Wiki-family validation before broader web search:
+   - linked Wikipedia list pages
+   - sibling list pages, redirects, and "See also" pages
+   - individual Wikipedia entity pages
+   - Wikidata entity pages
+   - SPARQL count/rank sanity checks
+4. Use non-Wiki external sources only when one of the following concrete
+   triggers holds:
+   - Wiki-family sources are missing entirely for the query universe,
+   - Wiki-family sources contradict each other across revisions,
+   - Wiki-family sources contain explicit "incomplete" or "list of
+     notable" disclaimers,
+   - Wiki-family sources are explicitly time-unstable for the staged
+     temporal scope, or
+   - the user explicitly asks for broader validation.
+
+   These sources can challenge the staged source set; they do not
+   automatically become registered ground truth.
+5. General web search is allowed for discovery, but findings must rest on
+   cited URLs with locators. Parametric memory is never evidence.
+
+During the Wiki-family discovery pass, ask:
+
+- Is there a more direct Wikipedia list/table page for the query than
+  the current cited source set?
+- Is the current source only an entity page, overview page, or partial
+  table when the query asks for a ranked, partitioned, or exhaustive set?
+- Do linked pages, redirects, sibling list pages, or Wikidata statements
+  imply a different row universe, ranking rule, or partition boundary?
+- For Wikidata/SPARQL instances, does a simple count/rank sanity check
+  against Wikipedia list pages reveal missing rows, rank filtering
+  issues, or ontology gaps?
+
+If you discover a missing source:
+
+- classify it as **BLOCKING** when the discovered missing source
+  materially changes the row universe, partition boundary, ranking
+  rule, or claim type that the staged instance asserts;
+- classify it as **NON-BLOCKING HYGIENE** when the discovered missing
+  source is provenance-only — the staged row set and scope claim
+  survive without it, but citing it would make the curation record
+  clearer;
+- classify it as **SUGGESTION** when it is merely an optional stronger
+  or cleaner source.
+
+If the bounded discovery pass returns no candidate but you still suspect
+a missing source exists (e.g., the query universe is large but no
+Wikipedia list page surfaced, or the cited source is an entity page
+where a list page would be more direct), record the suspected source
+type and the search path you checked so the next auditor or curator does
+not silently re-run the same dead-end pass. Default severity is
+**SUGGESTION**; classify it as **NON-BLOCKING HYGIENE** only when the
+current cited source set is visibly thin for the asserted query scope.
+
+Do not edit `source_urls` or the CSV during audit. If a discovered source
+should become part of the ground truth, recommend a `pkdb-bench-curation`
+repair that adds it to `source_urls`, updates `source_count`,
+`gt_construction`, `claim_type`, `temporal_note`, and records the choice
+in `decision_log`.
+
+## Cardinality And Partition Checks
+
+Always validate cardinality at the level implied by the query, not only
+at the whole-table level.
+
+For partitioned, ranked, or hierarchical instances (`top_k`,
+`scaled_enumeration`, `hierarchical_decomposition`, and similar shapes),
+check all of the following:
+
+- total row count;
+- expected partitions and rows per partition;
+- whether each partition uses the same ranking/filtering convention;
+- whether the cited sources support the top-K or membership rule inside
+  each partition;
+- whether any higher-ranked or in-scope entity is omitted even though
+  the table has the expected total row count.
+
+A table can have the right total number of rows and still fail
+cardinality if a partition is under-filled, over-filled, sourced from a
+different convention, or populated with lower-ranked rows while
+higher-ranked rows are omitted. Classify such findings by their effect
+on the asserted row universe, partition boundary, ranking rule, or claim
+type.
+
+If the cited source set itself uses partition-specific conventions,
+document the asymmetry and assess whether the staged `claim_type`,
+`table_title`, and `db_analog` honestly describe that source-defined
+scope. If they do not, recommend narrowing or rebuilding the instance.
 
 ## When To Use This Skill
 
@@ -67,11 +168,16 @@ Do NOT use this skill for:
    - `datasets/pkdb_bench/staging/<id>.comments.json` (if it exists —
      read prior audits before adding yours)
    - the URLs in `draft.json::source_urls`
-3. **Run the audit bundle** and write a structured, numbered response.
+3. **Run the Wiki-family source discovery pass** from the Validation
+   Source Policy. Keep it bounded: look for direct list/table pages,
+   linked/sibling pages, entity pages, Wikidata pages, or SPARQL sanity
+   checks that could materially change scope, coverage, ranking, or
+   provenance. Use broader web search only under the policy above.
+4. **Run the audit bundle** and write a structured, numbered response.
    Cite sources for every finding. Classify each issue.
-4. **Append the audit** to `<id>.comments.json` per
+5. **Append the audit** to `<id>.comments.json` per
    `references/comments-schema.md`. Do not overwrite prior entries.
-5. **Return a condensed verdict block** to the user:
+6. **Return a condensed verdict block** to the user:
    - Ready / Not ready (Ready requires zero BLOCKING findings)
    - Counts by severity: BLOCKING / NON-BLOCKING HYGIENE / SUGGESTION
    - Counts by issue type: factual / structural / scope-related
