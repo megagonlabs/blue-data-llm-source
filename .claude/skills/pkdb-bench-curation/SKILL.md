@@ -36,6 +36,19 @@ Read the core benchmark docs first:
 
 Then load only the reference file you need:
 
+- `datasets/pkdb_bench/docs/instance_selection_priorities.md`
+  Read when choosing the next new instance to create. It is a
+  lightweight picker guide, not a registration validator: use it to
+  balance seed-first preference, category gaps, domain variety, and
+  basic evaluation viability before staging a candidate.
+- `datasets/pkdb_bench/docs/domain_taxonomy.md`
+  Read when creating a new instance or setting/changing
+  `draft.json::domain`. Prefer the `Family/Subdomain` pattern while
+  keeping the field free text.
+- `datasets/pkdb_bench/docs/benchmark_domain_survey.md`
+  Background motivation for the domain taxonomy. Read only when
+  revising domain strategy or reviewing whether the taxonomy still
+  matches benchmark goals.
 - `references/artifact-contract.md`
   Read when creating or modifying staged files. Includes the canonical
   `operation_type` vocabulary — consult before setting that field.

@@ -67,7 +67,10 @@ the query wording and intended benchmark scope.
 > whether the staged source set is missing a more direct Wikipedia or
 > Wikidata source. In one response, do all of the following:
 >
-> 1. summarize what each cited source contributes,
+> 1. summarize what each cited source contributes, including its role
+>    (`universe` / `ranking` / `value` / `validation` / `entity-detail`)
+>    per `references/artifact-contract.md` § Source Roles, and flag any
+>    multi-source instance with no clearly identified `universe`,
 > 2. assess whether the table is complete for the stated query scope,
 > 3. estimate the expected coverage or row-count range implied by the
 >    sources, including per-partition counts for partitioned queries,
@@ -103,7 +106,9 @@ benchmark fit, and whether the instance is ready to register.
 >    sources,
 > 2. assess whether db_analog, query_category, operation_type,
 >    primary_key, column_types, gt_construction, temporal_note,
->    temporal_sensitivity, source_count, and source_urls are correct,
+>    temporal_sensitivity, source_count, domain (using
+>    `datasets/pkdb_bench/docs/domain_taxonomy.md`), and source_urls
+>    are correct,
 > 3. assess whether the current total and per-partition row count /
 >    expected cardinality story is documented clearly enough for
 >    registration,
@@ -143,9 +148,14 @@ prepared for registration. Broadest single audit.
 > 5. missing Wiki-family source check: whether a more direct Wikipedia
 >    or Wikidata source exists and would change scope, coverage, ranking,
 >    or provenance,
-> 6. source quality, source tier, and source-to-query scope match,
+> 6. source quality, source tier, source-to-query scope match, and
+>    whether each `source_urls[i]` has a documented role
+>    (`universe` / `ranking` / `value` / `validation` / `entity-detail`)
+>    per `references/artifact-contract.md` § Source Roles,
 > 7. table completeness for the intended scope,
-> 8. cfg metadata correctness,
+> 8. cfg metadata correctness, including whether `domain` follows
+>    `datasets/pkdb_bench/docs/domain_taxonomy.md` closely enough for
+>    benchmark stratification,
 > 9. LLM-knowable fit for the benchmark,
 > 10. whether this instance helps the benchmark's intended multi-source /
 >    structured extraction story,

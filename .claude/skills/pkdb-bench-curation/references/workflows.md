@@ -9,7 +9,11 @@ Use when starting a new staged instance.
 Steps:
 
 1. **Choose an under-covered category** by checking current
-   coverage against the per-category targets in `README.md`.
+   coverage against the per-category targets in `README.md`. When
+   choosing among multiple plausible next instances, also consult
+   `datasets/pkdb_bench/docs/instance_selection_priorities.md` so you
+   account for staged work, untouched seeds, domain variety, and the
+   fast viability gate.
 2. **Choose the question.** Walk this priority:
 
    a. **First, look at `datasets/pkdb_bench/docs/example_questions.txt`** —
@@ -29,6 +33,17 @@ Steps:
    c. **Document the choice** in `curation.json::decision_log`:
       state whether you used a seed verbatim, adapted a seed (and
       what changed), or proposed an original (and why no seed fit).
+
+   Before staging, fill the tiny candidate card from
+   `instance_selection_priorities.md` in `decision_log`: seed/provenance,
+   category fit, source plan, expected shape, domain, risks/adaptation,
+   and stage/adapt/abandon decision. Keep this brief; it should explain
+   the irreversible choice, not become a second protocol.
+
+   When setting `draft.json::domain`, use
+   `datasets/pkdb_bench/docs/domain_taxonomy.md`: prefer
+   `Family/Subdomain`, keep the subdomain natural, and document any
+   unusual fit in `decision_log`.
 
    **Logical decomposition is separate from URL count.** Keep
    `source_count` consistent with the current UI/protocol contract
@@ -100,8 +115,14 @@ Steps:
    - For **intersect**: collect each source, then intersect on the primary key;
      only rows present in every source survive.
    - Record each source's row contribution in `curation.json` under `source_coverage_notes`.
+   - Identify each `source_urls[i]` by role (`universe` / `ranking` /
+     `value` / `validation` / `entity-detail`) using the convention in
+     `references/artifact-contract.md`. A multi-source instance with
+     no clearly identified `universe` source is a red flag.
 6. Write the staged CSV.
-7. Write `draft.json` with a truthful query/title and metadata.
+7. Write `draft.json` with a truthful query/title and metadata. Set
+   `domain` using `domain_taxonomy.md` unless a legacy repair is only
+   preserving an existing understandable label.
 8. Write `curation.json` with why the row set is what it is.
 9. **Run the creator preflight** (next subsection) before reporting
    `ready`. Auditors will catch most things that slip through, but

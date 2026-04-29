@@ -129,6 +129,20 @@ document the asymmetry and assess whether the staged `claim_type`,
 `table_title`, and `db_analog` honestly describe that source-defined
 scope. If they do not, recommend narrowing or rebuilding the instance.
 
+## Domain Metadata Checks
+
+For metadata or registration audits, read
+`datasets/pkdb_bench/docs/domain_taxonomy.md` when checking
+`draft.json::domain`.
+
+- Missing `domain` is structural and must be fixed before registration.
+- Actively misleading `domain` is structural; usually NON-BLOCKING
+  HYGIENE if the rest of the metadata is correct, but can become
+  BLOCKING if it would mislead benchmark stratification.
+- Legacy but understandable labels are SUGGESTION at most.
+- Prefer `Family/Subdomain` labels for new or repaired instances, but
+  do not require churn on old labels only for style.
+
 ## When To Use This Skill
 
 Trigger this skill when the user asks to:
@@ -173,11 +187,13 @@ Do NOT use this skill for:
    linked/sibling pages, entity pages, Wikidata pages, or SPARQL sanity
    checks that could materially change scope, coverage, ranking, or
    provenance. Use broader web search only under the policy above.
-4. **Run the audit bundle** and write a structured, numbered response.
+4. For metadata / registration audits, check `draft.json::domain`
+   against `datasets/pkdb_bench/docs/domain_taxonomy.md`.
+5. **Run the audit bundle** and write a structured, numbered response.
    Cite sources for every finding. Classify each issue.
-5. **Append the audit** to `<id>.comments.json` per
+6. **Append the audit** to `<id>.comments.json` per
    `references/comments-schema.md`. Do not overwrite prior entries.
-6. **Return a condensed verdict block** to the user:
+7. **Return a condensed verdict block** to the user:
    - Ready / Not ready (Ready requires zero BLOCKING findings)
    - Counts by severity: BLOCKING / NON-BLOCKING HYGIENE / SUGGESTION
    - Counts by issue type: factual / structural / scope-related

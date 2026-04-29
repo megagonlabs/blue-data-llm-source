@@ -46,6 +46,12 @@ Populate at least:
 - `_staged_at` — ISO 8601 timestamp of initial staging
 - `_extraction_notes` — one paragraph explaining how the row set was derived, what was supplemented, and what was excluded
 
+For `domain`, prefer the `Family/Subdomain` pattern from
+`datasets/pkdb_bench/docs/domain_taxonomy.md` (for example
+`Science/Astronomy` or `Culture/Literature`). The field remains free
+text; do not invent a new top-level family unless no existing family
+fits.
+
 ## Operation Type Vocabulary
 
 `draft.json::operation_type` must be **exactly one** of these values.
@@ -84,6 +90,43 @@ Populate at least:
 - `decision_log`
 - `normalization_decisions`
 - `open_questions`
+
+## Source Roles
+
+`curation.json::source_coverage_notes` should identify what each
+`draft.json::source_urls` entry actually contributes. Use the labels
+below as a free-text convention — write them inline, do not invent a
+new structured field.
+
+| Role | What the source supplies |
+| --- | --- |
+| `universe` | Defines or anchors the row set (which entities are in scope, what the partition boundary is, what threshold qualifies a row). |
+| `ranking` | Supplies the ordering rule (e.g., a top-K list or a tier table). May overlap with `universe` when the universe is itself a ranked list. |
+| `value` | Supplies one or more non-key cell values for entities already in the universe. |
+| `validation` | Cross-check or sanity source whose rows do not directly populate the CSV but confirm membership, normalization, or numeric values. |
+| `entity-detail` | Per-entity page used to fill cells the universe/ranking source omitted (e.g., capital city for one country, language for one entity). Most commonly used in `partially_supplemented` instances. |
+
+Conventions:
+
+- Write a `Roles:` block in `source_coverage_notes` listing each
+  `source_urls[i]` and its role(s); a single URL can carry more than
+  one role.
+- Single-source instances still benefit from naming the role (usually
+  `universe + value`); it makes the audit easier and exposes when a
+  source is doing more work than it should.
+- A multi-source instance with no explicit `universe` source is a red
+  flag — universe scope must be grounded somewhere.
+- `validation` sources do not count toward `source_count`; they live in
+  `source_coverage_notes` prose, not in `source_urls`.
+
+Example (multi-source):
+
+```
+Roles:
+- source_urls[0] (List_of_X): universe + ranking
+- source_urls[1] (Country_Y_page): entity-detail (capital, language)
+- source_urls[2] (Wikidata SPARQL): validation (P36 capital cross-check)
+```
 
 ## Consistency Checks
 
