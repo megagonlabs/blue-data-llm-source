@@ -463,18 +463,18 @@ in `review_logs/<id>.review.json` under `open_doubts_overridden`.
 ```text
 ┌─ Tab: Coverage ─────────────────────────────────────────────────────────────┐
 │                                                                              │
-│  Registered: 12 / 49    Categories covered: 5 / 15    Staged: 2 pending    │
+│  Registered: 11 / 82    Categories covered: 4 / 15    Staged: N pending    │
 │                                                                              │
 │  Category                  Registered  Target  Gap   Progress               │
 │  ─────────────────────────────────────────────────────────────────          │
-│  set_operation             6           6       0     ██████ done            │
-│  implicit_join             2           4       2     ███░░░                 │
-│  multi_attribute_proj…     2           4       2     ███░░░                 │
-│  aggregation               1           3       2     ██░░░░                 │
-│  set_filter                1           3       2     ██░░░░                 │
-│  top_k                     0           3       3     ░░░░░░ ◄ next target   │
-│  multi_hop                 0           3       3     ░░░░░░                 │
-│  temporal                  0           3       3     ░░░░░░                 │
+│  set_operation             6           8       2     ████░░                 │
+│  implicit_join             2           8       6     ██░░░░                 │
+│  multi_attribute_proj…     2           8       6     ██░░░░ ◄ gap target   │
+│  aggregation               1           5       4     █░░░░░                 │
+│  set_filter                0           5       5     ░░░░░░                 │
+│  top_k                     0           5       5     ░░░░░░                 │
+│  multi_hop                 0           5       5     ░░░░░░                 │
+│  temporal                  0           5       5     ░░░░░░                 │
 │  ...                                                                         │
 │                                                                              │
 │  ▶ top_k (0 registered)                                                      │

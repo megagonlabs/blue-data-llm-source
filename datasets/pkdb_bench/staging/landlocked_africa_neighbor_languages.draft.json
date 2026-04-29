@@ -16,7 +16,7 @@
     "Bordering Country": "key",
     "Official Language": "categorical"
   },
-  "query_category": null,
+  "query_category": "multi_hop",
   "secondary_category": "",
   "db_analog": "SELECT lc.country, n.country, ol.language FROM countries lc JOIN borders b ON b.country_a = lc.country JOIN countries n ON n.country = b.country_b JOIN official_languages ol ON ol.country = n.country WHERE lc.is_landlocked AND lc.continent = 'Africa' ORDER BY lc.country, n.country, ol.language",
   "operation_type": "join",

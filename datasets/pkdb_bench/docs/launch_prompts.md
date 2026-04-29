@@ -117,7 +117,8 @@ Cover ALL of the following in one structured response:
 6. source quality, source tier, and source-to-query scope match,
 7. table completeness for the intended scope,
 8. cfg metadata correctness (table_title, query_category, db_analog,
-   operation_type, primary_key, column_types, source_count, domain,
+   operation_type, primary_key, column_types, source_count, domain
+   using datasets/pkdb_bench/docs/domain_taxonomy.md,
    temporal_sensitivity, gt_construction, temporal_note, source_urls),
 9. LLM-knowable fit (would a closed-book pre-2025 model plausibly know
    these rows from pretraining?),
@@ -225,7 +226,8 @@ Cover ALL of the following in one structured response:
 6. source quality, source tier, and source-to-query scope match,
 7. table completeness for the intended scope,
 8. cfg metadata correctness (table_title, query_category, db_analog,
-   operation_type, primary_key, column_types, source_count, domain,
+   operation_type, primary_key, column_types, source_count, domain
+   using datasets/pkdb_bench/docs/domain_taxonomy.md,
    temporal_sensitivity, gt_construction, temporal_note, source_urls),
 9. LLM-knowable fit (would a closed-book pre-2025 model plausibly know
    these rows from pretraining?),

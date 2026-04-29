@@ -45,6 +45,10 @@ datasets/pkdb_bench/docs/
 ├── README.md                 ← benchmark overview and current status
 ├── curation_protocol.md      ← this file
 ├── categories.txt            ← full 15-category taxonomy table
+├── example_questions.txt     ← human-curated seed working set
+├── instance_selection_priorities.md ← lightweight next-instance picker guide
+├── domain_taxonomy.md        ← operational domain-family guide
+├── benchmark_domain_survey.md ← motivation for domain coverage choices
 ├── calibration_metrics.md    ← metric design (ECE, composite score, AUSF1)
 └── papers.md                 ← related-work survey
 ```
@@ -330,7 +334,7 @@ Every registered instance requires a complete entry in `datasets/pkdb_bench/cfg.
     "source_count": 1,                // number of implicit source tables required
 
     // ── Domain and difficulty ──────────────────────────────────────────────
-    "domain": "Geography",            // free-text domain label
+    "domain": "Geography/Hydrology",  // free-text label; prefer domain_taxonomy.md family/subdomain
     "temporal_sensitivity": "low|medium|high",
     // low    = stable facts unlikely to change (geography, history)
     // medium = updated periodically (population, rankings)
@@ -360,7 +364,11 @@ better than `["Continent(s)", "River"]`.
 ### Step 1 — Identify a candidate instance
 
 Pick a query category with insufficient coverage (see the Registered/Gap columns in Section 9).
-Draft a `table_title` (the LLM query string) that satisfies the query criteria in Section 5.1.
+When choosing among several possible candidates, use `instance_selection_priorities.md`
+to balance seed-first preference, category gaps, domain variety, and basic evaluation
+viability. Draft a `table_title` (the LLM query string) that satisfies the query criteria
+in Section 5.1. When setting `domain`, prefer the `Family/Subdomain` pattern in
+`domain_taxonomy.md`.
 
 ### Step 2 — Choose a ground truth source
 
@@ -452,44 +460,51 @@ in `README.md`.
 
 ## 9. Coverage targets
 
-Target at least **3 instances per category** for the benchmark to be meaningful.
+Target **82 registered instances** across the 15 categories, matching the target
+counts in `README.md`.
 
 Coverage is tracked in two columns: **Registered** (in `cfg.json`, officially part of the
-benchmark) and **Prototype** (CSVs exist in `pkdb_bench/tables/` but not yet registered).
-Only the Registered count contributes to the Gap.
+benchmark) and **Staged / prototype** (artifacts exist but are not yet registered).
+Only the Registered count contributes to the official Gap. For day-to-day instance
+selection, also consult `instance_selection_priorities.md`, which tracks staged
+work so curators do not duplicate in-flight instances.
 
 | Category | Registered | Target | Gap |
 | -------- | ---------: | -----: | --: |
-| `set_operation` | 6 | 6 | 0 |
-| `implicit_join` | 2 | 4 | 2 |
-| `multi_attribute_projection` | 2 | 4 | 2 |
-| `aggregation` | 1 | 3 | 2 |
-| `set_filter` | 1 | 3 | 2 |
-| `top_k` | 0 | 3 | 3 |
-| `multi_hop` | 0 | 3 | 3 |
-| `temporal` | 0 | 3 | 3 |
-| `hierarchical_decomposition` | 0 | 3 | 3 |
-| `comparative` | 0 | 3 | 3 |
-| `scaled_enumeration` | 0 | 3 | 3 |
-| `qualitative` | 0 | 3 | 3 |
-| `geographic` | 0 | 3 | 3 |
-| `causal` | 0 | 3 | 3 |
-| `factual_lookup` | 0 | 2† | 2 |
-| **Total** | **12** | **49** | **37** |
+| `set_operation` | 6 | 8 | 2 |
+| `implicit_join` | 2 | 8 | 6 |
+| `multi_attribute_projection` | 2 | 8 | 6 |
+| `aggregation` | 1 | 5 | 4 |
+| `set_filter` | 0 | 5 | 5 |
+| `top_k` | 0 | 5 | 5 |
+| `multi_hop` | 0 | 5 | 5 |
+| `temporal` | 0 | 5 | 5 |
+| `hierarchical_decomposition` | 0 | 5 | 5 |
+| `comparative` | 0 | 5 | 5 |
+| `scaled_enumeration` | 0 | 5 | 5 |
+| `qualitative` | 0 | 5 | 5 |
+| `geographic` | 0 | 5 | 5 |
+| `causal` | 0 | 5 | 5 |
+| `factual_lookup` | 0 | 3† | 3 |
+| **Total** | **11** | **82** | **71** |
 
-† `factual_lookup` is the simplest category and mainly serves as a warm-up / sanity-check tier.
-2 instances are sufficient.
+† `factual_lookup` is the simplest category and mainly serves as a warm-up /
+sanity-check tier. Three instances are sufficient.
 
 Four SPARQL prototype CSVs exist in `datasets/pkdb_bench/tables/` but are not registered
 (see Section 2 for the issues). They are not counted in the Registered column above.
 
 **Priority order for new curation:**
 
-1. Fix and register the 4 unregistered SPARQL prototype CSVs — quickest coverage gain once
-   the data quality issues are resolved (see Section 2 for the issue per file).
-2. SPARQL-automatable new instances: `top_k`, `multi_hop`, `comparative`, `hierarchical_decomposition`.
-3. Wikipedia-manual: `temporal`, `implicit_join` extensions.
-4. Web-search-anchored: `qualitative`, `geographic`, `causal`, `scaled_enumeration`.
+1. Prefer high-quality seed questions from `example_questions.txt`, especially
+   when they fill high-gap categories and introduce under-represented domains.
+2. Use `instance_selection_priorities.md` as the lightweight picker guide for
+   balancing seed-first preference, category gaps, domain variety, and basic
+   evaluation viability.
+3. Fix and register existing staged/prototype artifacts when they already fit a
+   target category and can meet the quality criteria in Section 5.
+4. Create original category-targeted instances only when no seed covers the gap,
+   and document that choice in the curation record.
 
 ---
 

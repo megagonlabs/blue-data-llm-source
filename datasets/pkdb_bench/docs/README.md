@@ -76,6 +76,9 @@ currently instantiated tables.
 | `README.md` | This file — current status, benchmark framing, and transition notes |
 | `categories.txt` | Taxonomy of 15 query categories with DB analogues and stress notes |
 | `example_questions.txt` | Human-curated seed question working set in the LLM-as-DB framing |
+| `instance_selection_priorities.md` | Lightweight picker guide for the next instance (viability gate × seed-first × category balance × domain variety) plus current coverage snapshot |
+| `domain_taxonomy.md` | Operational domain-family guide for `draft.json::domain` labels |
+| `benchmark_domain_survey.md` | Survey of domain coverage in recent DB/NLP/ML knowledge and Wikipedia-style benchmarks, with implications for PKDB-Bench |
 | `example_output.png` | Confidence grid mockup (per-cell confidence heatmap) |
 | `metrics_notes.txt` | Short metric summary + how to run the implemented ECE evaluator |
 | `calibration_metrics.md` | Literature analysis for confidence / calibration design |

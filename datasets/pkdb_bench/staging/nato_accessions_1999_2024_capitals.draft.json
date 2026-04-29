@@ -19,7 +19,7 @@
   "db_analog": "SELECT n.country, n.accession_year, c.capital_city FROM nato_accessions n JOIN national_capitals c ON n.country = c.country WHERE n.accession_year BETWEEN 1999 AND 2024 ORDER BY n.accession_year, n.country",
   "operation_type": "join",
   "source_count": 2,
-  "domain": "Politics/Geography",
+  "domain": "Politics/International Relations",
   "temporal_sensitivity": "low",
   "gt_construction": "manual_wikipedia",
   "temporal_note": "Wikipedia pages accessed on 2026-04-23. The cited NATO enlargement page explicitly names the post-Cold War accessions in 1999 (Czech Republic, Hungary, Poland), 2004 (Bulgaria, Estonia, Latvia, Lithuania, Romania, Slovakia, Slovenia), 2009 (Albania, Croatia), 2017 (Montenegro), 2020 (North Macedonia), 2023 (Finland), and 2024 (Sweden). The capitals were taken from the cited list of national capitals. This instance keeps the full 1999-2024 accession slice.",

@@ -17,7 +17,7 @@
   "db_analog": "SELECT country, accession_year FROM eu_member_states WHERE membership_status = 'current' ORDER BY accession_year, country",
   "operation_type": "projection",
   "source_count": 1,
-  "domain": "Politics/History",
+  "domain": "Politics/European Union",
   "temporal_sensitivity": "low",
   "gt_construction": "sparql_wikidata",
   "temporal_note": "Wikidata SPARQL endpoint snapshot, accessed 2026-04-27. Universe is the 27 current EU member states \u2014 countries with a `P463=Q458` (member of: European Union) statement and no `P582` end-time qualifier on that statement. Excludes the United Kingdom (P582 = 2020-01-31 post-Brexit). Membership year is the `P580` start-time qualifier on the P463 statement; values are stable historical facts and will only change as new countries accede or leave.",
