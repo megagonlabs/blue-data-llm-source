@@ -13,6 +13,7 @@ from src.prompts import (
     ROW_ESTIMATION_PROMPT,
     DECOMPOSITION_DECISION_PROMPT,
     DATA_EXTRACTION_PROMPT,
+    DATA_EXTRACTION_PROMPT_WITH_CONFIDENCE,
     DATA_EXTRACTION_PARTITION_CONTEXT,
     DATA_EXTRACTION_COLUMNS_SUFFIX
 )
@@ -49,7 +50,7 @@ class DataTask:
             return f"{self.parent.get_full_context()} -> {self.query}"
         return self.query
 
-    def to_prompt(self) -> str:
+    def to_prompt(self, with_confidence: bool = False) -> str:
         """Generates the execution prompt for this task."""
         # Check if we have a schema to guide extraction
         cols = "*"
@@ -80,7 +81,8 @@ class DataTask:
         if self.estimated_rows and self.estimated_rows > 0:
             estimate_str = f"Estimated Target Rows: ~{self.estimated_rows}. You MUST extract them all."
 
-        prompt = DATA_EXTRACTION_PROMPT.format(
+        base_template = DATA_EXTRACTION_PROMPT_WITH_CONFIDENCE if with_confidence else DATA_EXTRACTION_PROMPT
+        prompt = base_template.format(
             query=self.query,
             constraint_str=constraint_str,
             estimate_str=estimate_str,

@@ -57,7 +57,7 @@ class WikiTabGenAdapter:
                 # In a real benchmark, we might want to enforce target columns.
                 # But let's test "Auto" partitioning capabilities first.
                 
-                df = await self.pkdb.extract_table(query)
+                df, _, __, ___ = await self.pkdb.extract_table(query)
                 
                 # Save CSV
                 out_path = os.path.join(tables_dir, f"{name}.csv")

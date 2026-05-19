@@ -1,0 +1,163 @@
+{
+  "id": "largest_asteroids_with_geometric_mean_diameter_above_250_km",
+  "claim_type": "source_defined",
+  "claim_type_rationale": "Single-master single-table source with deterministic numeric threshold. The universe scope (asteroids per Wikipedia's `List of exceptional asteroids` scope clause — minor planets out to Neptune, including Ceres + Jupiter trojans + centaurs, excluding TNOs) + the ranking rule (geometric mean diameter central value DESC) + the threshold (central value ≥ 250 km) all come from the same master source. No curator judgment after these three anchors. The deterministic-universe-rule preference (instance_selection_priorities.md::Fast viability gate) is satisfied: SQL-WHERE-clause = `geometric_mean_diameter_central_value >= 250 AND in_master_scope_clause`. Distinct from `partially_supplemented` (no rebuilding of any subset) and `candidate_rebuild` (no curator-bounded universe selection beyond the source's own scope clause).",
+  "collection_summary": {
+    "approach": "Pre-curation design pass (cycle-0 source exploration + audit-cycle-1 design review APPROVE-WITH-AMENDMENTS) produced a source-faithful instance. Cycle-0 verified the `List of exceptional asteroids` master exists with a 'Largest by diameter' table containing 25+ entries with Number+Name / Geometric Mean Diameter / Discovery Year / Discoverer columns. Cycle-0 also discovered that the user-suggested ≥300 km threshold yields only 6 rows (Ceres + Vesta + Pallas + Hygiea + Interamnia + Europa), which fails the artifact-contract ≥10 row viability gate; the cycle-0 design pass adjusted the threshold to ≥250 km (15 rows). Audit-cycle-1 issued 3 required amendments + 1 optional refinement: (1) threshold rule defined on master table's central geometric-mean value, NOT on uncertainty-band-spanning ranges (the cycle-0 wording falsely claimed all 15 rows are 'unambiguously above 250 km across uncertainty bands' — Hektor 256±12 and Camilla 254±12 have lower bounds below 250); (2) exact row count for ≥300 km alternative threshold = 6 (NOT approximate '5-7'); (3) Ceres-inclusion explicitly stated in title (not just risk notes); (optional) column renamed 'Mean Diameter (km)' → 'Geometric Mean Diameter (km)' — a normalized rephrasing of the master table's full header 'Diameter (km) (geometric mean)' (not a verbatim match to that source header). All amendments incorporated; staged design is locked.",
+    "universe_size": 15,
+    "threshold_rule": "Geometric mean diameter CENTRAL VALUE per master table ≥ 250 km. Defined on the central value alone (NOT on the uncertainty band). Two rows have lower-bound diameters that dip below 250 km within their reported ± uncertainty (Hektor 256±12 → range 244-268; Camilla 254±12 → range 242-266). A third tied-at-254-km row, Patientia 254±3, has a lower bound of 251 km which does NOT dip below 250. All three 254 km rows are IN scope under the central-value threshold because the source-cited central value is ≥ 250.",
+    "alternative_threshold_row_counts": {
+      "≥300 km": 6,
+      "≥250 km (chosen)": 15,
+      "≥200 km": "25+ (boundary noise increases; not chosen)"
+    },
+    "universe_listing": [
+      {"rank": 1, "asteroid": "1 Ceres", "diameter_km": 939.4, "year": 1801, "discoverer": "Piazzi, G."},
+      {"rank": 2, "asteroid": "4 Vesta", "diameter_km": 525.4, "year": 1807, "discoverer": "Olbers, H. W."},
+      {"rank": 3, "asteroid": "2 Pallas", "diameter_km": 511, "year": 1802, "discoverer": "Olbers, H. W."},
+      {"rank": 4, "asteroid": "10 Hygiea", "diameter_km": 433, "year": 1849, "discoverer": "de Gasparis, A."},
+      {"rank": 5, "asteroid": "704 Interamnia", "diameter_km": 332, "year": 1910, "discoverer": "Cerulli, V."},
+      {"rank": 6, "asteroid": "52 Europa", "diameter_km": 319, "year": 1858, "discoverer": "Goldschmidt, H."},
+      {"rank": 7, "asteroid": "511 Davida", "diameter_km": 298, "year": 1903, "discoverer": "Dugan, R. S."},
+      {"rank": 8, "asteroid": "87 Sylvia", "diameter_km": 271, "year": 1866, "discoverer": "Pogson, N. R."},
+      {"rank": 9, "asteroid": "15 Eunomia", "diameter_km": 270, "year": 1851, "discoverer": "de Gasparis, A."},
+      {"rank": 10, "asteroid": "31 Euphrosyne", "diameter_km": 268, "year": 1854, "discoverer": "Ferguson, J."},
+      {"rank": 11, "asteroid": "65 Cybele", "diameter_km": 263, "year": 1861, "discoverer": "Tempel, E. W."},
+      {"rank": 12, "asteroid": "624 Hektor", "diameter_km": 256, "year": 1907, "discoverer": "Kopff, A."},
+      {"rank": 13, "asteroid": "3 Juno", "diameter_km": 254, "year": 1804, "discoverer": "Harding, K. L.", "tie_note": "3-way tie at 254 km with Camilla + Patientia; minor-planet-number ASC tiebreak puts Juno first (asteroid number 3)"},
+      {"rank": 14, "asteroid": "107 Camilla", "diameter_km": 254, "year": 1868, "discoverer": "Pogson, N. R.", "tie_note": "tie at 254 km; minor-planet-number 107"},
+      {"rank": 15, "asteroid": "451 Patientia", "diameter_km": 254, "year": 1899, "discoverer": "Charlois, A.", "tie_note": "tie at 254 km; minor-planet-number 451"}
+    ],
+    "boundary_row_check": "Next row in the master table is 324 Bamberga at 227±3 km (lower-bound 224 km, central 227 km, upper-bound 230 km). Comfortably below the 250 km central-value threshold; no ambiguity at the boundary. Universe count is unambiguous at 15."
+  },
+  "source_coverage_notes": {
+    "roles": [
+      {
+        "url": "https://en.wikipedia.org/wiki/List_of_exceptional_asteroids",
+        "roles": ["universe", "ranking", "value"],
+        "role_note": "universe: defines the asteroid scope (verbatim from the article's scope clause — 'minor planets out to the orbit of Neptune, includes the dwarf planet Ceres, the Jupiter trojans and the centaurs, but not trans-Neptunian objects'); ranking: the 'Largest by diameter' table is sorted DESC by geometric mean diameter; value: supplies Asteroid Number+Name, Geometric Mean Diameter (km central value), Discoverer cells verbatim for all 15 staged rows; Discovery Year is a mechanical integer-year extraction of the source table's full 'Date discovered' field (not a verbatim cell copy)."
+      }
+    ],
+    "validation_only_sources": "Per-asteroid Wikipedia articles (1 Ceres, 4 Vesta, 2 Pallas, ..., 451 Patientia) are validation-only context — they cross-confirm individual diameter measurements + discovery years + discoverer names but are not row-defining for any cell. NOT registered in source_urls per the artifact contract (validation sources do not count toward source_count and live in provenance prose). The master table's central-value diameter is the canonical staged value; per-asteroid pages sometimes carry slightly different values from more-recent occultation / radar measurements, but the master table is the staged source.",
+    "source_count": 1,
+    "source_grounding_summary": "1 registered single-master source (List of exceptional asteroids; roles = [universe, ranking, value]). All 4 cells per row come from the same master table. Per-asteroid Wikipedia articles consulted for validation during curation but not registered."
+  },
+  "decision_log": [
+    {
+      "decision": "claim_type = source_defined (per audit-cycle-1 design review; deterministic-universe-rule preference satisfied)",
+      "rationale": "Single-master source carries the universe scope clause + ranking rule + value cells. The threshold (central value ≥ 250 km) is a deterministic numeric filter on the master's own ranked table. No curator judgment after the scope-clause + ranking + threshold anchors. SQL-WHERE-clause: `geometric_mean_diameter_central_value >= 250`."
+    },
+    {
+      "decision": "Threshold = 250 km on central geometric-mean value (NOT on uncertainty-band lower bounds)",
+      "rationale": "Per audit-cycle-1 amendment #1: the cycle-0 wording falsely claimed all 15 rows are 'unambiguously above 250 km across uncertainty bands'. Two rows (Hektor 256±12 → lower bound 244; Camilla 254±12 → lower bound 242) actually dip below 250 km at their lower bound. A third 254 km row, Patientia 254±3, has lower bound 251 and does NOT dip below 250 (cycle-2 hygiene fix corrected an earlier overstatement that included Patientia in the 'dips below 250' set). The honest rule is: universe = rows whose master-cited central value is ≥ 250 km. This yields the same 15 rows and keeps the universe deterministic, but removes the false certainty claim. Audit explicitly recommended this framing."
+    },
+    {
+      "decision": "Threshold choice rationale = ≥250 km (NOT ≥300 km or ≥200 km)",
+      "rationale": "Per audit-cycle-1 amendment #2: the alternative ≥300 km threshold yields exactly 6 rows (Ceres, Vesta, Pallas, Hygiea, Interamnia, Europa per the master table) — fails the artifact-contract ≥10 row viability gate. The alternative ≥200 km threshold yields 25+ rows but introduces more boundary noise (multiple rows at 200-220 km range with overlapping uncertainty bands). The chosen ≥250 km threshold yields exactly 15 rows with a clean boundary (next row Bamberga 227 km is comfortably below) and includes the canonical large-asteroid set that LLMs are most likely to know."
+    },
+    {
+      "decision": "Ceres included per source scope clause (NOT excluded as dwarf planet)",
+      "rationale": "Per audit-cycle-1 amendment #3: Ceres is officially classified as a dwarf planet (IAU 2006 redefinition), but the Wikipedia `List of exceptional asteroids` master article explicitly includes Ceres in its asteroid scope clause: 'for the purposes of this article, asteroid refers to minor planets out to the orbit of Neptune, and includes the dwarf planet Ceres'. The staged universe follows the source's stated scope. Excluding Ceres would be a curator override against the cited source's own scope, which would weaken source_defined claim_type. The title explicitly states 'including the dwarf planet Ceres' to pre-warn readers expecting strict post-IAU usage."
+    },
+    {
+      "decision": "Trans-Neptunian objects (TNOs) excluded per source scope clause",
+      "rationale": "Per master article's scope clause: '...but not trans-Neptunian objects.' Eris, Sedna, Makemake, Haumea, Quaoar, etc. are out of scope. Documented in source_coverage_notes::roles for transparency — analogous to f-block exclusion in periodic-table-groups and Ophiuchus exclusion in zodiac-stars."
+    },
+    {
+      "decision": "Diameter cell = central value only (NOT central ± uncertainty text)",
+      "rationale": "Per audit-cycle-1 design review: master table values include ± uncertainty bands (939.4±0.2, 511±4, 256±12). Staged numeric column carries the central value alone (939.4, 511, 256) for clean numeric comparability. Uncertainty bands documented in normalization_decisions and validation_only_sources (per-asteroid pages may carry refined values). The threshold rule is consistently defined on the same central value."
+    },
+    {
+      "decision": "Schema = 4 cols (Asteroid PK + Geometric Mean Diameter (km) + Discovery Year + Discoverer)",
+      "rationale": "Single PK on Asteroid (Number+Name). Geometric Mean Diameter is the ranking attribute that defines row selection — same precedent as Atomic Number in periodic-table-groups + Apparent Magnitude in zodiac-stars. Discovery Year + Discoverer are additional attributes for benchmark testing of historical knowledge. Column name 'Geometric Mean Diameter (km)' is a NORMALIZED label inspired by the master table's full header 'Diameter (km) (geometric mean)' (audit-cycle-1 optional refinement; cycle-2 hygiene fix corrected an earlier overstatement that this label is a verbatim match to the source header — it is a curator-normalized rephrasing). The 'Geometric Mean' qualifier reduces interpretation drift for irregular bodies whose diameter is a geometric-mean approximation of a triaxial ellipsoid (e.g., Vesta is markedly oblate; Hektor is highly elongated)."
+    },
+    {
+      "decision": "Asteroid PK format = 'Number + Name' verbatim (e.g., '1 Ceres', '704 Interamnia')",
+      "rationale": "Per audit-cycle-1 design review: the master table's Asteroid column uses 'Number + Name' format (minor-planet number followed by name). Number-only ('1') would lose semantic content; name-only ('Ceres') could collide with other named bodies (e.g., other objects named Ceres in mythology references). Staged form preserves the master's natural format for unambiguous identification."
+    },
+    {
+      "decision": "Sort = Geometric Mean Diameter DESC primary, minor-planet-number ASC secondary tiebreak",
+      "rationale": "Primary sort matches the master table's ranking order (largest first). The 3-way tie at 254 km (Juno=3, Camilla=107, Patientia=451) requires a tiebreaker; minor-planet-number ASC is deterministic and audit-friendly. Per audit-cycle-1 design review: the minor-planet-number ASC tiebreak is a CURATOR SORT NORMALIZATION (not the master table's native order — the master shows Juno, Patientia, Camilla at the tie); explicitly documented as such to prevent confusion with a claim that the entire sort is source-defined. The DESC ranking is source-defined; the tiebreaker is curator-normalized."
+    },
+    {
+      "decision": "Discoverer cell = verbatim 'Last, F.' format per master table (NOT expanded names)",
+      "rationale": "Master table uses 'Last, F.' or 'Last, F. M.' convention (e.g., 'Piazzi, G.', 'Olbers, H. W.', 'de Gasparis, A.'). Staged form preserves verbatim. Expansion to full names ('Giuseppe Piazzi', 'Heinrich Wilhelm Matthias Olbers') would be curator-judgment and source-overstating. Name-prefix preservation: 'de Gasparis' (lowercase 'de') is kept per source."
+    },
+    {
+      "decision": "Entity class = taxonomic-entities/asteroids (NEW fine-class)",
+      "rationale": "Asteroids are naturally-occurring celestial bodies classified by physical attributes (diameter, orbit, composition). Same bucket as moons (`planets_named_moons`), species (`mammal_species_at_risk_of_extinction`), nutrients (`vitamins_top5_food_sources`), and stars (just-extended fine-class in `three_brightest_stars_in_each_zodiac_constellation`). Asteroids extends the bucket from 4 to 5 instances. Under the answer-entity-wins policy, the single PK (Asteroid) IS the answer entity — no scaffold partition. Bucket cluster 'astronomical-objects/*' was considered but rejected — taxonomic-entities is the existing bucket precedent and asteroids fit the same physical-naturally-occurring-object pattern as moons + stars."
+    }
+  ],
+  "normalization_decisions": [
+    {
+      "field": "Asteroid",
+      "rule": "Format: 'Number Name' (minor-planet-number followed by name, single space separator). Verbatim from master table's Asteroid column. 15 values: '1 Ceres', '4 Vesta', '2 Pallas', '10 Hygiea', '704 Interamnia', '52 Europa', '511 Davida', '87 Sylvia', '15 Eunomia', '31 Euphrosyne', '65 Cybele', '624 Hektor', '3 Juno', '107 Camilla', '451 Patientia'. The number prefix is part of the canonical asteroid designation per IAU/MPC convention."
+    },
+    {
+      "field": "Geometric Mean Diameter (km)",
+      "rule": "Numeric (float). Central value from master table's Geometric Mean Diameter column (master header 'Diameter (km) (geometric mean)'; staged column label 'Geometric Mean Diameter (km)' is a normalized rephrasing, not a verbatim header copy), with ± uncertainty band stripped. Range: 254 (Juno/Camilla/Patientia) to 939.4 (Ceres). Source's full uncertainty annotations for reference: 1 Ceres 939.4±0.2; 4 Vesta 525.4±0.2; 2 Pallas 511±4; 10 Hygiea 433±8; 704 Interamnia 332±5; 52 Europa 319±4; 511 Davida 298±4; 87 Sylvia 271±5; 15 Eunomia 270±3; 31 Euphrosyne 268±4; 65 Cybele 263±3; 624 Hektor 256±12; 3 Juno 254±2; 107 Camilla 254±12; 451 Patientia 254±3. The ≥250 km threshold is defined on the central value alone — two rows (Hektor 256±12 → lower bound 244; Camilla 254±12 → lower bound 242) have lower bounds dipping below 250 km; a third 254 km row, Patientia 254±3, has lower bound 251 which does NOT dip below 250. All three 254 km rows are IN scope by the central-value rule."
+    },
+    {
+      "field": "Discovery Year",
+      "rule": "Integer year (CE). Mechanically extracted as the calendar-year component of the master table's full 'Date discovered' column (NOT a verbatim cell copy — the source cell carries full YYYY-MM-DD or similar date precision, e.g., Ceres 'January 1, 1801'; the staged cell carries only the year integer 1801). Range: 1801 (Ceres, discovered Jan 1, 1801 by Piazzi) to 1910 (Interamnia by Cerulli). All staged rows discovered in the 19th + early 20th centuries — a clean historical period of telescopic-discovery-era astronomy. Cycle-2 hygiene fix clarified that this is a mechanical extraction, not a verbatim cell copy."
+    },
+    {
+      "field": "Discoverer",
+      "rule": "Verbatim 'Last, F.' or 'Last, F. M.' format from master table. 15 values with one duplicate (Olbers, H. W. discovered both Vesta and Pallas — same person, two rows). Name-prefix preservation: 'de Gasparis, A.' (lowercase 'de' kept). Diacritic preservation: not applicable to current 15 discoverers (all ASCII). CSV-quoted because each Discoverer cell contains a literal comma in the 'Last, F.' format."
+    }
+  ],
+  "open_questions": [
+    {
+      "question": "Should the master table's central-value diameter be cross-checked against per-asteroid Wikipedia article values (which may carry more-recent occultation / radar measurements)?",
+      "answer": "No — the staged source rule is master table verbatim. The master article aggregates the canonical values; per-asteroid articles may carry refined values from individual observation campaigns but are not the staged source. If audit-cycle-1 prefers per-asteroid-grounding (analogous to capitals-on-rivers per-capital-grounding), the source plan would shift to source_count > 1. Recommend keeping single-source per the deterministic-universe-rule preference."
+    },
+    {
+      "question": "Should the staged set acknowledge the 254 km 3-way tie's native source order (Juno, Patientia, Camilla) in addition to the curator-normalized minor-planet-number sort?",
+      "answer": "Per audit-cycle-1 design review: the minor-planet-number ASC tiebreak is documented as a curator sort normalization in decision_log + normalization_decisions. The master's native order at the tie (Juno, Patientia, Camilla) is preserved as a note. The staged sort follows the curator-normalized rule (Juno, Camilla, Patientia) for audit-friendly deterministic ordering."
+    },
+    {
+      "question": "Should future-cycle staged instances using asteroid-bucket entities (e.g., 'asteroids by composition class', 'asteroids with confirmed water ice') consider this instance's source rule as precedent?",
+      "answer": "Open for future-cycle consideration. The single-master deterministic-threshold pattern is the cleanest source_defined pattern; if a future asteroid-keyed instance requires per-asteroid grounding (e.g., for orbital elements that vary across catalogues), that instance would shift to source_count > 1 with the master as universe-anchor and per-asteroid articles as value-suppliers."
+    }
+  ],
+  "proposed_supplements": [],
+  "audit_trail_pre_curation": {
+    "cycle_0_source_exploration": {
+      "task": "Verify source structure for the largest-asteroids candidate",
+      "outcome": "Verified `List of exceptional asteroids` master article exists with a 'Largest by diameter' table containing 25+ entries with Number+Name / Geometric Mean Diameter / Discovery Year / Discoverer columns. The article's scope clause explicitly includes Ceres + Jupiter trojans + centaurs; excludes TNOs. Cycle-0 discovered that the user-suggested ≥300 km threshold yields only 6 rows (below the artifact-contract ≥10 row viability gate); adjusted to ≥250 km threshold yielding 15 rows.",
+      "deliverable": "Initial design proposal with ≥250 km threshold + claim_type=source_defined + single-master source plan."
+    },
+    "cycle_1_audit_design_review": {
+      "task": "Audit agent reviews cycle-0 design proposal BEFORE staging",
+      "verdict": "APPROVE WITH AMENDMENTS (3 required amendments + 1 optional refinement)",
+      "amendments": [
+        "1. Threshold rule defined on master table's CENTRAL geometric-mean value, NOT 'unambiguously above 250 km across uncertainty bands'. The cycle-0 false-certainty claim was wrong — Hektor 256±12 and Camilla 254±12 have lower bounds below 250 km. The honest rule is: rows whose master-cited central value is ≥ 250 km. Same 15 rows; honest framing.",
+        "2. Exact row count for ≥300 km alternative threshold = 6 (not approximate '5-7'). Specifically: Ceres, Vesta, Pallas, Hygiea, Interamnia, Europa.",
+        "3. Ceres-inclusion explicit in title (not only risk notes). Title now reads 'including the dwarf planet Ceres per Wikipedia's `List of exceptional asteroids` scope definition' to pre-warn readers expecting strict post-IAU usage.",
+        "Optional refinement (applied): column renamed 'Mean Diameter (km)' → 'Geometric Mean Diameter (km)' — a NORMALIZED label inspired by the master table's full header 'Diameter (km) (geometric mean)' (cycle-2 hygiene corrected an earlier overstatement that this is a verbatim match to the source header). Reduces interpretation drift for irregular bodies whose diameter is a geometric-mean approximation of a triaxial ellipsoid.",
+        "Tie-tiebreak documentation note: minor-planet-number ASC tiebreak at the 254 km tie is a curator sort normalization (not the master table's native order — master shows Juno, Patientia, Camilla at the tie). Explicitly documented as such."
+      ],
+      "deliverable": "All 3 required + 1 optional amendments accepted. Design locked; staging."
+    },
+    "cycle_2_post_staging_hygiene": {
+      "task": "Cycle-1 post-staging audit (Full pre-registration sweep) reviewed the 3 staged artifacts; cycle-2 applied the 3 HYGIENE fixes (0 BLOCKING, 0 SUGGESTION).",
+      "verdict": "Ready (0 BLOCKING); 3 HYGIENE findings cleaned up in-place during cycle-2.",
+      "fixes_applied": [
+        "1. (HYGIENE / factual) Narrowed the 'lower-bound dips below 250 km' set from 3 rows to 2 rows. Patientia 254±3 has lower bound 251 km which does NOT dip below 250 — only Hektor 256±12 (244) and Camilla 254±12 (242) actually fall below at the lower bound. Corrected in collection_summary::threshold_rule, decision_log entry on the central-value threshold rule, and normalization_decisions for the diameter field.",
+        "2. (HYGIENE / structural) Rephrased the 'Geometric Mean Diameter (km)' column-label justification as NORMALIZED-from-source (not verbatim match). The master table's header is 'Diameter (km) (geometric mean)' — the staged label is a curator rephrasing that preserves the geometric-mean qualifier in the column name itself. Corrected in decision_log Schema entry, audit_trail_pre_curation::cycle_1::amendments[3], draft.json::_extraction_notes, and normalization_decisions for the diameter field.",
+        "3. (HYGIENE / structural) Clarified that Discovery Year is a mechanical integer-year extraction of the master table's full 'Date discovered' column (e.g., Ceres source cell 'January 1, 1801' → staged cell 1801), NOT a verbatim cell copy. The other three cells (Asteroid, Diameter central value, Discoverer) are verbatim. Corrected in source_coverage_notes::roles[0]::role_note, draft.json::temporal_note, and normalization_decisions for the Discovery Year field."
+      ],
+      "deliverable": "All 3 HYGIENE fixes applied. Instance is Ready (with 1 residual HYGIENE finding caught in cycle-3 verification — see cycle_3_residual_hygiene)."
+    },
+    "cycle_3_residual_hygiene": {
+      "task": "Cycle-2 verification audit caught 1 residual HYGIENE finding — the collection_summary::approach field still carried the stale 'to match the master table's header' phrase even though cycle-2 had cleaned the same phrase in all other locations. Cycle-3 applies the residual fix.",
+      "verdict": "Ready (0 BLOCKING); 1 HYGIENE finding cleaned up in collection_summary::approach.",
+      "fixes_applied": [
+        "1. (HYGIENE / structural) Replaced the stale 'to match the master table's header' wording in collection_summary::approach with the same normalized-from-source wording used in all other locations: 'a normalized rephrasing of the master table's full header `Diameter (km) (geometric mean)` (not a verbatim match to that source header)'. Sweep confirmed no other stale header-match phrasing remains; the one remaining 'matches the master table' phrase in decision_log (sort entry) refers to sort-order DESC ranking matching the master, which is accurate."
+      ],
+      "deliverable": "Residual HYGIENE fix applied. Instance is Ready+Clean. Cycle-3 is the terminal post-staging cycle for this instance."
+    }
+  },
+  "_curated_by": "claude-code",
+  "_curated_at": "2026-05-17T00:00:00Z"
+}

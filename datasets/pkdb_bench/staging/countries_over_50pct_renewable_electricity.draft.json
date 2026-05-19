@@ -1,0 +1,34 @@
+{
+  "id": "countries_over_50pct_renewable_electricity",
+  "table_title": "Which countries derived more than 50% of their electricity from renewable sources, with the renewable share, the dominant renewable source, and the year of the cited statistic (2022\u20132025 depending on country)?",
+  "columns": [
+    "Country",
+    "Renewable Share (%)",
+    "Dominant Renewable Source",
+    "Year"
+  ],
+  "primary_key": [
+    "Country"
+  ],
+  "column_types": {
+    "Country": "key",
+    "Renewable Share (%)": "numeric",
+    "Dominant Renewable Source": "categorical",
+    "Year": "numeric"
+  },
+  "query_category": "set_filter",
+  "secondary_category": "comparative",
+  "db_analog": "SELECT country, renewable_share_pct, dominant_renewable_source, year FROM countries_renewable_electricity_2022_2025 WHERE renewable_share_pct > 50 ORDER BY country",
+  "operation_type": "filter",
+  "source_count": 1,
+  "domain": "Environment/Energy",
+  "temporal_sensitivity": "medium",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia 'List of countries by electricity production from renewable sources' (alias: 'List of countries by renewable electricity production') accessed 2026-05-01. The article carries two wikitables: a TWh production table and a percentage-share table; this instance uses the percentage-share table only. The article cites different reporting years per country (2022, 2023, 2024, or 2025) depending on data availability from the cited Ember/IEA underlying source; rather than restrict to a single year (which would drop most of the canonical renewable leaders such as Norway, Costa Rica, Denmark, Sweden, and New Zealand who are reported in 2024 or 2025 vintages), the staged Year column carries the per-country reported year as the source records it. Renewable shares update on a roughly annual cadence as new IEA/Ember statistics are published; the row membership for the >50% filter is fairly stable on a multi-year horizon (countries near the threshold like Netherlands 51%, UK 52%, and the dropped exact-50 entities Greece and Cook Islands are the most likely to drift in or out year-to-year).",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/List_of_countries_by_electricity_production_from_renewable_sources"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-05-01T00:00:00Z",
+  "_extraction_notes": "Original instance filling the Environment family-level gap (Environment was one of three remaining unrepresented family-level gaps in the 2026-04-30 picker snapshot, alongside Education and Law; Law was planted by landmark_us_supreme_court_decisions_by_chief_justice on 2026-04-30 and this instance plants Environment). Source plan: Tier B Wikipedia, source_count = 1. Pipeline: (1) curl the cited Wikipedia article, locate the second wikitable (the percentage-share table; the first wikitable is absolute TWh production and is NOT used). (2) Drop aggregate region rows whose Location cell is in the set {World, European Union, OECD, Europe, Asia, Africa, Americas, Oceania, Non-OECD, North America, South America, Latin America, Middle East, Sub-Saharan Africa}; keep all per-entity rows the source lists (the article's framing is 'countries and dependencies' rather than 'sovereign countries only', so dependent territories like Greenland (an autonomous territory of Denmark) and French Guiana (an overseas region of France) are retained as the source presents them). (3) Filter strictly to Renew. > 50.0% (the title says 'more than 50%' so exact-50 rows \u2014 Cook Islands at 50% Solar 2022 and Greece at 50% Solar 2025 \u2014 are excluded). (4) For each surviving country, derive Dominant Renewable Source as the sub-component (Hydro, Wind, Solar, Biofuels, Other) with the highest percentage in that row; ties resolved by the Wikipedia column order Hydro > Wind > Solar > Biofuels > Other (no actual ties were observed in the staged set). (5) Take the per-country reported Year cell verbatim as a 4-digit integer. Result: 66 rows x 4 columns, PK on Country, 0 duplicates. Renewable Share range >50%-100% (9 entities reach 100% in the snapshot: Albania, Bhutan, Central African Republic, DR Congo, Ethiopia, Iceland, Lesotho, Nepal, Paraguay). Dominant-source distribution in the staged 66-row set: Hydro 55, Wind 6 (Denmark, Finland, Germany, Lithuania, Netherlands, United Kingdom \u2014 all reported under 2025), Solar 2 (Luxembourg, Spain), Biofuels 2, Other 1 (Kenya \u2014 43% geothermal, which the source records under 'Other'; Iceland's 30% Other (also geothermal) is dominated by its 70% Hydro and is therefore Hydro-dominant rather than Other-dominant). Note the two dropped exact-50% rows had different dominant sources from each other and from this list: Cook Islands at 50% Solar (2022) and Greece at 50% Solar (2025). Year distribution: 2022 = 7 entities, 2023 = 28, 2024 = 14, 2025 = 17; the heterogeneity is the source's own reporting cadence and is preserved as honest per-row data rather than smoothed."
+}

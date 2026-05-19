@@ -1,0 +1,39 @@
+{
+  "id": "transboundary_rivers_by_continent_over_500_miles",
+  "table_title": "For each continent, list the transboundary rivers in the cited Wikipedia source set that are at least 500 miles long (>= 805 km).",
+  "columns": [
+    "Continent",
+    "River",
+    "Length (km)",
+    "Countries"
+  ],
+  "primary_key": [
+    "Continent",
+    "River"
+  ],
+  "column_types": {
+    "Continent": "categorical",
+    "River": "key",
+    "Length (km)": "numeric",
+    "Countries": "text"
+  },
+  "query_category": "set_filter",
+  "secondary_category": "multi_attribute_projection",
+  "db_analog": "SELECT continent, river, length_km, countries FROM curated_transboundary_river_source_set WHERE length_miles > 100 ORDER BY continent, river",
+  "operation_type": "filter",
+  "source_count": 3,
+  "domain": "Geography/Hydrology",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia pages accessed in 2026. Main coverage comes from the Wikipedia \"Transboundary river\" page section \"List of major international transboundary rivers\", which is a source-defined list of major rivers rather than an exhaustive list of all qualifying rivers. Fly and Sepik were added from their dedicated pages for Oceania. This staged instance preserves the earlier minimal-supplement source set and should not be interpreted as covering additional omitted rivers later identified during the broader >=1000 km rebuild.",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/Transboundary_river",
+    "https://en.wikipedia.org/wiki/Fly_River",
+    "https://en.wikipedia.org/wiki/Sepik"
+  ],
+  "_staged_by": "codex",
+  "_staged_at": "2026-04-22T00:00:00Z",
+  "_extraction_notes": "Derived from transboundary_rivers_by_continent_over_100_miles by deterministic filter/projection on the parent CSV. Length filter raised from 100 to 500 miles (>= 805 km).",
+  "_derived_from": "transboundary_rivers_by_continent_over_100_miles",
+  "_derivation_note": "Length filter raised from 100 to 500 miles (>= 805 km)."
+}

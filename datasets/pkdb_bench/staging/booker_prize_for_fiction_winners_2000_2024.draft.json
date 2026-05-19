@@ -1,0 +1,59 @@
+{
+  "id": "booker_prize_for_fiction_winners_2000_2024",
+  "table_title": "List the Booker Prize for Fiction winners 2000-2024 inclusive (25 award years; the 2019 prize was shared by two co-winners and Hilary Mantel + Margaret Atwood each won twice within the window), with the winning book, and the author's birth country derived from the per-author Wikipedia article's 'Born' field (modern-sovereign-country normalization applied — constituent countries such as Scotland and Northern Ireland normalize to United Kingdom).",
+  "columns": [
+    "Year",
+    "Author",
+    "Book",
+    "Author Birth Country"
+  ],
+  "primary_key": [
+    "Year",
+    "Author"
+  ],
+  "column_types": {
+    "Year": "numeric",
+    "Author": "key",
+    "Book": "text",
+    "Author Birth Country": "categorical"
+  },
+  "query_category": "implicit_join",
+  "secondary_category": "temporal",
+  "db_analog": "SELECT year, author, book, author_birth_country FROM booker_winners_with_author_birth_country WHERE year BETWEEN 2000 AND 2024 ORDER BY year, author",
+  "operation_type": "join",
+  "source_count": 25,
+  "domain": "Culture/Literature",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia 'Booker Prize' master article (winners table) + 24 per-author Wikipedia articles, accessed 2026-05-15. Universe is the Booker Prize for Fiction winners 2000-2024 inclusive — a hard 25-year temporal window on the source-defined winners-table membership. The Booker article's winners table also lists a 2025 winner (David Szalay's 'Flesh') which is OUTSIDE the staged 2000-2024 window and therefore explicitly excluded; pre-2000 winners (Margaret Atwood 1985 not included since outside window; J.M. Coetzee 1983/1999; etc.) are also explicitly excluded. Per-row cells: Year is integer year of the award per the master winners table; Author is the winning author's name verbatim from the master winners table (composite PK part 2 with Year as PK part 1); Book is the winning book title verbatim from the master winners table; Author Birth Country is the modern sovereign country containing the author's birthplace per the per-author Wikipedia article's 'Born' field, with the constituent-country normalization rule applied (Scotland → United Kingdom, Northern Ireland → United Kingdom). The 26-row universe = 25 award years (one per year 2000-2024) + 1 extra row for the 2019 co-winner (Bernardine Evaristo + Margaret Atwood shared the prize that year). 2 authors won twice within the window: Hilary Mantel (2009 Wolf Hall + 2012 Bring Up the Bodies); Margaret Atwood (2000 The Blind Assassin + 2019 The Testaments co-winner). Composite PK (Year, Author) cleanly handles both the 2019 co-winner case and the 2-time winners. The 26-row universe is stable on a multi-year horizon: the Booker Prize winners are well-documented and won't change retroactively; future awards (2025+) would extend the universe if the time window is widened.",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/Booker_Prize",
+    "https://en.wikipedia.org/wiki/Margaret_Atwood",
+    "https://en.wikipedia.org/wiki/Peter_Carey_(novelist)",
+    "https://en.wikipedia.org/wiki/Yann_Martel",
+    "https://en.wikipedia.org/wiki/DBC_Pierre",
+    "https://en.wikipedia.org/wiki/Alan_Hollinghurst",
+    "https://en.wikipedia.org/wiki/John_Banville",
+    "https://en.wikipedia.org/wiki/Kiran_Desai",
+    "https://en.wikipedia.org/wiki/Anne_Enright",
+    "https://en.wikipedia.org/wiki/Aravind_Adiga",
+    "https://en.wikipedia.org/wiki/Hilary_Mantel",
+    "https://en.wikipedia.org/wiki/Howard_Jacobson",
+    "https://en.wikipedia.org/wiki/Julian_Barnes",
+    "https://en.wikipedia.org/wiki/Eleanor_Catton",
+    "https://en.wikipedia.org/wiki/Richard_Flanagan",
+    "https://en.wikipedia.org/wiki/Marlon_James_(novelist)",
+    "https://en.wikipedia.org/wiki/Paul_Beatty",
+    "https://en.wikipedia.org/wiki/George_Saunders",
+    "https://en.wikipedia.org/wiki/Anna_Burns",
+    "https://en.wikipedia.org/wiki/Bernardine_Evaristo",
+    "https://en.wikipedia.org/wiki/Douglas_Stuart_(writer)",
+    "https://en.wikipedia.org/wiki/Damon_Galgut",
+    "https://en.wikipedia.org/wiki/Shehan_Karunatilaka",
+    "https://en.wikipedia.org/wiki/Paul_Lynch_(writer)",
+    "https://en.wikipedia.org/wiki/Samantha_Harvey"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-05-15T00:00:00Z",
+  "_extraction_notes": "Original instance chipping `implicit_join` from gap 3 to **gap 2** (5 of 8 staged before this; this brings the count to 6 of 8). Source plan: Tier B Wikipedia, source_count = 25 — 1 master 'Booker Prize' Wikipedia article (winners table) + 24 per-author Wikipedia articles (24 distinct authors; Hilary Mantel + Margaret Atwood each won twice but have only 1 article each). The pre-staging audit design review (1 round) confirmed the design is basically sound with small cleanup needed: bare birth-country values without parentheticals, explicit modern-sovereign-country normalization rule, 2025-exclusion note, 25+1=26 row-count note. All audit-recommended fixes applied in cycle-0 staging. Pipeline: (1) fetch the cited Booker Prize Wikipedia article HTML and extract the winners-table rows for 2000-2024 (25 award-years + 1 co-winner row); (2) for each row, take Year + Author + Book verbatim from the winners table; (3) for each of 24 distinct authors, fetch the per-author Wikipedia article and extract the 'Born' field's modern sovereign country (with Scotland/Northern Ireland normalizing to United Kingdom per the documented rule). Result: 26 rows × 4 columns, composite PK (Year, Author), 0 duplicates. Author Birth Country distribution: United Kingdom 9 (Hollinghurst, Mantel x2 same person, Jacobson, Barnes, Burns, Evaristo, Stuart, Harvey — count is 8 distinct authors with Mantel x2 winning = 9 row-instances), Canada 3 (Atwood x2, Catton), Australia 3 (Carey, DBC Pierre, Flanagan), Ireland 3 (Banville, Enright, Lynch), India 2 (Desai, Adiga), United States 2 (Beatty, Saunders), Spain 1 (Martel), Jamaica 1 (James), South Africa 1 (Galgut), Sri Lanka 1 (Karunatilaka). Confidence gradient: very-LLM-knowable cells include canonical Booker winners (Atwood 2000, Mantel 2009/2012, Banville 2005, Carey 2001, Barnes 2011); mid-difficulty cells include the well-known but less-headline-grabbing recent winners (Adiga 2008, Flanagan 2014, James 2015, Saunders 2017, Stuart 2020); harder calibration cells include the recent/less-known winners (Lynch 2023, Karunatilaka 2022, Harvey 2024). The implicit-join cell (Author Birth Country) tests per-author article knowledge that requires looking up the author's biography. Implicit-join structure: master Booker article gives (Year, Author, Book) as a denormalized winners table; per-author articles supply Author Birth Country — a clean single-master-multiple-per-entity implicit join matching the precedent set by nato_accessions_1999_2024_capitals (master gives Country+Year; per-country article gives Capital) and notable_works_of_recent_nobel_literature_laureates (master gives Laureate; Wikidata supplies Works)."
+}

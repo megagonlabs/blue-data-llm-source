@@ -1,0 +1,57 @@
+{
+  "doubts": [],
+  "comments": [],
+  "chat_events": [
+    {
+      "at": "2026-05-19T00:24:29+00:00",
+      "action": "assistant_response",
+      "summary": "Full pre-registration sweep: Ready with hygiene — 0 BLOCKING / 2 NON-BLOCKING HYGIENE / 0 SUGGESTION. The staged 14-row data layer is correct, but active prose has two small factual/count residues: multi-country count text says 8/6 despite listing 9/5, and some excluded subsidiary-peak heights do not match the registered master....",
+      "source_cited": "",
+      "source_fetch_enabled": false
+    },
+    {
+      "at": "2026-05-19T00:33:48+00:00",
+      "action": "assistant_response",
+      "summary": "Cycle-2 verification pass: Ready+Clean — 0 BLOCKING / 0 NON-BLOCKING HYGIENE / 0 SUGGESTION.\n\nVerification results\n\n1. Prior structural HYGIENE resolved. Active Country(ies) prose now consistently say...",
+      "source_cited": "",
+      "source_fetch_enabled": false
+    }
+  ],
+  "chat_summary": "Cycle-2 verification pass: Ready+Clean — 0 BLOCKING / 0 NON-BLOCKING HYGIENE / 0 SUGGESTION.\n\nVerification results\n\n1. Prior structural HYGIENE resolved. Active Country(ies) prose now consistently say...",
+  "chat_history": [
+    {
+      "role": "user",
+      "content": "Please run a Full pre-registration sweep on the staged Eight-thousanders comparative instance. This is the first post-staging audit cycle after the pre-staging audit-cycle-1 design review (APPROVE WITH AMENDMENTS — 5 required amendments + 12 per-question recommendations). Saturating this instance moves comparative to 5/5 as the 12th fully-cleared category.\n\nFiles:\n- uiaa_recognized_eight_thousanders.csv (14 rows × 5 cols)\n- uiaa_recognized_eight_thousanders.draft.json\n- uiaa_recognized_eight_thousanders.curation.json\n\nSource: Single master https://en.wikipedia.org/wiki/Eight-thousander (roles = [universe, ranking, value]); per-peak Wikipedia articles + UIAA upstream are validation-only.\n\nClaim type: source_defined. UIAA-defined two-part threshold (elevation > 8000m AND prominence ≥ 600m) + closed canonical 14-row universe.\n\nPlease verify pre-staging amendments, 70 source cells, Lhotse boundary case, Everest prominence special case, subsidiary-peak exclusions, source-count honesty, schema/category metadata, and return a condensed verdict block with two-axis findings."
+    },
+    {
+      "role": "assistant",
+      "content": "Full pre-registration sweep: Ready with hygiene — 0 BLOCKING / 2 NON-BLOCKING HYGIENE / 0 SUGGESTION.\n\nFindings\n\n1. (structural, NON-BLOCKING HYGIENE) Multi-country count prose is internally inconsistent in active curation text. The CSV has 9 multi-country peaks and 5 single-country peaks. `curation.json::normalization_decisions[Country(ies)]` eventually states the correct 9/5 split but includes the residue phrase `8 of 14 peaks ... wait, that's 9`; `decision_log[Country column renamed Country(ies)]` still says `8 of 14` and `6 are single-country` while listing 9 multi-country names and only 5 single-country names. The staged CSV cells themselves are correct, so this is narrative/count hygiene only. Minimal fix: rewrite both active prose locations to cleanly say `9 of 14 multi-country; 5 single-country`, with the exact lists.\n\n2. (factual, NON-BLOCKING HYGIENE) A few subsidiary-peak example heights in active exclusion prose do not match the registered master. The Eight-thousander master proposed-expansion table lists Lhotse Shar at 8,382 m and Kangchenjunga S-Peak at 8,476 m; active prose uses Lhotse Shar 8,383 m in `table_title` / `temporal_note` and Kangchenjunga South 8,494 m in several curation prose locations. The exclusion logic remains correct and no staged row is affected, but the documentation should match the master when citing example excluded peaks. Minimal fix: update excluded-peak examples to the master table forms: `Lhotse Shar 8,382 m`, `Kangchenjunga S-Peak 8,476 m`, `Kangchenjunga C-Peak 8,473 m`, `Lhotse C-Peak I / Lhotse Middle 8,410 m`, `Broad Peak Central 8,011 m`, `Kangchenjunga W-Peak / Yalung Kang 8,505 m`.\n\nChecks Passed\n\n- The 14-row universe matches the registered Eight-thousander master: Everest, K2, Kangchenjunga, Lhotse, Makalu, Cho Oyu, Dhaulagiri I, Manaslu, Nanga Parbat, Annapurna I, Gasherbrum I, Broad Peak, Gasherbrum II, Shishapangma.\n- All staged Mountain, Country(ies), Elevation (m), Prominence (m), and First Ascent Year cells are supported by the master table after documented normalization: country slash-to-semicolon, comma stripping for numeric fields, and first-ascent year extraction from the date.\n- Lhotse is correctly documented as the boundary included peak at 610 m prominence; Everest prominence equals elevation at 8,849 m and is documented.\n- Schema and metadata are coherent: 14 rows × 5 cols, PK `Mountain`, `query_category=comparative`, `operation_type=filter`, `source_count=1`, `claim_type=source_defined`, `domain=Geography/Mountaineering`, `entity_class=physical-features/mountains` in narrative.\n- Range is not staged, preserving source_count=1; the validation-only 10 Himalayan / 4 Karakoram split is correctly stated.\n- Wiki-family discovery pass found no more direct Wikipedia source than `Eight-thousander` for the canonical UIAA-recognized 14; broader mountain list pages are less direct and would weaken the source-defined scope.\n\nMinimal Repair Set\n\n1. Clean the Country(ies) count prose to `9 multi-country / 5 single-country` in both decision_log and normalization_decisions.\n2. Correct subsidiary-peak example heights/names in title/scope prose and curation narrative to match the master proposed-expansion table.\n\nVerdict Block\n\n- Verdict: Ready with hygiene; not terminal clean until the two prose fixes land.\n- Severity counts: 0 BLOCKING / 2 NON-BLOCKING HYGIENE / 0 SUGGESTION\n- Issue-type counts: 0 blocking; 1 structural hygiene, 1 factual hygiene\n- comments.json: `datasets/pkdb_bench/staging/uiaa_recognized_eight_thousanders.comments.json`"
+    },
+    {
+      "role": "user",
+      "content": "Audit handoff: uiaa_recognized_eight_thousanders — cycle-2 verification pass\n\nPlease run a focused verification sweep to confirm both cycle-2 HYGIENE fixes landed correctly + the instance can be locked. Verify Country count prose, subsidiary peak heights, audit trail, unchanged CSV/data invariants, JSON parseability, and no new findings."
+    },
+    {
+      "role": "assistant",
+      "content": "Cycle-2 verification pass: Ready+Clean — 0 BLOCKING / 0 NON-BLOCKING HYGIENE / 0 SUGGESTION.\n\nVerification results\n\n1. Prior structural HYGIENE resolved. Active Country(ies) prose now consistently says 9 multi-country peaks and 5 single-country peaks in both `decision_log` and `normalization_decisions`. The stale `8 of 14` / `6 single-country` / `wait, that's 9` text remains only inside the cycle-2 repair history, where it accurately describes the prior defect.\n\n2. Prior factual HYGIENE resolved. Active subsidiary-peak examples now use master-aligned heights: Lhotse Shar 8,382 m and Kangchenjunga South 8,476 m. The old `8,383` / `8,494` values remain only inside the cycle-2 repair history as historical fix narration. Other documented examples remain stable: Yalung Kang 8,505 m, Lhotse Middle 8,410 m, Kangchenjunga Central 8,473 m, Broad Peak Central 8,011 m.\n\n3. Audit trail is coherent. `cycle_2_post_staging_hygiene` records exactly two hygiene fixes with the correct tags: one structural and one factual.\n\n4. Data-layer invariants are unchanged and clean: CSV is still 14 rows × 5 columns; Mountain PK is unique; Elevation (m) is sorted DESC; every row satisfies elevation > 8000 and prominence >= 600; both JSON files parse; source_count remains 1.\n\nTerminal verdict block\n\n- Verdict: Ready+Clean\n- Severity counts: 0 BLOCKING / 0 NON-BLOCKING HYGIENE / 0 SUGGESTION\n- Terminal confirmation: yes — prior cycle-1 hygiene findings are fully resolved, no new issue introduced\n- comments.json: `datasets/pkdb_bench/staging/uiaa_recognized_eight_thousanders.comments.json`"
+    }
+  ],
+  "_audit_metadata": {
+    "audits": [
+      {
+        "audited_by": "codex",
+        "audited_at": "2026-05-19T00:24:29+00:00",
+        "bundle": "Full pre-registration sweep",
+        "verdict": "Ready with hygiene",
+        "blocking_issue_count": 0
+      },
+      {
+        "audited_by": "codex",
+        "audited_at": "2026-05-19T00:33:48+00:00",
+        "bundle": "Focused verification sweep",
+        "verdict": "Ready+Clean",
+        "blocking_issue_count": 0
+      }
+    ]
+  }
+}

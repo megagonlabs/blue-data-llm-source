@@ -1,0 +1,56 @@
+{
+  "id": "decisive_battles_of_world_war_ii",
+  "table_title": "List 18 decisive battles of World War II with each battle's year, theater, winning side, primary Allied commander, and primary Axis commander. Universe is drawn from Wikipedia's 'List of World War II battles' master article (a broad enumeration of hundreds of battles), curator-selected for cross-theater balance across a 4-value curator-collapsed theater vocabulary (Western Front, Eastern Front, Pacific, North African / Mediterranean).",
+  "columns": [
+    "Battle",
+    "Year",
+    "Theater",
+    "Winning Side",
+    "Allied Commander",
+    "Axis Commander"
+  ],
+  "primary_key": [
+    "Battle"
+  ],
+  "column_types": {
+    "Battle": "key",
+    "Year": "numeric",
+    "Theater": "categorical",
+    "Winning Side": "categorical",
+    "Allied Commander": "categorical",
+    "Axis Commander": "categorical"
+  },
+  "query_category": "multi_hop",
+  "secondary_category": null,
+  "db_analog": "SELECT b.battle_name AS battle, b.start_year AS year, b.theater, b.winning_side, ac.commander_name AS allied_commander, xc.commander_name AS axis_commander FROM wwii_battles b JOIN commanders ac ON b.battle_id = ac.battle_id AND ac.side = 'Allied' JOIN commanders xc ON b.battle_id = xc.battle_id AND xc.side = 'Axis' WHERE b.battle_id IN (curator_selected_decisive_battle_ids) ORDER BY b.start_year ASC, b.battle_name ASC",
+  "operation_type": "join",
+  "source_count": 19,
+  "domain": "History/Military",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia 'List of World War II battles' master article + 18 per-battle Wikipedia articles, all accessed 2026-05-14. Universe = 18 curator-selected decisive WWII battles (claim_type = `partially_supplemented`) from the master article's full enumeration (which lists hundreds of battles across 1939-1945), chosen for cross-theater balance across a 4-value curator-collapsed theater vocabulary (Western Front 3, Eastern Front 4, Pacific 7, North African / Mediterranean 4 = 18). temporal_sensitivity = low because the underlying historical facts (battle dates, commanders, outcomes) are stable historiographically — minor framing shifts can occur (e.g., 'decisive' vs 'major' framing, contested-outcome wording for ambiguous battles like the Coral Sea or Operation Market Garden) but the core attribute values do not shift year-over-year. Per-row Year follows the calendar year of battle commencement (start year per per-battle Wikipedia article infobox 'Date' field); multi-year battles (Moscow 1941-42, Stalingrad 1942-43, Guadalcanal 1942-43, Bulge 1944-45) are staged with their start year only for numeric-integer-Year-column compatibility. Per-row Theater follows a 4-value curator-collapsed vocabulary inspired by (but NOT equal to) the master article's 9-section front-partition. **Per-row Winning Side follows a two-clause rule** (per curation.json::decision_log Rule 5 cycle-2 refinement): clean infobox 'Result' field for 17 of 18 rows; for 1 row (Battle of the Coral Sea), the per-battle infobox is two-tier ('Tactical Japanese victory / Strategic Allied victory') and staged value takes the strategic-level outcome per article-lead foregrounding. 17 of 18 are 'Allied' and 1 is 'Axis' (Pearl Harbor). **Per-row Allied + Axis Commander follow a two-tier rule** (per curation.json::decision_log Rule 3 cycle-2 refinement): default rule (16 of 18 rows) = per-battle article-lead foregrounded operational commander; curator-override (2 of 18 rows — Moscow + Berlin) = explicit override of the article's Hitler-first infobox ordering toward operational-level commander (Fedor von Bock for Moscow; Gotthard Heinrici for Berlin) per the curator-judgment rule that 'Axis Commander' refers to operational battle command not supreme political command. Alternative commanders for other battles documented in curation.json::open_questions.",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/List_of_World_War_II_battles",
+    "https://en.wikipedia.org/wiki/Battle_of_Britain",
+    "https://en.wikipedia.org/wiki/Attack_on_Pearl_Harbor",
+    "https://en.wikipedia.org/wiki/Battle_of_Moscow",
+    "https://en.wikipedia.org/wiki/Battle_of_Midway",
+    "https://en.wikipedia.org/wiki/Battle_of_Stalingrad",
+    "https://en.wikipedia.org/wiki/Battle_of_the_Coral_Sea",
+    "https://en.wikipedia.org/wiki/Guadalcanal_campaign",
+    "https://en.wikipedia.org/wiki/Second_Battle_of_El_Alamein",
+    "https://en.wikipedia.org/wiki/Allied_invasion_of_Sicily",
+    "https://en.wikipedia.org/wiki/Battle_of_Kursk",
+    "https://en.wikipedia.org/wiki/Battle_of_Anzio",
+    "https://en.wikipedia.org/wiki/Battle_of_Leyte_Gulf",
+    "https://en.wikipedia.org/wiki/Battle_of_Monte_Cassino",
+    "https://en.wikipedia.org/wiki/Battle_of_the_Bulge",
+    "https://en.wikipedia.org/wiki/Normandy_landings",
+    "https://en.wikipedia.org/wiki/Battle_of_Berlin",
+    "https://en.wikipedia.org/wiki/Battle_of_Iwo_Jima",
+    "https://en.wikipedia.org/wiki/Battle_of_Okinawa"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-05-14T00:00:00Z",
+  "_extraction_notes": "Multi_hop instance — chained attribute resolution per battle (battle → year → theater → outcome → Allied commander → Axis commander). Chips `multi_hop` from gap 2 to gap 1 (4 of 5 staged after this instance; one more saturates as the 7th category to fully clear). **History/Military NEW subdomain** — History family extends from 2 instances (`twentieth_century_us_presidents_attributes` History/Politics + `us_presidents_count_by_birth_state` History/Politics) to 3 instances with this Military subdomain, becoming a 2-subdomain family. Source universe = 18 curator-selected decisive WWII battles from Wikipedia 'List of World War II battles' master article. Per-row attribute grounding from 18 per-battle Wikipedia articles (infobox 'Date' for Year, 'Result' for Winning Side, 'Commanders and leaders' for Allied + Axis Commander). Schema: 6 cols (Battle PK + Year numeric + Theater categorical + Winning Side categorical + Allied Commander categorical + Axis Commander categorical). Sort: Year ASC primary (chronological), Battle ASC alphabetical secondary tiebreaker. Theater distribution: Pacific 7, Eastern Front 4, North African / Mediterranean 4, Western Front 3 (4-value curator-collapsed vocabulary from the master article's 9-section front-partition, curator-balanced; per curation.json::decision_log Rule 4 cycle-2 refinement). Winning Side distribution: Allied 17, Axis 1 (Pearl Harbor only — reflects the overall Allied-victory framing of the staged decisive-battles universe). Year range: 1940 (Battle of Britain) to 1945 (Berlin / Iwo Jima / Okinawa) — 6 years of war. Commander distribution: 4 Allied commanders staged for multiple battles (Eisenhower 3: Sicily, Normandy, Bulge; Zhukov 4: Moscow, Stalingrad, Kursk, Berlin; Alexander 2: Anzio, Monte Cassino); on Axis side Kesselring 2 (Anzio, Monte Cassino), Rundstedt 2 (Normandy, Bulge) — reflects the historical reality of theater-level commanders running multiple operations within their command. Bridges + dams + ports + airports cycle lessons applied upfront: (a) single PK on Battle using Wikipedia common-form names per per-battle article title with diacritics preserved (Hermann Göring uses ö umlaut U+00F6 per Wikipedia title); (b) per-row data sourced from 2 articles each (master + per-battle), 19 URLs total; (c) two-tier commander-selection rule documented at Stage-1, refined at cycle-2: default = per-battle article-lead foregrounded primary commander per side (16 of 18 rows); curator-override (2 of 18 rows: Moscow + Berlin) for cases where article infobox lists Hitler first per Wehrmacht supreme-command hierarchy AND article lead does NOT unambiguously foreground a single operational commander — staged Bock not Hitler for Moscow, Heinrici not Hitler for Berlin per curator-judgment rule; (d) `partially_supplemented` claim type (cycle-2 reframe from cycle-1's `source_defined` per audit B1) honestly reflects the 18-row curator-judgment selection from the master article's hundreds-of-battles enumeration; (e) Year column = start year of battle for multi-year battles (numeric integer schema compatibility; document multi-year-range battles in curation notes). Entity class: `events/battles` (NEW fine-class in the `events` bucket — bucket extends from 8 to 9 instances after this Ready, joining space-missions, financial-crises, epidemics, space-incidents, judicial-decisions, olympics, awards, inventions, battles)."
+}

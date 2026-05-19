@@ -1,0 +1,55 @@
+{
+  "id": "g20_countries_attributes",
+  "table_title": "List the 19 sovereign-state members of the G20 with their nominal GDP in USD millions (2026), total population (2026), official or national language(s), and government type.",
+  "columns": [
+    "Country",
+    "GDP (USD millions, 2026)",
+    "Population (2026)",
+    "Official language(s)",
+    "Government type"
+  ],
+  "primary_key": [
+    "Country"
+  ],
+  "column_types": {
+    "Country": "key",
+    "GDP (USD millions, 2026)": "numeric",
+    "Population (2026)": "numeric",
+    "Official language(s)": "text",
+    "Government type": "categorical"
+  },
+  "query_category": "multi_attribute_projection",
+  "secondary_category": "",
+  "db_analog": "SELECT country, gdp_usd_m_2026, population_2026, official_languages, government_type FROM g20_sovereign_states ORDER BY country",
+  "operation_type": "projection",
+  "source_count": 20,
+  "domain": "Business/Economics",
+  "temporal_sensitivity": "medium",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia per-country and master-G20 articles, accessed 2026-04-30. Universe is the 19 sovereign-state members of the G20: Argentina, Australia, Brazil, Canada, China, France, Germany, India, Indonesia, Italy, Japan, Mexico, Russia, Saudi Arabia, South Africa, South Korea, Turkey, United Kingdom, and United States. The two non-state G20 members (the European Union, member since 1999, and the African Union, member since the 2023 G20 Delhi summit) are excluded because the seed asks for 'G20 countries' and the seed's per-row attributes (Official language, Government type) do not apply cleanly to multilateral organizations. GDP (Nominal, USD millions) and Population values are the 2026 figures from the Wikipedia G20 article's economic table; they update on a roughly annual cadence and the rest of the schema is otherwise stable. Government type values are verbatim from each country's current Wikipedia infobox 'Government' field after stripping footnote markers \u2014 Russia's full phrase 'Federal semi-presidential republic under an authoritarian dictatorship' and South Africa's full phrase 'Unitary parliamentary republic with an executive presidency' are preserved per the source rather than trimmed to a canonical first clause; the verbatim policy is documented in normalization_decisions. Official-language values reflect each country's current Wikipedia infobox 'Official language(s)' field; four countries (Argentina, Australia, Japan, United Kingdom) use the 'National language' infobox label rather than 'Official language' because they have no statutory de jure official language at the federal level (the Argentina, Australia, Japan, and UK infoboxes report the de facto national language).",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/G20",
+    "https://en.wikipedia.org/wiki/Argentina",
+    "https://en.wikipedia.org/wiki/Australia",
+    "https://en.wikipedia.org/wiki/Brazil",
+    "https://en.wikipedia.org/wiki/Canada",
+    "https://en.wikipedia.org/wiki/China",
+    "https://en.wikipedia.org/wiki/France",
+    "https://en.wikipedia.org/wiki/Germany",
+    "https://en.wikipedia.org/wiki/India",
+    "https://en.wikipedia.org/wiki/Indonesia",
+    "https://en.wikipedia.org/wiki/Italy",
+    "https://en.wikipedia.org/wiki/Japan",
+    "https://en.wikipedia.org/wiki/Mexico",
+    "https://en.wikipedia.org/wiki/Russia",
+    "https://en.wikipedia.org/wiki/Saudi_Arabia",
+    "https://en.wikipedia.org/wiki/South_Africa",
+    "https://en.wikipedia.org/wiki/South_Korea",
+    "https://en.wikipedia.org/wiki/Turkey",
+    "https://en.wikipedia.org/wiki/United_Kingdom",
+    "https://en.wikipedia.org/wiki/United_States"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-04-30T00:00:00Z",
+  "_extraction_notes": "Verbatim seed #14 from datasets/pkdb_bench/docs/example_questions.txt ('List all G20 countries with their approximate GDP in trillions USD, total population, official language, and government type'), with two documented adaptations: (a) GDP is reported in USD millions for 2026 rather than 'approximate trillions' to match the precision of the cited G20-article source, and (b) the European Union and African Union, both non-state G20 members, are excluded because the seed says 'countries' and the per-row attributes do not apply cleanly to multilateral organizations. Source plan was originally Tier A SPARQL (per the picker guide); a probe of Wikidata's P37 (official language) and P122 (basic form of government) showed unfixable data-quality issues \u2014 the United States Q30 lists 'Hawaiian, Spanish' as P37 (a Wikidata data error; the US has English as official since the 2025 Executive Order), Russia Q159 has 36 P37 values covering republic-level languages, and P122 across G20 countries returns 3-7 multi-value entries each (e.g., China includes 'communist dictatorship', South Africa included 'apartheid' before end-time filtering). Switching to Tier B with per-country Wikipedia infoboxes was the right call for cleanly-verifiable per-cell values, at the cost of source_count=20. Construction: rowspan-aware HTML extraction of (a) the G20 article's economic-table for Country, GDP (Nominal, USD millions, 2026, column 2), and Population (2026, column 7); (b) each per-country Wikipedia article's first infobox for Official language(s) and Government type fields. Footnote markers ([1], [a], [c]), CSS class blobs from .mw-parser-output expansion, and HTML <br> separators were stripped or normalized to '; '. South Africa's infobox is multi-section (one section per language) and could not be parsed by the standard infobox-row matcher; its values are taken verbatim from the South_Africa Wikipedia article's infobox: 'Unitary parliamentary republic with an executive presidency' for Government and the 12 official languages 'Afrikaans; English; Ndebele; Sepedi; Sesotho; Setswana; South African Sign Language; Swazi; Tshivenda; Xhosa; Xitsonga; Zulu' (post-audit fix: prior staging dropped South African Sign Language and used the alternate short labels Pedi/Sotho/Tsonga/Venda; the corrected value uses the source's label forms and includes all 12 languages). Russia's infobox 'Government' field is verbatim 'Federal semi-presidential republic under an authoritarian dictatorship' with footnote markers stripped (post-audit fix: prior staging trimmed the qualifier to the canonical first phrase, but the audit's source-defined verbatim policy was applied consistently across both Russia and South Africa, restoring the full source phrase). Argentina, Australia, Japan, and United Kingdom use the 'National language' infobox label rather than 'Official language(s)' because they have no statutory de jure federal official language; the column header in the staged CSV is 'Official language(s)' and the values for these four rows are taken verbatim from the National-language field. Result: 19 rows x 5 columns, PK on Country, 0 duplicates."
+}

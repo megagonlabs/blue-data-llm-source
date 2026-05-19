@@ -1,0 +1,35 @@
+{
+  "doubts": [],
+  "comments": [],
+  "chat_events": [
+    {
+      "at": "2026-05-18T23:52:54+00:00",
+      "action": "assistant_response",
+      "summary": "Full pre-registration sweep: Ready+Clean — 0 BLOCKING, 0 NON-BLOCKING HYGIENE, 0 SUGGESTION.\n\nAudit bundle: Full pre-registration sweep.\n\nEvidence checked:\n- Ground-truth source set: https://en.wikipe...",
+      "source_cited": "",
+      "source_fetch_enabled": false
+    }
+  ],
+  "chat_summary": "Full pre-registration sweep: Ready+Clean — 0 BLOCKING, 0 NON-BLOCKING HYGIENE, 0 SUGGESTION.\n\nAudit bundle: Full pre-registration sweep.\n\nEvidence checked:\n- Ground-truth source set: https://en.wikipe...",
+  "chat_history": [
+    {
+      "role": "user",
+      "content": "Here is curatio agent's output:\n  Re: Cycle-1 post-staging audit —\n  global_200_tropical_moist_broadleaf_forest_ecoregions_by_realm\n  Mode: audit-instance (read + append-only to <id>.comments.json)\n\n  Cycle-3 design review verdict was \"Approve for Cycle-0 Staging, With 1 Required Correction\" +\n   master-derived 51-row dump. All 51 rows × 4 cells applied at cycle-0 staging master-verbatim\n   per the audit's dump (no best-guess values — avoiding decade_volcanoes-style cycle-1\n  BLOCKING factual catch).\n\n  Artifacts to read:\n  - datasets/pkdb_bench/staging/global_200_tropical_moist_broadleaf_forest_ecoregions_by_realm.\n  csv (51 rows × 4 cols)\n  - datasets/pkdb_bench/staging/global_200_tropical_moist_broadleaf_forest_ecoregions_by_realm.\n  draft.json\n  - datasets/pkdb_bench/staging/global_200_tropical_moist_broadleaf_forest_ecoregions_by_realm.\n  curation.json\n\n  Locked properties:\n  - Single PK = Global 200 Ecoregion; query_category = geographic; secondary = set_filter;\n  operation_type = filter; claim_type = source_defined; gt_construction = manual_wikipedia\n  - source_count = 1: Wikipedia Global 200 master article only; no validation cross-checks (per\n   cycle-3 confirmation)\n  - domain = Environment/Conservation NEW subdomain; entity class =\n  physical-features/ecoregions NEW fine-class\n  - 5-value closed Realm vocab: Afrotropical / Australasia / Indomalaya / Neotropic / Oceania\n  - Sort: Realm ASC alphabetic + Global 200 Ecoregion ASC alphabetic within realm (curator\n  sort)\n  - All 51 rows × 4 cells master-verbatim per cycle-3 audit's dump\n\n  Please verify:\n  1. All 51 rows × 4 cells match cycle-3 audit's master-derived dump (each row's Global 200\n  Ecoregion / Realm / Representative WWF Ecoregions semicolon-delim / WWF Ecoregion Codes\n  semicolon-delim — should be verbatim from the cycle-3 dump)\n  2. Realm distribution: Afrotropical 11 / Australasia 8 / Indomalaya 18 / Neotropic 12 /\n  Oceania 2 = 51 ✓\n  3. Curator sort applied: Realm ASC alphabetic (Afrotropical → Australasia → Indomalaya →\n  Neotropic → Oceania), Global 200 Ecoregion ASC alphabetic within realm\n  4. PK uniqueness, schema consistency, special-character handling (en-dash –, comma-bearing\n  cell \"São Tomé, Príncipe, and Annobón forests\" properly CSV-escaped)\n  5. source_count = 1 honest per cycle-3 confirmation\n\n  Expected outcome: Ready+Clean (0/0/0) — single-cycle convergence per the master-verbatim\n  staging pattern (mirror phanerozoic_periods_by_start_age 1-cycle precedent). If any row\n  deviates from cycle-3 dump, flag with specific row + cell correction."
+    },
+    {
+      "role": "assistant",
+      "content": "Full pre-registration sweep: Ready+Clean — 0 BLOCKING, 0 NON-BLOCKING HYGIENE, 0 SUGGESTION.\n\nAudit bundle: Full pre-registration sweep.\n\nEvidence checked:\n- Ground-truth source set: https://en.wikipedia.org/wiki/Global_200 — fetched page lines 248-255 describe Global 200 as the WWF priority-ecoregion list and note it contains 238 ecoregions; lines 277-457 contain the Tropical and subtropical moist broadleaf forests section with the Afrotropical, Australasia, Indomalaya, Neotropic, and Oceania realm headings and parent/child/code rows.\n- Local staged artifacts: datasets/pkdb_bench/staging/global_200_tropical_moist_broadleaf_forest_ecoregions_by_realm.csv, .draft.json, .curation.json.\n\nChecks performed:\n1. Row and cell correctness: PASS. The CSV has exactly 51 rows x 4 columns and matches the cycle-3 master-derived row list for every cell: Global 200 Ecoregion parent label, Realm, semicolon-delimited Representative WWF Ecoregions, and semicolon-delimited WWF Ecoregion Codes. No missing rows, extra rows, or cell mismatches found.\n2. Realm distribution: PASS. Counts are Afrotropical 11, Australasia 8, Indomalaya 18, Neotropic 12, Oceania 2, total 51.\n3. Sort order: PASS. Rows are sorted by Realm ASC alphabetically, then Global 200 Ecoregion ASC within each realm.\n4. PK and schema: PASS. Single PK Global 200 Ecoregion is unique. CSV columns match draft.json exactly: Global 200 Ecoregion, Realm, Representative WWF Ecoregions, WWF Ecoregion Codes. Column types align with the staged data.\n5. Special-character and CSV escaping: PASS. En-dash / accented-character names are preserved, including Cross–Sanaga–Bioko, Solomons–Vanuatu–Bismarck, Maldives–Lakshadweep–Chagos, Juruá, Japurá, Chocó–Darién, and São Tomé, Príncipe, and Annobón forests. The comma-bearing child-ecoregion cell is properly CSV-escaped and parses as one field.\n6. Multi-value alignment: PASS. For every row, the number of semicolon-delimited Representative WWF Ecoregions equals the number of semicolon-delimited WWF Ecoregion Codes, preserving positional alignment.\n7. Source and metadata: PASS. source_count=1 equals len(source_urls)=1. The Global 200 master carries both universe and value roles for this schema. draft.json has query_category=geographic, secondary_category=set_filter, operation_type=filter, domain=Environment/Conservation, temporal_sensitivity=low, and gt_construction=manual_wikipedia. curation.json has claim_type=source_defined and correctly explains the parent Global 200 entry granularity.\n8. Wiki-family source discovery pass: PASS. The registered Global 200 page is the direct Wiki-family master source for the row universe and all value cells. No missing Wiki-family source was found that would change scope, row count, row labels, realm vocabulary, codes, source_count, or claim_type.\n\nFindings:\n- None.\n\nVerdict: Ready+Clean. The instance can proceed to accept-ready / registration prep.\n\nCounts by severity: 0 BLOCKING, 0 NON-BLOCKING HYGIENE, 0 SUGGESTION.\nCounts by issue type: 0 factual, 0 structural, 0 scope-related.\nMinimal fixes needed: none.\n"
+    }
+  ],
+  "_audit_metadata": {
+    "audits": [
+      {
+        "audited_by": "codex",
+        "audited_at": "2026-05-18T23:52:54+00:00",
+        "bundle": "Full pre-registration sweep",
+        "verdict": "Ready+Clean",
+        "blocking_issue_count": 0
+      }
+    ]
+  }
+}

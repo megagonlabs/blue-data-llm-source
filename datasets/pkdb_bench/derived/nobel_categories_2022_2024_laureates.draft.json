@@ -1,0 +1,45 @@
+{
+  "id": "nobel_categories_2022_2024_laureates",
+  "table_title": "List Nobel Prize laureates from 2022 through 2024 across all categories with year, category, country, and citation.",
+  "columns": [
+    "Category",
+    "Year",
+    "Laureate",
+    "Country",
+    "Citation"
+  ],
+  "primary_key": [
+    "Category",
+    "Year",
+    "Laureate"
+  ],
+  "column_types": {
+    "Category": "key",
+    "Year": "key",
+    "Laureate": "key",
+    "Country": "text",
+    "Citation": "text"
+  },
+  "query_category": "multi_attribute_projection",
+  "secondary_category": "temporal",
+  "db_analog": "SELECT category, year, laureate, country, citation FROM nobel_laureates WHERE year BETWEEN 2020 AND 2024 ORDER BY category, year, laureate",
+  "operation_type": "projection",
+  "source_count": 6,
+  "domain": "Science/Academia",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Pre-2025 cutoff anchor: 'last 5 laureates per category' is interpreted as the laureates of the five most recent prize-years available before the benchmark's 2025 cutoff (2020, 2021, 2022, 2023, 2024). All six Nobel Prize categories have been awarded continuously across these five years, so each category contributes a non-empty partition. Underlying facts are stable: historical laureates and citations do not change once awarded. Wikipedia list pages were retrieved on 2026-04-29; their data for 2020-2024 has been settled for at least one year and is not expected to drift.",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/List_of_Nobel_laureates_in_Physics",
+    "https://en.wikipedia.org/wiki/List_of_Nobel_laureates_in_Chemistry",
+    "https://en.wikipedia.org/wiki/List_of_Nobel_laureates_in_Physiology_or_Medicine",
+    "https://en.wikipedia.org/wiki/List_of_Nobel_laureates_in_Literature",
+    "https://en.wikipedia.org/wiki/List_of_Nobel_Peace_Prize_laureates",
+    "https://en.wikipedia.org/wiki/List_of_Nobel_Memorial_Prize_laureates_in_Economics"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-04-29T00:00:00Z",
+  "_extraction_notes": "Derived from nobel_categories_2020_2024_laureates by deterministic filter/projection on the parent CSV. Year-range slice 2022 <= Year <= 2024.",
+  "_derived_from": "nobel_categories_2020_2024_laureates",
+  "_derivation_note": "Year-range slice 2022 <= Year <= 2024."
+}

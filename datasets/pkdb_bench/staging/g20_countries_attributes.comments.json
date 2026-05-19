@@ -1,0 +1,64 @@
+{
+  "doubts": [],
+  "comments": [
+    {
+      "scope": "cell",
+      "row": 5,
+      "column": "Population (2026)",
+      "text": "polulation is not in correct format"
+    }
+  ],
+  "chat_events": [
+    {
+      "at": "2026-04-30T23:05:09+00:00",
+      "action": "assistant_response",
+      "summary": "Full pre-registration sweep: Not ready \u2014 2 blocking issues, 1 non-blocking hygiene issue, 0 suggestions.\n\nVerdict: Not ready for registration. The 19-row sovereign-state G20 universe is well scoped an...",
+      "source_cited": "",
+      "source_fetch_enabled": false
+    },
+    {
+      "at": "2026-04-30T23:33:06+00:00",
+      "action": "assistant_response",
+      "summary": "Repair re-audit: Ready \u2014 0 blocking issues, 0 non-blocking hygiene issues, 0 suggestions.\n\nVerdict: Ready for registration. The prior South Africa blocking findings are resolved, and the Russia consis...",
+      "source_cited": "",
+      "source_fetch_enabled": false
+    }
+  ],
+  "chat_summary": "Repair re-audit: Ready \u2014 0 blocking issues, 0 non-blocking hygiene issues, 0 suggestions.\n\nVerdict: Ready for registration. The prior South Africa blocking findings are resolved, and the Russia consis...",
+  "chat_history": [
+    {
+      "role": "user",
+      "content": "Perform a full pre-registration review of staged instance `g20_countries_attributes` using the cited source set and current benchmark policy. Be policy-faithful, not perfectionist: if the source tier is allowed and honestly declared, do not block registration only because stronger sources could exist. At the same time, keep coverage checking strict and assess whether the cited sources truly support the rows and claimed scope. Run the bounded Wiki-family source discovery pass from `SKILL.md` so missing Wikipedia/Wikidata sources are surfaced before broader web validation. Cover row correctness, duplicates and primary keys, normalization, cardinality, source quality and roles, table completeness, cfg metadata correctness including domain, LLM-knowable fit, benchmark fit, and final Ready / Not ready judgment. If table corrections are needed, describe them only; do not write staged CSV/draft/curation files."
+    },
+    {
+      "role": "assistant",
+      "content": "Full pre-registration sweep: Not ready \u2014 2 blocking issues, 1 non-blocking hygiene issue, 0 suggestions.\n\nVerdict: Not ready for registration. The 19-row sovereign-state G20 universe is well scoped and the G20 article supports the staged GDP/population values, but the South Africa row has two source-grounding errors in the per-country attributes. I did not edit the staged CSV, draft, or curation files.\n\n1. South Africa `Official language(s)` omits an official language and uses stale/normalized labels without documentation.\n   - Type/severity: factual, BLOCKING.\n   - Evidence from staged ground-truth source: `https://en.wikipedia.org/wiki/South_Africa`, infobox, lines 492-505, says South Africa has `12 languages` and lists Afrikaans, English, Ndebele, Sepedi, Sesotho, Setswana, South African Sign Language, Swazi, Tshivenda, Xhosa, Xitsonga, and Zulu. The staged CSV row has `Afrikaans; English; Ndebele; Pedi; Sotho; Swazi; Tsonga; Tswana; Venda; Xhosa; Zulu`, which omits South African Sign Language and uses alternate labels (`Pedi`, `Sotho`, `Tsonga`, `Venda`) where the source labels are `Sepedi`, `Sesotho`, `Setswana`, `Tshivenda`, `Xitsonga`.\n   - Impact: the source-supported value is not the staged value. This is blocking because the table title asks for official/national languages and the source-defined claim says per-country articles provide the language cells.\n   - Minimal repair: update South Africa's language cell to include all 12 source-listed languages, preferably using the source labels, or explicitly document any label-normalization rule while still adding South African Sign Language.\n\n2. South Africa `Government type` is incomplete relative to the cited infobox field.\n   - Type/severity: factual, BLOCKING.\n   - Evidence from staged ground-truth source: `https://en.wikipedia.org/wiki/South_Africa`, infobox, line 547, gives Government as `Unitary parliamentary republic with an executive presidency`. The staged CSV has only `Unitary parliamentary republic`.\n   - Impact: the staged value drops the source's government-type qualifier. This is not just punctuation cleanup; `with an executive presidency` is part of the infobox Government field and distinguishes South Africa's parliamentary republic form.\n   - Minimal repair: change the South Africa Government type cell to `Unitary parliamentary republic with an executive presidency`, or document a general rule that government strings are reduced to the first linked/basic form and apply that rule consistently. Given the current source-defined wording, preserving the infobox value is cleaner.\n\n3. Row universe, GDP/population values, and table integrity \u2014 PASS.\n   - Type/severity: factual, PASS.\n   - Evidence from staged ground-truth source: `https://en.wikipedia.org/wiki/G20`, Members section, lines 462-466, states there are 21 members: 19 countries plus the European Union and African Union, and says the second member table gives population and GDP figures. The same article's member country data table at lines 507-527 lists the 19 sovereign-state rows plus EU/AU, with the GDP and Population values used in the staged CSV. For example Argentina through United States match the staged `GDP (USD millions, 2026)` and `Population (2026)` values in lines 507-525, while EU and AU appear separately at lines 526-527 and are explicitly out of scope.\n   - Local check: CSV has 19 rows x 5 columns; `Country` primary key is unique; `source_count` is 20 and equals `len(source_urls)`; no cells are blank; numeric GDP and Population cells are plain integers.\n   - Assessment: excluding EU/AU is acceptable because the title explicitly says `19 sovereign-state members` and the curation record documents why organization rows do not fit the country-attribute schema.\n\n4. Source plan, Wiki-family discovery, and metadata \u2014 PASS with one hygiene issue.\n   - Type/severity: structural, NON-BLOCKING HYGIENE.\n   - Evidence from staged ground-truth source set: `source_urls[0]` is the G20 article for the member universe plus GDP/Population values; `source_urls[1..19]` are the per-country Wikipedia articles for language/government values. This source role split is appropriate for a Tier B manual Wikipedia multi-attribute projection. The bounded Wiki-family discovery pass did not find a more direct Wikipedia source that provides the same 19 sovereign-state universe plus all four requested attributes in one table; the G20 article remains the correct universe/value anchor, with per-country articles needed for language and government type.\n   - Hygiene issue: `curation.json::normalization_decisions` still says South Africa has an `11-language list` hand-assembled from the article. The current source has 12 official languages. This will become incorrect once finding #1 is fixed unless the narrative is updated too.\n   - Metadata fit: `query_category=multi_attribute_projection`, `operation_type=projection`, `domain=Business/Economics`, `temporal_sensitivity=medium`, `gt_construction=manual_wikipedia`, and `source_count=20` are coherent. The table is suitable for parametric-knowledge benchmarking once the South Africa cells are repaired.\n\nFinal counts:\n- Severity: BLOCKING 2 / NON-BLOCKING HYGIENE 1 / SUGGESTION 0.\n- Issue type counts: factual 2 issues / structural 1 issue / scope-related 0 issues.\n- Ready / Not ready: Not ready.\n\nMinimal fixes needed:\n1. Update South Africa `Official language(s)` to include South African Sign Language and align/document source labels.\n2. Update South Africa `Government type` to include `with an executive presidency`, or define and consistently document a general government-type truncation rule.\n3. Update the South Africa language narrative in `curation.json::normalization_decisions` / `_extraction_notes` from 11 languages to the repaired 12-language value."
+    },
+    {
+      "role": "user",
+      "content": "Re-audit repaired staged instance `g20_countries_attributes` after the curation agent addressed the prior audit findings. Use `pkdb-bench-audit` append-only mode. Verify the South Africa Official language(s) and Government type fixes, the Russia consistency change, row count / primary key / source-count sanity, and append a registration-readiness verdict to comments.json only. Do not edit staged CSV, draft, or curation files."
+    },
+    {
+      "role": "assistant",
+      "content": "Repair re-audit: Ready \u2014 0 blocking issues, 0 non-blocking hygiene issues, 0 suggestions.\n\nVerdict: Ready for registration. The prior South Africa blocking findings are resolved, and the Russia consistency change is source-grounded. I did not edit the staged CSV, draft, or curation files.\n\n1. Prior BLOCKING #1, South Africa `Official language(s)` \u2014 RESOLVED.\n   - Type/severity: factual, PASS.\n   - Evidence from staged ground-truth source: `https://en.wikipedia.org/wiki/South_Africa`, infobox, lines 492-505, lists 12 official languages: Afrikaans, English, Ndebele, Sepedi, Sesotho, Setswana, South African Sign Language, Swazi, Tshivenda, Xhosa, Xitsonga, and Zulu.\n   - Evidence from staged artifact: the South Africa CSV cell now contains exactly those 12 source-labelled values in semicolon-delimited form.\n\n2. Prior BLOCKING #2, South Africa `Government type` \u2014 RESOLVED.\n   - Type/severity: factual, PASS.\n   - Evidence from staged ground-truth source: `https://en.wikipedia.org/wiki/South_Africa`, infobox, line 547, gives Government as `Unitary parliamentary republic with an executive presidency`.\n   - Evidence from staged artifact: the South Africa CSV cell now uses that full source phrase.\n\n3. Russia consistency change \u2014 PASS.\n   - Type/severity: factual, PASS.\n   - Evidence from staged ground-truth source: `https://en.wikipedia.org/wiki/Russia`, infobox, lines 525-551, lists Russian as the official/national language and gives Government as `Federal semi-presidential republic under an authoritarian dictatorship` after footnote stripping.\n   - Evidence from staged artifact: the Russia CSV row now preserves the full source phrase, consistent with the repaired verbatim-infobox policy documented in `draft.json::temporal_note` and `curation.json::normalization_decisions`.\n\n4. Row universe, GDP/population values, and metadata sanity \u2014 PASS.\n   - Type/severity: factual, PASS.\n   - Evidence from staged ground-truth source: `https://en.wikipedia.org/wiki/G20`, Members section, lines 462-466, defines the current 21-member G20 scope as 19 countries plus the EU and AU; the member data table at lines 495-516 and following provides `Nom. GDP mil. USD (2026)` and `Population (2026)` values used by the staged country rows.\n   - Local check: CSV remains 19 rows x 5 columns; `Country` primary key is unique; `source_count` is 20 and equals `len(source_urls)`; no cells are blank; GDP and Population values are plain integers.\n   - Assessment: excluding EU/AU remains acceptable because the table title explicitly scopes to 19 sovereign-state members and the curation record documents the organization-row mismatch.\n\nFinal counts:\n- Severity: BLOCKING 0 / NON-BLOCKING HYGIENE 0 / SUGGESTION 0.\n- Issue type counts: factual 0 issues / structural 0 issues / scope-related 0 issues.\n- Ready / Not ready: Ready.\n\nMinimal fixes needed before registration: none."
+    }
+  ],
+  "_audit_metadata": {
+    "audits": [
+      {
+        "audited_by": "codex",
+        "audited_at": "2026-04-30T23:05:09+00:00",
+        "bundle": "Full pre-registration sweep",
+        "verdict": "Not ready",
+        "blocking_issue_count": 2
+      },
+      {
+        "audited_by": "codex",
+        "audited_at": "2026-04-30T23:33:06+00:00",
+        "bundle": "Metadata and registration sweep",
+        "verdict": "Ready",
+        "blocking_issue_count": 0
+      }
+    ]
+  }
+}

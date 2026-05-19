@@ -1,0 +1,36 @@
+{
+  "id": "physicists_who_were_nobel_laureates",
+  "table_title": "Which scientists were both physicists by occupation and Nobel Prize laureates? List the intersection by laureate name with the Nobel year, Nobel category, and laureate's country/countries of citizenship.",
+  "columns": [
+    "Laureate",
+    "Year",
+    "Nobel Category",
+    "Country of Citizenship"
+  ],
+  "primary_key": [
+    "Laureate",
+    "Year",
+    "Nobel Category"
+  ],
+  "column_types": {
+    "Laureate": "key",
+    "Year": "numeric",
+    "Nobel Category": "categorical",
+    "Country of Citizenship": "text"
+  },
+  "query_category": "set_operation",
+  "secondary_category": "",
+  "db_analog": "SELECT laureate, year, category, citizenship FROM (SELECT person AS laureate FROM wikidata_persons WHERE 'physicist' IN occupations) AS physicists INTERSECT (SELECT recipient AS laureate, point_in_time_year AS year, award_category AS category FROM nobel_awards) ORDER BY year, laureate, category",
+  "operation_type": "intersect",
+  "source_count": 1,
+  "domain": "Science/Physics",
+  "temporal_sensitivity": "low",
+  "gt_construction": "sparql_wikidata",
+  "temporal_note": "Wikidata SPARQL endpoint snapshot, accessed 2026-04-30. The universe is the set INTERSECT of (a) Wikidata persons with at least one P106 (occupation) value of Q169470 (physicist) and (b) Wikidata persons with at least one P166 (award received) statement whose value is an instance of Q7191 (Nobel Prize) and whose P585 (point in time) qualifier names a year between 1901 and 2024 inclusive. The 1901-2024 window is anchored explicitly to the pre-2025 LLM-knowable cutoff used elsewhere in this benchmark; the Nobel Foundation announced 2025 prizes in October 2025 (post-cutoff) and those rows are excluded by the year filter even though they are present on Wikidata. The row set is stable on a once-per-year cadence: each October the Nobel Foundation adds new laureate rows for that year's awards, and Wikidata typically updates within days. Historical citizenship cells reflect Wikidata's full P27 history per person, including dissolved states (Wilhelm Röntgen carries 'German Empire; Kingdom of Prussia; Weimar Republic'; Marie Curie carries 'France; Russian Empire; Second Polish Republic'); this is documented as honest source-defined behavior rather than smoothed to a single canonical state.",
+  "source_urls": [
+    "https://query.wikidata.org/sparql"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-04-30T00:00:00Z",
+  "_extraction_notes": "Verbatim seed #9 from datasets/pkdb_bench/docs/example_questions.txt ('What scientists were both physicists and Nobel Prize laureates?'). The most natural reading of the seed wording is the intersection of (people who are physicists by occupation) and (Nobel Prize laureates of any category) — distinct from the Physics-and-Chemistry double-laureate intersection that the older datasets/pkdb_bench/tables/nobel_physics_and_chemistry.csv prototype encodes. Source plan: Tier A — Wikidata SPARQL endpoint, source_count = 1. The canonical SPARQL is at datasets/build_benchmark/sparql_queries/physicists_who_were_nobel_laureates.sparql; running it via datasets/build_benchmark/sparql_to_csv.py returns 424 raw bindings (one per (person, award-year, citizenship) tuple). Post-processing: (1) prefer rdfs:label@en for the Laureate name; fall back to the en.wikipedia.org sitelink title (schema:about + schema:isPartOf) when no English rdfs:label exists; this fallback recovers Marie Curie (Q7186), whose item has French and Polish rdfs:labels but no English one and whose wikibase:label SERVICE returns 'Q7186' for this query shape — without the sitelink fallback she would silently be excluded from the intersection. (2) Aggregate multi-citizenship rows into a single semicolon-delimited 'Country of Citizenship' cell per (Laureate, Year, Nobel Category), sorting alphabetically. (3) Strip the 'Nobel Prize in ' / 'Nobel Prize for ' prefix from the award label so the Nobel Category cell is a short categorical value (Physics, Chemistry, Physiology or Medicine). (4) Dedup on (Laureate, Year, Nobel Category). Result: 285 rows x 4 columns, composite PK on (Laureate, Year, Nobel Category), 0 duplicates. Two laureates appear with multiple rows because they won the prize in two distinct (year, category) combinations: Marie Curie (Physics 1903 + Chemistry 1911) and John Bardeen (Physics 1956 + Physics 1972). Distribution: Physics 219, Chemistry 49, Physiology or Medicine 17 — physicists who won Nobel Prizes outside Physics (Chemistry 49 + Medicine 17 = 66) are the structurally interesting tail of the intersection, whereas the Physics 219 are physicists who won the Nobel Prize in Physics (essentially every individual Physics laureate)."
+}

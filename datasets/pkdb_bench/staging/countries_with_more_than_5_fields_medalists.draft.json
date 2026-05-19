@@ -1,0 +1,34 @@
+{
+  "id": "countries_with_more_than_5_fields_medalists",
+  "table_title": "List the countries that have hosted institutions where Fields Medal recipients were affiliated at the time of their award (mathematics, 1936-2022), with the count of such medalists, whether the count exceeds five (qualifying status), and example medalist names.",
+  "columns": [
+    "Country",
+    "Fields Medalists",
+    "Qualifies (>5)",
+    "Example Medalists"
+  ],
+  "primary_key": [
+    "Country"
+  ],
+  "column_types": {
+    "Country": "key",
+    "Fields Medalists": "numeric",
+    "Qualifies (>5)": "categorical",
+    "Example Medalists": "text"
+  },
+  "query_category": "comparative",
+  "secondary_category": "aggregation",
+  "db_analog": "SELECT affiliation_country AS country, COUNT(*) AS fields_medalists, CASE WHEN COUNT(*) > 5 THEN 'Yes' ELSE 'No' END AS qualifies FROM fields_medalists_with_affiliation_when_awarded WHERE year BETWEEN 1936 AND 2022 AND affiliation_country IS NOT NULL GROUP BY affiliation_country ORDER BY fields_medalists DESC, country ASC",
+  "operation_type": "aggregation",
+  "source_count": 1,
+  "domain": "Science/Mathematics",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia Fields Medal article accessed 2026-04-30. The article's per-medalist table includes an 'Affiliation (when awarded)' column listing the institution + country where each recipient worked at the time of the prize. The staged table aggregates by that affiliation country. Cutoff: 2022 medals (most recent ICM was Helsinki 2022). Next ICM scheduled July 2026 in Philadelphia per the Fields Medal article — 2026 medals not yet announced as of 2026-04-30 staging date. Affiliation-at-award is a stable historical record and will not drift over time. The Soviet Union appears as a country row aggregating the 3 medalists who were affiliated with Soviet institutions before the 1991 dissolution (Novikov 1970, Margulis 1978, Drinfeld 1990). Of the 64 medalists awarded 1936-2022, 63 have a populated 'Affiliation (when awarded)' value and are aggregated in the staged table; one medalist (Grigori Perelman, 2006) has 'None' in the 'Affiliation (when awarded)' column per the Fields Medal article and is excluded from the country tally — Perelman had left the Steklov Institute in late 2005 before the 2006 ICM and held no institutional affiliation at the time of the award. The staged universe is therefore 'countries that have hosted institutions where Fields Medal recipients with a cited Affiliation (when awarded) value were affiliated at time of award'.",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/Fields_Medal"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-04-30T00:00:00Z",
+  "_extraction_notes": "Universe: 11 countries that have hosted institutions where at least one Fields Medal recipient with a populated 'Affiliation (when awarded)' value was affiliated at the time of award between 1936 and 2022. Total Fields Medals awarded in this period: 64 (matches the Fields Medal Wikipedia article's stated count); 63 of 64 medalists have a populated Affiliation (when awarded) and are aggregated in the staged table. The 1 excluded medalist is Grigori Perelman (2006) whose 'Affiliation (when awarded)' is 'None' in the Fields Medal article (Perelman had left the Steklov Institute in late 2005, before the 2006 ICM). Counting rule: each medalist with a populated Affiliation (when awarded) counts toward the country of that field. For medalists with multiple concurrent affiliations listed (Kodaira 1954: 'Princeton / Tokyo / IAS'), the FIRST listed institution's country is used (Princeton, US). For medalists with affiliations spanning two institutions in the same country (Zelmanov 1994: 'Wisconsin-Madison / Chicago' both US), the country is unambiguous. For medalists at Soviet institutions before the 1991 USSR dissolution, the country is 'Soviet Union' (not a successor state). Per-country affiliation tally (cycle-2): United States 26 (Douglas, Selberg, Kodaira, Milnor, Cohen, Smale, Hironaka, Mumford, Fefferman, Quillen, Thurston, Yau, Faltings, Freedman, Jones, Witten, Zelmanov, Borcherds, McMullen, Voevodsky, Okounkov, Tao, Bhargava, Mirzakhani, Venkatesh, Huh); France 16 (Schwartz, Serre, Thom, Grothendieck, Deligne, Connes, Bourgain, Lions, Yoccoz, Kontsevich, Lafforgue, Werner, Châu, Villani, Avila, Duminil-Copin); United Kingdom 9 (Roth, Atiyah, Baker, Thompson, Donaldson, Gowers, Hairer, Birkar, Maynard); Soviet Union 3 (Novikov, Margulis, Drinfeld); Switzerland 3 (Smirnov, Figalli, Viazovska); Finland 1 (Ahlfors); Germany 1 (Scholze); Israel 1 (Lindenstrauss); Italy 1 (Bombieri); Japan 1 (Mori); Sweden 1 (Hörmander). Total in CSV: 26+16+9+3+3+1+1+1+1+1+1 = 63 (= 64 medalists − 1 with None affiliation). Threshold for the 'Qualifies (>5)' boolean column: countries with strictly more than 5 medalists qualify. Result: 3 countries qualify (US 26, France 16, UK 9); 8 countries do not qualify (≤3 medalists each). Schema: composite-free PK on Country (each country is unique); numeric count column; categorical Yes/No qualifier; delimited text examples column (semicolon-separated to avoid CSV-quoting). Cycle-1 audit fix (relation-conflation BLOCKING): the cycle-0 staging incorrectly aggregated by primary nationality (which the Fields Medal article does not directly tabulate — it tabulates 'Affiliation (when awarded)' and 'Affiliation (current/last)'). Cycle-1 switched to affiliation-at-award. Cycle-2 audit fix (Russia not supported under declared rule, BLOCKING): cycle-1's Russia row had Perelman (2006), but Perelman's 'Affiliation (when awarded)' is 'None' per the Fields Medal article — the 'Russia' attribution came from Perelman's 'Affiliation (current/last)', which is NOT the declared aggregation column. Cycle-2 fix: removed the Russia row from the staged table (universe 12 → 11 countries; CSV total 64 → 63); documented the 1-medalist exclusion in temporal_note, _extraction_notes, decision_log, and source_coverage_notes. The universe is now strictly 'countries with at least one medalist whose Affiliation (when awarded) is populated and resolves to that country'. Domain note: Science/Mathematics rather than the originally proposed Education/Higher Education NEW family — the Fields Medal is a research-recognition award, not an educational outcome metric. Documented in decision_log; the higher-leverage gap fill is the comparative category (currently 0/5 staged) rather than the Education domain (currently 0/16 family target)."
+}

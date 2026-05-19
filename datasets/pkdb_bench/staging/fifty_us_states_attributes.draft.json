@@ -1,0 +1,38 @@
+{
+  "id": "fifty_us_states_attributes",
+  "table_title": "List the 50 United States, with the capital city, the largest city by population, the year of statehood (ratification or admission to the Union), the 2020 census population, and the total area in square miles.",
+  "columns": [
+    "State",
+    "Capital",
+    "Largest City",
+    "Statehood Year",
+    "Population (2020)",
+    "Total Area (sq mi)"
+  ],
+  "primary_key": [
+    "State"
+  ],
+  "column_types": {
+    "State": "key",
+    "Capital": "categorical",
+    "Largest City": "categorical",
+    "Statehood Year": "numeric",
+    "Population (2020)": "numeric",
+    "Total Area (sq mi)": "numeric"
+  },
+  "query_category": "multi_attribute_projection",
+  "secondary_category": "factual_lookup",
+  "db_analog": "SELECT state, capital, largest_city, statehood_year, population_2020, total_area_sq_mi FROM us_states ORDER BY state",
+  "operation_type": "projection",
+  "source_count": 1,
+  "domain": "Politics/Government",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia 'List of states and territories of the United States' master article, accessed 2026-05-11. Universe is the 50 US states as listed in the article's main wikitable (the article's first wikitable after the boilerplate; pandas.read_html identifies it as tables[1]); the District of Columbia (a federal district, not a state) and the 5 inhabited US territories (American Samoa, Guam, Northern Mariana Islands, Puerto Rico, US Virgin Islands) are explicitly excluded by the master article's table structure — they live in separate tables[2] and tables[3] respectively and are not within the 50-state filter. Per-row cells are taken verbatim from the master wikitable's columns: State name (with the '[B]' commonwealth footnote suffix stripped from Kentucky, Massachusetts, Pennsylvania, and Virginia); Capital and Largest City from the 'Cities' multi-column header; Statehood Year as the 4-digit year component of the 'Ratification or admission' date column (which carries values like 'Dec 14, 1819' for state admission or 'Jul X, 1788' for the 9 original-ratifier states; in all 50 rows the year is unambiguous); Population (2020) from the 2020 Census column; Total Area (sq mi) from the mi² sub-column of the 'Total area' multi-column header. The 2020 Census is the most recent decennial census and is the canonical population source on Wikipedia; the next refresh (2030 Census) will update these cells but the row set and other attributes are stable on a multi-decade horizon (no statehood admissions or geographic-area changes since Hawaii 1959).",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/List_of_states_and_territories_of_the_United_States"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-05-11T00:00:00Z",
+  "_extraction_notes": "Verbatim seed #17 from `example_questions.txt` ('50 US states × attrs') — the last verbatim untouched seed in the example_questions.txt working set after seed #18 (US presidents) was staged earlier this session. **Saturates `multi_attribute_projection` at 8/8 target — first category to fully clear target.** Source plan: Tier B Wikipedia, source_count = 1 — the master 'List of states and territories of the United States' Wikipedia article supplies all per-row cells via its main wikitable. Pipeline: (1) fetch the cited Wikipedia article HTML, (2) parse with pandas.read_html (using default lxml/bs4 backend) which expands the multi-column header structure; the main wikitable is tables[1] (tables[0] is a navigation sidebar; tables[1] is the 50-state main table; tables[2] is a single-row DC table; tables[3] is the 5-territory table), (3) take 50 rows directly with no filtering — every row in tables[1] is a state, (4) for each state, take the name verbatim with '[B]' footnote markers stripped (4 of 50 rows: Kentucky, Massachusetts, Pennsylvania, Virginia — the four states officially designated as 'Commonwealths' get a '[B]' marker in the source's State column), take Capital and Largest City verbatim from the 'Cities' multi-column header sub-columns, extract Statehood Year as the 4-digit year from the 'Ratification or admission' date string (regex '(\\d{4})' captures the year component cleanly for all 50 rows, ranging 1787 Delaware to 1959 Hawaii/Alaska), take Population (2020) as the 2020 Census integer, take Total Area (sq mi) as the mi² sub-column integer. Result: 50 rows × 6 columns, PK on State, 0 duplicates. Statehood Year range: 1787 (Delaware first to ratify Constitution) to 1959 (Hawaii/Alaska last admitted); 11 of the 13 original states have ratification years of 1787 or 1788 in the staged Year column — 3 with 1787 (Delaware Dec 1787, Pennsylvania Dec 1787, New Jersey Dec 1787) and 8 with 1788 (Georgia Jan 1788, Connecticut Jan 1788, Massachusetts Feb 1788, Maryland Apr 1788, South Carolina May 1788, New Hampshire Jun 1788, Virginia Jun 1788, New York Jul 1788). The 9-state threshold for the Constitution to take effect was reached when New Hampshire ratified in June 1788; Virginia and New York ratified shortly after, also in 1788, bringing the 1787/1788 cohort to 11 states. The remaining 2 of the 13 original states have later ratification years: North Carolina 1789 and Rhode Island 1790. The source's 'Ratification or admission' date for these 13 is the date of Constitutional ratification, not a later statehood-admission date. Population (2020) range: 576,851 (Wyoming) to 39,538,223 (California). Total Area range: 1,545 sq mi (Rhode Island) to 665,384 sq mi (Alaska — far the largest by area, nearly 2.5x larger than Texas at 268,596 sq mi). Capital-vs-Largest-City: 17 of 50 states have Capital = Largest City (Phoenix AZ, Little Rock AR, Denver CO, Atlanta GA, Honolulu HI, Boise ID, Indianapolis IN, Des Moines IA, Jackson MS, Boston MA, Oklahoma City OK, Providence RI, Nashville TN, Salt Lake City UT, Columbus OH, Cheyenne WY, Charleston WV) — the other 33 states have a non-capital largest city (e.g., New York's Albany capital vs New York City largest; California's Sacramento vs Los Angeles; Illinois's Springfield vs Chicago; Texas's Austin vs Houston; Florida's Tallahassee vs Jacksonville — these capital-vs-largest splits are the most LLM-calibration-rich cells in the schema because the LLM may confuse the two columns for prominent states). Confidence gradient is real: very-LLM-knowable cells include the major-state attributes (California 39M / 163,695 sq mi, Texas 29M / 268,596 sq mi, New York 20M / 54,555 sq mi); harder calibration cells include the smaller-population states (Wyoming 576k, Vermont 643k, Alaska 733k, North Dakota 779k, South Dakota 887k — the 5 least-populous states), the obscure capitals (Pierre SD, Bismarck ND, Montpelier VT, Frankfort KY, Juneau AK), and the statehood-year tail (Arizona/New Mexico both 1912, Oklahoma 1907, Hawaii/Alaska both 1959)."
+}

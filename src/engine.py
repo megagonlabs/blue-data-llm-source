@@ -23,7 +23,7 @@ class MapReduceEngine:
     """
     
     
-    def __init__(self, llm_client: LLMClient, planner=None, max_partitions: int = 50, default_execution_mode: str = "batch", map_validator=None, global_validator=None, completeness_strategy: str = "heuristic", continuation_pk_str_limit: int = 50):
+    def __init__(self, llm_client: LLMClient, planner=None, max_partitions: int = 50, default_execution_mode: str = "batch", map_validator=None, global_validator=None, completeness_strategy: str = "heuristic", continuation_pk_str_limit: int = 50, output_confidence: bool = False):
         self.llm = llm_client
         self.planner = planner
         self.max_partitions = max_partitions
@@ -32,6 +32,7 @@ class MapReduceEngine:
         self.global_validator = global_validator # Runs on final result (Reduce side)
         self.completeness_strategy = completeness_strategy
         self.continuation_pk_str_limit = continuation_pk_str_limit
+        self.output_confidence = output_confidence
         # self.validator = Validator(llm_client) # Old validator deprecated
 
     def _truncate_continuation_value(self, value: Any) -> str:
@@ -89,10 +90,10 @@ class MapReduceEngine:
             f"(do NOT repeat these exact rows):\n{json.dumps(seen_payload)}"
         )
         
-    async def execute(self, plan: DataPlanRequest, context: dict = None) -> Tuple[pd.DataFrame, LLMMetrics]:
+    async def execute(self, plan: DataPlanRequest, context: dict = None) -> Tuple[pd.DataFrame, Optional[pd.DataFrame], LLMMetrics]:
         context = context or {}
         logger.info(f"Starting execution of {len(plan.map_tasks)} map tasks.")
-        
+
         # Artifact Persistence: Save Tasks
         if "output_dir" in context:
             import os
@@ -104,7 +105,7 @@ class MapReduceEngine:
                     t_dict = asdict(t)
                     if t.parent: t_dict["parent"] = t.parent.query # Flatten parent
                     tasks_log.append(t_dict)
-                    
+
                 tasks_artifact = {
                     "tasks": tasks_log
                 }
@@ -112,24 +113,39 @@ class MapReduceEngine:
                     json.dump(tasks_artifact, f, indent=2)
             except Exception as e:
                 logger.warning(f"Failed to save tasks artifact: {e}")
-        
+
         # 1. Map Phase
         # Concurrency managed by LLMClient internally
-        
-        async def run_task(task: DataTask) -> Tuple[List[Dict], Optional[LLMMetrics]]:
+
+        async def run_task(task: DataTask) -> Tuple[List[Dict], List[Dict], Optional[LLMMetrics]]:
             return await self._execute_map_task(task, context=context)
-                
+
         tasks = [run_task(t) for t in plan.map_tasks]
         results_and_metrics = await asyncio.gather(*tasks)
-        
+
         results = [r[0] for r in results_and_metrics]
-        metrics_list = [r[1] for r in results_and_metrics if r[1]]
+        conf_results = [r[1] for r in results_and_metrics]
+        metrics_list = [r[2] for r in results_and_metrics if r[2]]
         total_metrics = sum_metrics(metrics_list) if metrics_list else LLMMetrics()
-        
+
         # 2. Reduce Phase
         logger.info("Aggregating results...")
         df = self._reduce(results, plan.schema.columns)
-        
+
+        # Build confidence DataFrame if output_confidence mode
+        conf_df: Optional[pd.DataFrame] = None
+        if self.output_confidence:
+            flat_conf = []
+            for batch in conf_results:
+                flat_conf.extend(batch)
+            if flat_conf:
+                conf_df = pd.DataFrame(flat_conf)
+                # Ensure same column order as data df
+                for col in df.columns:
+                    if col not in conf_df.columns:
+                        conf_df[col] = 1.0
+                conf_df = conf_df[list(df.columns)]
+
         # 3. Global Validation (Deduplication, etc)
         if self.global_validator:
             logger.info("Running Global Validator (Reduce Side)...")
@@ -138,19 +154,20 @@ class MapReduceEngine:
             df, val_metrics = await self.global_validator.run(df, context=val_context)
             if val_metrics:
                 total_metrics = total_metrics + val_metrics
-        
+
         logger.info(f"Execution complete. Generated {len(df)} rows. Total Tokens: {total_metrics.total_tokens}")
-        return df, total_metrics
+        return df, conf_df, total_metrics
         
-    async def _execute_map_task(self, task: DataTask, context: dict = None) -> Tuple[List[Dict], Optional[LLMMetrics]]:
+    async def _execute_map_task(self, task: DataTask, context: dict = None) -> Tuple[List[Dict], List[Dict], Optional[LLMMetrics]]:
         """Runs a single partition query"""
         context = context or {}
-        prompt = task.to_prompt()
+        prompt = task.to_prompt(with_confidence=self.output_confidence)
         
         try:
             # Dispatch based on mode
             if hasattr(task, 'execution_mode') and task.execution_mode == 'row_by_row':
-                return await self._execute_row_by_row(task, context)
+                data, metrics = await self._execute_row_by_row(task, context)
+                return data, [], metrics
                 
             # Default Batch Mode
             # Extraction Temperature from context or default
@@ -345,14 +362,26 @@ class MapReduceEngine:
                         
                 # Convert back to list
                 data = df.to_dict('records')
-                    
-                return data, metrics
+
+                # Extract confidence records if output_confidence mode
+                conf_records = []
+                if self.output_confidence:
+                    primary_keys = task.schema.primary_keys if task.schema and task.schema.primary_keys else []
+                    for item in data:
+                        conf_dict = item.pop("_confidence", None)
+                        if conf_dict and isinstance(conf_dict, dict) and primary_keys:
+                            conf_row = {pk: item.get(pk) for pk in primary_keys}
+                            conf_row.update({col: float(v) for col, v in conf_dict.items()
+                                             if col not in primary_keys and isinstance(v, (int, float))})
+                            conf_records.append(conf_row)
+
+                return data, conf_records, metrics
             else:
-                return [], metrics
+                return [], [], metrics
 
         except Exception as e:
             logger.error(f"Task {task.trace_id} CRITICAL FAILURE: {e}")
-            return [], None
+            return [], [], None
 
     def _save_task_io(self, task, prompt, response, parsed_count, tokens, context):
         import os

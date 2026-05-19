@@ -1,0 +1,36 @@
+{
+  "id": "periodic_table_groups_first_three_elements_by_atomic_number",
+  "table_title": "For each of the 18 IUPAC-numbered periodic table groups (Group 1 through Group 18), list the three lowest-atomic-number elements with symbol and atomic number. Lanthanides and actinides (the 14 f-block columns) are unnumbered per IUPAC and out of scope. Group 1 includes Hydrogen as its lowest-atomic-number member per IUPAC group-membership (NOT the chemical-family 'alkali metals' framing which excludes H). Group 3 uses the IUPAC 2021 ruling (Sc, Y, Lu, Lr) per the current Wikipedia `Group 3 element` article; the historical La/Ac framing is documented in curation.json::decision_log as an alternative that the staged set explicitly does not use.",
+  "columns": [
+    "Group",
+    "Element",
+    "Symbol",
+    "Atomic Number"
+  ],
+  "primary_key": [
+    "Group",
+    "Element"
+  ],
+  "column_types": {
+    "Group": "key",
+    "Element": "key",
+    "Symbol": "categorical",
+    "Atomic Number": "numeric"
+  },
+  "query_category": "hierarchical_decomposition",
+  "secondary_category": null,
+  "db_analog": "SELECT 'Group ' || g.group_number AS group_label, e.element_name AS element, e.symbol, e.atomic_number FROM iupac_groups g JOIN elements e ON e.iupac_group_id = g.group_number WHERE e.atomic_number IN (SELECT atomic_number FROM elements WHERE iupac_group_id = g.group_number ORDER BY atomic_number ASC LIMIT 3) ORDER BY g.group_number ASC, e.atomic_number ASC",
+  "operation_type": "join",
+  "source_count": 2,
+  "domain": "Science/Chemistry",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia `Periodic table` master article (universe + value role: defines IUPAC group-membership including H in Group 1, and supplies Element/Symbol/Atomic Number cell values) + `Group (periodic table)` master article (universe role: defines the 18-numbered-group set and the f-block-unnumbered exclusion). Both accessed 2026-05-16. source_count = 2 registered. Eighteen per-group Wikipedia articles (Alkali metal, Alkaline earth metal, Group 3 element through Group 12 element, Boron group, Carbon group, Pnictogen, Chalcogen, Halogen, Noble gas) were consulted as validation cross-checks during curation but per the artifact contract do NOT count toward source_count and are NOT registered in source_urls — they live in curation.json::source_coverage_notes::validation_cross_checks as provenance prose. Group 1's Alkali metal validation source is non-uniform (excludes H from its chemical-family enumeration) and is documented as such. Universe = 54 row-pairs (18 groups × 3 lowest-atomic-number elements per group). temporal_sensitivity = low because atomic numbers and IUPAC group-membership are stable on benchmark timescales; the Group 3 ruling (Sc, Y, Lu, Lr) was formalized by IUPAC in 1988 and reaffirmed in 2021 per the current Wikipedia `Group 3 element` validation article. The 'three lowest-atomic-number elements per group' rule is deterministic (atomic number is a total ordering); no curator-judgment selection of 'representative' elements (audit-cycle-1 amendment dropped the misleading 'representative' framing).",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/Periodic_table",
+    "https://en.wikipedia.org/wiki/Group_(periodic_table)"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-05-16T00:00:00Z",
+  "_extraction_notes": "Hierarchical_decomposition instance — 18 IUPAC-numbered periodic table groups partitioned by group-number, each partition enumerating its 3 lowest-atomic-number element members. Composite PK (Group, Element) matches the precedent set by `apollo_lunar_landing_mission_crews` (Mission, Astronaut) + `foundational_painters_of_major_modern_art_movements` (Movement, Painter). Brings `hierarchical_decomposition` from gap 3 to **gap 2** (3 of 5 staged). Science/Chemistry EXISTING subdomain — Science family extends to 13 instances; Science/Chemistry subdomain extends from 1 (`chemical_elements_discovered_1869_1945`, factual_lookup) to 2 instances. NEW `abstract-categories/chemical-groups` fine-class extending the abstract-categories bucket from 5 to 6 instances (joining religions×2, languages, philosophical-schools, architectural-styles). Schema: 4 cols (Group composite-PK-1 + Element composite-PK-2 + Symbol + Atomic Number) per audit-cycle-1 amendment #5; Atomic Number earns its column as the ranking attribute that defines row selection. Sort: numeric group-number ASC primary (NOT lexicographic — 'Group 1' through 'Group 18' parsed as integers 1 through 18; lexicographic 'Group 1, Group 10, ...' would mis-order) + Atomic Number ASC secondary per audit-cycle-2 amendment #1 explicit sort contract. Universe: 18 × 3 = 54 rows. claim_type = `source_defined` per audit-cycle-1 amendment #1 — the universe rule 'three lowest-atomic-number elements per IUPAC group' is deterministic and source-defined (no curator judgment after the universe-anchor and ranking-rule are stated). Source plan: 2 registered sources (Periodic table = universe + value; Group (periodic table) = universe) + 18 validation sources (per-group articles) documented in curation.json::source_coverage_notes::validation_cross_checks as provenance prose (not registered URLs per the artifact contract). Per audit-cycle-2 amendment #2: per-group articles serve a validation role, not a universe role; Group 1's Alkali metal validation article is specifically non-uniform because it excludes H from its chemical-family enumeration while the IUPAC periodic table (the universe source) includes H in Group 1. Audit-cycle-1 + cycle-2 amendments applied: (1) renamed from 'representative_elements' to 'first_three_elements_by_atomic_number' for source-faithful framing; (2) universe source switched from chemical-family pages (Alkali metal, Halogen, Noble gas) to IUPAC periodic-table pages (Periodic table + Group (periodic table)) — this fixes the Hydrogen issue (Group 1 = H, Li, Na under IUPAC); (3) 'lowest three atomic numbers' wording (not ambiguous 'top 3'); (4) Group 3 = Sc, Y, Lu per IUPAC 2021 ruling (historical La/Ac alternative documented in decision_log); (5) 4-col schema kept; (6) entity class = abstract-categories/chemical-groups per audit-cycle-1 amendment #6 (PK is a conceptual category, not an individual chemical entity — more semantically consistent with abstract-categories bucket precedent than taxonomic-entities). Entity class: `abstract-categories/chemical-groups` (NEW fine-class in abstract-categories bucket, joining religions×2, languages, philosophical-schools, architectural-styles)."
+}

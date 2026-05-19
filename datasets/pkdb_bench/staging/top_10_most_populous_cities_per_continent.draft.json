@@ -1,0 +1,46 @@
+{
+  "id": "top_10_most_populous_cities_per_continent",
+  "table_title": "For each populated continent, list the top 10 most populous cities ranked by the population basis the cited source uses (city proper, urban population, or urban area), with their country, population, the source's population basis, and the year of the cited estimate.",
+  "columns": [
+    "Continent",
+    "Rank",
+    "City",
+    "Country",
+    "Population",
+    "Population basis",
+    "Year"
+  ],
+  "primary_key": [
+    "Continent",
+    "Rank"
+  ],
+  "column_types": {
+    "Continent": "key",
+    "Rank": "rank",
+    "City": "key",
+    "Country": "categorical",
+    "Population": "numeric",
+    "Population basis": "categorical",
+    "Year": "text"
+  },
+  "query_category": "top_k",
+  "secondary_category": "hierarchical_decomposition",
+  "db_analog": "SELECT continent, ROW_NUMBER() OVER (PARTITION BY continent ORDER BY population DESC) AS rank, city, country, population, population_basis, year FROM source_defined_continent_city_rankings QUALIFY rank <= 10 ORDER BY continent, rank",
+  "operation_type": "projection",
+  "source_count": 6,
+  "domain": "Geography/Cities",
+  "temporal_sensitivity": "medium",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia per-continent city-ranking master articles, accessed 2026-04-30. Each continent's source page applies its own population convention and ranking rule, and the staged instance commits to those source-defined conventions rather than imposing a single global rule. Africa: 'List of cities in Africa by population' ranks by urban-population estimate (Cairo at 23.2M is the urban-population figure, not city-proper 9.8M); all 10 entries cite a 2026 World Population Review estimate. Asia: 'List of cities in Asia by population' is a multi-population table; the staged Population column is the City proper sub-column, and the Year column carries the source's parenthetical year qualifier when present (5 of 10 Asia rows carry a year, 5 do not). Europe: 'List of European cities by population within city limits' is strictly city-proper / official municipal population. North America and South America: same Wikipedia convention (city proper). Oceania: 'List of cities in Oceania by population' ranks by Urban area population (Significant Urban Area for Australian entries) rather than city proper; this is the only convention the source page provides. Population numbers update annually as new estimates are published; this instance is a 2026-04-30 snapshot. Antarctica is excluded because it has no permanent cities. Istanbul appears once on Asia's list (Rank 8, city-proper 14.66M, no year qualifier on source page) and once on Europe's list (Rank 1, official 2025 estimate 15.75M); both are kept because each continent's source page lists Istanbul independently with its own population value.",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/List_of_cities_in_Africa_by_population",
+    "https://en.wikipedia.org/wiki/List_of_Asian_cities_by_population_within_city_limits",
+    "https://en.wikipedia.org/wiki/List_of_European_cities_by_population_within_city_limits",
+    "https://en.wikipedia.org/wiki/List_of_North_American_cities_by_population",
+    "https://en.wikipedia.org/wiki/List_of_cities_in_South_America",
+    "https://en.wikipedia.org/wiki/List_of_cities_in_Oceania_by_population"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-04-30T00:00:00Z",
+  "_extraction_notes": "Adapted from seed #7 ('Name the 10 most populous cities in Asia') from datasets/pkdb_bench/docs/example_questions.txt. Adaptation: extended the universe from one continent (Asia) to all populated continents (Africa, Asia, Europe, North America, South America, Oceania), giving 60 rows instead of 10. The verbatim 10-row Asia-only version barely passes the >=10 row-count gate and provides only one partition; the per-continent adaptation exercises the partition structure that makes top_k meaningful for the benchmark's confidence-per-cell calibration. Antarctica is excluded because it has no permanent cities. Construction was rowspan-aware HTML extraction of the main wikitable on each per-continent Wikipedia article: Africa (Rank/City/Country/Population/Year), Asia (City/Nation/[Image]/[multi-population sub-columns]), Europe (City/Country/Official population/Date/Ref), North America (Rank/City/Image/Country/Population/Year), South America (Rank/Name/Image/Country/Population/Year), Oceania (City/Country/Urban area/Notes/Image). For Asia the City proper sub-column was used; for Oceania the Urban area column was used (the source provides no city-proper column). Footnote markers and biographical/methodological parentheticals were stripped from City, Country, and Population cells. Year was normalized from mixed source formats ('2026[1]', '31 Dec 2025', '1 Jan 2025', 'June 2021', '2020[c]', etc.) to a 4-digit year only; the five Asia rows whose source cell carries no year (Shanghai, Beijing, Istanbul, Tokyo, Metro Manila) carry the explicit sentinel value 'not specified' rather than a blank cell. The Population basis column makes the per-continent ranking convention explicit per row: 'urban population' for Africa (10 rows), 'city proper' for Asia, Europe, North America, and South America (40 rows), and 'urban area' for Oceania (10 rows). Population is the numeric value verbatim from the source cell with separator commas and footnote markers removed. Result: 60 rows x 7 columns, composite PK on (Continent, Rank), 0 duplicates. Istanbul intentionally appears twice (once on Asia rank 8 with a 14.66M city-proper value, once on Europe rank 1 with a 15.75M official 2025 estimate) because both per-continent source pages list it under their own ranking conventions; this is honest source-defined behavior rather than a duplicate-row bug. Honolulu appears on Oceania rank 7 because the cited Wikipedia source counts it under Oceania (Hawaii is geographically Oceanian), even though its country is the United States."
+}

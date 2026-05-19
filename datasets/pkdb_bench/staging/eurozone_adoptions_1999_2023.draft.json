@@ -12,7 +12,7 @@
     "Country": "key",
     "Adoption Year": "numeric"
   },
-  "query_category": "temporal",
+  "query_category": null,
   "secondary_category": "",
   "db_analog": "SELECT country, adoption_year FROM eurozone_accessions WHERE adoption_year BETWEEN 1999 AND 2023 ORDER BY adoption_year, country",
   "operation_type": "filter",

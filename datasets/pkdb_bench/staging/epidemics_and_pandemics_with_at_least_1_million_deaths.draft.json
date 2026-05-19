@@ -1,0 +1,36 @@
+{
+  "id": "epidemics_and_pandemics_with_at_least_1_million_deaths",
+  "table_title": "List epidemics and pandemics with at least 1 million deaths per Wikipedia's `List of epidemics and pandemics` master article — the master's own table is literally titled 'Epidemics and pandemics with at least 1 million deaths' so the staged universe inherits the master's canonical threshold verbatim. 19 rows preserved in master display order (rank ASC with a rank-1 tied pair where the master displays Plague of Justinian first + 1918 'Spanish' influenza pandemic second; ranks 2-18 each have one row, total 19 rows including the rank-1 tie). With disease/pathogen, source-verbatim death-toll range text (preserving '(as of 2026)' notation for ongoing HIV/AIDS + COVID-19 pandemics), years range, and location. Master accessed 2026-05-19.",
+  "columns": [
+    "Event",
+    "Disease",
+    "Death Toll",
+    "Years",
+    "Location"
+  ],
+  "primary_key": [
+    "Event"
+  ],
+  "column_types": {
+    "Event": "key",
+    "Disease": "categorical",
+    "Death Toll": "categorical",
+    "Years": "categorical",
+    "Location": "categorical"
+  },
+  "query_category": "comparative",
+  "secondary_category": null,
+  "db_analog": "SELECT e.event, e.disease, e.death_toll, e.years, e.location FROM epidemics_and_pandemics_master e WHERE e.death_toll_midpoint_millions >= 1 ORDER BY e.master_rank ASC, e.master_display_order ASC",
+  "operation_type": "filter",
+  "source_count": 1,
+  "domain": "Health/Epidemiology",
+  "temporal_sensitivity": "medium",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia `List of epidemics and pandemics` master article (roles = [universe, ranking, value]: scope-defines the universe via the master's verbatim table title 'Epidemics and pandemics with at least 1 million deaths', supplies the rank ordering per master's averaged-death-toll-midpoint convention, supplies Event / Disease / Death Toll / Years / Location cells verbatim from the master ranked table), accessed 2026-05-19. source_count=1 registered. Per-epidemic Wikipedia articles + WHO/CDC official records are validation-only context and NOT registered per the artifact contract. Master's verbatim ranking convention: 'For a given epidemic or pandemic, the average of its estimated death toll range is used for ranking. If the death toll averages of two or more epidemics or pandemics are equal, then the smaller the range, the higher the rank.' temporal_sensitivity = medium because HIV/AIDS + COVID-19 are ongoing pandemics with death tolls updating — master cells preserve '(as of 2026)' notation for these. Death Toll cells are source-verbatim TEXT (NOT numeric midpoint) per audit-cycle-1 amendment #1 — the source's ranges are wide, historically uncertain, and sometimes ongoing/as-of dated; range text 'X–Y million' is preserved with em-dash including the '(as of 2026)' suffix for ongoing pandemics. Years cells preserve em-dash + 'present' notation verbatim. Location cells preserve master multi-region text verbatim ('North Africa, Europe, Western Asia'; 'Europe, Asia, North Africa'; etc.). Sort = master display order: rank ASC, with the rank-1 tied pair preserving master's displayed order (Plague of Justinian first, 1918 'Spanish' influenza pandemic second). Universe count: 19 rows (ranks 2-18 each have 1 row = 17 rows + rank-1 tied pair = 2 rows; 17 + 2 = 19 total). The single-PK Event column carries 19 unique event names.",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/List_of_epidemics_and_pandemics"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-05-19T00:00:00Z",
+  "_extraction_notes": "Comparative instance — single-table threshold-on-master-inclusion pattern (universe = inclusion in the master article's table literally titled 'Epidemics and pandemics with at least 1 million deaths'). Same source-defined deterministic-threshold pattern as `largest_asteroids_with_geometric_mean_diameter_above_250_km` (asteroid diameter ≥ 250 km) + `skyscrapers_at_least_500_meters_worldwide` (architectural height ≥ 500 m) + `uiaa_recognized_eight_thousanders` (UIAA elevation > 8000m). The master's own table title carries the threshold (≥1 million deaths via averaged-death-toll-midpoint per master's stated convention); staged universe inherits the master's threshold verbatim — strongest possible source_defined claim. Pushes `comparative` from 5/5 (floor met, just-saturated) to **6/5** = first floor-lift in the +13 path toward 102-instance target (Option B proportional 20% growth). **Health/Epidemiology EXTENDS from 1 to 2 instances** (joins `major_modern_epidemics_and_pandemics_1918_2025` which is the causal-category instance) — strongest under-rep family-balance win in the corpus before this lock; only Health was at 1 instance after Food extended to 2 by FAOSTAT crops. events/epidemics EXISTING fine-class extends 1→2 (held by `major_modern_epidemics_and_pandemics_1918_2025`). Bucket events at 11 fine-classes stays unchanged. Schema: 5 cols (Event PK + Disease + Death Toll + Years + Location) per audit-cycle-1 amendment #3 — Event PK replaces cycle-0's awkward 'Pandemic/Epidemic' slash form; Percentage of Population Lost column DROPPED per amendment #4 (sparse '–' cells). Sort = master display order per audit-cycle-1 amendment #2 — preserves master's rank-1 tied display (Justinian first, Spanish flu second); explicitly NOT described as 'curator chronological tiebreak'. Death Toll cells = source-verbatim text range per audit-cycle-1 amendment #1 — NO numeric midpoint staging; '(as of 2026)' notation preserved for HIV/AIDS + COVID-19 per amendment #5. Audit-cycle-1 per-question rulings applied: (Q1) Death Toll source-verbatim text; (Q2) PK header 'Event'; (Q3) Disease verbatim; (Q4) Years verbatim with em-dash + 'present'; (Q5) Location verbatim; (Q6) sort = master rank/display order; (Q7) rank-1 tie preserves master display, not curator chronological; (Q8) Percentage Lost dropped; (Q9) overlap with major_modern_epidemics_1918_2025 acceptable (different category + scope + schema); (Q10) deterministic rule = source-defined table inclusion at ≥1M deaths; (Q11) Health/Epidemiology confirmed; (Q12) temporal_sensitivity = medium with '(as of 2026)' preserved. Universe scope clause verbatim from master: 'For a given epidemic or pandemic, the average of its estimated death toll range is used for ranking. If the death toll averages of two or more epidemics or pandemics are equal, then the smaller the range, the higher the rank.' Total 19 rows preserve master's rank-1 tied pair as the 2 highest-rank entries."
+}

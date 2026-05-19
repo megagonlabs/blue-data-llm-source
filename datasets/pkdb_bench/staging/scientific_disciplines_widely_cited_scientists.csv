@@ -1,0 +1,26 @@
+Discipline,List Position,Scientist,Nationality,Era,Contribution
+Astronomy,1,Nicolaus Copernicus,Polish,1473-1543,Formulated the heliocentric model of the universe placing the Sun at its center.
+Astronomy,2,Johannes Kepler,German,1571-1630,Formulated the laws of planetary motion.
+Astronomy,3,Galileo Galilei,Italian,1564-1642,Made original contributions to the science of motion through experimental and mathematical methods and made early telescopic discoveries.
+Astronomy,4,William Herschel,German-British,1738-1822,Discovered infrared radiation and the planet Uranus.
+Astronomy,5,Edwin Hubble,American,1889-1953,Demonstrated that the universe is expanding (Hubble's law).
+Biology,1,Carl Linnaeus,Swedish,1707-1778,"Formalised binomial nomenclature, the modern system of naming organisms."
+Biology,2,Charles Darwin,English,1809-1882,Developed the theory of evolution by natural selection.
+Biology,3,Louis Pasteur,French,1822-1895,"Discovered the principles of vaccination, microbial fermentation, and pasteurization."
+Biology,4,Gregor Mendel,Austrian,1822-1884,Founded the modern science of genetics through his pea-plant experiments.
+Biology,5,Francis Crick,English,1916-2004,Co-deciphered (with James Watson) the double-helix structure of the DNA molecule in 1953.
+Chemistry,1,Antoine Lavoisier,French,1743-1794,Discovered the role of oxygen in combustion and is credited with founding modern chemistry.
+Chemistry,2,John Dalton,English,1766-1844,Laid the foundations of modern atomic theory and stoichiometric chemistry.
+Chemistry,3,Dmitri Mendeleev,Russian,1834-1907,Formulated the periodic law and created an early version of the periodic table.
+Chemistry,4,Marie Curie,Polish-French,1867-1934,"Discovered the elements polonium and radium, pioneering research on radioactivity."
+Chemistry,5,Linus Pauling,American,1901-1994,Elucidated the nature of the chemical bond and the structure of complex substances.
+Mathematics,1,Euclid,Ancient Greek,fl. 300 BC,"Authored the Elements treatise, establishing the foundations of geometry."
+Mathematics,2,Leonhard Euler,Swiss,1707-1783,"Founded graph theory and topology and is regarded as the most prolific mathematician of the 18th century."
+Mathematics,3,Carl Friedrich Gauss,German,1777-1855,Proved the fundamental theorem of algebra and contributed broadly across number theory and differential geometry.
+Mathematics,4,Bernhard Riemann,German,1826-1866,Founded Riemannian geometry which later provided the mathematical framework for general relativity.
+Mathematics,5,David Hilbert,German,1862-1943,"Developed the foundations of modern mathematics, including invariant theory and the axiomatization of geometry."
+Physics,1,Isaac Newton,English,1643-1727,"Formulated the laws of motion and universal gravitation, achieving the first great unification in physics."
+Physics,2,Michael Faraday,English,1791-1867,"Discovered electromagnetic induction, diamagnetism, and the laws of electrolysis."
+Physics,3,James Clerk Maxwell,Scottish,1831-1879,"Formulated the classical theory of electromagnetic radiation, unifying electricity, magnetism, and light."
+Physics,4,Albert Einstein,German-born,1879-1955,Developed the theory of relativity (special and general).
+Physics,5,Niels Bohr,Danish,1885-1962,Made foundational contributions to understanding atomic structure and quantum theory (Bohr model of the atom).

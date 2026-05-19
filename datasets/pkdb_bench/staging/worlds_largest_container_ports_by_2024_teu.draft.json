@@ -1,0 +1,56 @@
+{
+  "id": "worlds_largest_container_ports_by_2024_teu",
+  "table_title": "List the world's 20 busiest container ports by 2024 annual TEU (twenty-foot equivalent units) throughput — with each port's country, host city, TEU volume in millions, and world region. Source universe is Wikipedia's 'List of busiest container ports' master article, 2024 column (Lloyd's List 'One Hundred Container Ports 2025' sourced).",
+  "columns": [
+    "Port",
+    "Country",
+    "City",
+    "TEU (millions)",
+    "Region"
+  ],
+  "primary_key": [
+    "Port"
+  ],
+  "column_types": {
+    "Port": "key",
+    "Country": "categorical",
+    "City": "categorical",
+    "TEU (millions)": "numeric",
+    "Region": "categorical"
+  },
+  "query_category": "top_k",
+  "secondary_category": null,
+  "db_analog": "SELECT p.port_name AS port, p.country, p.city, p.teu_millions_2024 AS teu, p.region FROM container_ports p WHERE p.teu_rank_2024 <= 20 ORDER BY p.teu_millions_2024 DESC, p.port_name ASC",
+  "operation_type": "filter",
+  "source_count": 21,
+  "domain": "Transportation/Logistics",
+  "temporal_sensitivity": "high",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia 'List of busiest container ports' master article + 20 per-port Wikipedia articles, all accessed 2026-05-14. Universe = top-20 container ports by 2024 annual TEU throughput per the master article's 2024 column (the master article maintains TEU columns for 2004-2024; the 2024 column is sourced from Lloyd's List 'One Hundred Container Ports 2025' retrieved 2025-09-18 and cross-referenced with World Shipping Council). temporal_sensitivity = high because TEU values are annual throughput metrics that shift year-over-year — the master article updates the most-recent-year column annually, so within 12-18 months the staged 2024 snapshot will be superseded by a 2025 snapshot. Snapshot-year choice (2024) is documented in the schema column name 'TEU (millions)' implicitly and explicitly in this temporal_note + curation.json::collection_summary. **Canonical-source rule INVERTED relative to the bridges + dams precedent**: for time-series throughput metrics (TEU), the master article wins because Lloyd's List updates the 2024 column annually while per-port Wikipedia article infoboxes are years out of date (Shanghai infobox cites 43.3M from 2019; Guangzhou body cites 4.774M from 2006; Hong Kong infobox cites 18M from 2020 — all stale relative to master's 2024 column). For non-time-series static attributes (Country, City), per-port article wins (entity-detail role). Region is a curator-assigned closed-vocabulary categorical from a fixed country-to-region mapping (see curation.json::decision_log Rule 8), not directly sourced from per-port articles. All 20 staged TEU values follow the master's 2024 column; per-port article values are explicitly documented as stale in source_coverage_notes. All 20 ports are operational as of source-access date 2026-05-14; no construction-status exclusions needed.",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/List_of_busiest_container_ports",
+    "https://en.wikipedia.org/wiki/Port_of_Shanghai",
+    "https://en.wikipedia.org/wiki/Port_of_Singapore",
+    "https://en.wikipedia.org/wiki/Port_of_Ningbo-Zhoushan",
+    "https://en.wikipedia.org/wiki/Port_of_Shenzhen",
+    "https://en.wikipedia.org/wiki/Qingdao_Port",
+    "https://en.wikipedia.org/wiki/Port_of_Guangzhou",
+    "https://en.wikipedia.org/wiki/Port_of_Busan",
+    "https://en.wikipedia.org/wiki/Port_of_Tianjin",
+    "https://en.wikipedia.org/wiki/Port_of_Jebel_Ali",
+    "https://en.wikipedia.org/wiki/Port_Klang",
+    "https://en.wikipedia.org/wiki/Port_of_Rotterdam",
+    "https://en.wikipedia.org/wiki/Port_of_Hong_Kong",
+    "https://en.wikipedia.org/wiki/Port_of_Antwerp",
+    "https://en.wikipedia.org/wiki/Port_of_Tanjung_Pelepas",
+    "https://en.wikipedia.org/wiki/Port_of_Xiamen",
+    "https://en.wikipedia.org/wiki/Port_of_Los_Angeles",
+    "https://en.wikipedia.org/wiki/Tanger_Med",
+    "https://en.wikipedia.org/wiki/Port_of_Long_Beach",
+    "https://en.wikipedia.org/wiki/Port_of_Suzhou",
+    "https://en.wikipedia.org/wiki/Laem_Chabang"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-05-14T00:00:00Z",
+  "_extraction_notes": "Top_k instance — single-cell-per-row attribute lookup over a top-20-by-2024-TEU fixed entity set. Chips `top_k` from gap 2 to gap 1 (4 of 5 staged after this instance). **Transportation/Logistics NEW subdomain** — the Transportation family extends from 1 instance (`countries_that_drive_on_the_left`, Transportation/Road Traffic) to 2 instances with a new Logistics subdomain. Source universe = top-20 container ports by 2024 annual TEU per Wikipedia 'List of busiest container ports' master article (Lloyd's List sourced). Per-row attribute grounding from 20 per-port Wikipedia articles for Country + City; TEU value from master article (Lloyd's List 2024) per the canonical-source rule inversion for time-series metrics; Region is a curator-assigned closed-vocabulary categorical (6 values used: East Asia 10, Southeast Asia 4, Europe 2, North America 2, Middle East 1, Africa 1). Schema: 5 cols (Port PK + Country categorical + City categorical + TEU (millions) numeric + Region categorical). Sort: TEU (millions) DESC primary (highest-first), Port ASC alphabetical secondary tiebreaker. Country distribution: China 9 (dominates global container-port rankings — Shanghai, Ningbo-Zhoushan, Shenzhen, Qingdao, Guangzhou, Tianjin, Hong Kong, Xiamen, Suzhou), Malaysia 2 (Port Klang + Tanjung Pelepas), United States 2 (Los Angeles + Long Beach), plus singletons for Singapore, South Korea, UAE, Netherlands, Belgium, Morocco, Thailand (10 distinct countries). Region distribution: East Asia 10 (China-dominated), Southeast Asia 4, Europe 2, North America 2, Middle East 1, Africa 1 (6 distinct regions). TEU range: 9.6 (Laem Chabang) to 51.5 (Shanghai) — 41.9 M TEU span across the top-20. Two TEU ties: 12.3 (Tanjung Pelepas + Xiamen, ranks 14-15) and 9.7 (Long Beach + Suzhou, ranks 18-19) — alphabetical secondary ordering inverts master-table rank for both ties (master had Xiamen + Suzhou first; staged CSV has Tanjung Pelepas + Long Beach first per Port-name alphabetical). Bridges + dams + cycle-2-bridges + cycle-2-dams lessons applied upfront: (a) single PK on Port using Wikipedia common-form names with disambiguators preserved per article title (Port of X for most; 4 exceptions to the 'Port of' prefix per Wikipedia article titles: 'Qingdao Port' / 'Port Klang' / 'Tanger Med' / 'Laem Chabang'); (b) per-row data sourced from 2 articles each (master + per-port), 21 URLs total; (c) **canonical-source rule INVERSION** for time-series TEU metric documented at Stage-1 (master wins for TEU because Lloyd's List 2024 is fresher than per-port infoboxes which lag by 3-10 years; per-port wins for Country + City which are not time-series); (d) source_defined claim type honestly reflects the top-20-by-2024-TEU universe (the master article enumerates 100 ports per Lloyd's List but only top-20 staged); (e) Hong Kong staged as Country = China per master-list grouping rule (mirrors the cycle-1 bridges Stonecutters-Hong-Kong-to-China precedent). Entity class: `organizations/ports` (NEW fine-class in the under-represented `organizations` bucket — bucket extends from 3 to 4 instances after this Ready, joining universities + companies + space-agencies)."
+}

@@ -1,0 +1,35 @@
+{
+  "id": "oceanic_trenches_named_deeps",
+  "table_title": "List the major oceanic trenches whose Wikipedia 'List of oceanic trenches' master-article entry documents a non-empty Lowest Point label (typically a named 'deep' feature; one row uses a descriptive location phrase), with the trench's ocean basin and the maximum depth at that lowest point.",
+  "columns": [
+    "Trench",
+    "Lowest Point",
+    "Ocean Basin",
+    "Maximum Depth (m)"
+  ],
+  "primary_key": [
+    "Trench",
+    "Lowest Point"
+  ],
+  "column_types": {
+    "Trench": "key",
+    "Lowest Point": "key",
+    "Ocean Basin": "categorical",
+    "Maximum Depth (m)": "numeric"
+  },
+  "query_category": "factual_lookup",
+  "secondary_category": "geographic",
+  "db_analog": "SELECT trench, lowest_point, ocean_basin, maximum_depth_m FROM oceanic_trenches WHERE lowest_point IS NOT NULL ORDER BY maximum_depth_m DESC",
+  "operation_type": "projection",
+  "source_count": 1,
+  "domain": "Geography/Oceans",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia 'List of oceanic trenches' master article, accessed 2026-05-14. Universe is the 17 oceanic-trench rows in the master article's Table[0] depth-ordered wikitable (Table[0] per pandas.read_html — 21 raw rows) that document a non-empty Lowest Point label in the Lowest Point column — typically a proper named 'deep' feature, but in one row (India Trench) the source's Lowest Point cell is the descriptive phrase 'Between India & Maldives' (drops 4 rows whose Lowest Point column is NaN: Kuril-Kamchatka Trench, Kermadec Trench, Izu-Bonin Trench, Japan Trench). Two trench names appear in the source with two distinct named deeps each: South Sandwich Trench (Meteor Deep in the Atlantic, 8266 m; Factorian Deep in the Southern Ocean, 7334 m) and Puerto Rico Trench (Milwaukee Deep in the Atlantic, 8376 m; Rio Bermuda Deep in the Atlantic, 5625 m); the composite primary key (Trench, Lowest Point) disambiguates these. Per-row cells: Trench name verbatim from the master Trench column (including the source's compound form 'Peru-Chile Trench or Atacama Trench' for the Pacific row with Richards Deep); Lowest Point verbatim from the master Lowest Point column (proper named features like 'Challenger Deep', 'Horizon Deep', 'Milwaukee Deep', plus the source's descriptive phrase 'Between India & Maldives' for the India Trench row); Ocean Basin normalized to a closed 5-value vocabulary (Pacific / Atlantic / Indian / Arctic / Southern) — the source's compound label 'Pacific Ocean (Solomon Sea)' for the New Britain Trench row is normalized to 'Pacific' per the closed vocabulary; Maximum Depth (m) is the integer metres value extracted from the master Maximum Depth column's '##,### m (##,### ft)' compound formulation (the metres-prefix component, comma-stripped). The 17-row universe is stable on a multi-year horizon: bathymetric survey updates may refine individual depth values, but the trench/lowest-point identifications are well-established.",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/List_of_oceanic_trenches"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-05-14T00:00:00Z",
+  "_extraction_notes": "Original instance chipping `factual_lookup` from gap 2 to **gap 1** (3 staged of 5 before this staging; this brings the count to 4 of 5). User-selected via deep-dive on universe alternatives: a pure '5 oceans only' shape would fail the row-count gate at 5 rows; the user picked 'major oceanic trenches with named deeps' to preserve the per-ocean-basin angle while clearing the gate. Composite PK (Trench, Lowest Point) was selected over single PK (Trench, with dedup-keep-deepest) because composite PK preserves all 5 ocean basins as populated (single-PK 15-row variant would lose the Southern Ocean's only entry — the shallower South Sandwich Trench Factorian Deep). Source plan: Tier B Wikipedia, source_count = 1 — the master 'List of oceanic trenches' article supplies all 4 cells per row via its Table[0] chronological-depth wikitable. Pipeline: (1) fetch the cited Wikipedia article HTML, (2) parse tables[0] (21 raw rows × 5 cols: Trench, Ocean, Lowest Point, Maximum Depth, Source), (3) filter to rows with non-NaN Lowest Point (drops 4 rows: Kuril-Kamchatka, Kermadec, Izu-Bonin, Japan), (4) for each row take Trench name verbatim from the Trench column, Lowest Point verbatim from the Lowest Point column, Ocean Basin normalized from the Ocean column ('Pacific Ocean' → 'Pacific'; 'Pacific Ocean (Solomon Sea)' → 'Pacific'; 'Atlantic Ocean' → 'Atlantic'; 'Indian Ocean' → 'Indian'; 'Arctic Ocean' → 'Arctic'; 'Southern Ocean' → 'Southern'), Maximum Depth (m) as the integer metres value extracted from the Maximum Depth column's compound '##,### m (##,### ft)' formulation (comma-stripped). Result: 17 rows × 4 columns, composite PK on (Trench, Lowest Point), 0 duplicates. Ocean Basin distribution: Indian 6 (Sunda, Mauritius, India, Ceylon, Somalia, Madagascar Trenches), Pacific 5 (Mariana, Tonga, Philippine, New Britain, Peru-Chile/Atacama Trenches — all 4 NaN-Lowest-Point Pacific Trenches Kuril-Kamchatka/Kermadec/Izu-Bonin/Japan are excluded by the universe filter), Atlantic 4 (Puerto Rico/Milwaukee, South Sandwich/Meteor, Cayman, Puerto Rico/Rio Bermuda), Southern 1 (South Sandwich/Factorian), Arctic 1 (Mid-Atlantic Ridge/Molloy — the source labels this row as Arctic Ocean despite the 'Mid-Atlantic Ridge' trench-name because the Molloy Deep is at the northern end of the ridge in the Arctic Ocean). All 5 ocean basins populated — no empty closed-vocabulary slots. Sort order: numerically by Maximum Depth (m) descending (deepest first) — the source's Table[0] is broadly depth-ordered but not perfectly sorted (a few adjacent rows show minor depth inversions in the source); the staged CSV applies a strict numeric-descending sort. Confidence gradient: very-LLM-knowable cells include the canonical deepest trench (Mariana Trench Challenger Deep 10925 m Pacific, the deepest known oceanic point); mid-difficulty cells include the well-known major trenches (Tonga Horizon, Philippine Emden, Puerto Rico Milwaukee, Sunda Java); harder calibration cells include the less-headline-grabbing trenches (Cayman Caribbean, India 'Between India & Maldives', Ceylon Sri Lanka, Somalia, Madagascar) and the duplicate-Trench-distinct-Deep cases (South Sandwich Meteor 8266 m Atlantic vs Factorian 7334 m Southern; Puerto Rico Milwaukee 8376 m vs Rio Bermuda 5625 m — both Atlantic). The composite PK design tests whether the LLM correctly recognizes that some Trench names have multiple named deeps in different ocean basins (South Sandwich Atlantic/Southern) or at different depths (Puerto Rico two Atlantic deeps)."
+}

@@ -1,0 +1,165 @@
+{
+  "id": "phanerozoic_periods_by_start_age",
+  "claim_type": "source_defined",
+  "claim_type_rationale": "The universe rule is deterministic and source-defined by closed canonical ICS designation: Wikipedia's `Geologic time scale` master article enumerates the 12 periods of the Phanerozoic Eon per the International Commission on Stratigraphy (ICS) International Chronostratigraphic Chart v2024/12. The list has been stable since IUGS ratification of Paleogene/Neogene/Quaternary (2009). Universe membership = 'period is one of the 12 ICS-canonical Phanerozoic-Eon periods per Wikipedia Geologic time scale article' — no curator judgment. Per-row cell values (Era, Start Age (Ma), End Age (Ma)) are taken from the master article's consolidated chronostratigraphic table. Central boundary ages used; ± uncertainty bands stripped per the mirror-precedent asteroids instance (`largest_asteroids_with_geometric_mean_diameter_above_250_km`). Mirror precedents for closed-canonical-list source_defined: `decade_volcanoes_by_continent` (16-entry closed IAVCEI list); `periodic_table_groups_first_three_elements_by_atomic_number` (18-group closed IUPAC list); `twelve_olympians_greek_to_roman` (13-entry closed Greek-deity list).",
+  "collection_summary": {
+    "approach": "Pre-curation design pass (1 round of pre-staging design review: cycle-1). Cycle-1 verdict: 'Approve for Cycle-0 Staging, With 1 Required Staging Edit' — the audit confirmed the granularity redirection from picker's sketched 'epochs' to 'periods' (12 entries is clean ICS-standard; Phanerozoic epochs ~30 with Paleozoic reform unstable; Cenozoic-only epochs 7 below 10-row gate), confirmed all other locked properties (claim_type source_defined; source_count=1; category temporal + secondary set_filter; operation_type filter; entity class time-periods/geological-periods NEW; Science/Geology NEW subdomain; 4-col schema with End Age kept for exact-match-friendliness), and required 1 staging edit: use ICS v2024/12 boundary values per the master article's currently-updated table (NOT my preview's older v2012-or-earlier values). All v2024/12 corrections applied at cycle-0 staging. Single-round pre-staging review reflects the clean closed-canonical-universe pattern — same precedent path as decade_volcanoes_by_continent and twelve_olympians_greek_to_roman.",
+    "universe_size": 12,
+    "partition_structure": "Closed canonical 12-period ICS Phanerozoic universe. Per-era distribution: Paleozoic 6 periods (Cambrian, Ordovician, Silurian, Devonian, Carboniferous, Permian), Mesozoic 3 periods (Triassic, Jurassic, Cretaceous), Cenozoic 3 periods (Paleogene, Neogene, Quaternary). Single PK Period.",
+    "row_count_check": "12 rows match the closed 12-period ICS Phanerozoic Eon universe. Pre-Phanerozoic eons (Hadean / Archean / Proterozoic) explicitly out of scope. Deprecated 'Tertiary' period (deprecated by IUGS 2009) NOT in universe — replaced by separate Paleogene + Neogene. Carboniferous is one period (NOT Mississippian + Pennsylvanian as two separate periods, per ICS-standard locked over US Geological Survey historical usage). Quaternary is a separate period (ratified by IUGS 2009; not a subset of Neogene)."
+  },
+  "source_coverage_notes": {
+    "roles": [
+      {
+        "url": "https://en.wikipedia.org/wiki/Geologic_time_scale",
+        "roles": ["universe", "value"],
+        "role_note": "universe: enumerates the closed canonical 12-period ICS Phanerozoic Eon list with explicit conformance to ICS International Chronostratigraphic Chart v2024/12. value: supplies Era + Start Age (Ma) + End Age (Ma) cell values for all 12 periods via the master article's consolidated chronostratigraphic table."
+      }
+    ],
+    "validation_cross_checks": {
+      "rationale": "Per artifact-contract.md: validation sources do not count toward source_count and live in source_coverage_notes prose rather than registered source_urls. The 12 per-period Wikipedia articles below were consulted during curation as validation sources for each period's Era and boundary-age cells. The ICS International Chronostratigraphic Chart (upstream authority) was also consulted but Wikipedia's master is registered per Tier B convention. None of these validation sources carries a universe role for the staged set; the universe role is carried by the master Geologic_time_scale article.",
+      "per_period_validation_urls": {
+        "Cambrian": "https://en.wikipedia.org/wiki/Cambrian",
+        "Ordovician": "https://en.wikipedia.org/wiki/Ordovician",
+        "Silurian": "https://en.wikipedia.org/wiki/Silurian",
+        "Devonian": "https://en.wikipedia.org/wiki/Devonian",
+        "Carboniferous": "https://en.wikipedia.org/wiki/Carboniferous",
+        "Permian": "https://en.wikipedia.org/wiki/Permian",
+        "Triassic": "https://en.wikipedia.org/wiki/Triassic",
+        "Jurassic": "https://en.wikipedia.org/wiki/Jurassic",
+        "Cretaceous": "https://en.wikipedia.org/wiki/Cretaceous",
+        "Paleogene": "https://en.wikipedia.org/wiki/Paleogene",
+        "Neogene": "https://en.wikipedia.org/wiki/Neogene",
+        "Quaternary": "https://en.wikipedia.org/wiki/Quaternary"
+      },
+      "upstream_authority_validation": {
+        "ics_chart": "https://stratigraphy.org/chart (International Commission on Stratigraphy International Chronostratigraphic Chart v2024/12 — the upstream authority for all boundary ages; Wikipedia master cites + tracks this chart)"
+      }
+    },
+    "source_count": 1,
+    "source_grounding_summary": "1 registered source (Geologic_time_scale: roles = [universe, value]). 12 per-period Wikipedia articles + 1 ICS chart consulted in validation role during curation; they live in validation_cross_checks above (provenance prose), NOT in source_urls, per the artifact contract."
+  },
+  "decision_log": [
+    {
+      "decision": "claim_type = source_defined (closed-canonical-list 12-period ICS Phanerozoic universe)",
+      "rationale": "The ICS Phanerozoic period set is a closed 12-period list ratified by IUGS in 2009 (with Paleogene/Neogene/Quaternary replacing the older Tertiary/Quaternary 2-period Cenozoic and confirming the modern 12-period Phanerozoic). Wikipedia 'Geologic time scale' article enumerates the 12 with stable membership conforming to ICS v2024/12. No curator judgment for universe membership; deterministic universe rule. Distinct from candidate_rebuild (no curator-bounded universe selection) and from partially_supplemented (no rebuilding of the master subset). Mirror precedents: `decade_volcanoes_by_continent` (16-entry IAVCEI closed list); `twelve_olympians_greek_to_roman` (13-entry closed Greek-deity list); `periodic_table_groups_first_three_elements_by_atomic_number` (18-entry closed IUPAC list)."
+    },
+    {
+      "decision": "Granularity = periods (12 entries) — NOT epochs (~30 unstable) or eras (3 below 10-row gate)",
+      "rationale": "The picker T1 sketch said 'Geological epochs of the Phanerozoic eon' but at the Phanerozoic-Eon scope, epochs would yield ~30 entries with Paleozoic recently reformed (Terreneuvian / Series 2 / Miaolingian / Furongian Cambrian subdivisions are newer; naming unstable). Cenozoic-only epochs (7 entries: Paleocene / Eocene / Oligocene / Miocene / Pliocene / Pleistocene / Holocene) are below the 10-row gate. Eras (3 entries: Paleozoic / Mesozoic / Cenozoic) are far below the 10-row gate. **Periods** at 12 entries is the clean canonical middle granularity that (a) clears the 10-row gate; (b) matches the periodic-table-groups + decade-volcanoes closed-canonical-list pattern; (c) reflects ICS's most-stable widely-known geological time subdivisions. Per cycle-1 audit: the redirection from 'epochs' to 'periods' is confirmed correct."
+    },
+    {
+      "decision": "Universe source = master Geologic_time_scale Wikipedia article only (source_count=1); per-period articles + ICS chart validation-only",
+      "rationale": "Per cycle-1 audit confirmation: 'source_count=1 is acceptable if the registered source is Wikipedia Geologic time scale; it carries both universe and value roles. The official ICS chart can be cited as optional validation, not required.' The master article's consolidated chronostratigraphic table is sufficient for all 4 staged cell types (Era, Start Age, End Age, Period name). Per-period Wikipedia articles cross-check the master's values; the ICS chart is the upstream authority Wikipedia tracks but is not registered per Tier B convention. Mirror precedent: decade_volcanoes_by_continent uses same source_count=1 master-only pattern."
+    },
+    {
+      "decision": "Start Age + End Age both kept (4-col schema, not 3-col with computed Duration)",
+      "rationale": "Per cycle-1 audit: 'Keep End Age (Ma): it is redundant but useful and exact-match-friendly.' End Age = next-younger period's Start Age (mathematically chained), but keeping it as an explicit cell aids LLM exact-match evaluation by giving each row a complete pair of boundary values rather than requiring derivation. Quaternary's End Age = 0 (present day) per ICS convention."
+    },
+    {
+      "decision": "ICS v2024/12 boundary values applied (cycle-1 audit's required staging edit)",
+      "rationale": "Per cycle-1 audit's required staging edit: 'Do not stage the preview boundary ages as written. Several are stale relative to the current Wikipedia/ICS v2024/12 table.' All boundary values reflect ICS v2024/12 per the audit's specific corrections list. Updates from my preview's older values: Ordovician end 486.85 (not 485.4); Silurian end 443.1 (not 443.8); Devonian end 419.62 (not 419.2); Carboniferous end 358.86 (not 358.9); Permian-Triassic 251.902 (not 251.9); Triassic end 201.4 (unchanged); Jurassic-Cretaceous 143.1 (not 145.0); Cretaceous-Paleogene 66.0 (unchanged); Paleogene-Neogene 23.04 (not 23.0); Neogene-Quaternary 2.58 (unchanged); Quaternary end 0 (present day, unchanged); Cambrian start 538.8 (unchanged)."
+    },
+    {
+      "decision": "Carboniferous as one period (NOT Mississippian + Pennsylvanian)",
+      "rationale": "ICS-standard locked. US Geological Survey historically uses Mississippian + Pennsylvanian as two separate periods (combining = Carboniferous), but ICS uses 'Carboniferous' as one period with Mississippian + Pennsylvanian as subperiods. Per cycle-1 audit: 'Carboniferous remains one period with Mississippian/Pennsylvanian as subperiods.' Universe locks to ICS-standard 12-period set (not 13)."
+    },
+    {
+      "decision": "Quaternary as separate period (NOT subset of Neogene)",
+      "rationale": "Per IUGS 2009 ratification: Quaternary is a separate period of the Cenozoic Era (not a subset of Neogene). Per cycle-1 audit confirmation. Universe includes Quaternary as the 12th and most-recent period."
+    },
+    {
+      "decision": "Tertiary deprecated — NOT in universe",
+      "rationale": "Historical 'Tertiary' period name was deprecated by IUGS in 2009, replaced by separate Paleogene + Neogene. Per cycle-1 audit: 'Current ICS framing uses Paleogene + Neogene + Quaternary, not deprecated Tertiary.' Universe explicitly excludes Tertiary; uses the modern 3-period Cenozoic split (Paleogene + Neogene + Quaternary)."
+    },
+    {
+      "decision": "Category = temporal primary; secondary = set_filter (NOT geographic, NOT factual_lookup)",
+      "rationale": "Per cycle-1 audit: 'Category=temporal, secondary_category=set_filter, operation_type=filter are defensible.' Temporal primary because the row universe is ordered along the geological time axis with Start Age (Ma) as the canonical ranking attribute — mirror precedent: `summer_olympics_hosts_1960_2020` (year-keyed) and `time_person_of_the_year_2000_2024` (year-keyed). Secondary set_filter because the universe is set-filtered to Phanerozoic-Eon membership (Hadean / Archean / Proterozoic eons explicitly out of scope). operation_type = filter (universe selection by Phanerozoic-Eon membership)."
+    },
+    {
+      "decision": "Entity class = time-periods/geological-periods (NEW fine-class extending the most-under-represented time-periods bucket)",
+      "rationale": "Per cycle-1 audit: 'time-periods/geological-periods is the right fine-class.' The PK 'Period' is a conceptual time-period entity (a named geological time division), matching the time-periods bucket convention. The bucket time-periods/* is the MOST-UNDER-REPRESENTED entity bucket in pkdb_bench at 1 instance only (decades from programming_languages_by_decade_of_first_appearance). This instance brings the bucket to 2 instances with NEW geological-periods fine-class joining decades."
+    },
+    {
+      "decision": "Domain = Science/Geology (NEW subdomain)",
+      "rationale": "Per cycle-1 audit: 'Science/Geology is a good new subdomain label.' No Geology represented in pkdb_bench previously (closest neighbors: Science/Astronomy, Science/Chemistry, Geography/Mountaineering — all distinct). Science family extends from 14 to 15 instances with NEW Geology subdomain. Despite Science family being already heavy at 14, the NEW subdomain + most-under-represented entity bucket + last-remaining-gap-3 category combo justifies staging."
+    }
+  ],
+  "normalization_decisions": [
+    {
+      "field": "Period",
+      "rule": "Period name verbatim per Wikipedia per-period article canonical title. 12 closed values: Cambrian, Ordovician, Silurian, Devonian, Carboniferous, Permian, Triassic, Jurassic, Cretaceous, Paleogene, Neogene, Quaternary. The deprecated 'Tertiary' (deprecated by IUGS 2009) is NOT in scope. 'Carboniferous' as one period (NOT Mississippian + Pennsylvanian) per ICS-standard."
+    },
+    {
+      "field": "Era",
+      "rule": "Era of the Phanerozoic Eon per the master article's Era column. Closed 3-value vocabulary: Paleozoic / Mesozoic / Cenozoic. Pre-Phanerozoic eras (Neoarchean / Mesoarchean / Paleoarchean / Eoarchean / Neoproterozoic / Mesoproterozoic / Paleoproterozoic) NOT in vocabulary because pre-Phanerozoic eons are out of scope."
+    },
+    {
+      "field": "Start Age (Ma)",
+      "rule": "Numeric value in millions of years ago (Ma) of the period's lower (older) boundary per ICS International Chronostratigraphic Chart v2024/12 (as reflected in Wikipedia's `Geologic time scale` master article). Central value only; ± uncertainty bands stripped per the mirror-precedent asteroids instance (`largest_asteroids_with_geometric_mean_diameter_above_250_km`). ICS publishes uncertainty bands (e.g., Cambrian 538.8 ± 0.2 Ma; Permian-Triassic 251.902 ± 0.024 Ma) but these are NOT in the CSV cell — only the central value (538.8, 251.902) is staged."
+    },
+    {
+      "field": "End Age (Ma)",
+      "rule": "Numeric value in millions of years ago (Ma) of the period's upper (younger) boundary per ICS v2024/12. Equals the next-younger period's Start Age in the chained chronostratigraphic order (e.g., Cambrian End Age 486.85 = Ordovician Start Age 486.85). Quaternary's End Age = 0 representing present day. Central value only; ± uncertainty bands stripped per the same rule as Start Age."
+    }
+  ],
+  "open_questions": [
+    {
+      "question": "When ICS publishes a future revision (v2025+ or later), should the instance be re-staged to reflect new boundary values?",
+      "answer": "Yes, when significant boundary value updates occur (e.g., the v2024/12 update changed Ordovician end from older 485.4 to 486.85). Universe is locked to ICS v2024/12 as of 2026-05-18 staging. temporal_sensitivity = low reflects that ICS revisions are infrequent and small but they do happen — typically every few years with new geochronological data."
+    },
+    {
+      "question": "Should the schema include the Eon column (all values = 'Phanerozoic')?",
+      "answer": "No — Eon = Phanerozoic for all 12 rows is constant and provides zero information. The instance title + universe rule already establish the Phanerozoic-Eon scope. Schema kept at 4 cols (Period, Era, Start Age, End Age)."
+    },
+    {
+      "question": "Should the schema include uncertainty bands for boundary ages (e.g., Cambrian 538.8 ± 0.2)?",
+      "answer": "No — central value only per the mirror-precedent asteroids instance. Uncertainty bands are documented in `normalization_decisions` for `Start Age (Ma)` and `End Age (Ma)` but NOT in the CSV cell. This is the same convention as `largest_asteroids_with_geometric_mean_diameter_above_250_km` (geometric mean diameter central value with ± uncertainty stripped from CSV)."
+    },
+    {
+      "question": "Should the deprecated 'Tertiary' period name be acknowledged in any cell or only in decision_log?",
+      "answer": "Only in decision_log (and table_title). The staged universe uses the modern Paleogene + Neogene + Quaternary 3-period Cenozoic split per IUGS 2009 ratification — Tertiary is NOT a staged Period value. The Tertiary historical naming is documented in decision_log as the rejected alternative (deprecated convention)."
+    },
+    {
+      "question": "Should the Mississippian + Pennsylvanian subperiods of Carboniferous be included as separate rows?",
+      "answer": "No — Carboniferous is one period per ICS-standard. Mississippian + Pennsylvanian are subperiods (NOT periods). US Geological Survey historically lists them as separate periods, but pkdb_bench follows ICS-canonical 12-period universe (not 13). Per cycle-1 audit confirmation."
+    }
+  ],
+  "proposed_supplements": [],
+  "audit_trail_pre_curation": {
+    "cycle_0_source_exploration": {
+      "task": "Verify source structure for the Phanerozoic geological periods candidate",
+      "outcome": "Verified that Wikipedia `Geologic time scale` master article exists, enumerates the 12 ICS Phanerozoic periods, and conforms to ICS International Chronostratigraphic Chart v2024/12 with Era + Start Age + End Age columns. All 12 entries cross-reference standalone per-period Wikipedia articles. Closed canonical universe — IUGS ratified the modern 12-period set in 2009; ICS publishes periodic revisions with current version v2024/12.",
+      "deliverable": "Initial design proposal with 4-col schema (Period, Era, Start Age (Ma), End Age (Ma)) + periods (NOT epochs) granularity choice based on Cenozoic-only-epochs failing 10-row gate and Phanerozoic-all-epochs being noisy due to Paleozoic reform."
+    },
+    "cycle_1_audit_design_review": {
+      "task": "Audit agent reviews cycle-0 design proposal BEFORE staging",
+      "verdict": "Approve for Cycle-0 Staging, With 1 Required Staging Edit",
+      "approved_design_elements": [
+        "Period-granularity (12 entries) over epochs (~30 unstable) or eras (3 below gate) — redirection from picker's sketched 'epochs' confirmed correct.",
+        "claim_type = source_defined — closed-canonical-list 12-period ICS universe.",
+        "source_count = 1 (Wikipedia Geologic time scale master only, with 12 per-period articles + ICS chart as validation cross-checks in prose).",
+        "Category = temporal primary, secondary = set_filter, operation_type = filter.",
+        "Entity class = time-periods/geological-periods (NEW fine-class extending most-under-represented time-periods bucket from 1 → 2).",
+        "Domain = Science/Geology (NEW subdomain).",
+        "4-col schema with End Age kept (redundant but exact-match-friendly).",
+        "ICS-standard locked: Carboniferous as 1 period (NOT Mississippian + Pennsylvanian); Tertiary deprecated; Quaternary as separate period."
+      ],
+      "staging_edit_required": [
+        "Use ICS v2024/12 boundary values per Wikipedia's current master table (NOT the preview's older v2012-or-earlier values). Specific updates: Ordovician end 486.85 (not 485.4); Silurian end 443.1 (not 443.8); Devonian end 419.62 (not 419.2); Carboniferous end 358.86 (not 358.9); Permian-Triassic 251.902 (not 251.9); Jurassic-Cretaceous 143.1 (not 145.0); Paleogene-Neogene 23.04 (not 23.0). Other values unchanged: Cambrian start 538.8; Triassic end 201.4; Cretaceous-Paleogene 66.0; Neogene-Quaternary 2.58; Quaternary end 0."
+      ],
+      "deliverable": "Staging edit approved for cycle-0 application. No cycle-2 design review needed if v2024/12 boundary values used."
+    },
+    "cycle_0_staging": {
+      "task": "Stage cycle-0 artifacts (CSV + draft.json + curation.json) with cycle-1 fix applied",
+      "files_written": [
+        "datasets/pkdb_bench/staging/phanerozoic_periods_by_start_age.csv (12 rows × 4 cols)",
+        "datasets/pkdb_bench/staging/phanerozoic_periods_by_start_age.draft.json (4-col schema + locked properties)",
+        "datasets/pkdb_bench/staging/phanerozoic_periods_by_start_age.curation.json (this file)"
+      ],
+      "deliverable": "Cycle-0 staging complete. 12 rows × 4 cols. Single PK Period. source_count = 1 (master only, per-period validation cross-checks in prose). All ICS v2024/12 boundary values applied per cycle-1 audit's required staging edit. Ready for cycle-1 post-staging audit."
+    }
+  },
+  "_curated_by": "claude-code",
+  "_curated_at": "2026-05-18T00:00:00Z"
+}

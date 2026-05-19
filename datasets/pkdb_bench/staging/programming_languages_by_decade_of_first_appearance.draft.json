@@ -1,0 +1,50 @@
+{
+  "id": "programming_languages_by_decade_of_first_appearance",
+  "table_title": "List the decades in which at least one programming language first appeared per Wikipedia's 'Timeline of programming languages' article (1790s through 2020s), with the count of language entries in that decade, one representative widely-known language, that language's primary designer, and the language's year of first appearance.",
+  "columns": [
+    "Decade",
+    "Language Count",
+    "Representative Language",
+    "Primary Designer",
+    "Year of First Appearance"
+  ],
+  "primary_key": [
+    "Decade"
+  ],
+  "column_types": {
+    "Decade": "key",
+    "Language Count": "numeric",
+    "Representative Language": "text",
+    "Primary Designer": "text",
+    "Year of First Appearance": "numeric"
+  },
+  "query_category": "aggregation",
+  "secondary_category": "multi_attribute_projection",
+  "db_analog": "WITH counts AS (SELECT FLOOR(timeline_entry_start_year/10)*10 AS decade, COUNT(*) AS language_count FROM wikipedia_timeline_of_programming_languages GROUP BY decade), representatives AS (SELECT decade, representative FROM curator_selected_representatives_per_decade) SELECT c.decade, c.language_count, r.representative AS representative_language, t.designer AS primary_designer, t.timeline_entry_start_year AS year_of_first_appearance FROM counts c JOIN representatives r USING (decade) JOIN wikipedia_timeline_of_programming_languages t ON t.entry_name = r.representative ORDER BY c.decade ASC",
+  "operation_type": "aggregation",
+  "source_count": 15,
+  "domain": "Technology/Programming",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia 'Timeline of programming languages' (master article) and per-language Wikipedia articles for the representative language of each decade (13 per-language articles for the 14 staged decades — Jacquard_loom covers both the 1790s and 1800s representatives), all accessed 2026-04-30 (counts re-verified 2026-05-02 per cycle-1 audit). Universe = the 14 decades in which the Timeline article has at least one entry: 1790s, 1800s, 1830s, 1840s, 1870s, 1940s, 1950s, 1960s, 1970s, 1980s, 1990s, 2000s, 2010s, 2020s. Per-decade counts (cycle-1 corrected per audit re-parse): 1790s=1, 1800s=1, 1830s=1, 1840s=1, 1870s=1, 1940s=7, 1950s=48, 1960s=60, 1970s=57, 1980s=68, 1990s=72, 2000s=54, 2010s=41, 2020s=12. Total 424 entries (cycle-0 had 419 from a pre-fetch summary that under-counted 1940s/1950s/1960s by 2/2/1 entries respectively). Decade boundaries are deterministic: floor(year/10)*10. Counting rule: raw entry count per decade in the Timeline article — version revisions and concept/implementation pairs counted as separate entries. The 2020s decade is incomplete (only entries through 2024 at staging time). Year of First Appearance for the Representative Language is sourced UNIFORMLY from the Wikipedia 'Timeline of programming languages' article entry under the **'Timeline Entry Start Year'** rule: when a Timeline entry shows a year range (e.g., Plankalkül '1943-45/46', LISP concept '1956-58'), the staged value is the **start year** of the range (Plankalkül → 1943). The Timeline year is the single tabulated source that applies to every row including the pre-1950 historical entries (Jacquard loom 1790 concept, Babbage's BAB L1 1837, Lovelace's Note G 1843, Frege's Begriffsschrift 1879) that have no software-style 'First appeared' infoboxes. Cycle-3 fix committed to Timeline-only rule. Cycle-5 fix: 1950s representative pinned to Timeline entry 'FORTRAN I' (1957 implementation) instead of bare 'Fortran' — the Timeline article has multiple Fortran entries ('1954-55 FORTRAN concept', '1957 FORTRAN I', '1958 FORTRAN II', '1962 FORTRAN IV', '1966 FORTRAN 66', etc.) so the staged Representative Language must pin to a specific Timeline entry to be unambiguously source-defined. Year 1957 unchanged. Cycle-4 fix: (a) explicit 'Timeline Entry Start Year' range-scalarization rule documented; (b) C++ year 1985 → 1983 to match the Timeline article's listing for C++ (cycle-3 had used the C++ infobox value 1985, an internal violation of the Timeline-only rule); (c) Plankalkül 1943, Rust 2010 unchanged (already Timeline-aligned in cycle-3). Both decade attributions for affected rows stable (C++ 1980s, Plankalkül 1940s, Rust 2010s). Cycle-1 audit B3 fix: replaced cycle-0 'Country of Origin' column with 'Year of First Appearance' — Country was not directly recoverable from cited per-language articles (institution names like IBM/Bell Labs/Microsoft were grounded but not 'United States' as a country value). Cycle-1 sourced Year from per-language infoboxes; cycle-3 later switched the Year source to the Timeline article entry (the active rule) because pre-1950 rows have no software-style 'First appeared' infoboxes — see audit_response cycle_3.",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/Timeline_of_programming_languages",
+    "https://en.wikipedia.org/wiki/List_of_programming_languages",
+    "https://en.wikipedia.org/wiki/Jacquard_loom",
+    "https://en.wikipedia.org/wiki/Analytical_Engine",
+    "https://en.wikipedia.org/wiki/Note_G",
+    "https://en.wikipedia.org/wiki/Begriffsschrift",
+    "https://en.wikipedia.org/wiki/Plankalk%C3%BCl",
+    "https://en.wikipedia.org/wiki/Fortran",
+    "https://en.wikipedia.org/wiki/BASIC",
+    "https://en.wikipedia.org/wiki/C_(programming_language)",
+    "https://en.wikipedia.org/wiki/C%2B%2B",
+    "https://en.wikipedia.org/wiki/Python_(programming_language)",
+    "https://en.wikipedia.org/wiki/C_Sharp_(programming_language)",
+    "https://en.wikipedia.org/wiki/Rust_(programming_language)",
+    "https://en.wikipedia.org/wiki/Mojo_(programming_language)"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-05-01T00:00:00Z",
+  "_extraction_notes": "Aggregation instance: GROUP BY decade COUNT(language) over Wikipedia 'Timeline of programming languages' article. Universe = 14 decades (every decade with at least one Timeline entry, from 1790s through 2020s) × 5 columns (Decade key + 1 numeric count + 1 text representative + 1 text designer + 1 numeric year). Per-decade Language Count (cycle-1 audit-corrected): 1790s=1, 1800s=1, 1830s=1, 1840s=1, 1870s=1, 1940s=7, 1950s=48, 1960s=60, 1970s=57, 1980s=68, 1990s=72, 2000s=54, 2010s=41, 2020s=12. Total 424 entries (was 419 in cycle-0 — audit re-parse caught under-count in 1940s/1950s/1960s by 2/2/1 entries). Representative Language pick per decade: 1790s Jacquard loom (concept) (1790, Joseph Marie Jacquard); 1800s Jacquard machine (1801, Jacquard); 1830s BAB L1 (1837, Charles Babbage); 1840s Note G (1843, Ada Lovelace); 1870s Begriffsschrift (1879, Gottlob Frege); 1940s Plankalkül (1943 per Timeline, Konrad Zuse); 1950s FORTRAN I (1957 per Timeline, John Backus); 1960s BASIC (1964, John G. Kemeny + Thomas E. Kurtz); 1970s C (1972, Dennis Ritchie); 1980s C++ (1983 per Timeline, Bjarne Stroustrup); 1990s Python (1991, Guido van Rossum); 2000s C# (2000, Anders Hejlsberg); 2010s Rust (2010 per Timeline, Graydon Hoare); 2020s Mojo (2023, Chris Lattner). For decades with only 1 entry (1790s/1800s/1830s/1840s/1870s), the representative is unambiguously that single entry. Cycle-1 audit fix (3 BLOCKING + 1 HYG): (B1 factual) corrected 1940s 5→7, 1950s 46→48, 1960s 59→60, total 419→424; (B2 structural) rewrote db_analog with explicit two-step structure separating source-defined COUNT from curator-selected representatives; (B3 structural) replaced 'Country of Origin' with 'Year of First Appearance' — Year is directly stated in every per-language Wikipedia article infobox (Country was only indirectly inferable via institution names); (HYG) fixed decision_log stale '10 URLs / 8 per-language articles' reference. Cycles 1+2+3 + Fields-Medal-cycles lessons applied: PK on Decade single key; per-row Wikipedia citation; explicit relation commitment in title and db_analog (first-appearance year per Timeline; floor(year/10) decade boundary); deterministic counting rule. Multi-wiki source plan (15 URLs): Timeline article + List of programming languages cross-validation + 13 per-language articles. Cycle-2 audit fix (2 BLOCKING + 1 HYG): (B1 factual) Year of First Appearance now uniformly sourced from per-language infobox — Plankalkül 1943→1948, Rust 2010→2012 (both decade attributions stable); (B2 structural) db_analog alias mismatches fixed (counts CTE now exposes 'decade' not 'decade_start'; representatives CTE exposes 'representative' not 'curator_selected_representative_language' to match downstream c.decade and r.representative references); (HYG) scrubbed stale Country wording from active curation narrative. Cycle-3 audit fix: switched to Timeline Entry Year rule. Cycle-4 audit fix (1 BLOCKING + 1 HYG): (B1) documented explicit 'Timeline Entry Start Year' range-scalarization rule for entries with year ranges (Plankalkül '1943-45/46' → 1943 start year). Also caught C++ Timeline entry year is 1983 (not 1985 infobox value used in cycles 0-3) — corrected C++ 1985 → 1983 to align with the Timeline-only rule. db_analog updated to reference timeline_entry_start_year. (HYG) scrubbed remaining 'per-language infobox' wording from active narrative — Year column is now Timeline-sourced, not infobox-sourced."
+}

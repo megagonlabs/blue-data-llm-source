@@ -1,0 +1,38 @@
+{
+  "id": "notable_works_of_recent_nobel_literature_laureates",
+  "table_title": "For each Nobel Prize in Literature laureate from prize-years 2000 through 2024, list every notable work declared on the laureate's Wikidata item, with the year the laureate received the Nobel, the work's publication year, and the laureate's primary writing language.",
+  "columns": [
+    "Laureate",
+    "Nobel Year",
+    "Work",
+    "Publication Year",
+    "Original Language"
+  ],
+  "primary_key": [
+    "Laureate",
+    "Work"
+  ],
+  "column_types": {
+    "Laureate": "key",
+    "Nobel Year": "numeric",
+    "Work": "key",
+    "Publication Year": "text",
+    "Original Language": "categorical"
+  },
+  "query_category": "implicit_join",
+  "secondary_category": "multi_attribute_projection",
+  "db_analog": "SELECT laureate.name AS laureate, laureate.nobel_year, work.title AS work, work.publication_year, laureate.primary_language AS original_language FROM nobel_literature_laureates_2000_2024 AS laureate JOIN works ON works.author_id = laureate.id WHERE work.is_notable = true ORDER BY laureate.nobel_year, laureate.name, work.publication_year",
+  "operation_type": "join",
+  "source_count": 2,
+  "domain": "Culture/Literature",
+  "temporal_sensitivity": "low",
+  "gt_construction": "sparql_wikidata",
+  "temporal_note": "Wikidata SPARQL endpoint snapshot, accessed 2026-04-30, with the laureate's primary writing language taken from the Wikipedia 'List of Nobel laureates in Literature' article at the same date. The 25-laureate universe is source-defined by Wikidata's P166 (award received) statements with value Q37922 (Nobel Prize in Literature) and a P585 (point in time) qualifier in 2000-2024 inclusive. Per-laureate works are every value of the laureate's P800 (notable work) statements; publication year comes from each work's P577 (publication date), truncated to a 4-digit year. The row set updates only when (a) the Nobel Foundation announces a new laureate (annually each October, post-cutoff), (b) Wikidata editors add or remove a P800 'notable work' statement on a laureate's item, or (c) a work's P577 publication date changes — all of which are infrequent and small-scale. The 125-row count at the snapshot reflects Wikidata's current notable-work declarations after the documented post-processing (drop QID-only labels and dedup on (Laureate, Work) using MIN year) and is not a parametric reconstruction. 8 rows carry the explicit sentinel 'not specified' for Publication Year because Wikidata has the work but no P577 statement for it; this matches the precedent set by top_10_most_populous_cities_per_continent.",
+  "source_urls": [
+    "https://query.wikidata.org/sparql",
+    "https://en.wikipedia.org/wiki/List_of_Nobel_laureates_in_Literature"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-04-30T00:00:00Z",
+  "_extraction_notes": "Original instance filling the lone gap-5 category implicit_join (no untouched seed in example_questions.txt fits cleanly: #8 and #12 fail the row-count gate, #9 is set_operation). The DB-analog shape is a join of the 25-row laureate set with each laureate's notable-work table on Wikidata. Construction is fully deterministic from the cited SPARQL query at datasets/build_benchmark/sparql_queries/nobel_literature_laureates_notable_works_2000_2024.sparql plus the Wikipedia laureate list for the per-laureate primary writing language. Pipeline: (1) run the SPARQL via datasets/build_benchmark/sparql_to_csv.py — returns 129 raw bindings consisting of one row per (laureate, P800 work) pair with optional P577 publication date. (2) Drop 3 rows whose work label is an unresolved QID (e.g., 'Q120560612' for one Mo Yan work whose Wikidata label service returned a QID rather than a label); these are Wikidata data-completeness issues rather than query bugs and are documented as a known scope limitation. (3) Deduplicate on (Laureate, Work) using MIN(P577 year) when a work has multiple P577 statements (Wikidata sometimes records multiple editions/printings under separate P577 statements; one such case in the staged set: Louise Glück's 'Faithful and Virtuous Night' has two P577 = 2020 statements). (4) Truncate P577 datetimes to a 4-digit year; for the 8 (laureate, work) pairs whose work has no P577 at all, write the explicit sentinel 'not specified'. (4) Normalize the Wikidata laureate-label English form to the master Nobel-list article's canonical name where they differ ('Vidiadhar Surajprasad Naipaul' -> 'V. S. Naipaul'; 'John Maxwell Coetzee' -> 'J. M. Coetzee'; 'Jean-Marie Gustave Le Clézio' -> 'J. M. G. Le Clézio'); these three normalizations align the Wikidata rdfs:label with the form used in the Wikipedia laureate list. (5) Join to the per-laureate Original Language column from the cited Wikipedia 'List of Nobel laureates in Literature' article — for laureates listed with multiple languages, the staged value is the FIRST language listed by the article (e.g., Chinese for Gao Xingjian, who also writes in French; Russian for Svetlana Alexievich, who is from Belarus but writes primarily in Russian; English for Kazuo Ishiguro who is UK-based and writes in English; Korean for Han Kang). Result: 125 rows x 5 columns, composite PK on (Laureate, Work), 0 duplicates after the (Laureate, Work) dedup. Per-laureate work count is variable from 1 (J. M. Coetzee) to 10 (Jon Fosse), reflecting Wikidata's per-laureate P800 curation depth rather than a curator-imposed cap. 12 distinct primary writing languages."
+}

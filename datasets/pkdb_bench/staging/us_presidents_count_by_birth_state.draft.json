@@ -1,0 +1,30 @@
+{
+  "id": "us_presidents_count_by_birth_state",
+  "table_title": "For each U.S. state that has been the birthplace of at least one U.S. president, how many U.S. presidents were born there?",
+  "columns": [
+    "Birth State",
+    "Presidents Born"
+  ],
+  "primary_key": [
+    "Birth State"
+  ],
+  "column_types": {
+    "Birth State": "key",
+    "Presidents Born": "numeric"
+  },
+  "query_category": "aggregation",
+  "secondary_category": "",
+  "db_analog": "SELECT birth_state, COUNT(DISTINCT president) AS presidents_born FROM us_presidents GROUP BY birth_state HAVING COUNT(DISTINCT president) >= 1 ORDER BY birth_state",
+  "operation_type": "aggregation",
+  "source_count": 1,
+  "domain": "History/Politics",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Snapshot taken 2026-04-27 from Wikipedia 'List of presidents of the United States by home state'. Covers presidencies 1 through 47 (George Washington through Donald Trump's second term, inaugurated January 2025). Cleveland (22 and 24) and Trump (45 and 47) each count as one person, so the table aggregates over 45 distinct individuals. The row set will grow only when a new individual is inaugurated as U.S. president whose birth state is not already represented; existing per-state counts may also increment over time.",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/List_of_presidents_of_the_United_States_by_home_state"
+  ],
+  "_staged_by": "human (demoted from registered)",
+  "_staged_at": "2026-05-11T00:00:00Z",
+  "_extraction_notes": "Originally registered in cfg.json on 2026-04-27 from the cited Wikipedia page and demoted to staging on 2026-05-11 for re-review alongside the LLM-curated staged set. The 21 rows aggregate distinct individual U.S. presidents 1-47 by Wikipedia-listed birth state; Cleveland (22, 24) and Trump (45, 47) are each counted once, yielding 45 distinct individuals. No supplementation beyond the single cited Wikipedia page."
+}

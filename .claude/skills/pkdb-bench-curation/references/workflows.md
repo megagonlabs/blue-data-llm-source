@@ -324,5 +324,7 @@ For multi-agent collaboration patterns (default Stage→Audit ownership rule,
 parallel-staging ID rule, experimental same-query duel layout, and the
 reconciliation persistence rule), see the "Agent Collaboration Patterns"
 section of `datasets/pkdb_bench/docs/agent_handoff_bundle.md`. That file is
-the agent-agnostic source of truth — this skill mirrors it but does not
-restate it.
+the agent-agnostic source of truth. Its "Minimal Session Kickoff" and
+"Mode Router" sections explain how a fresh session should choose between
+curation and audit before loading this workflow. This skill mirrors the
+curation side but does not restate the full handoff contract.

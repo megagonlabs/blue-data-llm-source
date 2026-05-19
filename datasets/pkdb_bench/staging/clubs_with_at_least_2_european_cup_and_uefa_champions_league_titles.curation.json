@@ -1,0 +1,190 @@
+{
+  "id": "clubs_with_at_least_2_european_cup_and_uefa_champions_league_titles",
+  "claim_type": "source_defined",
+  "claim_type_rationale": "Single-master single-table source with deterministic numeric threshold on a pre-aggregated COUNT cell. The universe scope (football clubs with European Cup + UEFA Champions League title appearances per Wikipedia's `List of European Cup and UEFA Champions League finals` master article's `By club` per-club tally), the ranking rule (Titles DESC), and the value cells (Club, Country, Titles, First Title Year, Most Recent Title Year) all come from the same master. The ≥ 2 threshold is the only curator-chosen input and is documented as a deterministic round-number cutoff that yields exactly 13 rows from the master's 24 title-winning clubs. The pooled European Cup + UCL title-counting convention is inherited from the master's own framing (the article says 'Prior to the 1992-93 season, the tournament was named the European Cup' and the per-club tally combines both eras as one continuous trophy lineage). The deterministic-universe-rule preference is satisfied: SQL-WHERE-clause = `titles >= 2`. Distinct from `partially_supplemented` (no rebuilding of any subset) and `candidate_rebuild` (no curator-bounded universe selection beyond the master's own per-club tally + the curator-chosen ≥ 2 threshold).",
+  "collection_summary": {
+    "approach": "Pre-curation design pass (cycle-0 source exploration + audit-cycle-1 design review APPROVE-WITH-AMENDMENTS) produced a source-faithful instance. Cycle-0 verified the `List of European Cup and UEFA Champions League finals` master article exists with a `Performances → By club` sub-table (columns: Club | Title(s) | Runners-up | Seasons won | Seasons runner-up), treats the European Cup era (1955-1992) and UEFA Champions League era (1992-present) as one continuous trophy lineage, and is current as of the 2024-25 season (PSG won the most-recent final). The full table has 42 rows (24 title-winning clubs + 18 runner-up-only clubs); the ≥ 2 staged threshold yields exactly 13 rows. Audit-cycle-1 issued 4 required amendments + 12 per-question recommendations — all incorporated. Staged design is locked.",
+    "universe_size": 13,
+    "threshold_rule": "Total European Cup era (1955-1992) + UEFA Champions League era (1992-present) titles per the master's `By club` pooled tally ≥ 2. The pooled-era convention is inherited from the master article's own framing — the master explicitly treats both as one continuous trophy lineage and the per-club Title(s) count combines both eras. The ≥ 2 threshold is a deterministic numeric cutoff on a pre-aggregated COUNT cell. The next row immediately below the threshold (≥ 1 universe) includes 11 single-title clubs (Feyenoord, Celtic, Hamburger SV, Steaua București, Marseille, PSV Eindhoven, Red Star Belgrade, Borussia Dortmund, Aston Villa, Manchester City, Paris Saint-Germain) — none of them enter the ≥ 2 universe.",
+    "alternative_threshold_row_counts": {
+      "≥ 1 title": 24,
+      "≥ 2 titles (chosen, clean ≥ 10 row gate + 'multiple wins' semantic)": 13,
+      "≥ 3 titles": 8,
+      "≥ 5 titles": 5,
+      "_note_on_threshold_choice": "≥ 2 is the only threshold that clears the ≥ 10 row viability gate while preserving a meaningful 'multiple winners / repeat-champion' semantic. ≥ 1 is broader (24 rows) but loses the elite-tier filter sense. ≥ 3 (8 rows) and ≥ 5 (5 rows) fail the gate."
+    },
+    "universe_listing": [
+      {"rank": 1, "club": "Real Madrid", "country": "Spain", "titles": 15, "first_title_year": 1956, "most_recent_title_year": 2024},
+      {"rank": 2, "club": "Milan", "country": "Italy", "titles": 7, "first_title_year": 1963, "most_recent_title_year": 2007},
+      {"rank": 3, "club": "Bayern Munich", "country": "Germany", "titles": 6, "first_title_year": 1974, "most_recent_title_year": 2020, "tie_note": "tied at 6 titles with Liverpool; First Title Year ASC tiebreak puts Bayern (1974) first"},
+      {"rank": 4, "club": "Liverpool", "country": "England", "titles": 6, "first_title_year": 1977, "most_recent_title_year": 2019, "tie_note": "tied at 6 titles with Bayern Munich; First Title Year ASC tiebreak puts Liverpool (1977) second"},
+      {"rank": 5, "club": "Barcelona", "country": "Spain", "titles": 5, "first_title_year": 1992, "most_recent_title_year": 2015},
+      {"rank": 6, "club": "Ajax", "country": "Netherlands", "titles": 4, "first_title_year": 1971, "most_recent_title_year": 1995},
+      {"rank": 7, "club": "Inter Milan", "country": "Italy", "titles": 3, "first_title_year": 1964, "most_recent_title_year": 2010, "tie_note": "tied at 3 titles with Manchester United; First Title Year ASC tiebreak puts Inter Milan (1964) first"},
+      {"rank": 8, "club": "Manchester United", "country": "England", "titles": 3, "first_title_year": 1968, "most_recent_title_year": 2008, "tie_note": "tied at 3 titles with Inter Milan; First Title Year ASC tiebreak puts Manchester United (1968) second"},
+      {"rank": 9, "club": "Benfica", "country": "Portugal", "titles": 2, "first_title_year": 1961, "most_recent_title_year": 1962, "tie_note": "tied at 2 titles in a 5-way tie (Benfica + Nottingham Forest + Juventus + Porto + Chelsea); First Title Year ASC tiebreak puts Benfica (1961) first"},
+      {"rank": 10, "club": "Nottingham Forest", "country": "England", "titles": 2, "first_title_year": 1979, "most_recent_title_year": 1980, "tie_note": "tied at 2 titles; First Title Year ASC tiebreak puts Nottingham Forest (1979) second in the 5-way tie"},
+      {"rank": 11, "club": "Juventus", "country": "Italy", "titles": 2, "first_title_year": 1985, "most_recent_title_year": 1996, "tie_note": "tied at 2 titles; First Title Year ASC tiebreak puts Juventus (1985) third in the 5-way tie"},
+      {"rank": 12, "club": "Porto", "country": "Portugal", "titles": 2, "first_title_year": 1987, "most_recent_title_year": 2004, "tie_note": "tied at 2 titles; First Title Year ASC tiebreak puts Porto (1987) fourth in the 5-way tie"},
+      {"rank": 13, "club": "Chelsea", "country": "England", "titles": 2, "first_title_year": 2012, "most_recent_title_year": 2021, "tie_note": "tied at 2 titles; First Title Year ASC tiebreak puts Chelsea (2012) fifth (last) in the 5-way tie"}
+    ],
+    "boundary_row_check": "Next-below universe is the ≥ 1 layer's 11 single-title clubs (Feyenoord 1970, Celtic 1967, Hamburger SV 1983, Steaua București 1986, Marseille 1993, PSV Eindhoven 1988, Red Star Belgrade 1991, Borussia Dortmund 1997, Aston Villa 1982, Manchester City 2023, Paris Saint-Germain 2025). None of these enter the staged ≥ 2 universe. The boundary at 'exactly 1 title' is unambiguous because the Titles column is an integer count; no fractional / pending values."
+  },
+  "source_coverage_notes": {
+    "roles": [
+      {
+        "url": "https://en.wikipedia.org/wiki/List_of_European_Cup_and_UEFA_Champions_League_finals",
+        "roles": ["universe", "ranking", "value"],
+        "role_note": "universe: defines the club scope via the master's `Performances → By club` per-club tally — the master's pooled European Cup + UEFA Champions League title count is the staged universe's row-defining attribute. ranking: the per-club table is sorted by Title(s) DESC. value: supplies Club, Country (via embedded country flag-icon + linked country text in the Club cell — a normalized extraction from a single source, NOT a separate verbatim Country header), Titles (master's `Title(s)` column verbatim), First Title Year + Most Recent Title Year (min/max of the displayed final-year integer list in the master's `Seasons won` column — the master already displays final years as integers (1956, 1957, ..., 2024) rather than season-notation strings like '1955-56'). All 5 cells per row derive from this single master."
+      }
+    ],
+    "validation_only_sources": "Per-club Wikipedia articles (Real Madrid CF, AC Milan, Bayern Munich, Liverpool FC, FC Barcelona, AFC Ajax, FC Internazionale Milano, Manchester United FC, SL Benfica, Nottingham Forest FC, Juventus FC, FC Porto, Chelsea FC) are validation-only context — they cross-confirm individual title counts, founding years, and country values but are not row-defining for any cell. NOT registered in source_urls per the artifact contract (validation sources do not count toward source_count and live in provenance prose). The UEFA official records and the `European Cup and UEFA Champions League records and statistics` Wikipedia article cited by the master were consulted for cross-confirmation but are not directly registered — the staged source is the canonical finals-list master that contains the per-club tally.",
+    "source_count": 1,
+    "source_grounding_summary": "1 registered single-master source (List of European Cup and UEFA Champions League finals; roles = [universe, ranking, value]). All 5 cells per row derive from the master's per-club tally + the embedded country link in each row's Club cell. Per-club Wikipedia articles + UEFA records consulted for validation during curation but not registered."
+  },
+  "decision_log": [
+    {
+      "decision": "claim_type = source_defined (per audit-cycle-1 design review; deterministic-universe-rule preference satisfied)",
+      "rationale": "Single-master source carries the universe scope (per-club tally) + ranking rule (Title(s) DESC) + value cells (Club, Country, Titles, First/Most Recent Year). The threshold (Titles ≥ 2) is a deterministic numeric filter on a pre-aggregated COUNT cell. No curator judgment after the master-tally + threshold anchors. SQL-WHERE-clause: `titles >= 2`."
+    },
+    {
+      "decision": "ID = `clubs_with_at_least_2_european_cup_and_uefa_champions_league_titles` (per audit-cycle-1 amendment #1)",
+      "rationale": "The cycle-0 ID `uefa_champions_league_titles_per_club` was non-parametric on threshold and did not advertise the pooled European Cup + UCL scope. Audit-cycle-1 amendment #1 recommended a threshold-explicit + scope-explicit ID. The chosen form makes both load-bearing facts visible: '_at_least_2_' makes the threshold visible, and '_european_cup_and_uefa_champions_league_titles' makes the pooled-era scope visible. This is the longest ID in the staging set, but the explicit framing prevents downstream confusion about the staged threshold or scope."
+    },
+    {
+      "decision": "Threshold = ≥ 2 titles (NOT ≥ 1, NOT ≥ 3)",
+      "rationale": "≥ 2 yields exactly 13 rows — clears the ≥ 10 row viability gate AND preserves the meaningful 'multiple winners / repeat-champion' semantic that the natural-language query implies. ≥ 1 yields 24 rows (broad; loses the elite-tier filter sense + introduces 11 single-title clubs whose membership in the universe is benchmark-uninteresting). ≥ 3 yields 8 rows (below the gate). ≥ 5 yields 5 rows (below the gate). The ≥ 2 cutoff is the only viable threshold under the deterministic-universe-rule preference."
+    },
+    {
+      "decision": "Title scope = pooled European Cup era + UEFA Champions League era (master's own convention)",
+      "rationale": "Per audit-cycle-1 per-question recommendation Q4: the master article explicitly treats both eras as one continuous trophy lineage — the article says 'Prior to the 1992-93 season, the tournament was named the European Cup' and the per-club Title(s) cell combines both eras. Excluding European Cup era wins would be a curator override against the master's own scope. The universal football-journalism convention also treats them as one trophy (e.g., Real Madrid's '15 Champions League titles' counts 6 European Cup era wins + 9 UCL era wins). The pooled-era convention is documented in title + threshold_rule for transparency."
+    },
+    {
+      "decision": "Year-anchor = master accessed 2026-05-18; tally reflects completed finals through 2024-25 season",
+      "rationale": "Per audit-cycle-1 recommended temporal_note wording: the master's tally is current as of the 2024-25 final (PSG won the 2025 final and is now a single-title club, kept OUT of the ≥ 2 universe). The 2025-26 final is separately listed by the master as an upcoming fixture; 2025-26 results are NOT yet part of the title totals. temporal_sensitivity = medium because the tally updates per season; if any current single-title club wins again (Man City, PSG, Marseille, etc.), the universe shifts to 14 rows."
+    },
+    {
+      "decision": "Year-cell extraction = min/max of the master's displayed final-year integer list (NOT season-notation parsing)",
+      "rationale": "Per audit-cycle-1 amendment #2: the cycle-0 design proposal assumed the master's `Seasons won` column uses season-notation strings (e.g., '1955-56') requiring curator parsing to extract calendar years. Audit-cycle-1 verified this assumption was WRONG — the live master's `Seasons won` column already displays final-year integers (e.g., 1956, 1957, ..., 2024). First Title Year + Most Recent Title Year are simply the min and max of that displayed integer list per club — no curator parsing required. The cells are source-defined."
+    },
+    {
+      "decision": "Country sourcing = master-derived from embedded country flag-icon + linked country text in each Club cell (NOT a separate Country header)",
+      "rationale": "Per audit-cycle-1 amendment #3: the master article does NOT expose a standalone Country column header in the `By club` table — the table headers are `Club | Title(s) | Runners-up | Seasons won | Seasons runner-up`. Country is embedded in each row's Club cell via a flag-icon + linked country text appearing BEFORE the club name. This is still a single-source extraction (source_count = 1 preserved), but the staged Country cell is a NORMALIZED extraction from the Club-cell's embedded country link, NOT a separate verbatim Country header. Documented as a normalized extraction in normalization_decisions."
+    },
+    {
+      "decision": "Master full-table row count = 42 (NOT 44; per audit-cycle-1 amendment #4)",
+      "rationale": "Cycle-0 design proposal stated the master's `By club` table has 44 rows. Audit-cycle-1 verified the live master has 42 rows (24 title-winning clubs + 18 runner-up-only clubs). The staged ≥ 2 universe of 13 rows is unaffected, but the cycle-0 row-count statement was corrected before staging."
+    },
+    {
+      "decision": "Schema = 5 cols (Club PK + Country + Titles + First Title Year + Most Recent Title Year)",
+      "rationale": "Single PK on Club. Titles is the pre-aggregated COUNT cell (the aggregation attribute that defines row selection — same pattern as 'Total Oscars Won' in films_winning_at_least_8_academy_awards). Country adds geographic dimension for benchmark testing. First Title Year + Most Recent Title Year add temporal dimensions for benchmark testing of historical / current-era knowledge. Column name 'Titles' is the cleanest normalization of the master's `Title(s)` column header (per audit-cycle-1 recommendation Q9 — drops the parenthetical 's' for readability while preserving meaning)."
+    },
+    {
+      "decision": "Sort = Titles DESC primary; First Title Year ASC secondary tiebreak; Club ASC final tiebreak",
+      "rationale": "Primary sort matches the master table's ranking order (most titles first). The First Title Year ASC secondary tiebreak is a CURATOR SORT NORMALIZATION (not the master table's native order — the master uses an unknown internal tiebreak at ties); explicitly documented as such. At the 6-title tie: Bayern Munich 1974 < Liverpool 1977. At the 3-title tie: Inter Milan 1964 < Manchester United 1968. At the 5-way 2-title tie: Benfica 1961 < Nottingham Forest 1979 < Juventus 1985 < Porto 1987 < Chelsea 2012. Club ASC is the final tiebreaker — not triggered at the current 13-row universe (no two clubs share both Title count AND First Title Year)."
+    },
+    {
+      "decision": "Club name normalization = master verbatim ('Milan' not 'AC Milan'; 'Bayern Munich' not 'FC Bayern München'; 'Inter Milan'; 'Manchester United'; etc.)",
+      "rationale": "Per audit-cycle-1 recommendation Q8: master verbatim forms preserve source faithfulness. Notable verbatim choices: 'Milan' (NOT 'AC Milan' or 'Associazione Calcio Milan' — the master uses the short form); 'Bayern Munich' (NOT 'FC Bayern München' or 'Bayern München' — the master uses the partial-Anglicization); 'Inter Milan' (NOT 'Internazionale' or 'FC Inter Milano' — the master uses the partial-Anglicization); 'Manchester United' (NOT 'Manchester United F.C.'); 'Barcelona' (NOT 'FC Barcelona'); 'Real Madrid' (NOT 'Real Madrid CF'); 'Liverpool' (NOT 'Liverpool FC'); 'Chelsea' (NOT 'Chelsea FC'); 'Juventus' (NOT 'Juventus FC'); 'Benfica' (NOT 'SL Benfica' or 'Sport Lisboa e Benfica'); 'Porto' (NOT 'FC Porto'); 'Ajax' (NOT 'AFC Ajax'); 'Nottingham Forest' (NOT 'Nottingham Forest FC')."
+    },
+    {
+      "decision": "Country form normalization = master verbatim (constituent-country for British clubs)",
+      "rationale": "Per audit-cycle-1 recommendation Q7: master uses constituent-country forms for British clubs. 4 of 13 rows are English clubs ('England' for Liverpool, Manchester United, Nottingham Forest, Chelsea — note these are all 'England' not 'United Kingdom'). No Scottish clubs in the staged universe (Celtic has exactly 1 title, below threshold). Other countries: 'Spain' (×2 — Real Madrid + Barcelona); 'Italy' (×3 — Milan + Inter Milan + Juventus); 'Germany' (×1 — Bayern Munich); 'Netherlands' (×1 — Ajax); 'Portugal' (×2 — Benfica + Porto). All forms verbatim from master."
+    },
+    {
+      "decision": "Domain = Sports/Football (NEW subdomain under Sports family)",
+      "rationale": "Sports family currently has 2 subdomains: Sports/Olympics (held by `summer_olympics_hosts_1960_2020` + `trial_join_2`) and Sports/Tennis (held by `tennis_players_with_more_than_5_grand_slam_singles_titles`). This instance introduces Sports/Football as a 3rd Sports subdomain. The Football subdomain is benchmark-distinctive because club-level football competitions (UCL, Premier League, Bundesliga, etc.) are categorically different from national-team competitions (Olympics, World Cup) — different organizational structures, different temporal cadences, different LLM knowledge sources."
+    },
+    {
+      "decision": "Entity class = organizations/sports-clubs (NEW fine-class within organizations bucket)",
+      "rationale": "Per audit-cycle-1 recommendation Q10: organizations bucket currently has 4 fine-classes (universities, companies, space-agencies, ports). Sports clubs are categorically distinct (membership-driven competitive organizations with league participation, fan ownership in some cases, and shared structural properties across different sports). The choice of `sports-clubs` (broader) over `football-clubs` (more specific) is intentional: it leaves room for future hockey / baseball / basketball / etc. club-aggregation instances without forcing a re-classification. Under the answer-entity-wins policy, the single PK = Club IS the answer entity — no scaffold partition. The NEW `sports-clubs` fine-class extends the under-represented organizations bucket from 4 to 5 instances."
+    },
+    {
+      "decision": "Operation type = aggregation (pre-aggregated COUNT cell)",
+      "rationale": "Per audit-cycle-1 recommendation Q11: the Titles column is a pre-aggregated COUNT of finals-won per club, sourced verbatim from the master's `Title(s)` column. operation_type = `aggregation` per the artifact-contract canonical vocab. Same pattern as `films_winning_at_least_8_academy_awards` (pre-aggregated Oscar count per film) and `us_presidents_count_by_birth_state` (pre-aggregated COUNT-GROUP-BY-state of presidents born per state)."
+    }
+  ],
+  "normalization_decisions": [
+    {
+      "field": "Club",
+      "rule": "Verbatim from master's `Club` column. 13 unique values: 'Real Madrid', 'Milan', 'Bayern Munich', 'Liverpool', 'Barcelona', 'Ajax', 'Inter Milan', 'Manchester United', 'Benfica', 'Nottingham Forest', 'Juventus', 'Porto', 'Chelsea'. Master uses partial-Anglicization and short-form conventions (e.g., 'Milan' not 'AC Milan'; 'Bayern Munich' not 'FC Bayern München'; 'Inter Milan' not 'Internazionale'). Diacritic / special-character handling: no diacritics in current 13-row universe (all club names use ASCII characters in master)."
+    },
+    {
+      "field": "Country",
+      "rule": "Normalized extraction from each row's Club cell embedded country link (master does not expose a standalone Country header). 7 unique countries across 13 rows: Spain (×2 — Real Madrid, Barcelona), Italy (×3 — Milan, Inter Milan, Juventus), Germany (×1 — Bayern Munich), England (×4 — Liverpool, Manchester United, Nottingham Forest, Chelsea), Netherlands (×1 — Ajax), Portugal (×2 — Benfica, Porto). British clubs use constituent-country form 'England' per master (NOT 'United Kingdom' or 'Great Britain'). Country cell is the linked-country-page title from the embedded country link in each Club cell — a single-source extraction documented as a normalized field (not a verbatim separate column)."
+    },
+    {
+      "field": "Titles",
+      "rule": "Integer count. Master's `Title(s)` column verbatim. Pre-aggregated COUNT of European Cup + UEFA Champions League finals won per club per master's pooled-era convention. Range: 2 (5-way tie at the threshold) to 15 (Real Madrid). The ≥ 2 threshold is defined on this same column. Column name 'Titles' is the cleanest normalization of the master's `Title(s)` header (drops the parenthetical 's' for readability)."
+    },
+    {
+      "field": "First Title Year",
+      "rule": "Integer year (CE). Min of the displayed final-year integer list in the master's `Seasons won` column. The master already displays final years as integers (1956, 1957, ..., 2024), NOT as season-notation strings (1955-56). No curator parsing of season-notation is required. Range: 1956 (Real Madrid's 1st of 15 titles) to 2012 (Chelsea's 1st of 2 titles)."
+    },
+    {
+      "field": "Most Recent Title Year",
+      "rule": "Integer year (CE). Max of the displayed final-year integer list in the master's `Seasons won` column. Same source-cell convention as First Title Year (no season-notation parsing). Range: 1962 (Benfica's 2nd / most-recent title in 1962 — earliest 'most-recent' across the universe) to 2024 (Real Madrid's 15th / most-recent title in 2024 — latest 'most-recent' across the universe). For all 13 staged rows, Most Recent Title Year ≥ First Title Year (trivially)."
+    }
+  ],
+  "open_questions": [
+    {
+      "question": "Should defunct or renamed clubs (Steaua București → FCSB; Yugoslavia-era Red Star Belgrade) be handled differently if the threshold drops to ≥ 1?",
+      "answer": "Not relevant at the staged ≥ 2 threshold. Steaua București has exactly 1 title (1986) and Red Star Belgrade has exactly 1 title (1991); both are below the threshold and OUT of the staged universe. If a future-cycle instance lowers the threshold to ≥ 1, audit-cycle-1 would need to resolve: (a) name-form normalization (Steaua București = pre-rename master form OR FCSB = current form?), (b) country-form normalization (Yugoslavia = historical-state OR Serbia = successor-state for Red Star Belgrade?). Neither question affects the current 13-row staged universe."
+    },
+    {
+      "question": "What is the master's native ordering at multi-club ties (6-title Bayern/Liverpool; 3-title Inter/Man Utd; 5-way 2-title Benfica/Forest/Juventus/Porto/Chelsea)?",
+      "answer": "The master's native tie-ordering is unknown — likely an internal alphabetical or seasons-won-list-based convention. The staged sort applies First Title Year ASC as a CURATOR SORT NORMALIZATION (audit-friendly + deterministic); this is documented in decision_log + normalization_decisions. The master's native order at ties is preserved as a note for future-cycle reference."
+    },
+    {
+      "question": "If Manchester City or PSG wins a 2nd title in a future season, would the universe shift to 14 rows?",
+      "answer": "Yes. The staged ≥ 2 universe is stable as of 2024-25 but the tally updates each season. PSG won its 1st title in 2025 (kept OUT of staged universe). Manchester City won its 1st title in 2023 (kept OUT). If either club wins a 2nd title in the 2025-26 or later season, that club enters the ≥ 2 universe and the staged row count shifts to 14. Year-anchor (master accessed 2026-05-18 / 2024-25 season complete) documented in temporal_note + decision_log to make this future-shift behavior explicit."
+    },
+    {
+      "question": "Could a future-cycle instance use the same master for a different staged scope (e.g., runner-up appearances ≥ 5, or top-K by combined finals appearances)?",
+      "answer": "Yes. The master's `By club` table also carries Runners-up + Seasons runner-up columns, so future instances could mine: (a) clubs with ≥ N runner-up appearances (comparative); (b) clubs by combined (Titles + Runners-up) finals appearances (different ranking attribute); (c) per-country club-aggregation (countries with most UCL titles via second-level aggregation). The current staged instance does not preclude any of these."
+    }
+  ],
+  "proposed_supplements": [],
+  "audit_trail_pre_curation": {
+    "cycle_0_source_exploration": {
+      "task": "Verify source structure for the user-selected `uefa_champions_league_titles_per_club` candidate.",
+      "outcome": "Cycle-0 verified `List of European Cup and UEFA Champions League finals` master article exists with a `Performances → By club` sub-table (columns Club | Title(s) | Runners-up | Seasons won | Seasons runner-up), treats both eras as one continuous trophy lineage, and is current as of the 2024-25 season. Universe size at thresholds: ≥ 1 → 24 clubs; ≥ 2 → 13 clubs (chosen); ≥ 3 → 8 clubs (below gate); ≥ 5 → 5 clubs (below gate). Per-row data verified for the 13 ≥ 2 clubs (Real Madrid 15 / Milan 7 / Bayern 6 / Liverpool 6 / Barcelona 5 / Ajax 4 / Inter Milan 3 / Manchester United 3 / Juventus 2 / Benfica 2 / Chelsea 2 / Nottingham Forest 2 / Porto 2). Cycle-0 also identified 11 single-title clubs (Feyenoord, Celtic, Hamburger SV, Steaua București, Marseille, PSV Eindhoven, Red Star Belgrade, Borussia Dortmund, Aston Villa, Manchester City, Paris Saint-Germain) that stay OUT of the staged universe.",
+      "deliverable": "Initial design proposal with ≥ 2 threshold + claim_type=source_defined + single-master source plan + 5-col schema."
+    },
+    "cycle_1_audit_design_review": {
+      "task": "Audit agent reviews cycle-0 design proposal BEFORE staging",
+      "verdict": "APPROVE WITH AMENDMENTS (4 required amendments + 12 per-question recommendations)",
+      "amendments": [
+        "1. ID renamed from `uefa_champions_league_titles_per_club` to `clubs_with_at_least_2_european_cup_and_uefa_champions_league_titles` — makes both the threshold (≥ 2) AND the pooled European Cup + UCL scope visible in the ID. Longer but more honest.",
+        "2. Year-extraction premise corrected: the master's `Seasons won` column already displays final-year integers (1956, 1957, ..., 2024), NOT season-notation strings (1955-56). First/Most Recent Title Year cells are min/max of the displayed integer list — no curator season-notation parsing required.",
+        "3. Country sourcing documented precisely: master-derived from each row's Club-cell embedded country flag-icon + linked country text — a normalized single-source extraction, NOT a separate verbatim Country header. The master does not expose a standalone Country column. source_count = 1 preserved.",
+        "4. Cycle-0 row-count corrected from 44 to 42: the live master's `By club` table has 42 rows (24 title-winning + 18 runner-up-only), not 44. The staged ≥ 2 universe of 13 rows is unaffected."
+      ],
+      "per_question_recommendations": [
+        "Q1: Country sourceability single-source from Club cell embed; source_count = 1.",
+        "Q2: ≥ 2 threshold confirmed (current live counts: ≥ 1 → 24, ≥ 2 → 13, ≥ 3 → 8, ≥ 5 → 5).",
+        "Q3: First Title Year ASC tiebreak as curator sort normalization (not master-native).",
+        "Q4: Inherit master's pooled European Cup + UCL convention; state explicitly in title + decision_log.",
+        "Q5: Defunct/renamed clubs out of scope at ≥ 2; note in open_questions only.",
+        "Q6: Year normalization = displayed final-year integers from Seasons won; no season-string parsing.",
+        "Q7: Country forms master-verbatim (England, Spain, Italy, Germany, Netherlands, Portugal).",
+        "Q8: Club names master-verbatim (Milan, Bayern Munich, Inter Milan, Manchester United, etc.).",
+        "Q9: Column name = 'Titles' (cleanest normalization of source header `Title(s)`).",
+        "Q10: Entity class = organizations/sports-clubs (broader than football-clubs to enable future cross-sport instances).",
+        "Q11: operation_type = aggregation (pre-aggregated COUNT cell).",
+        "Q12: Deterministic-universe preference satisfied (SQL-WHERE = `titles >= 2`)."
+      ],
+      "deliverable": "All 4 required + 12 per-question recommendations incorporated. Design locked; staging."
+    },
+    "cycle_2_post_staging_hygiene": {
+      "task": "Cycle-1 post-staging audit (Full pre-registration sweep) reviewed the 3 staged artifacts; cycle-2 applied the 1 HYGIENE fix (0 BLOCKING, 0 SUGGESTION).",
+      "verdict": "Ready (0 BLOCKING); 1 HYGIENE finding cleaned up in-place during cycle-2.",
+      "fixes_applied": [
+        "1. (HYGIENE / structural) Replaced the leftover 'Sports family extends from N to N+1 instances' placeholder in draft.json::_extraction_notes with the actual count ('Sports family extends from 3 to 4 instances'). The pre-cycle Sports family count was 3 (Sports/Olympics: `summer_olympics_hosts_1960_2020` + `trial_join_2`; Sports/Tennis: `tennis_players_with_more_than_5_grand_slam_singles_titles`); this UCL clubs instance adds Sports/Football as the 4th, making the post-cycle count 4. The audit observation was that the 'N to N+1' shorthand is active metadata prose (not historical audit-trail text) and should not carry a placeholder."
+      ],
+      "deliverable": "HYGIENE fix applied. Instance is Ready+Clean pending cycle-3 verification. Cycle-2 is prose-only; CSV unchanged."
+    }
+  },
+  "_curated_by": "claude-code",
+  "_curated_at": "2026-05-18T00:00:00Z"
+}

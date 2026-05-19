@@ -1,0 +1,42 @@
+{
+  "id": "top_grossing_films_worldwide_1990s_only",
+  "table_title": "List the top 5 worldwide-grossing films of the 1990s with worldwide gross in USD and release year.",
+  "columns": [
+    "Decade",
+    "Rank",
+    "Film",
+    "Worldwide Gross (USD)",
+    "Year"
+  ],
+  "primary_key": [
+    "Decade",
+    "Rank"
+  ],
+  "column_types": {
+    "Decade": "key",
+    "Rank": "rank",
+    "Film": "key",
+    "Worldwide Gross (USD)": "numeric",
+    "Year": "date"
+  },
+  "query_category": "scaled_enumeration",
+  "secondary_category": "",
+  "db_analog": "SELECT decade, ROW_NUMBER() OVER (PARTITION BY decade ORDER BY worldwide_gross_usd DESC) AS rank, film, worldwide_gross_usd, release_year FROM films WHERE decade IN ('1980s','1990s','2000s','2010s') QUALIFY rank <= 5 ORDER BY decade, rank",
+  "operation_type": "union+filter",
+  "source_count": 4,
+  "domain": "Culture/Film",
+  "temporal_sensitivity": "medium",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia per-decade '[decade]_in_film' articles accessed 2026-04-27. Worldwide gross figures are taken from the 'List of worldwide highest-grossing films' table on each decade page; values reflect lifetime worldwide gross at the time of fetch and may include theatrical re-release earnings (e.g., Avatar's $2.92B includes its 2022 re-release; Titanic's $1.84B includes the 2012 3D and later re-releases). The top-5 ordering itself is stable; the absolute gross values may shift with future re-releases or with Wikipedia table updates.",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/1980s_in_film",
+    "https://en.wikipedia.org/wiki/1990s_in_film",
+    "https://en.wikipedia.org/wiki/2000s_in_film",
+    "https://en.wikipedia.org/wiki/2010s_in_film"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-04-27T00:00:00Z",
+  "_extraction_notes": "Derived from top_grossing_films_worldwide_per_decade_1980s_2010s by deterministic filter/projection on the parent CSV. Decade filter == 1990s.",
+  "_derived_from": "top_grossing_films_worldwide_per_decade_1980s_2010s",
+  "_derivation_note": "Decade filter == 1990s."
+}

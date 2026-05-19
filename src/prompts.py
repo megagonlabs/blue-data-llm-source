@@ -357,6 +357,41 @@ You are processing a PARTITION: "{partition_key}" = "{partition_value}".
 You MUST ONLY return items where "{partition_key}" is equal to "{partition_value}".
 {partition_estimate_str}"""
 
+DATA_EXTRACTION_PROMPT_WITH_CONFIDENCE = """
+User Request: "{query}"
+Target Scope:
+{constraint_str}
+{estimate_str}
+
+**CRITICAL INSTRUCTION**: According to {source}, extract ALL data matching the request.
+- Extract the COMPLETE set of items. Do NOT limit yourself to "the most famous",
+  "the most common", or any arbitrary top-N selection.
+- Do NOT stop early because you have reached a convenient stopping point.
+  Continue until you genuinely have no more entries to add.
+- When in doubt, include more rows rather than fewer. Missing rows are worse than extras.
+
+**CONFIDENCE SCORING**:
+For each row, add a "_confidence" field: a JSON object mapping each non-key column name
+to a float between 0.0 and 1.0 representing how confident you are in that value.
+- 1.0 = certain (directly verifiable from {source})
+- 0.7 = fairly confident (general knowledge, may have minor errors)
+- 0.5 = uncertain (reasonable guess)
+- 0.0 = unknown / highly speculative
+Do NOT include confidence scores for primary key columns.
+
+**OUTPUT FORMAT**:
+Return a valid JSON Object with a single key "items" containing the list of rows.
+Each row must include a "_confidence" dictionary for all non-key columns.
+Example:
+{{
+    "items": [
+        {{"Column1": "Value1", "Column2": 42, "_confidence": {{"Column2": 0.9}}}},
+        ...
+    ]
+}}
+DO NOT return a raw list. DO NOT return Markdown.
+"""
+
 ROW_BY_ROW_KEYS_PROMPT = """
 You are a retriever of facts.
 We want to create a table with the detailed information about {query} according to {source}

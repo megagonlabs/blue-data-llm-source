@@ -1,0 +1,51 @@
+{
+  "id": "films_winning_at_least_8_academy_awards",
+  "table_title": "List the 15 films that have won at least 8 competitive Academy Awards per Wikipedia's 'List of Academy Award–winning films' master article, with the year of release, total competitive Oscars won (the aggregation cell — COUNT of competitive Academy Award wins per film), whether the film also won Best Picture (closed Yes/No vocabulary), and the director(s) per the per-film Wikipedia article.",
+  "columns": [
+    "Film",
+    "Year of Release",
+    "Total Oscars Won",
+    "Best Picture Winner",
+    "Director"
+  ],
+  "primary_key": [
+    "Film"
+  ],
+  "column_types": {
+    "Film": "key",
+    "Year of Release": "numeric",
+    "Total Oscars Won": "numeric",
+    "Best Picture Winner": "categorical",
+    "Director": "text"
+  },
+  "query_category": "aggregation",
+  "secondary_category": "comparative",
+  "db_analog": "SELECT film, year_of_release, total_oscars_won, best_picture_winner, director FROM academy_award_winning_films WHERE total_oscars_won >= 8 ORDER BY total_oscars_won DESC, year_of_release ASC",
+  "operation_type": "aggregation",
+  "source_count": 16,
+  "domain": "Culture/Film",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia 'List of Academy Award–winning films' master article + 15 per-film Wikipedia articles, accessed 2026-05-16. Universe is the 15 films that have won at least 8 competitive Academy Awards per the master article's Film / Year / Awards / Nominations table. The threshold ≥8 was selected after pre-staging audit review evaluated 3 alternatives: ≥9 gives only 7 rows (below 10-row gate); ≥7 gives 28 rows (audit confirmed current source count) including Oppenheimer 2023 7-Oscar Best-Picture-winner and Gravity 2013 7-Oscar non-Best-Picture; ≥8 is the chosen design giving 15 rows comfortably above the gate with a cleaner 'most-awarded films' interpretation and one strong calibration case (Cabaret 1972, won 8 Oscars but lost Best Picture to The Godfather). Total Oscars Won is COMPETITIVE Academy Award wins only — does NOT include honorary Oscars, special achievement awards, or Best Foreign Language Film submissions per Wikipedia master article convention. Distribution: 3 films with 11 Oscars (Ben-Hur 1959, Titanic 1997, The Lord of the Rings: The Return of the King 2003); 1 film with 10 (West Side Story 1961); 3 films with 9 (Gigi 1958, The Last Emperor 1987, The English Patient 1996); 8 films with 8 (Gone with the Wind 1939, From Here to Eternity 1953, On the Waterfront 1954, My Fair Lady 1964, Cabaret 1972, Gandhi 1982, Amadeus 1984, Slumdog Millionaire 2008). Cabaret is the only non-Best-Picture winner in the universe (lost Best Picture to The Godfather 1972 despite winning 8 other Oscars). Per-row cells: Film name verbatim from per-film Wikipedia article canonical title; Year of Release integer per per-film infobox; Total Oscars Won integer per master article's Awards column; Best Picture Winner closed Yes/No vocabulary; Director text from per-film article infobox (semicolon-delimited for multi-director films — West Side Story has 'Robert Wise; Jerome Robbins' per the per-film article's co-director credit). Notable: Everything Everywhere All at Once (2022) is NOT in the universe — it won 7 competitive Oscars (Best Picture, Best Director, Best Actress, Best Supporting Actor, Best Supporting Actress, Best Original Screenplay, Best Film Editing) — 7 is below the ≥8 threshold. The 15-row universe is stable on a multi-year horizon: future Best Picture winners would extend the universe only if they win ≥8 competitive Oscars (rare event — last such was Slumdog Millionaire in 2008).",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/List_of_Academy_Award%E2%80%93winning_films",
+    "https://en.wikipedia.org/wiki/Ben-Hur_(1959_film)",
+    "https://en.wikipedia.org/wiki/Titanic_(1997_film)",
+    "https://en.wikipedia.org/wiki/The_Lord_of_the_Rings:_The_Return_of_the_King",
+    "https://en.wikipedia.org/wiki/West_Side_Story_(1961_film)",
+    "https://en.wikipedia.org/wiki/Gigi_(1958_film)",
+    "https://en.wikipedia.org/wiki/The_Last_Emperor",
+    "https://en.wikipedia.org/wiki/The_English_Patient_(film)",
+    "https://en.wikipedia.org/wiki/Gone_with_the_Wind_(film)",
+    "https://en.wikipedia.org/wiki/From_Here_to_Eternity",
+    "https://en.wikipedia.org/wiki/On_the_Waterfront",
+    "https://en.wikipedia.org/wiki/My_Fair_Lady_(film)",
+    "https://en.wikipedia.org/wiki/Cabaret_(1972_film)",
+    "https://en.wikipedia.org/wiki/Gandhi_(film)",
+    "https://en.wikipedia.org/wiki/Amadeus_(film)",
+    "https://en.wikipedia.org/wiki/Slumdog_Millionaire"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-05-16T00:00:00Z",
+  "_extraction_notes": "Original instance chipping `aggregation` from gap 3 to **gap 2** (2 of 5 staged before this; this brings the count to 3 of 5: programming_languages_by_decade_of_first_appearance + us_presidents_count_by_birth_state + this films instance). Source plan: Tier B Wikipedia, source_count = 16 — 1 master 'List of Academy Award–winning films' Wikipedia article + 15 per-film Wikipedia articles. The pre-staging audit design review (1 round) confirmed aggregation category-fit is honest (Total Oscars Won = COUNT(competitive Oscar wins) grouped by Film, pre-aggregated by master article — same pattern as us_presidents_count_by_birth_state) and surfaced 5 required fixes all applied in cycle-0: (1) threshold ≥8 (not ≥7) — ≥8 gives 15 rows cleaner 'most-awarded films' interpretation; ≥7 would give 28 rows with more boundary churn; ≥9 gives only 7 rows below gate. (2) Master source switched from 'Academy Award records' to 'List of Academy Award–winning films' for cleaner Film/Year/Awards/Nominations table provenance. (3) Everything Everywhere All at Once (2022) excluded from universe — it won 7 competitive Oscars NOT 8 as initially proposed. (4) Director normalization uses semicolon-delimited multi-director format: 'Robert Wise; Jerome Robbins' for West Side Story per per-film article co-director credit. (5) Best Picture Winner uses closed Yes/No vocabulary with Cabaret documented as the calibration case (only non-Best-Picture-winner in the universe — won 8 Oscars but lost Best Picture to The Godfather). Pipeline: (1) fetch the cited master article HTML and extract films with Awards ≥ 8 from the master table (Awards column); (2) for each row, take Film name verbatim from per-film article canonical title, Year of Release from per-film infobox, Total Oscars Won from master Awards column, Best Picture Winner via master+per-film cross-check, Director from per-film infobox; (3) sort by Total Oscars Won descending then Year of Release ascending. Result: 15 rows × 5 columns, single PK on Film, 0 duplicates. Total Oscars Won distribution: 11→3, 10→1, 9→3, 8→8 = 15. Best Picture Winner distribution: Yes 14, No 1 (Cabaret). Director list: William Wyler (1 — Ben-Hur), James Cameron (1 — Titanic), Peter Jackson (1 — LOTR Return), Robert Wise+Jerome Robbins (1 — West Side Story co-directed), Vincente Minnelli (1 — Gigi), Bernardo Bertolucci (1 — Last Emperor), Anthony Minghella (1 — English Patient), Victor Fleming (1 — Gone with the Wind), Fred Zinnemann (1 — From Here to Eternity), Elia Kazan (1 — On the Waterfront), George Cukor (1 — My Fair Lady), Bob Fosse (1 — Cabaret), Richard Attenborough (1 — Gandhi), Miloš Forman (1 — Amadeus, diacritic preserved), Danny Boyle (1 — Slumdog Millionaire). Confidence gradient: very-LLM-knowable cells include the most-iconic 11-Oscar films (Ben-Hur, Titanic, LOTR Return); mid-difficulty cells include the well-known 8-Oscar films (Gone with the Wind, Amadeus, Slumdog Millionaire, Gandhi); harder calibration cells include the Cabaret edge case (8 Oscars but no Best Picture) and the less-popularly-known earlier films (Gigi 1958, From Here to Eternity 1953, On the Waterfront 1954, My Fair Lady 1964). Aggregation category-fit: per the aggregation category contract, each row aggregates multiple underlying source rows (the individual Oscar wins for a film) into a per-partition COUNT. The Total Oscars Won cell is COUNT(*) over the film's competitive Academy Award wins. Mirror precedent: us_presidents_count_by_birth_state where each row aggregates multiple presidents born in a state into a COUNT per state. Same pattern: pre-aggregated COUNT cell from a master summary, not computed by the model from raw per-row data; the curation explicitly documents this is a lookup of a source-published aggregate, not model-side computation."
+}

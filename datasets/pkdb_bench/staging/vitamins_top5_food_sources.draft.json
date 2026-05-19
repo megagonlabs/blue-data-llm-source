@@ -1,0 +1,43 @@
+{
+  "id": "vitamins_top5_food_sources",
+  "table_title": "For each of six major vitamins (Vitamin A, B12, C, D, E, K), list five notable food sources known for high content of that vitamin, with their approximate content per serving and source type.",
+  "columns": [
+    "Vitamin",
+    "List Position",
+    "Food",
+    "Approximate Content",
+    "Source Type"
+  ],
+  "primary_key": [
+    "Vitamin",
+    "Food"
+  ],
+  "column_types": {
+    "Vitamin": "key",
+    "List Position": "numeric",
+    "Food": "key",
+    "Approximate Content": "text",
+    "Source Type": "categorical"
+  },
+  "query_category": "scaled_enumeration",
+  "secondary_category": "",
+  "db_analog": "SELECT vitamin, list_position, food, approximate_content, source_type FROM vitamin_food_sources WHERE vitamin IN ('Vitamin A','Vitamin B12','Vitamin C','Vitamin D','Vitamin E','Vitamin K') ORDER BY vitamin, list_position",
+  "operation_type": "union+filter",
+  "source_count": 7,
+  "domain": "Food/Nutrition",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia per-vitamin articles accessed 2026-04-29. The 6-vitamin universe (Vitamin A, B12, C, D, E, K) is anchored to Wikipedia 'Vitamin' article which classifies all 6 as essential vitamins (the article lists 13 in total: 4 fat-soluble — A, D, E, K — and 9 water-soluble — 8 B vitamins and Vitamin C; the staged 6 are picked to span both classification groups). Per-vitamin food source listings + content + source type are anchored to each per-vitamin Wikipedia article's Sources / Dietary Sources section. Vitamin C / E / A use mg or μg per 100 g (the per-vitamin article tables); Vitamin K uses mixed per-100g (K2 sources: Nattō, Egg yolk) and per-serving (K1 sources: Collard greens 1/2 cup, Spinach 1/2 cup, Kale 1 cup) because the article's K1 leafy-green table reports per-cup or per-half-cup; Vitamin D uses IU per serving (3 oz fish or 1/2 cup mushrooms or 1 cup milk) per the article's reporting convention; Vitamin B12 uses qualitative descriptors because the Vitamin B12 Wikipedia article does not provide a numeric food-content table — the 5 staged B12 rows preserve the article's verbatim food-name list (organ meats from lamb, beef, turkey + crab meat + fortified breakfast cereals) with a 'qualitative' tag. Schema follows the cycles 1+2+3 lessons from prior scaled_enumeration instances: selection-not-ranked framing in table_title; composite PK (Vitamin, Food) with List Position as a non-key numeric display ordinal; per-row Wikipedia article cited from cycle 0 (each row is cited via its vitamin's article).",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/Vitamin",
+    "https://en.wikipedia.org/wiki/Vitamin_A",
+    "https://en.wikipedia.org/wiki/Vitamin_B12",
+    "https://en.wikipedia.org/wiki/Vitamin_C",
+    "https://en.wikipedia.org/wiki/Vitamin_D",
+    "https://en.wikipedia.org/wiki/Vitamin_E",
+    "https://en.wikipedia.org/wiki/Vitamin_K"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-04-29T00:00:00Z",
+  "_extraction_notes": "Universe: 6 vitamins (A, B12, C, D, E, K) anchored to Wikipedia 'Vitamin' which classifies them all as essential vitamins (4 fat-soluble + 1 from B-complex + Vitamin C). Per-vitamin 5-food-source selection: anchored to each per-vitamin Wikipedia article's Sources / Dietary Sources section. Articles vary in coverage: Vitamin A/C/E provide ranked food-source tables with numeric content; Vitamin K has separate K1 and K2 tables (the staged K rows span K1 leafy greens and K2 fermented/animal sources rather than a single ranked list); Vitamin D reports per-serving content with strong emphasis on fortified sources; Vitamin B12 has no numeric food-content table at all (qualitative listings only). Schema applies the cycles 1+2+3 lessons from world_religions_top5_holy_sites, twentieth_century_decade_inventions, and scientific_disciplines_widely_cited_scientists: (a) table_title says 'list five notable food sources' (selection framing) rather than 'list the 5 dishes high in...' (ranked framing) — Wikipedia per-vitamin articles do not always rank top-5 explicitly, so 'notable' is the honest framing; (b) composite PK is (Vitamin, Food) with List Position as a non-key numeric column; (c) per-row Wikipedia article cited from cycle 0 — each row's content + source-type values come directly from the vitamin's Wikipedia article (no parametric supplementation). Vitamin B12 special case: the Vitamin B12 article does NOT include a numeric food-content table, so the 5 B12 rows use qualitative content descriptors preserved verbatim from the article ('high concentration of vitamin B12', 'organ meats from lamb / veal / beef / turkey', 'crab meat', 'fortified breakfast cereals'). The other 5 vitamins (A / C / D / E / K) have numeric content per their articles, with mixed units (mg/100g, μg/100g, μg RAE/100g, IU/serving, μg per cup or 1/2 cup for K1 leafy greens) — the 'Approximate Content' column is typed 'text' to accommodate the unit variation. Result: 6 vitamins x 5 food sources = 30 rows x 5 columns, composite PK on (Vitamin, Food), 0 duplicate PKs. Source Type column ranges over 4 distinct values (Animal, Plant, Fortified, Fermented). Source Type distribution after cycle-1 audit fix (was Animal-skewed pre-fix): Animal 10 rows (A: 3, B12: 4, D: 2, K: 1); Plant 16 rows (A: 2, C: 5, D: 1, E: 5, K: 3); Fortified 3 rows (B12: 1, D: 2); Fermented 1 row (K: Nattō). Cycle-1 audit fixes (in addition to Source-Type recount): (i) B12 rows trimmed to article-verbatim foods — replaced subspecific 'Clams' / 'Salmon' with 'Lamb liver' and 'Turkey liver' which are explicitly named in the Vitamin B12 article quote 'liver and other organ meats from lamb, veal, beef, and turkey; also shellfish and crab meat'; (ii) cycle-0 had used the article's fish-bioavailability percentage as Salmon's content cell, which conflated bioavailability with content; cycle-1 removed Salmon and replaced with Turkey liver, and the bioavailability metric is no longer used as content; (iii) Vitamin K rows rebalanced from K2-only (5 K2 sources) to K1+K2 mix (1 K2 fermented + 3 K1 plant + 1 K2 animal) so the partition spans the broader Vitamin K universe per the article's K1 leafy-greens table; (iv) secondary_category dropped from 'top_k' to '' because B12 (qualitative) and K (mixed K1+K2 with no single ranking) are not clean top-K rankings."
+}

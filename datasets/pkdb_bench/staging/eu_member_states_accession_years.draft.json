@@ -12,7 +12,7 @@
     "Country": "key",
     "Year of EU Accession": "date"
   },
-  "query_category": null,
+  "query_category": "factual_lookup",
   "secondary_category": "",
   "db_analog": "SELECT country, accession_year FROM eu_member_states WHERE membership_status = 'current' ORDER BY accession_year, country",
   "operation_type": "projection",

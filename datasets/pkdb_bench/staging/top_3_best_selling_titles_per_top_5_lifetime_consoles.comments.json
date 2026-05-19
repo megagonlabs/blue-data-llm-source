@@ -1,0 +1,57 @@
+{
+  "doubts": [],
+  "comments": [],
+  "chat_events": [
+    {
+      "at": "2026-05-18T21:22:18+00:00",
+      "action": "assistant_response",
+      "summary": "Full pre-registration sweep: Not ready — 1 BLOCKING factual issue, 2 NON-BLOCKING HYGIENE factual issues, 0 suggestions. B1: the Nintendo DS source row is `Nintendogs (all versions)` but the CSV stages `Nintendogs` while the artifact claims verbatim Title cells....",
+      "source_cited": "",
+      "source_fetch_enabled": false
+    },
+    {
+      "at": "2026-05-18T21:27:22+00:00",
+      "action": "assistant_response",
+      "summary": "Cycle-2 verification pass: Ready+Clean — 0 BLOCKING / 0 NON-BLOCKING HYGIENE / 0 SUGGESTION. The Nintendogs title now matches the registered Nintendo DS list row verbatim, the Tetris provenance note distinguishes the exact table-cell value from looser intro prose, and the PS2 boundary note now cites Gran Turismo 4 at 11.76 million....",
+      "source_cited": "",
+      "source_fetch_enabled": false
+    }
+  ],
+  "chat_summary": "Cycle-2 verification pass: Ready+Clean — 0 BLOCKING / 0 NON-BLOCKING HYGIENE / 0 SUGGESTION. The Nintendogs title now matches the registered Nintendo DS list row verbatim, the Tetris provenance note distinguishes the exact table-cell value from looser intro prose, and the PS2 boundary note now cites Gran Turismo 4 at 11.76 million....",
+  "chat_history": [
+    {
+      "role": "user",
+      "content": "Audit handoff: top_3_best_selling_titles_per_top_5_lifetime_consoles — cycle-1 post-staging review\n\nPlease run a Full pre-registration sweep on the staged video-games hierarchical_decomposition instance. This is the first post-staging audit cycle after the pre-staging audit-cycle-1 design review (APPROVE WITH AMENDMENTS — 6 required amendments + 12 per-question recommendations).\n\nFiles:\n- datasets/pkdb_bench/staging/top_3_best_selling_titles_per_top_5_lifetime_consoles.csv (15 rows × 4 cols)\n- datasets/pkdb_bench/staging/top_3_best_selling_titles_per_top_5_lifetime_consoles.draft.json\n- datasets/pkdb_bench/staging/top_3_best_selling_titles_per_top_5_lifetime_consoles.curation.json\n\nSource plan: 6 URLs — 1 master List_of_best-selling_game_consoles (universe-only role) + 5 per-console list pages (universe + ranking + value roles for each partition). Same source-pattern as zodiac-stars.\n\nClaim type: source_defined. N=5 partition cut + within-partition top-3 are both source-defined; only curator input is N=5 deterministic threshold.\n\nPlease verify the six amendments, row cells, Game Boy grouped-generation handling, Game Boy Tetris normalization, source-count honesty, heterogeneous year-anchor prose, and return a condensed verdict block with two-axis findings."
+    },
+    {
+      "role": "assistant",
+      "content": "Full pre-registration sweep: Not ready — 1 BLOCKING factual issue, 2 NON-BLOCKING HYGIENE factual issues, 0 suggestions.\n\nFindings\n\n1. (factual, BLOCKING) The Nintendo DS partition is not source-verbatim as staged. The registered DS source table shows the second row as `Nintendogs (all versions)` in the Title/Game cell, while the CSV stages `Nintendogs`. This conflicts with the artifact's own active rule that Title cells are taken verbatim from the per-console list page, and it hides the same grouped-row semantics that the artifact carefully preserves for Pokémon Generation I/II. Evidence: `List of best-selling Nintendo DS video games`, list table row 2 (`Nintendogs (all versions)`, 23.96 million, April 21 2005); staged CSV row `Nintendo DS,Nintendogs,23.96,2005`; `curation.json::normalization_decisions[Title]` says titles are verbatim from source. Minimal fix: either change the CSV/key value to `Nintendogs (all versions)` and propagate the exact label through prose, or explicitly redefine the normalization rule away from source-verbatim row labels and justify that departure. The former is cleaner and matches the grouped-title policy already used elsewhere.\n\n2. (factual, NON-BLOCKING HYGIENE) The active Tetris provenance prose overstates fuzziness relative to the registered value source. The Game Boy list intro says \"over 35 million\", but the registered row-value table gives `Tetris` a numeric `35,000,000` Sales cell. Active prose in `draft.json::temporal_note`, `curation.json::universe_listing[Tetris]`, `normalization_decisions[Units Sold (millions)]`, and `open_questions` describes the staged `35.00` as a lower-bound extraction from a fuzzy row value. The numeric CSV cell is still supported, so this does not block readiness, but the provenance story should distinguish the exact table cell from the looser intro sentence. Evidence: `List of best-selling Game Boy video games`, list table row for Tetris (`35,000,000`); intro prose on the same page says `over 35 million`.\n\n3. (factual, NON-BLOCKING HYGIENE) The PS2 within-partition boundary prose is stale. `collection_summary::boundary_row_check` says the fourth-ranked PS2 row is \"likely Final Fantasy X ~10.85M\"; the registered PS2 list shows the correct fourth row is `Gran Turismo 4` at `11.76 million`, after the staged top three (`Grand Theft Auto: San Andreas`, `Gran Turismo 3: A-Spec`, `Grand Theft Auto: Vice City`). The top-3 CSV rows remain correct, so this is narrative hygiene only. Evidence: `List of best-selling PlayStation 2 video games`, lead + list table lines covering ranks 1-5.\n\nChecks passed\n\n- The 5-console partition universe is correct: PS2, Nintendo Switch, Nintendo DS, Game Boy & Game Boy Color, and PS4 are the top five rows of the console master; PlayStation is correctly outside the N=5 cut. Evidence: `List of best-selling game consoles`, best-selling consoles table rows 1-7.\n- Source registration is structurally correct at 6 URLs: one universe master plus five per-console `[universe, ranking, value]` pages.\n- The 15-row partition cardinality, 3 rows per partition, composite PK uniqueness, partition sort order, and all other staged numeric values checked correctly against their cited per-console pages.\n- Game Boy/Game Boy Color combined-platform handling and Pokémon Generation I/II grouped-title documentation are source-faithful.\n- Wiki-family source discovery pass found no more-direct missing Wikipedia page that would materially change the staged partition universe or top-3 ranking rule; the chosen per-console list pages are the direct list sources for the asserted scope.\n\nMinimal repair set\n\n1. Resolve the DS Title normalization mismatch for `Nintendogs (all versions)`.\n2. Rewrite the Tetris provenance note to reflect exact table cell vs looser intro prose.\n3. Refresh the PS2 fourth-row boundary note to `Gran Turismo 4` at `11.76 million`.\n\nVerdict block\n\n- Verdict: Not ready\n- Severity counts: 1 BLOCKING / 2 NON-BLOCKING HYGIENE / 0 SUGGESTION\n- Issue-type counts: 3 factual / 0 structural / 0 scope-related\n- comments.json: `datasets/pkdb_bench/staging/top_3_best_selling_titles_per_top_5_lifetime_consoles.comments.json`"
+    },
+    {
+      "role": "user",
+      "content": "Audit handoff: top_3_best_selling_titles_per_top_5_lifetime_consoles — cycle-2 verification pass\n\nPlease run a focused verification sweep to confirm the cycle-2 fixes landed correctly + the instance can be locked.\n\nFiles touched in cycle-2:\n- top_3_best_selling_titles_per_top_5_lifetime_consoles.csv — row 8 (Nintendogs → Nintendogs (all versions))\n- top_3_best_selling_titles_per_top_5_lifetime_consoles.curation.json — 4 locations: universe_listing[Nintendogs], universe_listing[Tetris], normalization_decisions::Units Sold (millions), boundary_row_check; added new audit_trail_pre_curation::cycle_2_post_staging_repair block\n- top_3_best_selling_titles_per_top_5_lifetime_consoles.draft.json — UNCHANGED\n\nPlease verify the Nintendogs title repair, the Tetris provenance repair, the PS2 boundary-note repair, the new audit-trail block, row-count/PK/partition invariants, and return a condensed terminal verdict."
+    },
+    {
+      "role": "assistant",
+      "content": "Cycle-2 verification pass: Ready+Clean — 0 BLOCKING / 0 NON-BLOCKING HYGIENE / 0 SUGGESTION.\n\nVerification results\n\n1. Prior BLOCKING resolved. The Nintendo DS CSV row now stages `Nintendogs (all versions)`, exactly matching the registered DS list-table row label; the curation note correctly explains that the row aggregates Lab & Friends, Chihuahua & Friends, Dachshund & Friends, and Dalmatian & Friends. Evidence: `List of best-selling Nintendo DS video games`, list table row 2; repaired CSV row `Nintendo DS,Nintendogs (all versions),23.96,2005`.\n\n2. Prior HYGIENE resolved. The Tetris provenance wording now correctly sources the staged `35.00` from the Game Boy table cell `35,000,000` and separately notes that the article intro uses looser `over 35 million` prose. `universe_listing[Tetris]` and `normalization_decisions[Units Sold (millions)]` now describe the distinction accurately. Evidence: `List of best-selling Game Boy video games`, intro + list-table Tetris row.\n\n3. Prior HYGIENE resolved. `collection_summary::boundary_row_check` now correctly identifies the PS2 fourth-ranked row as `Gran Turismo 4` at `11.76 million`, below the staged third-ranked `Grand Theft Auto: Vice City` at `14.2 million`. Evidence: `List of best-selling PlayStation 2 video games`, ranked list rows 1-4.\n\n4. The new `audit_trail_pre_curation::cycle_2_post_staging_repair` block accurately records the exact cycle-1 repair set: 1 BLOCKING factual + 2 HYGIENE factual findings, all repaired.\n\n5. Invariants still hold: CSV remains 15 rows × 4 cols; composite PK is unique across all 15 rows; each of the 5 console partitions contains exactly 3 rows; all other staged top-three rows remain unchanged; both JSON files parse.\n\nTerminal verdict block\n\n- Verdict: Ready+Clean\n- Severity counts: 0 BLOCKING / 0 NON-BLOCKING HYGIENE / 0 SUGGESTION\n- Terminal confirmation: yes — prior cycle-1 findings are fully resolved, no new issue introduced\n- comments.json: `datasets/pkdb_bench/staging/top_3_best_selling_titles_per_top_5_lifetime_consoles.comments.json`"
+    }
+  ],
+  "_audit_metadata": {
+    "audits": [
+      {
+        "audited_by": "codex",
+        "audited_at": "2026-05-18T21:22:18+00:00",
+        "bundle": "Full pre-registration sweep",
+        "verdict": "Not ready",
+        "blocking_issue_count": 1
+      },
+      {
+        "audited_by": "codex",
+        "audited_at": "2026-05-18T21:27:22+00:00",
+        "bundle": "Focused verification sweep",
+        "verdict": "Ready+Clean",
+        "blocking_issue_count": 0
+      }
+    ]
+  }
+}

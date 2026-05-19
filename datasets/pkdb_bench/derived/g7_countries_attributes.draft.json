@@ -1,0 +1,57 @@
+{
+  "id": "g7_countries_attributes",
+  "table_title": "List the 7 G7 member countries with their nominal GDP in USD millions (2026), total population (2026), official or national language(s), and government type.",
+  "columns": [
+    "Country",
+    "GDP (USD millions, 2026)",
+    "Population (2026)",
+    "Official language(s)",
+    "Government type"
+  ],
+  "primary_key": [
+    "Country"
+  ],
+  "column_types": {
+    "Country": "key",
+    "GDP (USD millions, 2026)": "numeric",
+    "Population (2026)": "numeric",
+    "Official language(s)": "text",
+    "Government type": "categorical"
+  },
+  "query_category": "multi_attribute_projection",
+  "secondary_category": "",
+  "db_analog": "SELECT country, gdp_usd_m_2026, population_2026, official_languages, government_type FROM g20_sovereign_states ORDER BY country",
+  "operation_type": "projection",
+  "source_count": 20,
+  "domain": "Business/Economics",
+  "temporal_sensitivity": "medium",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia per-country and master-G20 articles, accessed 2026-04-30. Universe is the 19 sovereign-state members of the G20: Argentina, Australia, Brazil, Canada, China, France, Germany, India, Indonesia, Italy, Japan, Mexico, Russia, Saudi Arabia, South Africa, South Korea, Turkey, United Kingdom, and United States. The two non-state G20 members (the European Union, member since 1999, and the African Union, member since the 2023 G20 Delhi summit) are excluded because the seed asks for 'G20 countries' and the seed's per-row attributes (Official language, Government type) do not apply cleanly to multilateral organizations. GDP (Nominal, USD millions) and Population values are the 2026 figures from the Wikipedia G20 article's economic table; they update on a roughly annual cadence and the rest of the schema is otherwise stable. Government type values are verbatim from each country's current Wikipedia infobox 'Government' field after stripping footnote markers — Russia's full phrase 'Federal semi-presidential republic under an authoritarian dictatorship' and South Africa's full phrase 'Unitary parliamentary republic with an executive presidency' are preserved per the source rather than trimmed to a canonical first clause; the verbatim policy is documented in normalization_decisions. Official-language values reflect each country's current Wikipedia infobox 'Official language(s)' field; four countries (Argentina, Australia, Japan, United Kingdom) use the 'National language' infobox label rather than 'Official language' because they have no statutory de jure official language at the federal level (the Argentina, Australia, Japan, and UK infoboxes report the de facto national language).",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/G20",
+    "https://en.wikipedia.org/wiki/Argentina",
+    "https://en.wikipedia.org/wiki/Australia",
+    "https://en.wikipedia.org/wiki/Brazil",
+    "https://en.wikipedia.org/wiki/Canada",
+    "https://en.wikipedia.org/wiki/China",
+    "https://en.wikipedia.org/wiki/France",
+    "https://en.wikipedia.org/wiki/Germany",
+    "https://en.wikipedia.org/wiki/India",
+    "https://en.wikipedia.org/wiki/Indonesia",
+    "https://en.wikipedia.org/wiki/Italy",
+    "https://en.wikipedia.org/wiki/Japan",
+    "https://en.wikipedia.org/wiki/Mexico",
+    "https://en.wikipedia.org/wiki/Russia",
+    "https://en.wikipedia.org/wiki/Saudi_Arabia",
+    "https://en.wikipedia.org/wiki/South_Africa",
+    "https://en.wikipedia.org/wiki/South_Korea",
+    "https://en.wikipedia.org/wiki/Turkey",
+    "https://en.wikipedia.org/wiki/United_Kingdom",
+    "https://en.wikipedia.org/wiki/United_States"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-04-30T00:00:00Z",
+  "_extraction_notes": "Derived from g20_countries_attributes by deterministic filter/projection on the parent CSV. G20 -> G7 country subset; only the seven G7 members retained.",
+  "_derived_from": "g20_countries_attributes",
+  "_derivation_note": "G20 -> G7 country subset; only the seven G7 members retained."
+}

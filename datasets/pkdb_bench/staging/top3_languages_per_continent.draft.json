@@ -1,0 +1,50 @@
+{
+  "id": "top3_languages_per_continent",
+  "table_title": "For each inhabited continent, list three of the most widely spoken languages by number of native (L1) speakers — drawn from the languages explicitly named in the continent's Wikipedia 'Languages of [Continent]' article (and the global L1 list for Asia) — with their approximate L1 speaker count in millions and language family.",
+  "columns": [
+    "Continent",
+    "List Position",
+    "Language",
+    "L1 Speakers (M)",
+    "Language Family"
+  ],
+  "primary_key": [
+    "Continent",
+    "Language"
+  ],
+  "column_types": {
+    "Continent": "key",
+    "List Position": "numeric",
+    "Language": "key",
+    "L1 Speakers (M)": "text",
+    "Language Family": "categorical"
+  },
+  "query_category": "scaled_enumeration",
+  "secondary_category": "",
+  "db_analog": "SELECT continent, list_position, language, l1_speakers_millions, language_family FROM continent_top_languages WHERE continent IN ('Africa','Asia','Europe','North America','South America','Oceania') ORDER BY continent, list_position",
+  "operation_type": "union+filter",
+  "source_count": 14,
+  "domain": "Society/Languages",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia 'Languages of [Continent]' articles + master 'List of languages by number of native speakers' + per-language Wikipedia articles accessed 2026-04-30. The 6-continent universe (Africa, Asia, Europe, North America, South America, Oceania) excludes Antarctica because it has no permanent population. 'Most widely spoken' is interpreted as highest L1 (native) speaker count within the continent — the most consistently reported metric across the cited Wikipedia articles. Claim type is partially_supplemented (cycle-2): Asia / Europe / South America picks are directly source-defined by the cited continent or global ranking source; Africa / North America / Oceania picks are curator selections from the languages explicitly named in the per-continent Wikipedia article, with per-language Wikipedia articles supplying the L1 counts. The Oceania partition has no continent-article numeric L1 ranking; the staged set (English / Fijian Hindi / Tok Pisin) is the curator's selection from the languages explicitly named in Languages of Oceania, ordered by descending per-language-article L1 count. L1 Speakers values use the per-continent or per-language Wikipedia article's stated count; values are typed 'text' rather than 'numeric' because some entries use approximate-with-tilde notation ('~250') where the precise per-continent L1 count is not directly tabulated. Language family classifications are from the per-language Wikipedia article infoboxes.",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/List_of_languages_by_number_of_native_speakers",
+    "https://en.wikipedia.org/wiki/Languages_of_Africa",
+    "https://en.wikipedia.org/wiki/Languages_of_Asia",
+    "https://en.wikipedia.org/wiki/Languages_of_Europe",
+    "https://en.wikipedia.org/wiki/Languages_of_North_America",
+    "https://en.wikipedia.org/wiki/Languages_of_South_America",
+    "https://en.wikipedia.org/wiki/Languages_of_Oceania",
+    "https://en.wikipedia.org/wiki/Hausa_language",
+    "https://en.wikipedia.org/wiki/Yoruba_language",
+    "https://en.wikipedia.org/wiki/Fiji_Hindi",
+    "https://en.wikipedia.org/wiki/Tok_Pisin",
+    "https://en.wikipedia.org/wiki/English_language",
+    "https://en.wikipedia.org/wiki/Spanish_language",
+    "https://en.wikipedia.org/wiki/French_language"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-04-30T00:00:00Z",
+  "_extraction_notes": "Universe: 6 inhabited continents (Africa, Asia, Europe, North America, South America, Oceania); Antarctica excluded (no permanent population). Per-continent 3-language selection: anchored to each continent's Wikipedia 'Languages of [Continent]' article (and the global L1 list for Asia) supplemented by per-language Wikipedia articles for L1 speaker counts and language family classification. 'Most widely spoken' = highest L1 (native) speaker count within the continent. Claim type is 'partially_supplemented' (cycle-2): three partitions are source-defined (Asia from the global L1 list; Europe and South America from the per-continent article's stated 50M+ list / numeric table); three partitions are curator-supplemented selections from the languages explicitly named in the per-continent article, with per-language Wikipedia articles supplying the L1 counts (Africa, North America, Oceania). Schema applies the cycles 1+2+3 lessons from prior scaled_enumeration instances: PK = (Continent, Language) with List Position as a non-key numeric column. Per-row Wikipedia citation from cycle 0. Per-continent picks: Africa = Arabic / Hausa / Yoruba (Arabic from Languages of Africa demographics table 150M; Hausa 58M and Yoruba 48M from the per-language Wikipedia articles — selected over Amharic/Berber from the Languages of Africa article because per-language L1 counts place Hausa/Yoruba higher); Asia = Mandarin / Hindi / Bengali (per the global L1 list — the top 3 L1 languages globally are all in Asia, source-defined); Europe = Russian / German / French (per Languages of Europe: '5 languages have more than 50 million native speakers in Europe: Russian, German, French, Italian, and English' with Russian 110M, German 97M, French 81M continent-restricted counts — source-defined); North America = English / Spanish / French (per Languages of North America's stated rank order English > Spanish > French; numeric L1 counts from the per-language Wikipedia articles since the continent article gives no numbers); South America = Portuguese / Spanish / Quechua (per Languages of South America's numeric table — source-defined); Oceania = English / Fijian Hindi / Tok Pisin (curator selection from the languages explicitly named in Languages of Oceania; ranked descending L1 per the per-language Wikipedia article counts). L1 Speakers values: Africa rows use the per-language article's stated L1 count (Arabic 150M from Africa-context article; Hausa 58M from Hausa article 2023-2024; Yoruba 48M from Yoruba article 2023). Asia rows use the global L1 list (Mandarin 988M, Hindi 347M, Bengali 232M). Europe rows use the Europe article's continent-restricted counts (Russian 110M in European Russia + adjacent areas; German 97M; French 81M). North America rows use cycle-1 cited continent-restricted counts (~250M English = 231M USA + 19M Canada per the English language article; ~160M Spanish = Mexico-largest + USA Hispanic L1 ~30-35M per the Spanish language article, approximate; ~7.7M French = Canada 7.7M per the French language article 2021 census). South America rows use the South America article's numeric table (Portuguese 215.7M ≈ 216M; Spanish 214.3M ≈ 214M; Quechua 7.7M). Oceania rows use cited per-language L1 counts (~25M English = 17M Australia + 3.7M NZ + Pacific Anglophones per the English language article; ~0.34M = 340K Fijian Hindi per the Fiji Hindi article; ~0.12M = 120K Tok Pisin per the Tok Pisin article). Result: 6 continents x 3 languages = 18 rows x 5 columns, composite PK on (Continent, Language), 0 duplicate PKs. Some languages appear in multiple continent partitions (English in NA + Oceania; Spanish in NA + SA; French in Europe + NA) — the composite PK handles this without duplication."
+}

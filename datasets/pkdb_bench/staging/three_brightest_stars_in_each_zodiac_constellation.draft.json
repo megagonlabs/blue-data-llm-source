@@ -1,0 +1,47 @@
+{
+  "id": "three_brightest_stars_in_each_zodiac_constellation",
+  "table_title": "For each of the 12 constellations after which the twelve zodiac signs are named (Aries through Pisces in ecliptic order), list the three brightest stars by lowest apparent magnitude, with apparent magnitude and spectral class. Universe is anchored by Wikipedia's `Zodiac` master article (which identifies the 12 namesake constellations + ecliptic order) and the 12 dedicated `List of stars in <Constellation>` ranked-list articles (which supply universe + ranking + value cells per constellation). Ophiuchus is explicitly NOT in scope per the Zodiac article's distinction between the twelve zodiac namesake constellations and the 13 ecliptic-intersecting constellations (which include Ophiuchus); the staged set follows the 12-zodiac-namesake set. Constellation names use the astronomical Latin forms (Scorpius, Capricornus) per the per-constellation list-article titles, NOT the astrological sign forms (Scorpio, Capricorn) which appear in the Zodiac article's sign-name column.",
+  "columns": [
+    "Constellation",
+    "Star",
+    "Apparent Magnitude",
+    "Spectral Class"
+  ],
+  "primary_key": [
+    "Constellation",
+    "Star"
+  ],
+  "column_types": {
+    "Constellation": "key",
+    "Star": "key",
+    "Apparent Magnitude": "numeric",
+    "Spectral Class": "categorical"
+  },
+  "query_category": "hierarchical_decomposition",
+  "secondary_category": null,
+  "db_analog": "SELECT z.constellation_name AS constellation, s.star_name AS star, s.apparent_magnitude, s.spectral_class FROM zodiac_constellations z JOIN stars s ON s.constellation_id = z.constellation_id WHERE s.apparent_magnitude IN (SELECT apparent_magnitude FROM stars WHERE constellation_id = z.constellation_id ORDER BY apparent_magnitude ASC LIMIT 3) ORDER BY z.zodiac_position ASC, s.apparent_magnitude ASC",
+  "operation_type": "join",
+  "source_count": 13,
+  "domain": "Science/Astronomy",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia `Zodiac` master article (universe role: defines the 12-zodiac-namesake constellation set + ecliptic order) + 12 dedicated `List of stars in <Constellation>` ranked-list articles (each carrying universe + ranking + value roles: enumerates the constellation's stars sorted by apparent magnitude, supplies Name cell + Apparent Magnitude + Spectral Class values), all accessed 2026-05-17. source_count = 13 registered. The per-constellation prose pages (`Aries (constellation)`, `Taurus (constellation)`, ..., `Pisces (constellation)`) are validation-only context and NOT registered in source_urls per the artifact contract. Universe = 36 row-pairs (12 × 3 lowest-apparent-magnitude stars per constellation). temporal_sensitivity = low because apparent magnitudes are stable on benchmark timescales (variable-star catalogues use a single scalar mean/peak value, documented in normalization). Per-row Star + Apparent Magnitude + Spectral Class cells are taken verbatim from the list-article Name column / Apparent Magnitude column / Spectral Class column, per audit-cycle-1 amendment #4 (source-table Name cell verbatim, not curator-judgment proper-name preference). The 'three brightest by apparent magnitude per constellation' rule is deterministic (apparent magnitude is a total ordering); no curator-judgment selection.",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/Zodiac",
+    "https://en.wikipedia.org/wiki/List_of_stars_in_Aries",
+    "https://en.wikipedia.org/wiki/List_of_stars_in_Taurus",
+    "https://en.wikipedia.org/wiki/List_of_stars_in_Gemini",
+    "https://en.wikipedia.org/wiki/List_of_stars_in_Cancer",
+    "https://en.wikipedia.org/wiki/List_of_stars_in_Leo",
+    "https://en.wikipedia.org/wiki/List_of_stars_in_Virgo",
+    "https://en.wikipedia.org/wiki/List_of_stars_in_Libra",
+    "https://en.wikipedia.org/wiki/List_of_stars_in_Scorpius",
+    "https://en.wikipedia.org/wiki/List_of_stars_in_Sagittarius",
+    "https://en.wikipedia.org/wiki/List_of_stars_in_Capricornus",
+    "https://en.wikipedia.org/wiki/List_of_stars_in_Aquarius",
+    "https://en.wikipedia.org/wiki/List_of_stars_in_Pisces"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-05-17T00:00:00Z",
+  "_extraction_notes": "Hierarchical_decomposition instance — 12 zodiac-namesake constellations partitioned by ecliptic position, each partition enumerating its 3 lowest-apparent-magnitude stars. Composite PK (Constellation, Star) matches the precedent set by `periodic_table_groups_first_three_elements_by_atomic_number` (Group, Element) + `apollo_lunar_landing_mission_crews` (Mission, Astronaut) + `foundational_painters_of_major_modern_art_movements` (Movement, Painter). Brings `hierarchical_decomposition` from gap 2 (3 of 5) to **gap 1 (4 of 5)** — one more after this would saturate. Science/Astronomy EXISTING subdomain — Science family extends from 13 to 14 instances; Science/Astronomy subdomain extends from 2 (`planets_named_moons`, `apollo_lunar_landing_mission_crews`) to 3 instances. NEW `taxonomic-entities/stars` fine-class extending under-represented taxonomic-entities bucket from 3 to 4 instances (joining moons, species, nutrients). Schema: 4 cols (Constellation composite-PK-1 + Star composite-PK-2 + Apparent Magnitude + Spectral Class); Apparent Magnitude earns its column as the ranking attribute that defines row selection (same precedent as Atomic Number in periodic-table-groups). Sort: zodiac-position ASC primary (Aries=1 through Pisces=12, NOT lexicographic — lexicographic 'Aquarius, Aries, Cancer, ...' would mis-order) + Apparent Magnitude ASC secondary per audit-cycle-1 amendment (explicit numeric-zodiac-position sort contract; same pattern as periodic-table-groups' numeric-parse-from-Group-N sort). Universe: 12 × 3 = 36 rows. claim_type = `source_defined` per audit-cycle-1 design review — universe (12-zodiac-namesake set per Zodiac master) + ranking rule (lowest 3 apparent magnitudes per list-article) + value (list-article Name + Magnitude + Spectral Class columns verbatim) all source-defined. Source plan: 1 master Zodiac + 12 `List of stars in <Constellation>` ranked-list pages = 13 registered URLs. Per audit-cycle-1 amendment #1: the row-defining source family is the 12 dedicated ranked-list pages (which expose Name + Magnitude + Spectral Class verbatim), NOT the per-constellation prose pages (which are non-uniform and could disagree). Audit-cycle-1 amendments applied: (1) row-defining source switched from per-constellation prose pages to dedicated `List of stars in <Constellation>` ranked-list pages — this fixes the cycle-0 preliminary slate which had Aries 3rd row wrong (Mesarthim instead of 41 Ari) and Pisces 3rd row wrong (Alrescha instead of ω Psc); (2) universe scope reframed from '12 zodiac constellations' (slightly loose) to 'the 12 constellations after which the twelve zodiac signs are named' (matches master article's exact framing); (3) Ophiuchus explicit exclusion documented (Zodiac article notes ecliptic intersects 13 constellations including Ophiuchus, but only 12 are zodiac-sign-namesake); (4) Star cell value taken VERBATIM from list-article Name column, NOT curator-judgment proper-name-preferred (yields a deterministic mix: Hamal + β Ari + 41 Ari in Aries; less pretty but source-faithful and audit-friendly); (5) Spectral Class kept as full source-faithful classification (e.g., 'M1.5Iab-b', 'A5mF2 (IV)', 'M3/M4III'), not letter-only; (6) Variable stars use single scalar magnitude from the ranked list page (variability documented in provenance, not a range cell); (7) sort contract = numeric zodiac-position 1-12 in db_analog. Entity class: `taxonomic-entities/stars` (NEW fine-class — under the answer-entity-wins policy, the answer entity is the Star (composite PK 2), not the Constellation (composite PK 1, scaffold partition); stars are naturally-occurring celestial objects classified by attributes, same bucket as moons + species)."
+}

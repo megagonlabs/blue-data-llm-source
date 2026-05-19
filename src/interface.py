@@ -35,10 +35,16 @@ class PKDBConfig:
     # Continuation / Completeness
     continuation_pk_str_limit: int = 50  # Max chars per PK value in continuation prompt
 
+    # Confidence output
+    output_confidence: bool = False  # Ask LLM to output per-cell confidence scores
+
     # Validation
     map_validators: List[str] = field(default_factory=lambda: ["ChunkConstraints", "FormatNormalization"])
     global_validators: List[str] = field(default_factory=lambda: ["Deduplication", "EntityResolution", "PrimaryKeyValidation", "Completeness", "FormatNormalization"])
     dedup_strategy: str = "llm_based"  # "first" or "llm_based" (conflict resolution for duplicate rows)
+    entity_resolution_mode: str = "llm"  # "semantic_type" | "keyword" | "llm"
+    chunk_repair_mode: str = "drop"  # "drop" | "repair" (ChunkValidator fix behavior)
+    entity_resolution_max_drop_ratio: float = 0.15  # max fraction of rows EntityResolution may drop before skipping
 
 class PKDB:
     """
@@ -75,12 +81,18 @@ class PKDB:
         self.map_validator = DataValidator(
             self.llm,
             strategies=getattr(self.config, 'map_validators', ["ChunkConstraints", "FormatNormalization"]),
-            dedup_strategy=self.config.dedup_strategy
+            dedup_strategy=self.config.dedup_strategy,
+            entity_resolution_mode=self.config.entity_resolution_mode,
+            chunk_repair_mode=self.config.chunk_repair_mode,
+            entity_resolution_max_drop_ratio=self.config.entity_resolution_max_drop_ratio,
         )
         self.global_validator = DataValidator(
             self.llm,
             strategies=getattr(self.config, 'global_validators', ["Deduplication", "EntityResolution", "PrimaryKeyValidation", "Completeness", "FormatNormalization"]),
-            dedup_strategy=self.config.dedup_strategy
+            dedup_strategy=self.config.dedup_strategy,
+            entity_resolution_mode=self.config.entity_resolution_mode,
+            chunk_repair_mode=self.config.chunk_repair_mode,
+            entity_resolution_max_drop_ratio=self.config.entity_resolution_max_drop_ratio,
         )
         
         self.schema_generator = SchemaGenerator(
@@ -128,8 +140,8 @@ class PKDB:
         return self.config.default_execution_mode
         
     async def extract_table(
-        self, 
-        query: str, 
+        self,
+        query: str,
         strategy: str = "llm_rank",
         schema: Optional[SchemaDefinition] = None,
         context: dict = None,
@@ -137,10 +149,10 @@ class PKDB:
         map_validator = None,
         global_validator = None,
         plan_only: bool = False # Dry run for planning cost
-    ) -> Tuple[pd.DataFrame, LLMMetrics, int]:
+    ) -> Tuple[pd.DataFrame, Optional[pd.DataFrame], LLMMetrics, int]:
         """
         Main API: Extracts a table from the LLM's parametric knowledge.
-        
+
         Args:
             query: The user query, e.g. "List all US cities"
             strategy: Schema selection strategy ('first', 'llm_rank')
@@ -149,16 +161,18 @@ class PKDB:
             execution_mode: "batch" or "row_by_row" (defaults to self.default_execution_mode)
             map_validator: Optional Map Side Validator override.
             global_validator: Optional Reduce Side Validator override.
-            
+
         Returns:
-            (pd.DataFrame, LLMMetrics, int): The extracted table, usage metrics, and subquery count.
+            (pd.DataFrame, pd.DataFrame | None, LLMMetrics, int):
+            The extracted table, optional confidence table, usage metrics, and subquery count.
+            confidence table is None when output_confidence=False.
         """
         context = context or {}
         mode = execution_mode or self.default_execution_mode
-        
+
         # 1. Plan
         plan = await self.planner.create_plan(
-            query, 
+            query,
             decomposition_strategy=self.config.decomposition_strategy,
             partitioning_method=self.config.partitioning_method,
             context=context,
@@ -168,26 +182,27 @@ class PKDB:
             max_depth=self.config.max_depth,
             source=self.config.source
         )
-        
+
         if plan_only:
             logger.info("Plan-only mode enabled. Skipping execution.")
             # Retrieve metrics from llm client manually since engine won't run
             metrics = self.llm.get_cumulative_metrics()
-            return pd.DataFrame(), metrics, len(plan.map_tasks)
-        
+            return pd.DataFrame(), None, metrics, len(plan.map_tasks)
+
         # 2. Execute
         m_val = map_validator if map_validator else self.map_validator
         g_val = global_validator if global_validator else self.global_validator
-        
+
         engine = MapReduceEngine(
-            self.llm, 
-            planner=self.planner, 
+            self.llm,
+            planner=self.planner,
             max_partitions=self.config.max_partitions,
             map_validator=m_val,
-            global_validator=g_val
+            global_validator=g_val,
+            output_confidence=self.config.output_confidence
         )
-        
-        df, metrics = await engine.execute(plan, context=context)
-        
-        return df, metrics, len(plan.map_tasks)
+
+        df, conf_df, metrics = await engine.execute(plan, context=context)
+
+        return df, conf_df, metrics, len(plan.map_tasks)
 

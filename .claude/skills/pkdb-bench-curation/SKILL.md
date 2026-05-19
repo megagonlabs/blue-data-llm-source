@@ -11,6 +11,13 @@ canonical staged artifacts** (`<id>.csv`, `<id>.draft.json`,
 `<id>.comments.json`), use the sibling skill `pkdb-bench-audit` — do not
 duplicate audit work here.
 
+For session-level routing, handoff prompts, and multi-agent ownership
+patterns, see `datasets/pkdb_bench/docs/agent_handoff_bundle.md`. Its
+"Minimal Session Kickoff" and "Mode Router" sections are the canonical
+agent-agnostic entrypoint; this skill is the curation action layer.
+Expanded copy-paste prompts live in
+`datasets/pkdb_bench/docs/launch_prompts.md` for fallback handoffs.
+
 The benchmark artifact is not just a CSV. Every instance has four distinct layers:
 
 - query intent

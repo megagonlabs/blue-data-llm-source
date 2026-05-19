@@ -1,0 +1,49 @@
+{
+  "id": "world_religions_top3_holy_sites",
+  "table_title": "List the top 3 holy sites for each major world religion with their city, country, and significance note.",
+  "columns": [
+    "Religion",
+    "List Position",
+    "Site",
+    "City",
+    "Country",
+    "Significance Note"
+  ],
+  "primary_key": [
+    "Religion",
+    "Site"
+  ],
+  "column_types": {
+    "Religion": "key",
+    "List Position": "numeric",
+    "Site": "key",
+    "City": "text",
+    "Country": "text",
+    "Significance Note": "text"
+  },
+  "query_category": "scaled_enumeration",
+  "secondary_category": "",
+  "db_analog": "SELECT religion, list_position, site, city, country, significance_note FROM holy_sites_selection WHERE religion IN ('Christianity','Islam','Hinduism','Buddhism') ORDER BY religion, list_position",
+  "operation_type": "union+filter",
+  "source_count": 9,
+  "domain": "Religion/Holy Sites",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia articles accessed 2026-04-28. The four-religion universe is anchored to the largest groups in Wikipedia 'Major religious groups' (Christianity, Islam, Hinduism, Buddhism); folk religions and 'unaffiliated' are excluded as they are not coherent traditions with shared holy-site lists. Per-religion site selections are anchored to that religion's primary Wikipedia pilgrimage / holy-sites article and corroborated against per-site Wikipedia articles for Islam (cycle-1 audit fix: the consolidated 'Holiest sites in Islam' article was flagged with a Wikipedia LLM-generated-content warning in November 2025 and was replaced with five per-site Wikipedia articles for the Islam rows). Site selections are stable historical traditions and are not expected to drift on a multi-year timescale, but the article snapshots on which the selections rely may be edited. The 'Significance Note' column is a one-sentence paraphrase of the cited article's description of why the site is significant; cell-level evaluation should treat semantic similarity to the article phrasing as success rather than exact-string match. The 'List Position' column is a within-religion ordinal (1 through 5) that records the curator's documented display order for each religion (per-religion rationale in decision_log; not a uniform source-defined ranking); it is a non-key column (cycle-2 PK is (Religion, Site)) and should not be interpreted as an absolute holiness ranking — see the cycle-1 / cycle-2 audit responses for the reframing from 'top 5 holiest ranked' to 'five major sites selected' and the PK change.",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/Major_religious_groups",
+    "https://en.wikipedia.org/wiki/Christian_pilgrimage",
+    "https://en.wikipedia.org/wiki/Masjid_al-Haram",
+    "https://en.wikipedia.org/wiki/Al-Masjid_an-Nabawi",
+    "https://en.wikipedia.org/wiki/Al-Aqsa_Mosque",
+    "https://en.wikipedia.org/wiki/Cave_of_the_Patriarchs",
+    "https://en.wikipedia.org/wiki/Imam_Ali_Shrine",
+    "https://en.wikipedia.org/wiki/Sapta_Puri",
+    "https://en.wikipedia.org/wiki/Buddhist_pilgrimage_sites"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-04-28T00:00:00Z",
+  "_extraction_notes": "Derived from world_religions_top5_holy_sites by deterministic filter/projection on the parent CSV. List Position filter <= 3.",
+  "_derived_from": "world_religions_top5_holy_sites",
+  "_derivation_note": "List Position filter <= 3."
+}

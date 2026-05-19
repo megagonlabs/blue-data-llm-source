@@ -180,21 +180,26 @@ class DataValidator:
     """
     Unified Orchestrator for Validation Pipelines.
     """
-    def __init__(self, llm_client, strategies: List[str] = None, dedup_strategy: str = "first"):
+    def __init__(self, llm_client, strategies: List[str] = None, dedup_strategy: str = "first",
+                 entity_resolution_mode: str = "semantic_type", chunk_repair_mode: str = "drop",
+                 entity_resolution_max_drop_ratio: float = 0.15):
         self.llm = llm_client
         self.strategies = strategies or []
         self.dedup_strategy = dedup_strategy
+        self.entity_resolution_mode = entity_resolution_mode
+        self.chunk_repair_mode = chunk_repair_mode
+        self.entity_resolution_max_drop_ratio = entity_resolution_max_drop_ratio
         self.validators = self._initialize_validators()
 
     def _initialize_validators(self) -> List[BaseValidator]:
         params = {"llm_client": self.llm}
         validator_map = {
-            "ChunkConstraints": ChunkValidator(**params),
+            "ChunkConstraints": ChunkValidator(llm_client=self.llm, repair_mode=self.chunk_repair_mode),
             "Deduplication": DeduplicationValidator(llm_client=self.llm, strategy=self.dedup_strategy),
             "Code": CodeValidator(**params),
             "Embedding": EmbeddingValidator(**params),
             "FormatNormalization": FormatNormalizationValidator(**params),
-            "EntityResolution": EntityResolutionValidator(**params),
+            "EntityResolution": EntityResolutionValidator(llm_client=self.llm, mode=self.entity_resolution_mode, max_drop_ratio=self.entity_resolution_max_drop_ratio),
             "PrimaryKeyValidation": PrimaryKeyValidationValidator(**params),
             "Completeness": CompletenessValidator(**params)
         }
@@ -246,7 +251,16 @@ class ChunkValidator(BaseValidator):
     """
     Enforces partition constraints (e.g. Year=2020) and General Data Quality.
     Uses LLM to validate values against constraints, types, and schema.
+
+    repair_mode:
+      - "drop"   (default): invalid rows are always dropped; no LLM repair call.
+      - "repair": attempt LLM repair first; fall back to drop if repair fails.
     """
+
+    def __init__(self, llm_client=None, repair_mode: str = "drop"):
+        super().__init__(llm_client)
+        self.repair_mode = repair_mode
+
     async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> Tuple[List[int], LLMMetrics]:
         """Returns list of indices violating constraints using LLM-based value validation."""
         metrics = LLMMetrics()
@@ -348,9 +362,14 @@ class ChunkValidator(BaseValidator):
         return unique_invalid, metrics
 
     async def fix(self, df: pd.DataFrame, report: List[int], context: Dict[str, Any] = None) -> Tuple[pd.DataFrame, LLMMetrics]:
-        """Attempts to refine violating rows via LLM, or drops them."""
+        """Drops or repairs violating rows depending on repair_mode."""
         metrics = LLMMetrics()
         context = context or {}
+
+        if self.repair_mode == "drop" or not self.llm:
+            logger.info(f"ChunkValidator (repair_mode={self.repair_mode}): dropping {len(report)} invalid rows.")
+            return df.drop(report), metrics
+
         constraints = context.get('constraints', {})
         schema = context.get('schema')
         target_columns = [c.name for c in schema.columns] if schema and getattr(schema, "columns", None) else list(df.columns)
@@ -358,9 +377,6 @@ class ChunkValidator(BaseValidator):
             invalid_rows = df.loc[report].to_dict('records')
         except:
             invalid_rows = []
-
-        if not self.llm:
-            return df.drop(report), metrics
 
         logger.info(f"ChunkValidator: Attempting to refine {len(report)} rows.")
         
@@ -1145,32 +1161,54 @@ class EntityResolutionValidator(BaseValidator):
     """
     Resolves duplicates based on Entity Name/Identity, overriding strict PK differences.
     Fixes hallucinations where same entity appears with different IDs.
+
+    Identity column selection modes (controlled by `mode`):
+      - "semantic_type": only columns with semantic_type=="entity" qualify.
+      - "keyword":       heuristic keyword matching on column name/description.
+      - "llm":           ask the LLM which column is the entity identity.
     """
-    def __init__(self, llm_client=None):
+    def __init__(self, llm_client=None, mode: str = "semantic_type", max_drop_ratio: float = 0.15):
         super().__init__(llm_client)
         from src.prompts import ENTITY_RESOLUTION_DECISION_PROMPT
         self.prompt_template = ENTITY_RESOLUTION_DECISION_PROMPT
+        self.mode = mode
+        self.max_drop_ratio = max_drop_ratio
 
-    def _find_entity_identity_column(self, schema, df: pd.DataFrame) -> Optional[str]:
+    # ------------------------------------------------------------------
+    # Mode A: semantic_type
+    # ------------------------------------------------------------------
+    def _find_by_semantic_type(self, schema, df: pd.DataFrame) -> Optional[str]:
+        """Return the first non-PK column with semantic_type == 'entity'."""
+        primary_keys = set(schema.primary_keys or [])
+        for col in schema.columns:
+            if col.name not in df.columns:
+                continue
+            if (col.semantic_type or "").lower() == "entity" and col.name not in primary_keys:
+                return col.name
+        return None
+
+    # ------------------------------------------------------------------
+    # Mode C: keyword heuristic
+    # ------------------------------------------------------------------
+    def _find_by_keyword(self, schema, df: pd.DataFrame) -> Optional[str]:
+        """Score columns by keyword matching; return best if score > 0."""
         preferred_exact = {"name", "title", "entity", "pokemon"}
+        # Only genuine named-entity identity keywords.
+        # Excludes categorical group columns (country, team, city, state, console).
         preferred_keywords = [
-            "name", "title", "entity", "author", "artist", "composer", "country",
-            "team", "song", "game", "book", "work", "city", "state", "console"
+            "name", "title", "entity", "author", "artist", "composer",
+            "song", "game", "book", "work"
         ]
-
         scored_candidates = []
         for col in schema.columns:
             if col.name not in df.columns:
                 continue
-
             name_lower = col.name.lower()
             desc_lower = (col.description or "").lower()
             sem_type = (col.semantic_type or "").lower()
             data_type = (col.data_type or "").lower()
-
             if sem_type not in {"entity", "text", "categorical"} and data_type not in {"str", "string", "text"}:
                 continue
-
             score = 0
             if name_lower in preferred_exact:
                 score += 100
@@ -1180,56 +1218,128 @@ class EntityResolutionValidator(BaseValidator):
                 score += 20
             if sem_type == "entity":
                 score += 10
-
             scored_candidates.append((score, col.name))
-
         if not scored_candidates:
             return None
-
         scored_candidates.sort(reverse=True)
-        return scored_candidates[0][1]
+        best_score, best_col = scored_candidates[0]
+        return best_col if best_score > 0 else None
+
+    # ------------------------------------------------------------------
+    # Mode B: LLM-based
+    # ------------------------------------------------------------------
+    async def _find_by_llm(self, schema, df: pd.DataFrame) -> Tuple[Optional[str], LLMMetrics]:
+        """Ask the LLM which column uniquely identifies a named entity."""
+        metrics = LLMMetrics()
+        if not self.llm:
+            logger.warning("EntityResolution (llm mode): no LLM client available, skipping.")
+            return None, metrics
+
+        col_descriptions = "\n".join(
+            f"- {c.name} (semantic_type={c.semantic_type}, data_type={c.data_type}): {c.description or ''}"
+            for c in schema.columns
+            if c.name in df.columns
+        )
+        primary_keys = schema.primary_keys or []
+        prompt = (
+            "You are helping identify the entity-identity column in a table schema.\n\n"
+            f"Table: {schema.table_name}\n"
+            f"Primary keys: {primary_keys}\n\n"
+            f"Columns:\n{col_descriptions}\n\n"
+            "Which single column, if any, gives each row a UNIQUE individual name — "
+            "i.e. every row in the table refers to a different named entity, and this column "
+            "is how you would tell them apart by name?\n\n"
+            "The key test: would two different rows ever share the same value in this column "
+            "as a normal part of the table's design? If yes, it is not the right column.\n\n"
+            "Rules:\n"
+            "- Do NOT pick a primary key column.\n"
+            "- If no column clearly passes the test, reply NONE.\n\n"
+            "Reply with just the column name or NONE."
+        )
+        try:
+            response = await self.llm.agenerate(prompt)
+            metrics = metrics + response.metrics
+            col_name = response.content.strip().strip('"').strip("'")
+            if col_name.upper() == "NONE" or col_name not in df.columns:
+                return None, metrics
+            return col_name, metrics
+        except Exception as e:
+            logger.warning(f"EntityResolution (llm mode): LLM call failed: {e}")
+            return None, metrics
+
+    async def _resolve_identity_column(self, schema, df: pd.DataFrame) -> Tuple[Optional[str], LLMMetrics]:
+        metrics = LLMMetrics()
+        if self.mode == "semantic_type":
+            return self._find_by_semantic_type(schema, df), metrics
+        elif self.mode == "keyword":
+            return self._find_by_keyword(schema, df), metrics
+        elif self.mode == "llm":
+            return await self._find_by_llm(schema, df)
+        else:
+            logger.warning(f"EntityResolution: unknown mode '{self.mode}', falling back to semantic_type.")
+            return self._find_by_semantic_type(schema, df), metrics
 
     async def detect(self, df: pd.DataFrame, context: Dict[str, Any] = None) -> Tuple[List[int], LLMMetrics]:
-        # Returns indices of DUPLICATE entities that need resolution.
-        # We group by specific "Entity Name" columns.
-        
         metrics = LLMMetrics()
         logger.info("EntityResolution: Starting Detection...")
         logger.info(f"EntityResolution: DF Shape: {df.shape}")
-        
+
         schema = context.get('schema')
         if not schema:
             logger.warning("EntityResolution: No schema found in context.")
             return [], metrics
         primary_keys = schema.primary_keys if schema.primary_keys else []
-            
-        schema_cols = [c.name for c in schema.columns]
-        logger.info(f"EntityResolution: Schema Columns: {schema_cols}")
-        name_col = self._find_entity_identity_column(schema, df)
-        
-        if not name_col or name_col not in df.columns:
-            logger.warning(f"EntityResolution: Name column not found. target='{name_col}'. DF DF Cols: {list(df.columns)}")
+
+        # Fix A: skip entirely for composite PKs — entity resolution is unsafe when
+        # the same entity can legitimately appear multiple times under different PK values.
+        if len(primary_keys) > 1:
+            logger.info(
+                "EntityResolution: Skipping — composite PK %s. "
+                "Entity resolution not safe with multi-column keys.",
+                primary_keys,
+            )
             return [], metrics
 
-        # If the inferred identity column is already part of the PK, duplicates in this
-        # column are often legitimate rows for a composite key (e.g. Game across Consoles).
+        schema_cols = [c.name for c in schema.columns]
+        logger.info(f"EntityResolution: Schema Columns: {schema_cols}")
+
+        name_col, id_metrics = await self._resolve_identity_column(schema, df)
+        metrics = metrics + id_metrics
+
+        if not name_col or name_col not in df.columns:
+            logger.info(f"EntityResolution: No identity column found (mode={self.mode}). Skipping.")
+            return [], metrics
+
+        # If the identity column is part of the PK, duplicates are legitimate (composite key rows).
         if name_col in primary_keys:
             logger.info(
                 "EntityResolution: Skipping because identity column '%s' is part of primary key %s.",
-                name_col,
-                primary_keys
+                name_col, primary_keys,
             )
             return [], metrics
-            
-        # 2. Find duplicates in Name
-        # We look for Name duplicates where other fields (like ID) differ.
+
         dup_mask = df.duplicated(subset=[name_col], keep=False)
         num_dups = dup_mask.sum()
         logger.info(f"EntityResolution: Duplicates Mask Sum: {num_dups}")
-        
+
         if not any(dup_mask):
             return [], metrics
-            
+
+        # Mass-collapse guard: skip if this would destroy too much of the table.
+        # rows_after = one survivor per duplicate group + all non-duplicate rows
+        rows_after = df.loc[dup_mask].groupby(name_col).ngroups + int((~dup_mask).sum())
+        drop_ratio = 1.0 - (rows_after / max(len(df), 1))
+        if drop_ratio > self.max_drop_ratio:
+            logger.info(
+                "EntityResolution: skipping '%s' — projected drop ratio %.3f exceeds threshold %.2f.",
+                name_col, drop_ratio, self.max_drop_ratio,
+            )
+            return [], metrics
+
+        # Cache the resolved column so fix() uses the same one without a second LLM call.
+        if context is not None:
+            context["_entity_resolution_name_col"] = name_col
+
         candidates = df[dup_mask].index.tolist()
         logger.info(f"EntityResolution: Found {len(candidates)} duplicates for resolution in column '{name_col}'.")
         return candidates, metrics
@@ -1239,12 +1349,22 @@ class EntityResolutionValidator(BaseValidator):
         if not report:
             return df, metrics
             
-        # Determine Name col again
-        schema = context.get('schema')
-        name_col = self._find_entity_identity_column(schema, df)
-        if not name_col:
+        schema = context.get('schema') if context else None
+        primary_keys = (schema.primary_keys or []) if schema else []
+
+        # Mirror composite PK guard from detect()
+        if len(primary_keys) > 1:
             return df, metrics
-                
+
+        # Reuse identity column cached by detect() to avoid a second LLM call
+        # and guarantee consistent grouping between detection and fix.
+        name_col = context.get("_entity_resolution_name_col") if context else None
+        if not name_col:
+            name_col, id_metrics = await self._resolve_identity_column(schema, df)
+            metrics = metrics + id_metrics
+        if not name_col or name_col not in df.columns:
+            return df, metrics
+
         # Group duplicates
         subset = df.loc[report]
         groups = subset.groupby(name_col)

@@ -1,0 +1,48 @@
+{
+  "id": "major_religious_traditions_foundational_texts",
+  "table_title": "List selected major religious traditions covered in world-religions textbook surveys, with the canonical foundational text or corpus, the scriptural language(s) of original composition, and the tradition family (Abrahamic / Dharmic / East Asian / Iranian).",
+  "columns": [
+    "Religion",
+    "Foundational Text",
+    "Scriptural Language(s)",
+    "Tradition Family"
+  ],
+  "primary_key": [
+    "Religion"
+  ],
+  "column_types": {
+    "Religion": "key",
+    "Foundational Text": "text",
+    "Scriptural Language(s)": "text",
+    "Tradition Family": "categorical"
+  },
+  "query_category": "qualitative",
+  "secondary_category": null,
+  "db_analog": "SELECT religion, foundational_text, scriptural_languages, tradition_family FROM religious_traditions WHERE religion_in_world_religions_textbook_canon_slate = TRUE ORDER BY religion",
+  "operation_type": "projection",
+  "source_count": 15,
+  "domain": "Religion/Texts",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Three Wikipedia master articles + 12 per-text Wikipedia articles, accessed 2026-05-14. Universe is the 12 religious traditions commonly covered in 'world religions' textbook surveys per the Wikipedia 'World religions' article's discussion of the category — the Big Five (Christianity, Islam, Hinduism, Buddhism, Judaism) plus the Wikipedia-recognized extensions (Bahá'í Faith, Sikhism, Zoroastrianism), plus 3 additional textbook-canon East Asian traditions (Taoism, Confucianism, Shinto) and 1 additional Dharmic tradition (Jainism). The universe is a balanced textbook-canon slate (4 Abrahamic + 4 Dharmic + 3 East Asian + 1 Iranian) rather than an adherent-count top list — the Wikipedia 'World religions' article explicitly says 'world religion' is a socially-constructed category typically referring to the Big Five and sometimes extended to Bahá'í/Sikhism/Zoroastrianism. Per-row cells: Religion is taken verbatim from each tradition's Wikipedia article canonical name (with apostrophe in Bahá'í Faith). Foundational Text is the broadest named canonical corpus per Wikipedia's 'List of religious texts' master listing for each tradition, with per-row exceptions documented for traditions where a single individual text is more LLM-canonical than the broader corpus (Bahá'í Faith Kitáb-i-Aqdas as the single most-authoritative book of Bahá'u'lláh's writings; Taoism Tao Te Ching as the most-famous individual Taoist text per textbook tradition; Shinto Kojiki as the oldest of the two foundational chronicles). Scriptural Language(s) is the language or compact-semantic-language-list of the foundational text's original composition, derived from the corresponding per-text Wikipedia article's language section — multi-language cells use semicolon delimiters and reflect the canonical-language inventory per source, with documented compression allowed for corpora whose source-listed language inventory is unwieldy (the Sikhism compact-semantic compression below is the documented case) (Christianity Bible includes Biblical Hebrew + Biblical Aramaic + Koine Greek per the Bible article's lead and New Testament section; Buddhism Tripitaka includes Pali + Sanskrit + Buddhist Chinese + Tibetan per the article's three-canon scope (the cell uses 'Buddhist Chinese' and 'Tibetan' per the Tripitaka article's own wording rather than 'Classical Chinese' / 'Classical Tibetan'); Sikhism Guru Granth Sahib uses 'Sant Bhasha; multiple Indo-Aryan languages; Persian; Arabic' as a compact-semantic compression of the per-text article's larger language inventory including Punjabi, Lahnda, regional Prakrits, Apabhramsa, Sanskrit, Hindi-Braj, Bhojpuri, Sindhi, Marathi, Marwari, Bengali, Persian, Arabic — Gurmukhi is the SCRIPT not a language and is therefore not in the Scriptural Language(s) cell; Shinto Kojiki is mostly Classical Chinese with songs in Old Japanese via man'yōgana per the Kojiki article). Tradition Family is a closed 4-value taxonomy (Abrahamic / Dharmic / East Asian / Iranian) curator-derived from canonical religious-studies classification, with Bahá'í documented as Abrahamic-by-origin (post-Islamic, founded 1844-1863 by Bahá'u'lláh) and Sikhism documented as Dharmic per Indian-origin and shared dharma concepts with Hindu/Buddhist/Jain traditions. The 12-row universe is stable on a multi-year horizon: the textbook-canon religions and their foundational texts have been canonical for centuries (the most-recent text in the staged set is the 1873 Kitáb-i-Aqdas; all others are pre-1700).",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/World_religions",
+    "https://en.wikipedia.org/wiki/Major_religious_groups",
+    "https://en.wikipedia.org/wiki/List_of_religious_texts",
+    "https://en.wikipedia.org/wiki/Kit%C3%A1b-i-Aqdas",
+    "https://en.wikipedia.org/wiki/Tripi%E1%B9%ADaka",
+    "https://en.wikipedia.org/wiki/Bible",
+    "https://en.wikipedia.org/wiki/Four_Books_and_Five_Classics",
+    "https://en.wikipedia.org/wiki/Vedas",
+    "https://en.wikipedia.org/wiki/Quran",
+    "https://en.wikipedia.org/wiki/Jain_Agamas",
+    "https://en.wikipedia.org/wiki/Tanakh",
+    "https://en.wikipedia.org/wiki/Kojiki",
+    "https://en.wikipedia.org/wiki/Guru_Granth_Sahib",
+    "https://en.wikipedia.org/wiki/Tao_Te_Ching",
+    "https://en.wikipedia.org/wiki/Avesta"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-05-14T00:00:00Z",
+  "_extraction_notes": "Original instance chipping `qualitative` from gap 2 to **gap 1** (4 of 5 staged after this; existing 3: major_music_genres_landmark_albums, major_western_philosophers_primary_works, us_states_warm_year_round_climate). Pre-staging design review by audit agent surfaced 4 BLOCKING-equivalent issues with the cycle-0 draft (universe scope overclaim 'major world religions'; per-religion-article source plan for Original Language; specific cell errors for Sikhism/Christianity/Judaism/Shinto languages; foundational-text precedence rule needed for Buddhism/Confucianism/Judaism). All 4 issues addressed in the cycle-0 staging design BEFORE staging: (1) title/universe reframed to 'selected major religious traditions covered in world-religions textbook surveys'; (2) source plan revised to use 'World religions' as primary universe-context master + 'List of religious texts' as text-candidate master + 12 per-text articles for language grounding (not per-religion); (3) cell revisions applied: Christianity language Biblical Hebrew + Biblical Aramaic + Koine Greek (per Bible article); Judaism Tanakh + Biblical Hebrew + Biblical Aramaic; Sikhism Sant Bhasha + multiple Indo-Aryan + Persian + Arabic (Gurmukhi excluded as script-not-language per audit); Shinto Classical Chinese + Old Japanese for Kojiki (was wrongly 'Classical Japanese'); (4) foundational-text revisions: Judaism Hebrew Bible → Tanakh; Buddhism Pali Canon → Tripitaka (broader cross-tradition corpus); Confucianism Analects → Four Books and Five Classics (broader canonical corpus). Source plan: Tier B Wikipedia, source_count = 15 — 3 master articles (World religions, Major religious groups, List of religious texts) + 12 per-text articles (one per row). Pipeline: (1) consult 'World religions' Wikipedia article for universe-context rationale (textbook-canon slate framing, Big Five + extensions discussion); (2) consult 'List of religious texts' master article for per-religion canonical text candidates; (3) for each of the 12 staged religions, fetch the per-text Wikipedia article to ground the Foundational Text choice + extract Scriptural Language(s) from the article's language section. Result: 12 rows × 4 columns, PK on Religion, 0 duplicates. Tradition Family distribution: Abrahamic 4 (Bahá'í Faith, Christianity, Islam, Judaism), Dharmic 4 (Buddhism, Hinduism, Jainism, Sikhism), East Asian 3 (Confucianism, Shinto, Taoism), Iranian 1 (Zoroastrianism) — sum 12. Confidence gradient: very-LLM-knowable cells include the canonical Big Five foundational texts (Christianity Bible, Islam Quran, Judaism Tanakh, Hinduism Vedas, Buddhism Tripitaka); mid-difficulty cells include the well-known but textbook-canonical extensions (Sikhism Guru Granth Sahib, Bahá'í Kitáb-i-Aqdas, Taoism Tao Te Ching, Confucianism Four Books and Five Classics, Shinto Kojiki); harder calibration cells include the less-LLM-knowable corpora (Jainism Agamas, Zoroastrianism Avesta) and the language-cell normalizations (Sikhism's compact-semantic compression; Shinto Kojiki Classical Chinese + Old Japanese rather than Classical Japanese). The Scriptural Language(s) column is the cell-type most likely to attract cycle-1 audit attention because it involves curator-derived multi-language compressions for some rows; per-row exceptions are documented in normalization_decisions."
+}

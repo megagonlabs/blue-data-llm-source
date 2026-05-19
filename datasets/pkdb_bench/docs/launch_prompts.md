@@ -1,14 +1,21 @@
 # Agent Launch Prompts
 
 Copy-paste prompts for launching Claude Code or Codex on PKDB-Bench
-instance work. The full contract (rules, schemas, ownership) lives in
-`agent_handoff_bundle.md`; this file is just the launch lines.
+instance work. The full contract (mode routing, rules, schemas,
+ownership) lives in `agent_handoff_bundle.md`; this file is just the
+prompt library.
 
-> Claude Code prompts assume the `pkdb-bench-curation` skill is installed
-> at `.claude/skills/pkdb-bench-curation/`. The `/pkdb-bench-curation`
-> invocation preloads workflows + artifact contract.
+For normal new sessions, prefer the minimal kickoff in
+`agent_handoff_bundle.md` and then give a short task prompt. Use this
+file when you need a fully expanded handoff prompt.
+
+> Claude Code prompts assume the PKDB-Bench skills are installed under
+> `.claude/skills/`. The `/pkdb-bench-curation` and `/pkdb-bench-audit`
+> invocations preload the relevant workflow references.
 >
-> Codex prompts work without any skill — the agent reads the bundle directly.
+> Codex sessions may also have local PKDB-Bench skills installed. If not,
+> the agent reads `agent_handoff_bundle.md` and the referenced docs
+> directly.
 
 ---
 
@@ -23,7 +30,7 @@ common case.
 /pkdb-bench-curation
 
 Read datasets/pkdb_bench/docs/agent_handoff_bundle.md and follow the
-"Standard agent prompt" to create one new staged PKDB-Bench instance.
+"Standard Curation Prompt" to create one new staged PKDB-Bench instance.
 
 Use the gap-counter snippet in the bundle to pick a category before
 choosing your query. Set _staged_by = "claude-code" in draft.json.
@@ -33,7 +40,7 @@ choosing your query. Set _staged_by = "claude-code" in draft.json.
 
 ```text
 Read datasets/pkdb_bench/docs/agent_handoff_bundle.md and follow the
-"Standard agent prompt" to create one new staged PKDB-Bench instance.
+"Standard Curation Prompt" to create one new staged PKDB-Bench instance.
 
 Use the gap-counter snippet in the bundle to pick a category before
 choosing your query. Set _staged_by = "codex" in draft.json.
@@ -341,7 +348,7 @@ Query intent: <query_intent>
 Target query_category: <category>
 
 Read datasets/pkdb_bench/docs/agent_handoff_bundle.md and follow the
-"Standard agent prompt", with these duel-mode overrides:
+"Standard Curation Prompt", with these duel-mode overrides:
 
 - Write your output to (create the directory if missing):
     datasets/pkdb_bench/staging/duel/<id>/claude.csv
@@ -367,7 +374,7 @@ Query intent: <query_intent>
 Target query_category: <category>
 
 Read datasets/pkdb_bench/docs/agent_handoff_bundle.md and follow the
-"Standard agent prompt", with these duel-mode overrides:
+"Standard Curation Prompt", with these duel-mode overrides:
 
 - Write your output to (create the directory if missing):
     datasets/pkdb_bench/staging/duel/<id>/codex.csv

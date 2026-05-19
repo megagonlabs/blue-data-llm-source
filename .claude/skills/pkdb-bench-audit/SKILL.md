@@ -9,6 +9,13 @@ Use this skill for audit-only work on already-staged PKDB-Bench instances.
 Audit has a different ownership model from creation: append-only,
 source-checking, registration judgment.
 
+For session-level routing, handoff prompts, and multi-agent ownership
+patterns, see `datasets/pkdb_bench/docs/agent_handoff_bundle.md`. Its
+"Minimal Session Kickoff" and "Mode Router" sections are the canonical
+agent-agnostic entrypoint; this skill is the audit action layer.
+Expanded copy-paste prompts live in
+`datasets/pkdb_bench/docs/launch_prompts.md` for fallback handoffs.
+
 ## Hard Rules
 
 1. **Append-only.** You may read all staged files but you may only write
@@ -153,7 +160,7 @@ Trigger this skill when the user asks to:
 - check normalization, duplicates, or schema correctness
 - act as agent B in a Stage → Audit handoff (see
   `datasets/pkdb_bench/docs/agent_handoff_bundle.md` →
-  "Agent Collaboration Patterns")
+  "Mode Router" and "Agent Collaboration Patterns")
 
 Do NOT use this skill for:
 
@@ -212,7 +219,8 @@ If you have not audited in this benchmark before, read:
 - `datasets/pkdb_bench/docs/curation_protocol.md`
 - `datasets/pkdb_bench/docs/categories.txt`
 - `datasets/pkdb_bench/docs/agent_handoff_bundle.md` —
-  especially the "Agent Collaboration Patterns" section
+  especially "Mode Router", "Where To Find State", and
+  "Agent Collaboration Patterns"
 
 The handoff bundle is the agent-agnostic source of truth for the
 Stage → Audit ownership contract; this skill mirrors it.

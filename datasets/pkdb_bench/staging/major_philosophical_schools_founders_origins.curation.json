@@ -1,0 +1,228 @@
+{
+  "id": "major_philosophical_schools_founders_origins",
+  "claim_type": "candidate_rebuild",
+  "claim_type_rationale": "The Wikipedia 'List of philosophies' master article is a broad cross-tradition enumeration that does NOT cleanly anchor a Greek + Indian + Chinese + Medieval + Modern slate with founder/period/origin triples. It lists dozens of philosophies across overlapping schemes (by tradition / by century / by subject) without a single source-defined 'major schools with founders' enumeration. The universe is therefore curator-rebuilt across the master + 18 per-school Wikipedia articles, with a strict admission rule (per-school article itself must foreground a single founder) applied to keep the rebuild honest. This is the FIRST `candidate_rebuild` claim type in pkdb_bench; prior instances have used `source_defined`, `partially_supplemented`, or `exhaustive`. The distinction from `partially_supplemented` is that there is no source-defined seed list being supplemented — the entire universe membership is curator-judgment per the admission rule.",
+  "collection_summary": {
+    "approach": "Pre-curation design pass (cycle-0 research + audit-cycle-1 design-review + audit-cycle-2 amendments) screened ~30 candidate philosophical schools against the admission rule 'per-school Wikipedia article foregrounds a single founder without curator scalarization'. 18 schools passed the strict-cleanliness screen across 5 traditions (Hellenistic 6, Indian 5, Chinese 2, Medieval 3, Modern Western 2). Per-row data is drawn from each school's own Wikipedia article (Founder + Approximate Founding Period + Origin Region all per the article lede / infobox). Master 'List of philosophies' is referenced for universe-discovery only — not as a row-defining source.",
+    "universe_size": 18,
+    "tradition_distribution": {
+      "Hellenistic": 6,
+      "Indian": 5,
+      "Chinese": 2,
+      "Medieval": 3,
+      "Modern_Western": 2
+    },
+    "founder_grounding": "18 of 18 rows — each row's Founder is the single foregrounded founder per the per-school Wikipedia article's lede. Admission-gating rule applied strictly: schools whose per-school article does NOT itself carry a single-founder claim are excluded even if the per-person article does (cycle-2 audit amendment).",
+    "approximate_founding_period_format": "TEXT categorical, NOT numeric year. Accepts article-lede formats: 'c. 5th century BCE', 'c. 6th–5th century BCE', 'c. 13th century CE', 'c. early 20th century CE'. Format rationale per audit-cycle-1 explicit guidance: numeric year creates artificial precision against sources that themselves use century ranges.",
+    "origin_region_format": "Per-school-article-lede foregrounded geographic origin. Closed-vocabulary style: 'Athens, Greece' (4 schools); 'India' (4 schools); 'Northern India' (1); 'China' (2); 'Elis, Greece' (1); 'Alexandria, Roman Egypt' (1); 'Persia' (1); 'Italy/France' (1); 'Scotland/Paris' (1); 'France' (1); 'Germany' (1). 12 distinct values across 18 rows."
+  },
+  "source_coverage_notes": {
+    "master_article": {
+      "url": "https://en.wikipedia.org/wiki/List_of_philosophies",
+      "role": "universe-discovery only — used to enumerate candidate schools across traditions; NOT a row-defining source per the candidate_rebuild claim type. The master article does not cleanly enumerate a Greek + Indian + Chinese + Medieval + Modern slate with founder/period/origin triples."
+    },
+    "per_school_articles": "18 per-school Wikipedia articles supply all per-row data (Founder + Approximate Founding Period + Origin Region). Each row is grounded in its own school's article.",
+    "per_school_entries": {
+      "Buddhism": {
+        "url": "https://en.wikipedia.org/wiki/Buddhism",
+        "founder_grounding": "Article lede foregrounds Siddhartha Gautama (the Buddha) as founder; infobox lists Gautama Buddha as founder.",
+        "period_grounding": "Article lede places founding in 'the 5th century BCE'.",
+        "region_grounding": "Article lede states origin in 'ancient India' / 'the Magadha kingdom' — staged as 'Northern India' per the geographic specificity of the Magadha region."
+      },
+      "Confucianism": {
+        "url": "https://en.wikipedia.org/wiki/Confucianism",
+        "founder_grounding": "Article lede foregrounds Confucius (Kong Fuzi) as founder.",
+        "period_grounding": "Article lede places founding 'in the 6th–5th century BCE' / 'during the Spring and Autumn period'.",
+        "region_grounding": "Article lede states origin in China (Lu state)."
+      },
+      "Mohism": {
+        "url": "https://en.wikipedia.org/wiki/Mohism",
+        "founder_grounding": "Article lede foregrounds Mozi (Master Mo) as founder.",
+        "period_grounding": "Article lede places founding 'in the 5th century BCE'.",
+        "region_grounding": "Article lede states origin in China (Warring States period)."
+      },
+      "Nyaya": {
+        "url": "https://en.wikipedia.org/wiki/Nyaya",
+        "founder_grounding": "Article lede foregrounds Akshapada Gautama (also called Gotama / Gautama) as founder; he is also associated with the Nyaya Sutras.",
+        "period_grounding": "Article lede places founding 'in the 6th century BCE' (foundation date) — note tradition extends earlier but article-foregrounded founding is 6th century BCE per Akshapada Gautama.",
+        "region_grounding": "Article lede states origin in India."
+      },
+      "Vaisheshika": {
+        "url": "https://en.wikipedia.org/wiki/Vaisheshika",
+        "founder_grounding": "Article lede foregrounds Kanada (also called Kashyapa) as founder.",
+        "period_grounding": "Article lede places founding 'in the 6th to 2nd century BCE' (range per article).",
+        "region_grounding": "Article lede states origin in India."
+      },
+      "Aristotelianism": {
+        "url": "https://en.wikipedia.org/wiki/Aristotelianism",
+        "founder_grounding": "Article lede foregrounds Aristotle as founder.",
+        "period_grounding": "Article lede places founding 'in the 4th century BCE'.",
+        "region_grounding": "Article lede states origin in Athens, Greece (the Lyceum)."
+      },
+      "Platonism": {
+        "url": "https://en.wikipedia.org/wiki/Platonism",
+        "founder_grounding": "Article lede foregrounds Plato as founder.",
+        "period_grounding": "Article lede places founding 'in the 4th century BCE'.",
+        "region_grounding": "Article lede states origin in Athens, Greece (the Academy)."
+      },
+      "Pyrrhonism": {
+        "url": "https://en.wikipedia.org/wiki/Pyrrhonism",
+        "founder_grounding": "Article lede foregrounds Pyrrho of Elis as founder.",
+        "period_grounding": "Article lede places founding 'in the 4th century BCE'.",
+        "region_grounding": "Article lede states origin in Elis, Greece (Pyrrho's birthplace and where he taught)."
+      },
+      "Epicureanism": {
+        "url": "https://en.wikipedia.org/wiki/Epicureanism",
+        "founder_grounding": "Article lede foregrounds Epicurus as founder.",
+        "period_grounding": "Article lede places founding 'in 307 BCE' / 'in the late 4th century BCE' (when Epicurus founded the Garden in Athens).",
+        "region_grounding": "Article lede states origin in Athens, Greece (the Garden)."
+      },
+      "Mimamsa": {
+        "url": "https://en.wikipedia.org/wiki/Mimamsa",
+        "founder_grounding": "Article lede foregrounds Jaimini as founder (compiler of the Mimamsa Sutras).",
+        "period_grounding": "Article lede places founding 'in the 3rd century BCE'.",
+        "region_grounding": "Article lede states origin in India."
+      },
+      "Stoicism": {
+        "url": "https://en.wikipedia.org/wiki/Stoicism",
+        "founder_grounding": "Article lede foregrounds Zeno of Citium as founder.",
+        "period_grounding": "Article lede places founding 'in the early 3rd century BCE' (around 300 BCE).",
+        "region_grounding": "Article lede states origin in Athens, Greece (the Stoa Poikile)."
+      },
+      "Yoga": {
+        "url": "https://en.wikipedia.org/wiki/Yoga_(philosophy)",
+        "founder_grounding": "Article lede foregrounds Patanjali as the systematizer / founder of Yoga philosophy (compiler of the Yoga Sutras).",
+        "period_grounding": "Article lede places Patanjali's composition 'in the 2nd century BCE' (or thereabouts — article foregrounds 2nd century BCE).",
+        "region_grounding": "Article lede states origin in India."
+      },
+      "Neoplatonism": {
+        "url": "https://en.wikipedia.org/wiki/Neoplatonism",
+        "founder_grounding": "Article lede foregrounds Plotinus as founder (founder of Neoplatonist school in Alexandria/Rome).",
+        "period_grounding": "Article lede places founding 'in the 3rd century CE'.",
+        "region_grounding": "Article lede states origin in Alexandria, Roman Egypt (where Plotinus studied under Ammonius Saccas) — Plotinus later taught in Rome but Alexandria is the foregrounded origin."
+      },
+      "Avicennism": {
+        "url": "https://en.wikipedia.org/wiki/Avicennism",
+        "founder_grounding": "Article lede foregrounds Avicenna (Ibn Sina) as founder.",
+        "period_grounding": "Article lede places founding 'in the 11th century CE'.",
+        "region_grounding": "Article lede states origin in Persia (where Avicenna lived and taught)."
+      },
+      "Thomism": {
+        "url": "https://en.wikipedia.org/wiki/Thomism",
+        "founder_grounding": "Article lede foregrounds Thomas Aquinas as founder.",
+        "period_grounding": "Article lede places founding 'in the 13th century CE'.",
+        "region_grounding": "Article lede states origin across Italy and France (Aquinas was Italian but taught extensively in Paris)."
+      },
+      "Scotism": {
+        "url": "https://en.wikipedia.org/wiki/Scotism",
+        "founder_grounding": "Article lede foregrounds Duns Scotus (John Duns) as founder.",
+        "period_grounding": "Article lede places founding 'in the late 13th to early 14th century CE'.",
+        "region_grounding": "Article lede states origin in Scotland and Paris (Duns Scotus was Scottish but taught in Paris)."
+      },
+      "Cartesianism": {
+        "url": "https://en.wikipedia.org/wiki/Cartesianism",
+        "founder_grounding": "Article lede foregrounds René Descartes as founder.",
+        "period_grounding": "Article lede places founding 'in the 17th century CE'.",
+        "region_grounding": "Article lede states origin in France."
+      },
+      "Phenomenology": {
+        "url": "https://en.wikipedia.org/wiki/Phenomenology_(philosophy)",
+        "founder_grounding": "Article lede foregrounds Edmund Husserl as founder.",
+        "period_grounding": "Article lede places founding 'in the early 20th century CE'.",
+        "region_grounding": "Article lede states origin in Germany (Husserl was Austrian-German and taught at Göttingen and Freiburg)."
+      }
+    },
+    "source_count": 19,
+    "source_grounding_summary": "1 master URL (universe-discovery only, NOT row-defining) + 18 per-school URLs (each grounding 1 row's Founder + Period + Region) = 19 URLs total."
+  },
+  "decision_log": [
+    {
+      "decision": "Pivot from literary movements to philosophical schools at audit-cycle-1 design review",
+      "rationale": "Audit agent's cycle-1 design review found that the proposed literary movements instance had three structural problems: (1) Founding Theorist column is not row-universal (some literary movements are anonymous-tradition / collective with no single founder); (2) Founding Manifesto was semantically mis-specified (audit found that several proposed values were anthologies, novels, or critical essays rather than actual manifesto documents); (3) Start Year was too sharp against article-lede phrasing that itself uses ranges. The audit recommended pivoting to philosophical schools because (a) founder semantics are well-established across philosophical traditions, (b) approximate founding period as TEXT categorical avoids the sharp-year problem, (c) origin region is per-school-article foregrounded. Pivot accepted."
+    },
+    {
+      "decision": "Strict admission gating — per-school article must itself carry the founder claim",
+      "rationale": "Cycle-2 audit amendment: schools whose per-school Wikipedia article does NOT itself foreground a single founder (even if the per-person article does) are excluded. This rule screened out: Daoism (Taoism article describes broader historically-layered development of the tradition, NOT Laozi-as-single-founder); Legalism (multiple predecessor figures, no single foregrounded founder); Jainism (Mahavira revives earlier tradition per article-lede; not 'founder' in the strict sense); Advaita Vedanta (Shankara is systematizer per article-lede, not founder); Charvaka (Brihaspati attribution is traditional and texts are lost; article-lede does not foreground); Samkhya (Kapila is ancient traditional attribution; article-lede does not foreground a single foundational moment). The rule keeps the universe rebuild honest — no curator scalarization of contested founders."
+    },
+    {
+      "decision": "Approximate Founding Period staged as TEXT categorical, NOT numeric year",
+      "rationale": "Cycle-1 audit-design explicit guidance: per-school article ledes use phrases like 'in the 5th century BCE', 'in the 6th–5th century BCE', 'in the late 4th century BCE', 'in the early 20th century CE'. Forcing these into a numeric year creates artificial precision against sources. TEXT categorical preserves article-lede fidelity and matches the qualitative category's appropriate granularity."
+    },
+    {
+      "decision": "Canonical Text column DROPPED at cycle-0 design pass",
+      "rationale": "Cycle-0 research screening found only ~15 of 22 candidate PASS schools had a single foregrounded canonical text in their per-school article lede (~68%, BELOW the 70% clean-row threshold the audit specified). The 7 multi-text rows (e.g., Buddhism has multiple foundational suttas; Hellenistic schools cite multiple dialogues; Yoga has multiple Yoga Sutras editions) would have forced curator scalarization — the literary-movement analogue of the Macedonian / multi-capital problem from prior cycles. Dropping the column at design time keeps the staged slate honest. Final schema is 4 cols (School + Founder + Approximate Founding Period + Origin Region) instead of 5 cols (would have added Canonical Text)."
+    },
+    {
+      "decision": "Origin Region uses a per-school-article-lede foregrounded geographic origin, NOT a closed top-level vocabulary",
+      "rationale": "Each school's article lede foregrounds its own geographic specificity (Athens vs. India vs. Persia vs. Alexandria). Forcing a normalized top-level region vocab (e.g., 'Mediterranean' / 'Subcontinent' / 'East Asia') would obscure the per-row article-grounding. The closed-vocab style ('Athens, Greece' / 'Northern India' / 'India' / 'China' / 'Persia' / 'Italy/France' / 'Scotland/Paris' / 'France' / 'Germany' / 'Alexandria, Roman Egypt') is the same article-lede fidelity pattern that battles + empires used for their Region columns."
+    },
+    {
+      "decision": "claim_type = candidate_rebuild (FIRST instance of this claim type in pkdb_bench)",
+      "rationale": "The Wikipedia 'List of philosophies' master article is a broad cross-tradition enumeration that does NOT cleanly anchor a Greek + Indian + Chinese + Medieval + Modern slate with founder/period/origin triples. No single source-defined 'major schools' list exists in Wikipedia that matches the staged scope. The universe is therefore curator-rebuilt across master + per-school articles, with strict admission gating. This is distinct from `partially_supplemented` (which has a source-defined seed list being supplemented) and from `source_defined` (which inherits scope from a single source). The claim_type accurately reports that universe-membership is curator-judgment per the admission rule."
+    },
+    {
+      "decision": "Sort: chronological by approximate founding year primary, School ASC alphabetical secondary tiebreaker",
+      "rationale": "Chronological primary sort matches the qualitative category's natural reading order across traditions (Indian + Chinese 6th–5th century BCE → Greek 4th–3rd century BCE → Roman Egypt 3rd century CE → Medieval Christian/Islamic 11th–13th century CE → Modern Western 17th–20th century CE). BCE periods sort before CE. Alphabetical-School secondary tiebreaker handles 4 ties: 5th century BCE (Buddhism + Mohism), 4th century BCE (Aristotelianism + Platonism + Pyrrhonism), 3rd century BCE (Mimamsa + Stoicism), 13th century CE (Thomism + Scotism follows because 13th–14th)."
+    },
+    {
+      "decision": "Universe size = 18 (vs. 24 originally identified by cycle-0 research)",
+      "rationale": "Cycle-0 research identified 24 candidate schools (22 PASS + 2 borderline). After cycle-1 audit-design review applied admission-gating rule, 6 schools were dropped (Daoism, Legalism, Jainism, Advaita Vedanta, Charvaka, Samkhya — all failed the strict 'per-school article foregrounds single founder' test). Final staged universe = 18 schools. Distribution: Hellenistic 6, Indian 5, Chinese 2, Medieval 3, Modern Western 2."
+    }
+  ],
+  "normalization_decisions": [
+    {
+      "field": "School",
+      "rule": "Wikipedia common-form school name per per-school article title. All 18 staged school names are ASCII (no diacritics required for current set). PK on School is unique across the 18 rows."
+    },
+    {
+      "field": "Founder",
+      "rule": "Per-school-article-lede foregrounded single founder name. Style: standard English-language Wikipedia form (e.g., 'Siddhartha Gautama' not 'Gautama Buddha' nor 'the Buddha'; 'Confucius' not 'Kong Fuzi'; 'René Descartes' not 'Descartes'). Diacritics preserved (René Descartes). Disambiguated where Wikipedia disambiguates (Pyrrho of Elis; Zeno of Citium; Akshapada Gautama)."
+    },
+    {
+      "field": "Approximate Founding Period",
+      "rule": "TEXT categorical accepting article-lede phrasing. Format: 'c. <century> BCE/CE' or 'c. <range> BCE/CE' or 'c. early/late <century> BCE/CE'. Leading 'c.' (circa) preserved per article-lede convention. BCE/CE used consistently (NOT BC/AD). No numeric year extraction — preserves article-lede fidelity."
+    },
+    {
+      "field": "Origin Region",
+      "rule": "Per-school-article-lede foregrounded geographic origin. Style: '<city>, <country>' for city-specific foundings (Athens-based schools, Pyrrhonism in Elis, Neoplatonism in Alexandria); '<country>' for nationally-attributed foundings (Indian schools, Chinese schools, Avicennism in Persia, Cartesianism in France, Phenomenology in Germany); '<country>/<country>' for cross-region foundings (Thomism Italy/France, Scotism Scotland/Paris); 'Northern India' for Buddhism per Magadha specificity. Diacritics preserved (no diacritics in current set)."
+    }
+  ],
+  "open_questions": [
+    {
+      "question": "Should Yoga be staged as 'Yoga' or 'Yoga philosophy' to disambiguate from the contemporary practice?",
+      "answer": "Staged as 'Yoga' per the Wikipedia article title 'Yoga (philosophy)' — the parenthetical disambiguator is removed in staged form per the same convention used for other Wikipedia (disambiguator) titles in the benchmark. The context (founder = Patanjali; period = 2nd century BCE; region = India) makes the philosophical referent unambiguous in the table."
+    },
+    {
+      "question": "Is the Neoplatonism Origin Region correctly 'Alexandria, Roman Egypt' rather than 'Rome'?",
+      "answer": "The per-school article lede foregrounds Plotinus's formation under Ammonius Saccas in Alexandria; Plotinus later moved to Rome where he taught publicly. The article-foregrounded origin is Alexandria; Rome is the publishing/teaching venue. Staged 'Alexandria, Roman Egypt' per article-lede fidelity."
+    }
+  ],
+  "proposed_supplements": [],
+  "audit_trail_pre_curation": {
+    "cycle_0_research": {
+      "task": "Universe discovery via Wikipedia 'List of philosophies' + per-school articles",
+      "outcome": "Identified ~30 candidate schools across 5 traditions; 22 PASS at strict-cleanliness screen; 2 borderline; 6 fail.",
+      "deliverable": "Initial design proposal for Founder + Founding Period + Origin Region + Canonical Text (5 cols)."
+    },
+    "cycle_1_audit_design_review": {
+      "task": "Audit agent reviews cycle-0 design proposal BEFORE staging",
+      "findings": [
+        "REJECT literary movements (the originally-proposed alternative) — Founding Theorist not row-universal, Founding Manifesto semantically mis-specified (anthologies/novels labeled manifestos), Start Year too sharp.",
+        "PIVOT TO philosophical schools — founder semantics well-established, period-as-text avoids sharp-year problem, region per-school-article-grounded.",
+        "DROP Canonical Text column — only ~68% of candidates have single foregrounded canonical text (BELOW 70% threshold)."
+      ],
+      "deliverable": "Pivot accepted; schema reduced to 4 cols."
+    },
+    "cycle_2_audit_design_amendments": {
+      "task": "Audit agent issues amendments BEFORE staging",
+      "findings": [
+        "AMEND admission rule: per-school article (NOT per-person article) must carry the founder claim. Drops Daoism, Legalism, Jainism, Advaita Vedanta, Charvaka, Samkhya.",
+        "AMEND Approximate Founding Period type: TEXT categorical, NOT numeric year. Preserves article-lede phrasing.",
+        "AMEND universe size: 22 PASS → 18 after admission-gating."
+      ],
+      "deliverable": "Final design approved for staging. Universe = 18; schema = 4 cols; period-as-text; admission-gated."
+    }
+  },
+  "_curated_by": "claude-code",
+  "_curated_at": "2026-05-15T00:00:00Z"
+}

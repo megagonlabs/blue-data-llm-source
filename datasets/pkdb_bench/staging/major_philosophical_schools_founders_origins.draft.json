@@ -1,0 +1,52 @@
+{
+  "id": "major_philosophical_schools_founders_origins",
+  "table_title": "List 18 major philosophical schools across world traditions — Hellenistic Greek, Indian, Chinese, Medieval Christian/Islamic, and Modern Western — with each school's founder, approximate founding period, and origin region. Universe is curator-screened against an admission rule that each school's own Wikipedia article must itself foreground a single founder (NOT just the per-person article); admission-failing schools (Daoism, Legalism, Jainism, Advaita Vedanta, Charvaka, Samkhya) are excluded per the pre-curation design pass.",
+  "columns": [
+    "School",
+    "Founder",
+    "Approximate Founding Period",
+    "Origin Region"
+  ],
+  "primary_key": [
+    "School"
+  ],
+  "column_types": {
+    "School": "key",
+    "Founder": "categorical",
+    "Approximate Founding Period": "categorical",
+    "Origin Region": "categorical"
+  },
+  "query_category": "qualitative",
+  "secondary_category": null,
+  "db_analog": "SELECT s.school_name AS school, f.founder_name AS founder, s.founding_period_approximate, s.origin_region FROM philosophical_schools s JOIN founders f ON s.school_id = f.school_id WHERE s.school_id IN (curator_screened_school_ids) ORDER BY s.approximate_founding_year ASC, s.school_name ASC",
+  "operation_type": "join",
+  "source_count": 19,
+  "domain": "Culture/Philosophy",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia 'List of philosophies' master article + 18 per-school Wikipedia articles, all accessed 2026-05-15. Universe = 18 curator-screened major philosophical schools (claim_type = `candidate_rebuild`) — the master 'List of philosophies' is a broad cross-tradition enumeration but does NOT itself cleanly anchor a Greek + Indian + Chinese + Medieval + Modern slate with founder/period/origin triples, so the universe is rebuilt across the master + per-school articles per the cycle-0 design pass and audit-cycle-2 amendments. temporal_sensitivity = low because the underlying historical facts (founder, approximate founding period, origin region) are stable historiographically — minor framing shifts occur for schools with founder-vs-tradition-development ambiguity (the audit-excluded set: Daoism Laozi-traditional / Jainism Mahavira-revival / Legalism multiple-predecessors / Advaita Vedanta Shankara-systematizer / Charvaka Brihaspati-traditional / Samkhya Kapila-ancient) but staged schools all pass the admission rule. Per-row Founder follows per-school article-lede foregrounded single founder (admission-gated rule: per-school article itself must carry the founder claim — person-article-only claims are insufficient for admission, per audit-cycle-2 explicit guidance). Per-row Approximate Founding Period is a TEXT categorical (NOT numeric year) accepting article-lede formats like 'c. 5th century BCE', 'c. 6th–5th century BCE', 'c. 13th century CE', 'c. early 20th century CE' — per audit-cycle-2 explicit guidance that numeric year creates artificial precision against sources that use ranges. Per-row Origin Region is a per-school-article-lede foregrounded geographic origin; closed-vocab style ('Athens, Greece' / 'Northern India' / 'India' / 'China' / 'Persia' / 'Italy/France' / 'Scotland/Paris' / 'France' / 'Germany' / 'Alexandria, Roman Egypt'). **Canonical Text column was considered and DROPPED** at the cycle-0 design pass: screening found only ~15 of 22 candidate PASS schools had a single foregrounded canonical text (~68%, below the 70% threshold the audit specified) — the 7 multi-text rows would have forced curator scalarization, the literary-movement analogue of the Macedonian / battles commander problem from prior cycles. Dropping the column at design time keeps the staged slate honest.",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/List_of_philosophies",
+    "https://en.wikipedia.org/wiki/Buddhism",
+    "https://en.wikipedia.org/wiki/Confucianism",
+    "https://en.wikipedia.org/wiki/Mohism",
+    "https://en.wikipedia.org/wiki/Nyaya",
+    "https://en.wikipedia.org/wiki/Vaisheshika",
+    "https://en.wikipedia.org/wiki/Aristotelianism",
+    "https://en.wikipedia.org/wiki/Platonism",
+    "https://en.wikipedia.org/wiki/Pyrrhonism",
+    "https://en.wikipedia.org/wiki/Epicureanism",
+    "https://en.wikipedia.org/wiki/Mimamsa",
+    "https://en.wikipedia.org/wiki/Stoicism",
+    "https://en.wikipedia.org/wiki/Yoga_(philosophy)",
+    "https://en.wikipedia.org/wiki/Neoplatonism",
+    "https://en.wikipedia.org/wiki/Avicennism",
+    "https://en.wikipedia.org/wiki/Thomism",
+    "https://en.wikipedia.org/wiki/Scotism",
+    "https://en.wikipedia.org/wiki/Cartesianism",
+    "https://en.wikipedia.org/wiki/Phenomenology_(philosophy)"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-05-15T00:00:00Z",
+  "_extraction_notes": "Qualitative instance — single-cell-per-row attribute lookup over a candidate-rebuilt entity set. **SATURATES `qualitative` at 5/5 — EIGHTH CATEGORY TO FULLY CLEAR** (joining factual_lookup 6/5, top_k 6/5, multi_hop 5/5, multi_attribute_projection 8/8, set_operation 8/8, set_filter 5/5, causal 5/5). **Culture/Philosophy existing subdomain** — Culture family extends from 9 instances to 10 instances with this Ready; Culture/Philosophy subdomain joins `major_western_philosophers_primary_works` (which is people/philosophers entity class — distinct from this instance's abstract-categories/philosophical-schools entity class). Source universe = 18 curator-screened philosophical schools assembled across Wikipedia's broad 'List of philosophies' master + 18 per-school articles. Pre-curation design pass (cycle-0 research subagent + cycle-1 audit-design review + cycle-2 audit-design amendments) screened ~30 candidate schools against the admission rule 'school article itself foregrounds a single founder without curator scalarization'; 18 passed the strict-cleanliness screen. Schema: 4 cols (School PK + Founder categorical + Approximate Founding Period categorical-text + Origin Region categorical). Sort: chronological by approximate founding year primary (BCE before CE, earliest first), School ASC alphabetical secondary tiebreaker at period-ties. Tradition distribution: Hellenistic 6 (Stoicism, Epicureanism, Pyrrhonism, Platonism, Aristotelianism, Neoplatonism), Indian 5 (Buddhism, Nyaya, Vaisheshika, Mimamsa, Yoga), Chinese 2 (Confucianism, Mohism), Medieval 3 (Avicennism, Thomism, Scotism), Modern Western 2 (Cartesianism, Phenomenology) = 18. Founder column: 18 distinct values (one per row), all article-grounded per the strict admission rule. Approximate Founding Period: TEXT format accepting article-lede ranges; 14 distinct period strings across 18 rows (4 ties handled by alphabetical-School-secondary: 5th century BCE Buddhism+Mohism, 4th century BCE Aristotelianism+Platonism+Pyrrhonism, 3rd century BCE Mimamsa+Stoicism, 13th century CE Thomism). Origin Region: 12 distinct values (Athens/Greece appears 4× for Aristotelianism+Platonism+Epicureanism+Stoicism; India appears 4× for Nyaya+Vaisheshika+Mimamsa+Yoga; China appears 2× for Confucianism+Mohism). Bridges + dams + ports + airports + battles + empires cycle lessons applied upfront: (a) single PK on School using Wikipedia common-form names per per-school article title (all 18 ASCII; no diacritics in school names); (b) per-row data sourced from 2 articles each (master + per-school), 19 URLs total; (c) **strict admission gating** — the cycle-2 audit-design pass explicitly required that the per-school article itself carry the founder claim (NOT just the per-person article); this rule screened out Daoism/Laozi (Taoism article describes broader historically-layered development), Jainism/Mahavira (Mahavira revives earlier tradition), Legalism (multiple predecessor figures), Advaita Vedanta/Shankara (systematizer not founder), Charvaka/Brihaspati (traditional attribution, texts lost), Samkhya/Kapila (ancient traditional attribution); (d) **`candidate_rebuild` claim type** — FIRST instance of this claim_type in pkdb_bench; the master 'List of philosophies' does not cleanly enumerate the Greek + Indian + Chinese + Medieval + Modern slate, so the universe is rebuilt across master + per-school articles; (e) **Canonical Text column DROPPED at cycle-0 design pass** per the audit's <70% clean-row threshold rule (only ~15 of 22 candidate PASS schools had clean single canonical text; the 7 multi-text rows would have forced curator scalarization); (f) Approximate Founding Period staged as TEXT categorical (NOT numeric year) per audit-cycle-1 explicit guidance that numeric year creates artificial precision against article-lede ranges. Entity class: `abstract-categories/philosophical-schools` (NEW fine-class in the `abstract-categories` bucket — bucket extends from 4 to 5 instances after this Ready, joining music-genres + religions ×2 + languages)."
+}

@@ -8,6 +8,12 @@ sync by hand. **If you change one, update both.**
 Pick exactly one bundle per audit. Default is **Full pre-registration
 sweep** if you are unsure or only running one pass.
 
+For session startup and ownership routing, use
+`datasets/pkdb_bench/docs/agent_handoff_bundle.md` ("Minimal Session
+Kickoff", "Mode Router", and "Agent Collaboration Patterns"). This file
+only defines audit bundle content after the session has already chosen
+audit mode.
+
 Before running any bundle, follow `SKILL.md`'s Validation Source Policy:
 audit the cited source set first, then run a bounded Wiki-family source
 discovery pass to catch missing Wikipedia/Wikidata list, entity, sibling,
