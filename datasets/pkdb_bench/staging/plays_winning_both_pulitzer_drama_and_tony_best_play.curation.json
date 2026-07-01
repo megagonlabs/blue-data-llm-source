@@ -1,0 +1,178 @@
+{
+  "id": "plays_winning_both_pulitzer_drama_and_tony_best_play",
+  "claim_type": "source_defined",
+  "claim_type_rationale": "Per cycle-1 pre-staging audit confirmation. Universe is the closed canonical 19-entry set of plays that have won BOTH Pulitzer Prize for Drama AND Tony Award for Best Play through Branden Jacobs-Jenkins's Purpose (2025). Universe constructed via set intersection: {Pulitzer Drama winner rows} ∩ {Tony Best Play winner rows} computed at integration time from the two Wikipedia masters' explicit winner-row tabulations. Both Wikipedia masters (Pulitzer Prize for Drama + Tony Award for Best Play) are authoritative source-defined tabulations of their respective prize-winner canonical lists; no curator judgment for universe membership. All 4 cell values source-extractive per cycle-1 audit's verbatim 19-row dump. Mirror precedents for closed-canonical INTERSECT-of-two-prize-rosters source_defined: `unesco_world_heritage_mixed_sites_attributes` (UNESCO designated-cultural ∩ designated-natural — just-completed instance), `aau_big_ten_intersection_universities` (AAU members ∩ Big Ten conference members), `physicists_who_were_nobel_laureates` (physicist set ∩ Nobel laureate set).",
+  "collection_summary": {
+    "approach": "Pre-curation design pass (1 round of pre-staging design review). Cycle-1 verdict: 'Approve for Cycle-0 Staging With Required Edits + Row Dump Provided' — 3 required edits: (1) drop Year Premiered column (schema 5→4) because master tables don't uniformly support premiere year; (2) use explicit Pulitzer-winner-row ∩ Tony-Best-Play-winner-row predicate (NOT Pulitzer-master's '†' dagger marker which appears on Tony-winning rows in the Pulitzer table regardless of Pulitzer winner/finalist status — illustrated by 2003 Anna in the Tropics Pulitzer winner alongside Tony-winning finalists The Goat or Who Is Sylvia? and Take Me Out); (3) join on normalized play identity using Pulitzer-master labels to preserve subtitle specificity (Doubt: A Parable / Angels in America: Millennium Approaches Part-One disambiguation). All 3 edits applied at cycle-0 staging using audit's verbatim 19-row dump.",
+    "universe_size": 19,
+    "partition_structure": "Closed canonical 19-entry universe of completed Pulitzer Drama + Tony Best Play dual winners through 2025. Single PK Play. No partition structure (flat intersection). 2026 Tony rows are nominations only as of staging date; Liberation (2026 Tony Best Play nominee) NOT in scope until award confirmed.",
+    "row_count_check": "19 rows match cycle-1 audit's verbatim master-derived dump from both Wikipedia masters. 18 of 19 rows have Pulitzer Year = Tony Year; Clybourne Park (Pulitzer 2011 + Tony 2012) is the only 1-year-offset case."
+  },
+  "source_coverage_notes": {
+    "roles": [
+      {
+        "url": "https://en.wikipedia.org/wiki/Pulitzer_Prize_for_Drama",
+        "roles": ["universe", "value"],
+        "role_note": "universe: Wikipedia 'Pulitzer Prize for Drama' master article tabulates the closed canonical Pulitzer Drama winner-row set (one explicit winner row per year, alongside finalist rows). Operational predicate filters to is_winner=TRUE rows (NOT the dagger '†' marker which appears on Tony-winning rows regardless of Pulitzer winner/finalist status). value: supplies Play (verbatim from Pulitzer-master labels — preserves subtitle specificity: Doubt: A Parable / Angels in America: Millennium Approaches Part-One) + Playwright (with semicolon-delim co-author convention: Albert Hackett; Frances Goodrich) + Pulitzer Year cell values."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Tony_Award_for_Best_Play",
+        "roles": ["universe", "value"],
+        "role_note": "universe: Wikipedia 'Tony Award for Best Play' master article tabulates the closed canonical Tony Best Play winner set (one winner per Tony ceremony year since 1947). Operational predicate filters to is_winner=TRUE rows; nominees-only excluded. value: supplies Tony Year cell values (year of Tony ceremony, usually equals Pulitzer Year; Clybourne Park 2011/2012 is the only 1-year-offset case in 19-row universe). Play + Playwright cross-validated against Pulitzer-master labels at integration time."
+      }
+    ],
+    "validation_cross_checks": {
+      "rationale": "Per-play Wikipedia articles consulted as validation cross-checks (NOT registered as sources) for select rows where master tables had label-form ambiguity (Doubt: A Parable subtitle preservation across both masters; Angels in America Part One/Part Two disambiguation; The Diary of Anne Frank co-authorship ordering Hackett-first vs Goodrich-first). All 19 staged rows match both Wikipedia masters' explicit winner-row tabulations."
+    },
+    "source_count": 2,
+    "source_grounding_summary": "2 registered sources: Wikipedia Pulitzer Prize for Drama master (roles=[universe, value]) + Wikipedia Tony Award for Best Play master (roles=[universe, value]). Intersection computed at integration time using is_winner=TRUE filter on both sources."
+  },
+  "decision_log": [
+    {
+      "decision": "claim_type = source_defined (Pulitzer-Drama-winners ∩ Tony-Best-Play-winners closed canonical intersection)",
+      "rationale": "Per cycle-1 audit. Both Wikipedia masters are authoritative tabulations of their respective prize-winner canonical lists; intersection is mechanically computable + closed canonical; 19 entries per current master state."
+    },
+    {
+      "decision": "Drop Year Premiered column per cycle-1 audit required edit #1 (schema 5→4 cols)",
+      "rationale": "Both Wikipedia award-page masters tabulate Play + Playwright + award year — they do NOT uniformly tabulate premiere year. Staging Year Premiered would have required per-play Wikipedia page extraction (19+ per-play articles) inflating source_count from 2 to 21+ + introducing Broadway-premiere-vs-world-premiere ambiguity for some plays (e.g., I Am My Own Wife premiered Off-Broadway). Cleaner 4-col schema matches master support."
+    },
+    {
+      "decision": "Operational predicate = explicit Pulitzer winner row ∩ Tony Best Play winner row (NOT Pulitzer dagger marker) per cycle-1 audit required edit #2",
+      "rationale": "Pulitzer-master notes describe '†' as marking Tony Best Play winners — but the Pulitzer table includes both winner rows AND finalist rows for each year, and the dagger appears on Tony-winning rows REGARDLESS of Pulitzer winner/finalist status. Example: 2003 Pulitzer table has winner row 'Anna in the Tropics' (Cruz) plus finalist rows 'The Goat or Who Is Sylvia?' (Albee) and 'Take Me Out' (Greenberg) — both finalist rows also carry the '†' dagger because they won Tony Best Play 2002 and 2003 respectively. Dagger-only filtering would incorrectly include both 2003 Pulitzer finalists in the dual-winner universe. The correct operational predicate uses explicit winner-row intersection: Pulitzer is_winner=TRUE rows ∩ Tony is_winner=TRUE rows."
+    },
+    {
+      "decision": "Play labels staged from Pulitzer master (preserves subtitle specificity) per cycle-1 audit required edit #3",
+      "rationale": "Pulitzer master labels carry full play titles with subtitles ('Doubt: A Parable' / 'Angels in America: Millennium Approaches' / 'August: Osage County') while Tony master sometimes labels with shorter common forms ('Doubt'). Staging from Pulitzer labels (a) preserves subtitle specificity for benchmark calibration; (b) disambiguates 'Angels in America: Millennium Approaches' (Part One — 1993 Pulitzer + 1993 Tony) from 'Angels in America: Perestroika' (Part Two — separate 1994 Tony Best Play winner; NOT in 19-row universe because Part Two did not win Pulitzer); (c) matches more authoritative source for play-identity since Pulitzer Drama citation is the canonical scholarly reference."
+    },
+    {
+      "decision": "Who's Afraid of Virginia Woolf? (Albee 1963) EXCLUDED from universe per audit confirmation",
+      "rationale": "Albee's play won Tony Best Play 1963 but the Pulitzer board declined to award any Drama Pulitzer that year overruling the jury's recommendation. Pulitzer winner-row membership is false (no Pulitzer was officially awarded for 1963 Drama); intersection-membership is false. Tests benchmark's strict-source-rendering policy (jury-recommended-but-board-declined cases excluded preserving source_defined cleanly)."
+    },
+    {
+      "decision": "Musical Pulitzer Drama winners (Sunday in the Park with George 1985 / Rent 1996 / Next to Normal 2010 / Hamilton 2016 / A Strange Loop 2020) AUTO-EXCLUDED from universe",
+      "rationale": "These musicals won Pulitzer Drama but Tony Best MUSICAL (not Tony Best Play — Tony Awards have separate Best Play and Best Musical categories). Tony Best Play winner-row membership is false for any musical. Intersection auto-excludes without explicit musical-filter — a clean property of the {Pulitzer Drama} ∩ {Tony Best Play} predicate. No curator judgment needed."
+    },
+    {
+      "decision": "Pulitzer/Tony year-offset = Clybourne Park (2011/2012) only edge",
+      "rationale": "18 of 19 staged rows have Pulitzer Year = Tony Year (same calendar year for both awards). Clybourne Park is the one 1-year-offset case: Pulitzer Drama 2011 announcement (April 2011) + Tony Best Play 2012 ceremony (June 2012) reflects the play's Off-Broadway 2010 → Broadway 2012 production trajectory (Tony eligibility opened with Broadway transfer). Both years staged as separate cells; benchmark tests for this normalization."
+    },
+    {
+      "decision": "Co-authored play (The Diary of Anne Frank) Playwright = 'Albert Hackett; Frances Goodrich' (semicolon-delim, Hackett-first per Pulitzer master)",
+      "rationale": "Only co-authored play in 19-row universe. Semicolon-delim matches benchmark cross-instance convention (films multi-director cells / monarchs multi-house cells / heritage transboundary multi-country cells). Hackett-first ordering matches Pulitzer master's verbatim credit order."
+    },
+    {
+      "decision": "Category = set_operation primary + set_filter secondary; operation_type = intersect",
+      "rationale": "Per cycle-1 audit confirmation + cycle-2 audit normalized-identity-join clarification. db_analog models the prize-winner-set intersection via INNER JOIN on `normalize_play_identity(play_title)` (semantically equivalent to INTERSECT on canonical-play-identity dimension — accommodates 'Doubt: A Parable' vs 'Doubt' cross-master label-form difference). Genuine set-arithmetic at source level: two authoritative prize-winner sets intersected on normalized play identity. Mirror precedent `aau_big_ten_intersection_universities` + `unesco_world_heritage_mixed_sites_attributes` + `physicists_who_were_nobel_laureates`."
+    },
+    {
+      "decision": "Domain = Culture/Theater NEW subdomain",
+      "rationale": "No prior pkdb_bench Theater instance. Culture family extends from 10 to 11 instances (joining Film + Music + Literature + Architecture + Philosophy + Visual-Arts + Gaming + Heritage; Theater is genuinely novel)."
+    },
+    {
+      "decision": "Entity class = artifacts/plays NEW fine-class",
+      "rationale": "Per cycle-1 audit lock. Plays are artifacts (creative works) not events (the awards are events but the benchmark entity is the play itself). Mirror precedent: artifacts/films + artifacts/books + artifacts/songs + artifacts/video-games — plays fit this bucket cleanly. NEW fine-class extends artifacts bucket from 4 to 5 fine-classes."
+    },
+    {
+      "decision": "Sort = Pulitzer Year ASC + Play ASC tiebreak",
+      "rationale": "Pulitzer Year ASC orders the universe chronologically by first-prize-year (since Pulitzer and Tony years usually match; Clybourne Park's Tony 2012 sorted under Pulitzer 2011 maintains chronological consistency). Play ASC tiebreak is defensive — no Pulitzer-Year ties in the 19-row staged universe."
+    },
+    {
+      "decision": "Cycle-2 HYGIENE fix: db_analog INNER JOIN on normalized_play_id (NOT raw play_title)",
+      "rationale": "Per cycle-1 post-staging audit's NON-BLOCKING HYGIENE. Original db_analog used `INNER JOIN ON p.play_title = t.play_title` which would miss-match 'Doubt: A Parable' (Pulitzer-master label preserved per audit edit #3) vs 'Doubt' (Tony-master shorter label) even though both refer to the same play. Rewritten db_analog uses `INNER JOIN ON p.normalized_play_id = t.normalized_play_id` where normalized_play_id = `normalize_play_identity(play_title)` — a normalization function that collapses subtitle variants + minor label form differences to a canonical play key. This honestly models the cross-master label-form-tolerance that the staged Play column already encodes (per Pulitzer-master-labels-preserved policy). Update propagated to draft.json temporal_note + _extraction_notes."
+    }
+  ],
+  "normalization_decisions": [
+    {
+      "field": "Play",
+      "rule": "Play title verbatim from Wikipedia 'Pulitzer Prize for Drama' master labels per cycle-1 audit required edit #3. Subtitle preservation: 'Doubt: A Parable' (NOT shorter 'Doubt' Tony-master label); 'Angels in America: Millennium Approaches' (Part One specificity — disambiguates from 'Angels in America: Perestroika' Part Two which won Tony 1994 but not Pulitzer); 'August: Osage County' (colon-subtitle convention). 'J.B.' staged with initials+period convention per Pulitzer master (MacLeish's verse drama). 'Long Day's Journey into Night' apostrophe + lowercase 'into' verbatim per master."
+    },
+    {
+      "field": "Playwright",
+      "rule": "Playwright verbatim from Wikipedia 'Pulitzer Prize for Drama' master with one cross-master normalization: co-authored plays use semicolon-delim per benchmark convention. The Diary of Anne Frank's 'Albert Hackett; Frances Goodrich' is the only co-authored row in the 19-row universe; Hackett-first ordering matches Pulitzer master's verbatim credit order. Single-author plays use master's exact name form including middle names where present ('Frank D. Gilroy' / 'John Patrick Shanley' / 'Branden Jacobs-Jenkins' hyphenated surname). Distinct same-surname playwrights preserved: 'Jason Miller' (That Championship Season 1973) ≠ 'Arthur Miller' (Death of a Salesman 1949) — both staged with full first name from Pulitzer master."
+    },
+    {
+      "field": "Pulitzer Year",
+      "rule": "Integer year of Pulitzer Drama announcement per Wikipedia 'Pulitzer Prize for Drama' master. Pulitzer Drama announcements typically in April for the prior season's plays. Range: 1949 (Death of a Salesman) → 2025 (Purpose). Year-form is the announcement year (matches Pulitzer master's column convention)."
+    },
+    {
+      "field": "Tony Year",
+      "rule": "Integer year of Tony ceremony per Wikipedia 'Tony Award for Best Play' master. Tony ceremony typically in June. 18 of 19 rows have Tony Year = Pulitzer Year (most dual-winner plays win both prizes within the same calendar year cycle). EDGE: Clybourne Park (Norris, row 18) has Pulitzer Year=2011 + Tony Year=2012 — the only 1-year-offset case in the staged 19-row universe. The offset reflects Clybourne Park's production trajectory (2010 Off-Broadway debut → 2011 Pulitzer announcement → 2012 Broadway transfer → 2012 Tony ceremony eligibility). Both years staged separately preserving the source-extractive cell values."
+    }
+  ],
+  "open_questions": [
+    {
+      "question": "When Liberation (2026 Tony Best Play nominee) or other future plays win both Pulitzer Drama AND Tony Best Play, should the instance be re-staged?",
+      "answer": "Yes. Dual winners accrue ~1 per decade on average. Liberation is currently a 2026 Tony Best Play nominee per the Tony master; ceremony has not yet occurred as of 2026-05-20 staging date so Liberation is NOT in scope. If Liberation wins Tony Best Play 2026 AND the corresponding Pulitzer Drama, universe extends 19→20. temporal_sensitivity = low reflects slow accumulation."
+    },
+    {
+      "question": "Why use winner-row intersection instead of the Pulitzer master's '†' dagger marker?",
+      "answer": "Per cycle-1 audit required edit #2. The Pulitzer master's notes describe '†' as marking 'plays that also won Tony Best Play' — but the Pulitzer table includes BOTH winner rows AND finalist rows for each year, and the dagger appears on Tony-winning rows REGARDLESS of Pulitzer winner/finalist status. 2003 Pulitzer table example: winner row 'Anna in the Tropics' (Cruz) has no dagger; finalist rows 'The Goat or Who Is Sylvia?' (Albee, 2002 Tony) and 'Take Me Out' (Greenberg, 2003 Tony) BOTH carry '†' because they won Tony Best Play in their respective years even though they were Pulitzer finalists not winners. Dagger-only filtering would incorrectly include 2003 Pulitzer finalists alongside the Pulitzer winner — overcounts. Explicit winner-row intersection is the correct operational predicate."
+    },
+    {
+      "question": "Why staged from Pulitzer master labels instead of Tony master labels?",
+      "answer": "Per cycle-1 audit required edit #3. Pulitzer master labels preserve subtitle specificity (Doubt: A Parable + Angels in America: Millennium Approaches Part-One disambiguation) while Tony master sometimes uses shorter common forms. Pulitzer Drama citation is the canonical scholarly reference for play identity; Tony Award page-link form may abbreviate. Staging Pulitzer-verbatim avoids Angels in America Part-One/Part-Two confusion (Part Two 'Perestroika' won 1994 Tony but NOT Pulitzer; NOT in 19-row universe)."
+    },
+    {
+      "question": "Why is Who's Afraid of Virginia Woolf? (Albee 1963) excluded?",
+      "answer": "Won Tony Best Play 1963 but the Pulitzer board declined to award any Drama Pulitzer that year overruling the jury's recommendation. Pulitzer winner-row membership is false; intersection-membership is false. Tests benchmark's strict-source-rendering policy."
+    },
+    {
+      "question": "Why is Sunday in the Park with George (Sondheim/Lapine 1985) excluded? It won Pulitzer Drama.",
+      "answer": "Won Pulitzer Drama 1985 but it's a MUSICAL — won Tony Best Musical not Tony Best Play. Tony Awards have separate Best Play and Best Musical categories. Tony Best Play winner-row membership is false for any musical. {Pulitzer Drama} ∩ {Tony Best Play} auto-excludes all musical Pulitzer Drama winners without explicit musical filter. Other musical Pulitzer Drama winners also auto-excluded: Rent (Larson 1996), Next to Normal (Yorkey/Kitt 2010), Hamilton (Miranda 2016), A Strange Loop (Jackson 2020)."
+    },
+    {
+      "question": "Why does Clybourne Park have Pulitzer Year=2011 but Tony Year=2012?",
+      "answer": "Production trajectory: Off-Broadway debut 2010 → Pulitzer Drama announcement April 2011 (Off-Broadway eligibility) → Broadway transfer 2012 → Tony eligibility opened with Broadway transfer → Tony Best Play 2012 ceremony June 2012. The 1-year offset is master-source-canonical (both years are correct per their respective masters). This is the ONLY 1-year-offset case in the 19-row staged universe; all 18 other rows have Pulitzer Year = Tony Year. Tests benchmark's per-cell year-extraction precision."
+    },
+    {
+      "question": "What's the database structure of the set_operation framing?",
+      "answer": "Per cycle-2-rewritten db_analog: pulitzer_drama_winners CTE = Pulitzer master rows with is_winner=TRUE (filters out finalist rows alongside the dagger-bearing rows) projected with `normalize_play_identity(play_title) AS normalized_play_id`; tony_best_play_winners CTE = Tony master rows with category='Best Play' AND is_winner=TRUE (filters out nominees) similarly normalized; INNER JOIN on normalized_play_id yields the 19-row dual-winner set; final SELECT extracts Play (Pulitzer-master label per audit edit #3), Playwright, Pulitzer Year, Tony Year ordered by Pulitzer Year ASC + Play ASC tiebreak. The INNER JOIN on normalized_play_id is semantically equivalent to INTERSECT on the canonical play-identity dimension; the cycle-1 original db_analog used raw play_title join which would have miss-matched 'Doubt: A Parable' (Pulitzer-master label) vs 'Doubt' (Tony-master shorter label) even though both refer to the same play — cycle-2 audit HYGIENE fix corrected this by introducing the normalized_play_id intermediate. The set-operation INTERSECT semantic is preserved with cross-master label-form-tolerance."
+    }
+  ],
+  "proposed_supplements": [],
+  "audit_trail_pre_curation": {
+    "cycle_0_source_exploration": {
+      "task": "Verify source viability for the Pulitzer Drama + Tony Best Play intersect candidate",
+      "outcome": "Initial design proposed 5-col schema with Year Premiered as 5th column + 'use Pulitzer dagger marker as efficient operational predicate' shortcut + estimated ~15-20 row universe. Cycle-1 audit pivoted on 3 axes: (a) drop Year Premiered (5→4 cols, master tables don't support it); (b) reject dagger-only predicate (overcounts due to dagger appearing on finalist rows); (c) lock Play labels to Pulitzer master (subtitle preservation).",
+      "deliverable": "Initial design proposal with 5-col schema + dagger-predicate shortcut + ~15-20 estimate + open questions for audit."
+    },
+    "cycle_1_audit_design_review": {
+      "task": "Audit agent reviews cycle-0 design proposal BEFORE staging",
+      "verdict": "Approve for Cycle-0 Staging With Required Edits + Row Dump Provided",
+      "required_edits": [
+        "1. Drop Year Premiered column (schema 5→4 cols) because master tables don't uniformly support premiere year.",
+        "2. Use explicit Pulitzer winner row ∩ Tony Best Play winner row predicate (NOT Pulitzer's '†' dagger marker — the Pulitzer table includes finalist rows alongside winner rows + dagger appears on Tony-winning rows regardless of Pulitzer winner/finalist status; 2003 example: Anna in the Tropics Pulitzer winner alongside Tony-winning finalists The Goat or Who Is Sylvia? and Take Me Out).",
+        "3. Join on normalized play identity using Pulitzer-master labels (preserves Doubt: A Parable subtitle + Angels in America: Millennium Approaches Part-One specificity even when Tony master uses shorter labels)."
+      ],
+      "master_derived_row_list_dump": "Audit provided 19-row master-derived dump verbatim from both Wikipedia masters with all 4 cell values populated. Universe locked at 19 (NOT my preview's ~15-20 estimate). Used at cycle-0 staging.",
+      "deliverable": "All 3 required edits applied at cycle-0 staging."
+    },
+    "cycle_0_staging": {
+      "task": "Stage cycle-0 artifacts with cycle-1 fixes applied",
+      "deliverable": "Cycle-0 staging complete. 19 rows × 4 cols. Single PK Play. source_count = 2 (Wikipedia Pulitzer Prize for Drama + Tony Award for Best Play masters). gt_construction = manual_wikipedia. NEW Culture/Theater subdomain (Culture family extends 10→11 instances). NEW artifacts/plays fine-class (artifacts bucket extends 4→5 fine-classes). Chips set_operation from 9 (1 over original 8 saturation) to 10 (2 over original; toward raised-target 102 ceiling). Total bench: 100 → 101 unique instances (target 102: 1 short). Ready for cycle-1 post-staging audit."
+    },
+    "cycle_1_post_staging_audit": {
+      "task": "Audit agent reviews cycle-0 staged artifacts (cycle-1 post-staging audit)",
+      "verdict": "Ready with residual hygiene — 0 BLOCKING / 1 NON-BLOCKING HYGIENE / 0 SUGGESTION",
+      "findings": [
+        "NON-BLOCKING HYGIENE: db_analog INNER JOIN uses raw `p.play_title = t.play_title` which would miss-match 'Doubt: A Parable' (Pulitzer-master label preserved per audit edit #3) vs 'Doubt' (Tony-master shorter label) even though both refer to the same play. CSV cell values + universe membership are correct; only the SQL analogy has the literal-interpretation bug. Audit recommends rewriting join to explicit normalized identity: `p.normalized_play_id = t.normalized_play_id`."
+      ],
+      "passes": [
+        "All 19 CSV rows match parsed winner-row intersection from both Pulitzer Drama + Tony Best Play masters",
+        "All 76 cells source-grounded under documented normalizations",
+        "Clybourne Park year-offset correctly 2011/2012",
+        "Doubt: A Parable / Angels in America: Millennium Approaches subtitle preservation correct",
+        "Co-author delimiter Hackett; Goodrich correct",
+        "Universe exclusions (Who's Afraid VW + musical Pulitzer winners) correctly handled",
+        "source_count, query_category, secondary_category, operation_type, entity class all check out"
+      ],
+      "deliverable": "All findings recorded in comments.json. Cycle-2 hygiene repair pass required."
+    },
+    "cycle_2_hygiene_repair": {
+      "task": "Apply cycle-2 hygiene fix per cycle-1 post-staging audit finding",
+      "deliverable": "Cycle-2 repair complete. Fix: draft.json::db_analog rewritten using `INNER JOIN ON p.normalized_play_id = t.normalized_play_id` where normalized_play_id = `normalize_play_identity(play_title)` — a normalization function that collapses subtitle variants + minor label form differences across the two masters to a canonical play key (resolves Doubt: A Parable vs Doubt cross-master label-form mismatch). Update propagated to draft.json::temporal_note (added cycle-2 normalized-identity-join explanation), draft.json::_extraction_notes (set_operation category-fit sentence updated), curation.json::decision_log (cycle-2 HYGIENE fix entry added), curation.json::open_questions (db_analog answer rewritten to cycle-2 framing with normalized_play_id intermediate). Ready for cycle-2 post-staging audit."
+    }
+  },
+  "_curated_by": "claude-code",
+  "_curated_at": "2026-05-20T00:00:00Z"
+}

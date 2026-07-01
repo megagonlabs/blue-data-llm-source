@@ -1,0 +1,205 @@
+{
+  "id": "us_presidents_who_also_served_as_vice_president",
+  "claim_type": "source_defined",
+  "claim_type_rationale": "Per cycle-1 pre-staging audit confirmation. Universe is the closed canonical 15-entry set of people who have held BOTH US Vice President AND US President offices per the two Wikipedia masters ('List of presidents of the United States' + 'List of vice presidents of the United States'). Universe predicate is the set intersection of {US Presidents roster as people} ∩ {US Vice Presidents roster as people}, intersected on person-identity. Both Wikipedia masters are authoritative role-rosters maintained as canonical reference lists; no curator judgment for universe membership beyond person-identity normalization across the two masters. All 5 cell values source-extractive per cycle-1 audit's verbatim 15-row dump. Mirror precedents for closed-canonical INTERSECT-of-two-role-rosters source_defined: `plays_winning_both_pulitzer_drama_and_tony_best_play` (two-role intersection on artifact-identity — just-completed instance), `physicists_who_were_nobel_laureates` (people in both physicist-set AND Nobel-laureate-set), `unesco_world_heritage_mixed_sites_attributes` (set INTERSECT of two designation-rosters), `aau_big_ten_intersection_universities` (set INTERSECT of two membership-rosters).",
+  "collection_summary": {
+    "approach": "Pre-curation design pass (1 round of pre-staging design review). Cycle-1 verdict: 'Approve With Required Edits + Row Dump Provided' — 4 required edits: (1) keep schema at 5 columns (no Succession Path 6th column — would introduce curator-classification surface not needed for clean set intersection); (2) Person names staged from VP list as displayed key, joined to president-list identity via normalize_person_identity(); (3) strip VP footnote markers — Gerald Ford's VP Number rendered with footnote (Ford was appointed VP under 25th Amendment 1973, NOT elected) staged as plain numeric 40; (4) document scope as current of source snapshot — current VP JD Vance + current P Donald Trump (47) do NOT affect the intersection (Vance hasn't held P; Trump hasn't held VP). All 4 edits applied at cycle-0 staging using audit's verbatim 15-row dump.",
+    "universe_size": 15,
+    "partition_structure": "Closed canonical 15-entry universe. Single PK Person. No partition structure (flat intersection). Scope locked to source snapshot 2026-05-21; future VPs who become President extend universe.",
+    "row_count_check": "15 rows match cycle-1 audit's verbatim master-derived dump from both Wikipedia masters. 5 same-year VP-and-P start cases (Tyler 1841 / A. Johnson 1865 / Arthur 1881 / TR 1901 / Truman 1945 — death-succession-in-same-year-as-VP-inauguration cases per cycle-2 post-staging audit's prose-precision clarification; strict subset of the 9 total succession-of-predecessor cases in the universe — other succession cases [Fillmore/Coolidge/LBJ death-successions + Ford resignation-succession] are valid succession but NOT same-calendar-year). 5 numerical inversions where P# < VP# (Truman 34VP/33P / LBJ 37VP/36P / Ford 40VP/38P / GHW Bush 43VP/41P / Biden 47VP/46P)."
+  },
+  "source_coverage_notes": {
+    "roles": [
+      {
+        "url": "https://en.wikipedia.org/wiki/List_of_presidents_of_the_United_States",
+        "roles": ["universe", "value"],
+        "role_note": "universe: master tabulates closed canonical US Presidents roster (1789 Washington through 2025 Trump 47, sequentially numbered 1-47). Operational predicate intersects with VP roster on person-identity (15 dual-role people). value: supplies President Number + President Term Start Year cell values verbatim from master's columns."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/List_of_vice_presidents_of_the_United_States",
+        "roles": ["universe", "value"],
+        "role_note": "universe: master tabulates closed canonical US Vice Presidents roster (1789 Adams through 2025 Vance, sequentially numbered 1-50 per cycle-3 post-staging audit's HYGIENE fix — corrected from cycle-2 staging's '1-49' against current live source). Operational predicate intersects with P roster on person-identity (15 dual-role people). value: supplies Person + VP Number + VP Term Start Year cell values verbatim from master's columns (Person staged from VP master labels per cycle-1 audit edit #2; VP Number footnote-stripped per cycle-1 audit edit #3 — Ford = 40 plain numeric)."
+      }
+    ],
+    "validation_cross_checks": {
+      "rationale": "Per-person Wikipedia articles consulted as validation cross-checks (NOT registered as sources) for select rows where name-form variants across the two masters could differ (Andrew Johnson 16VP/17P disambiguation from Lyndon B. Johnson 37VP/36P; Joe Biden short-form vs Joseph R. Biden Jr. longer form). All 15 staged rows match both Wikipedia masters' explicit role-roster tabulations."
+    },
+    "source_count": 2,
+    "source_grounding_summary": "2 registered sources: Wikipedia 'List of presidents of the United States' master (roles=[universe, value]) + Wikipedia 'List of vice presidents of the United States' master (roles=[universe, value]). Intersection computed at integration time via normalize_person_identity() join on canonical-person-identity."
+  },
+  "decision_log": [
+    {
+      "decision": "claim_type = source_defined (Presidents-roster ∩ VPs-roster closed canonical intersection on person-identity)",
+      "rationale": "Per cycle-1 audit. Both Wikipedia masters are authoritative role-rosters; intersection is mechanically computable + closed canonical; 15 entries per current Wikipedia state."
+    },
+    {
+      "decision": "Schema kept at 5 columns (NO Succession Path 6th column) per cycle-1 audit required edit #1",
+      "rationale": "Per audit: 'Do not add Succession Path; that would introduce a new classification surface not needed for this clean set intersection.' Succession Path (Elected vs Succession-of-death vs Succession-of-resignation) would require curator-classification beyond pure source-extraction. The calibration features that a Succession Path column would surface are partially inferable from year-cell patterns without requiring a separate column: same-calendar-year VP-and-P start identifies 5 of the 9 death-succession-where-predecessor-died-in-VP's-first-year cases (Tyler/A.Johnson/Arthur/TR/Truman); 4 other succession cases (Fillmore/Coolidge/LBJ death-successions in years AFTER VP inauguration; Ford resignation-succession in year AFTER VP appointment) are NOT distinguishable from year-cells alone and would require Succession Path column to identify. The 6 direct-election cases (Adams/Jefferson/Van Buren/Nixon/GHW Bush/Biden) are also not directly inferable from year-cells but can be inferred negatively from the absence of same-year-transition + the presence of VP-end-to-P-start gap > 0. Audit accepted this partial-inferability tradeoff in favor of cleaner 5-col schema. Per cycle-2 post-staging audit's prose-precision clarification."
+    },
+    {
+      "decision": "Person names staged from VP list (joined to P list via normalize_person_identity) per cycle-1 audit required edit #2",
+      "rationale": "Per audit: 'Use Person names from the VP list as the displayed key, joined to president-list identity via normalize_person_identity().' VP list is the consistent labeling authority for the staged Person column; P list joined via normalized intermediate per cycle-2 PulitzerTonyPlays + automobiles normalize_*_identity precedent — accommodates potential name-form variants across the two masters (both use canonical short forms but defensive intermediate)."
+    },
+    {
+      "decision": "VP Number footnote markers stripped per cycle-1 audit required edit #3 (Ford = 40 plain numeric)",
+      "rationale": "Per audit: 'Strip VP footnote markers from VP Number. Gerald Ford appears with a footnoted VP number in the rendered table, but the staged numeric value should be 40.' Ford's footnote in the VP master reflects his appointment under 25th Amendment (after Agnew resignation 1973) rather than election, but this annotation belongs in source-citation prose NOT the staged numeric cell. Other 14 VPs have plain numeric values without footnotes."
+    },
+    {
+      "decision": "Scope documented as current of source snapshot 2026-05-21 per cycle-1 audit required edit #4",
+      "rationale": "Per audit: 'Document that the list is current as of the source snapshot and that JD Vance / Donald Trump 47 do not affect the intersection unless a VP later becomes president.' As of 2026-05-21: presidents list current through Donald Trump's 47th presidency; VP list current through JD Vance's 50th VP tenure under Trump 47 (corrected from cycle-2 staging's '49th VP' against current live source per cycle-3 post-staging audit's HYGIENE fix). Trump 45/47 is NOT in VP roster (never held VP office). Vance is in VP roster but NOT in P roster. So latest in-scope intersection row remains Joe Biden (47VP/46P). If a future sitting VP later becomes President, the universe extends."
+    },
+    {
+      "decision": "Category = set_operation primary + set_filter secondary; operation_type = intersect",
+      "rationale": "Per cycle-1 audit confirmation. set_operation because universe is constructed via set arithmetic on two source-defined sets (Presidents roster ∩ VPs roster). operation_type = intersect because db_analog uses INNER JOIN on normalize_person_identity() (semantically equivalent to INTERSECT). Mirror precedent: `plays_winning_both_pulitzer_drama_and_tony_best_play` (just-completed two-role intersection with same shape)."
+    },
+    {
+      "decision": "Domain = History/Politics existing subdomain",
+      "rationale": "Per cycle-1 audit. Matches existing `twentieth_century_us_presidents_attributes` instance's convention (NOT 'Politics/US-Government' NEW subdomain). History family extends with 4th US-government instance joining 20th-century-presidents + presidents-count-by-birth-state + scotus-appointments."
+    },
+    {
+      "decision": "Entity class = people/politicians existing fine-class extension",
+      "rationale": "Per cycle-1 audit. people/politicians is the natural entity class for US executive role-holders. NOT a new fine-class; extends existing politicians fine-class which already includes presidents from other instances."
+    },
+    {
+      "decision": "Sort = VP Number ASC (source-natural chronological by VP tenure)",
+      "rationale": "Per cycle-1 audit confirmation: 'Sort by VP Number ASC is the right source-natural order.' Orders the universe chronologically by VP tenure (Adams 1789 first; Biden 2009 most-recent). Alternative President Number ASC would be misleading because of the 5 numerical inversions (Truman 34VP/33P; LBJ 37VP/36P; etc.) which would scramble the chronological narrative."
+    },
+    {
+      "decision": "Cycle-2 HYGIENE fix #1: Same-year-VP-and-P-start prose precision",
+      "rationale": "Per cycle-1 post-staging audit's NON-BLOCKING HYGIENE #1. Original prose claimed '5 same-year VP-and-P transitions = all succession-of-deceased-predecessor cases' — but this overclaimed by conflating two distinct sets: (a) 5 same-calendar-year cases (Tyler/A.Johnson/Arthur/TR/Truman); (b) 9 total succession cases including Fillmore/Coolidge/LBJ death-successions in year(s) AFTER VP inauguration + Ford resignation-succession. Cycle-2 fix: rewrote prose to be precise — the 5 same-year cases are death-succession-in-same-year-as-VP-inauguration cases (a strict subset of the 9 succession cases); other 4 succession cases are valid succession but NOT same-calendar-year; Ford specifically is the ONLY resignation-succession case in the universe (all other 8 are death-succession). Updated 3 prose spots: draft.json::temporal_note + draft.json::_extraction_notes + curation.json::row_count_check + curation.json::decision_log::Schema-kept-at-5-columns rationale + curation.json::normalization_decisions::President-Term-Start-Year rule. NO CSV cell-value changes."
+    },
+    {
+      "decision": "Cycle-2 HYGIENE fix #2: Biden gap metric precision",
+      "rationale": "Per cycle-1 post-staging audit's NON-BLOCKING HYGIENE #2. Original prose mixed two distinct gap metrics: (a) VP-start-to-P-start (Biden = 12 years 2009→2021; Nixon = 16 years 1953→1969 longest); (b) VP-end-to-P-start (Biden = 4 years 2017→2021; Nixon = 8 years 1961→1969 longest). Cycle-2 fix: adopted VP-end-to-P-start as the canonical career-gap metric per audit clarification — Nixon has the LONGEST gap at 8 years; Biden is second-longest at 4 years; other VP-to-P transitions are mostly 0-year (direct election cases Adams/Jefferson/Van Buren/GHW Bush + the 5 same-year-succession cases). The alternative VP-start-to-P-start metric is mentioned as a distinct measure but not used as primary. Updated 2 prose spots: draft.json::temporal_note + curation.json::normalization_decisions::President-Term-Start-Year rule. NO CSV cell-value changes."
+    },
+    {
+      "decision": "Cycle-3 HYGIENE fix #1: open_questions same-year answer prose precision",
+      "rationale": "Per cycle-2 post-staging audit's NON-BLOCKING HYGIENE #1. The 'Why are there 5 same-year VP-and-P transitions?' open_questions answer still used the cycle-1 narrow framing ('All 5 are cases where the VP succeeded a deceased predecessor in the same calendar year') and did NOT mention the 9 total succession cases or distinguish Ford as the only resignation-succession. This single open_questions answer was missed in cycle-2's 4-spot prose sweep. Cycle-3 fix: rewrote the answer to explicitly: (a) call out the 5 cases as STRICT SUBSET of 9 total succession cases; (b) name all 4 other succession cases (Fillmore/Coolidge/LBJ death-successions + Ford resignation-succession); (c) identify Ford as the ONLY resignation-succession case (all other 8 are death-succession); (d) name the remaining 6 direct-election cases. NO CSV cell-value changes."
+    },
+    {
+      "decision": "Cycle-3 HYGIENE fix #2: Vance VP number correction 49→50",
+      "rationale": "Per cycle-2 post-staging audit's NON-BLOCKING HYGIENE #2. Original cycle-2 staging prose called JD Vance the '49th VP' and said VP roster runs '1-49' in 4 spots across draft.json + curation.json. The live source has Vance as the 50th VP — VP roster runs 1-50. (Background: 48th VP = Mike Pence under Trump 45; 49th VP = Kamala Harris under Biden 46; 50th VP = JD Vance under Trump 47.) This factual error in metadata-description prose does NOT affect the staged 15-row intersection (Vance was never in scope anyway since he has not held P office), but the metadata description must be factually correct. Cycle-3 fix: corrected 4 spots across draft.json (temporal_note + _extraction_notes) + curation.json (source_coverage_notes::role_note + decision_log::Scope-documented + open_questions[0]::Vance answer + open_questions[2]::Vance answer) from '49th VP' / '1-49' to '50th VP' / '1-50'; each correction explicitly attributed to cycle-3 audit's HYGIENE fix. NO CSV cell-value changes."
+    }
+  ],
+  "normalization_decisions": [
+    {
+      "field": "Person",
+      "rule": "Person staged verbatim from Wikipedia 'List of vice presidents of the United States' master's name column per cycle-1 audit required edit #2 — VP list as displayed-key authority. Canonical short forms: 'John Adams' (1st VP / 2nd P — NOT 'John Adams Sr.' or 'John Adams the Elder'; disambiguates from his son John Quincy Adams who was 6th P but NEVER VP and hence NOT in this 15-row universe), 'Thomas Jefferson', 'Martin Van Buren', 'John Tyler', 'Millard Fillmore', 'Andrew Johnson' (16th VP / 17th P — distinct from Lyndon B. Johnson, both in 15-row universe), 'Chester A. Arthur' (middle initial + period), 'Theodore Roosevelt' (NOT 'Theodore Roosevelt Jr.' — TR's son who never held either office; NOT 'Theodore Roosevelt Sr.' — TR's father who never held either office either), 'Calvin Coolidge', 'Harry S. Truman' (S. middle initial + period per Wikipedia VP master's verbatim convention — the S. is not an abbreviation of anything; Truman's middle name was officially just the letter 'S'), 'Richard Nixon' (NOT 'Richard M. Nixon'), 'Lyndon B. Johnson' (middle initial + period), 'Gerald Ford' (NOT 'Gerald R. Ford Jr.' — Wikipedia VP master uses short form), 'George H. W. Bush' (both middle initials + periods + spaces — disambiguates from his son George W. Bush who was 43rd P but NEVER VP and hence NOT in this 15-row universe), 'Joe Biden' (NOT 'Joseph R. Biden Jr.' — Wikipedia VP master uses short form). The 4 'Andrew Johnson / Lyndon B. Johnson / George H. W. Bush' name-form disambiguations are load-bearing — both Johnsons + GHW Bush are in the 15-row universe but their respective sons (Quincy Adams / no Lyndon Jr. / George W. Bush) are NOT (sons either never held either office or held only P)."
+    },
+    {
+      "field": "VP Number",
+      "rule": "Sequential integer per Wikipedia 'List of vice presidents of the United States' master's numbering column, with footnote markers stripped per cycle-1 audit required edit #3. Closed 15 values: 1 (Adams) / 2 (Jefferson) / 8 (Van Buren) / 10 (Tyler) / 12 (Fillmore) / 16 (Andrew Johnson) / 20 (Arthur) / 25 (TR) / 29 (Coolidge) / 34 (Truman) / 36 (Nixon) / 37 (LBJ) / 40 (Ford — footnote-stripped from master's footnoted '40†' rendering reflecting Ford's 25th-Amendment appointment under Nixon after Agnew resignation 1973) / 43 (GHW Bush) / 47 (Biden). 14 of 15 values have no footnote in source; Ford is the only footnoted case."
+    },
+    {
+      "field": "VP Term Start Year",
+      "rule": "Integer year of VP inauguration per Wikipedia VP master. Range: 1789 (Adams) to 2009 (Biden). 15 values: 1789 / 1797 / 1833 / 1841 / 1849 / 1865 / 1881 / 1901 / 1921 / 1945 / 1953 / 1961 / 1973 / 1981 / 2009. NOTE: VP Number and VP Term Start Year do not always strictly chronologically agree at the inauguration-year resolution because (a) VP tenure may end early (death/resignation/succession-to-presidency) leaving the next-numbered VP's tenure start unchanged; (b) some VP tenures span only months (Tyler 1841 / A. Johnson 1865 — both succeeded to presidency within their first year)."
+    },
+    {
+      "field": "President Number",
+      "rule": "Sequential integer per Wikipedia 'List of presidents of the United States' master's numbering column. Closed 15 values: 2 (Adams) / 3 (Jefferson) / 8 (Van Buren) / 10 (Tyler) / 13 (Fillmore) / 17 (A. Johnson) / 21 (Arthur) / 26 (TR) / 30 (Coolidge) / 33 (Truman) / 37 (Nixon) / 36 (LBJ) / 38 (Ford) / 41 (GHW Bush) / 46 (Biden). NOTE: 5 numerical inversions where P# < VP#: Truman 34VP/33P (FDR was 32P; Truman became 33P succeeding FDR died 1945 — Truman's P# is 1 LOWER than his VP#), LBJ 37VP/36P (JFK was 35P; LBJ became 36P succeeding JFK assassination 1963), Ford 40VP/38P (Nixon was 37P; Ford became 38P succeeding Nixon resignation 1974), GHW Bush 43VP/41P (Reagan was 40P; Bush became 41P via direct election 1988), Biden 47VP/46P (Trump was 45P; Biden became 46P via direct election 2020). These inversions reflect the fact that the VP and P numbering sequences are independent counters across the same chronological timeline."
+    },
+    {
+      "field": "President Term Start Year",
+      "rule": "Integer year of P inauguration per Wikipedia P master. Range: 1797 (Adams) to 2021 (Biden). 15 values: 1797 / 1801 / 1837 / 1841 / 1850 / 1865 / 1881 / 1901 / 1923 / 1945 / 1969 / 1963 / 1974 / 1989 / 2021. NOTE per cycle-2 post-staging audit's prose-precision clarification: (a) 5 same-year VP-and-P start cases where VP Term Start Year = President Term Start Year (Tyler 1841 / A. Johnson 1865 / Arthur 1881 / TR 1901 / Truman 1945) — these are death-succession-in-same-year-as-VP-inauguration cases (predecessor died in same calendar year as VP's first inauguration); strict subset of the 9 total succession-of-predecessor cases. The other 4 succession cases (Fillmore 1850 death-succession year-after his 1849 VP start; Coolidge 1923 death-succession 2-years-after his 1921 VP start; LBJ 1963 death-succession 2-years-after his 1961 VP start; Ford 1974 resignation-succession year-after his 1973 VP appointment) are valid succession but NOT same-calendar-year. Ford specifically is the ONLY resignation-succession case in the universe (all other 8 successions are death-succession). (b) Using VP-tenure-end → P-tenure-start as the canonical career-gap metric: Nixon has the LONGEST gap at 8 years (1961 VP end → 1969 P start); Biden's gap is 4 years (2017 VP end → 2021 P start) — second-longest. Most other VPs who became P had 0-year gaps (direct VP→P transition: Adams 1797→1797; Jefferson 1801→1801; Van Buren 1837→1837; GHW Bush 1989→1989; the 5 same-year-succession cases also have 0-year VP-end→P-start gap since VP tenure ended the moment they assumed P office). This is distinct from VP-start-to-P-start gap (Biden = 12 years; Nixon = 16 years longest by that alternative metric)."
+    }
+  ],
+  "open_questions": [
+    {
+      "question": "When a future sitting VP becomes President, should the instance be re-staged?",
+      "answer": "Yes. The universe grows by 1 every ~20-30 years on average. Biden (47VP/46P, P-start 2021) is the most-recent staged. Current VP JD Vance (50th VP under Trump 47 per cycle-3 post-staging audit's HYGIENE fix — corrected from cycle-2 staging's '49th VP' against current live source) is in the VP roster but has not held P office; if Vance later becomes President via direct election or succession, the universe extends 15→16. temporal_sensitivity = low reflects this slow growth."
+    },
+    {
+      "question": "Why isn't Donald Trump (45/47 P) in the intersection? He's been President twice.",
+      "answer": "Trump has held only the office of President (45th P 2017-2021 + 47th P 2025-present); he has never held the office of Vice President. The intersection captures people who have held BOTH offices. Trump's two non-consecutive P terms are accounted for in the Wikipedia P master's numbering (45/47) but neither makes him a VP. Trump 45/47 does NOT affect this 15-row intersection regardless of his P-term count."
+    },
+    {
+      "question": "Why isn't JD Vance in the intersection? He's the current VP.",
+      "answer": "Vance is the 50th VP (inaugurated 2025 under Trump 47 — corrected from cycle-2 staging's '49th VP' against current live source per cycle-3 post-staging audit's HYGIENE fix) but has not held P office. He is in the VP roster but NOT in the P roster, so the intersection excludes him. If Vance later becomes President via direct election or succession, the universe extends 15→16."
+    },
+    {
+      "question": "Why is Gerald Ford's VP Number staged as plain '40' when the source table shows a footnote?",
+      "answer": "Per cycle-1 audit required edit #3. Ford's VP Number in the Wikipedia VP master has a footnote marker (rendered as '40†' or similar) because Ford was the first VP appointed under the 25th Amendment — Nixon nominated Ford to replace Agnew after Agnew's resignation 1973; Ford was confirmed by both houses of Congress rather than elected by the public on a presidential ticket. This annotation belongs in source-citation prose NOT the staged numeric cell. Other 14 VPs have plain numeric values without footnotes."
+    },
+    {
+      "question": "What's the difference between Andrew Johnson (16VP/17P) and Lyndon B. Johnson (37VP/36P)? Both are 'Johnson' in the intersection.",
+      "answer": "They are different people separated by ~100 years and disambiguated by both first name + VP/P numbers. Andrew Johnson was Lincoln's VP (16th VP, 1865 inauguration) and became 17th P upon Lincoln's assassination April 14, 1865 (so VP Term Start Year = President Term Start Year = 1865 — same-year transition). Lyndon B. Johnson was Kennedy's VP (37th VP, 1961 inauguration) and became 36th P upon Kennedy's assassination November 22, 1963 (37VP / 36P numerical inversion). Both staged with full disambiguated names per Wikipedia VP master verbatim."
+    },
+    {
+      "question": "Why are there 5 same-year VP-and-P transitions?",
+      "answer": "Per cycle-3 post-staging audit's prose-precision clarification: these 5 are a STRICT SUBSET of the 9 total succession-of-predecessor cases in the 15-row universe — specifically the death-succession-in-same-year-as-VP-inauguration cases where the predecessor died in the same calendar year the VP was first inaugurated: John Tyler (1841 — Harrison died one month after his inauguration), Andrew Johnson (1865 — Lincoln assassinated April 1865), Chester A. Arthur (1881 — Garfield assassinated September 1881 after July shooting), Theodore Roosevelt (1901 — McKinley assassinated September 1901), Harry S. Truman (1945 — FDR died April 1945 less than 3 months after Truman's January 1945 VP inauguration). In all 5 cases the VP Term Start Year and President Term Start Year are identical because the predecessor died early in the VP's first year of tenure. The OTHER 4 succession cases in the universe are valid succession but NOT same-calendar-year: Fillmore (1850 death-succession after Taylor died, year-after his 1849 VP start); Coolidge (1923 death-succession after Harding died, 2-years-after his 1921 VP start); LBJ (1963 death-succession after JFK assassination, 2-years-after his 1961 VP start); Ford (1974 RESIGNATION-succession after Nixon resigned, year-after his 1973 VP appointment). Ford specifically is the ONLY resignation-succession case in the universe — all other 8 successions (5 same-year + 3 year-after death-successions) are death-succession. The remaining 6 universe rows are direct-election cases: Adams (1797) / Jefferson (1801) / Van Buren (1837) / Nixon (1969) / GHW Bush (1989) / Biden (2021)."
+    },
+    {
+      "question": "Why are there 5 numerical inversions where President Number < VP Number?",
+      "answer": "Truman 34VP/33P; LBJ 37VP/36P; Ford 40VP/38P; GHW Bush 43VP/41P; Biden 47VP/46P. These reflect the fact that the VP and P numbering sequences are INDEPENDENT counters across the same chronological timeline. The VP-numbering increments faster (almost every term has a new VP; some Presidents had multiple VPs e.g., FDR had Garner+Wallace+Truman across his 4 terms; Nixon had Agnew+Ford) so by the time a VP becomes P, the VP-counter is ahead of the P-counter. The closer the gap (VP# - P# = 1) the more recent the VP-to-P transition: Truman/LBJ/Ford/GHW Bush/Biden all have VP# - P# = 1 or 2."
+    },
+    {
+      "question": "What's the database structure of the set_operation framing?",
+      "answer": "Per db_analog: presidents CTE = Wikipedia P master rows projected with normalize_person_identity(person_name) AS normalized_person_id + president_number + term_start_year; vice_presidents CTE = Wikipedia VP master rows similarly normalized + vp_number + term_start_year; INNER JOIN on normalized_person_id yields the 15-row dual-role set; final SELECT extracts Person (from VP master per audit edit #2), VP Number (footnote-stripped per audit edit #3), VP Term Start Year, President Number, President Term Start Year ordered by VP Number ASC. The INNER JOIN on normalize_person_identity is semantically equivalent to INTERSECT on canonical-person-identity dimension; the normalize_*_identity intermediate accommodates potential name-form variants across the two masters (defensive per cycle-2 PulitzerTonyPlays + automobiles precedent). The set-operation INTERSECT semantic is preserved with cross-master name-form-tolerance."
+    }
+  ],
+  "proposed_supplements": [],
+  "audit_trail_pre_curation": {
+    "cycle_0_design_exploration": {
+      "task": "Initial design proposal — US Presidents who also served as Vice President set_operation INTERSECT instance",
+      "outcome": "Initial design proposed 5-col schema (Person + VP Number + VP Term Start Year + President Number + President Term Start Year) + parametric universe estimate of 15 people + source_count=2 (Wikipedia P-list + VP-list masters) + open questions about Succession Path 6th column + person-name normalization.",
+      "deliverable": "Initial design proposal with 5-col schema + parametric universe estimate + 7 open questions for audit."
+    },
+    "cycle_1_audit_design_review": {
+      "task": "Audit agent reviews cycle-0 design proposal BEFORE staging",
+      "verdict": "Approve With Required Edits + Row Dump Provided",
+      "required_edits": [
+        "1. Keep schema at 5 columns (no Succession Path 6th column — would introduce curator-classification surface not needed for clean set intersection).",
+        "2. Use Person names from VP list as displayed key, joined to president-list identity via normalize_person_identity().",
+        "3. Strip VP footnote markers from VP Number — Gerald Ford's footnoted '40' staged as plain numeric 40.",
+        "4. Document scope as current of source snapshot — current VP JD Vance + current P Donald Trump 47 do NOT affect intersection unless a VP later becomes President."
+      ],
+      "master_derived_row_list_dump": "Audit provided 15-row master-derived dump verbatim from both Wikipedia masters with all 5 cell values populated. Universe locked at exactly 15 (parametric estimate confirmed). Used at cycle-0 staging.",
+      "deliverable": "All 4 required edits applied at cycle-0 staging using audit's verbatim 15-row dump."
+    },
+    "cycle_0_staging": {
+      "task": "Stage cycle-0 artifacts with cycle-1 fixes applied",
+      "deliverable": "Cycle-0 staging complete. 15 rows × 5 cols. Single PK Person. source_count = 2 (Wikipedia P-list + VP-list masters). gt_construction = manual_wikipedia. History/Politics existing subdomain (matches twentieth-century-presidents convention; NOT NEW). people/politicians existing fine-class extension. Chips set_operation from 10 (2 over original 8 saturation) to 11 (3 over original; toward raised-target ceiling). **Total bench: 103 → 104 unique instances on disk (2 over raised target 102)**. Ready for cycle-1 post-staging audit."
+    },
+    "cycle_1_post_staging_audit": {
+      "task": "Audit agent reviews cycle-0 staged artifacts (cycle-1 post-staging audit)",
+      "verdict": "Ready with residual hygiene — 0 BLOCKING / 2 NON-BLOCKING HYGIENE / 0 SUGGESTION",
+      "findings": [
+        "NON-BLOCKING HYGIENE #1: Same-year/succession explanation overclaims. The 5 same-year VP/P start rows (Tyler/A.Johnson/Arthur/TR/Truman) are NOT 'all succession cases' — they are death-succession-in-same-year-as-VP-inauguration cases (a strict subset of the 9 total succession cases in the universe). Other succession cases (Fillmore/Coolidge/LBJ/Ford) are valid succession but NOT same-calendar-year rows; Ford specifically is resignation succession, not death succession.",
+        "NON-BLOCKING HYGIENE #2: Biden gap prose mixes definitions. Original prose claimed Biden's 4-year gap (VP-end 2017 → P-start 2021) is 'longest in staged universe' but elsewhere claimed 'Biden's 12-year gap (2009 VP → 2021 P) is longest'. These are two different gap metrics. Nixon's VP-end-to-P-start gap is longer at 8 years (1961→1969)."
+      ],
+      "passes": [
+        "CSV clean: 15 rows × 5 cols, unique Person PK",
+        "source_count=2 correct",
+        "VP-number sort correct",
+        "Ford normalized to plain 40 (footnote-stripped)",
+        "Intersection against both Wikipedia rosters matches all staged cells"
+      ],
+      "deliverable": "All findings recorded in comments.json. Cycle-2 prose-hygiene repair pass required."
+    },
+    "cycle_2_hygiene_repair": {
+      "task": "Apply cycle-2 prose-hygiene fixes per cycle-1 post-staging audit findings",
+      "deliverable": "Cycle-2 repair complete. Fix #1 (same-year/succession precision): rewrote 4 prose spots to distinguish 5 same-calendar-year cases (Tyler/A.Johnson/Arthur/TR/Truman) as 'death-succession-in-same-year-as-VP-inauguration' (strict subset of 9 succession cases); other 4 succession cases (Fillmore/Coolidge/LBJ death-successions + Ford resignation-succession) are valid succession but NOT same-calendar-year; Ford is the ONLY resignation-succession case (all other 8 are death-succession). Fix #2 (Biden gap metric precision): adopted VP-end-to-P-start as canonical career-gap metric — Nixon longest at 8 years (1961→1969); Biden second-longest at 4 years (2017→2021); most other VPs who became P had 0-year gaps (direct VP→P transitions or same-year-succession). VP-start-to-P-start mentioned as distinct alternative metric (Biden 12yr; Nixon 16yr longest). Updated 5+ prose spots across draft.json + curation.json. NO CSV/schema/source/db_analog/category/claim-type changes. Ready for cycle-2 post-staging audit."
+    },
+    "cycle_2_post_staging_audit": {
+      "task": "Audit agent reviews cycle-2 hygiene-repair artifacts (cycle-2 post-staging audit)",
+      "verdict": "Ready with residual hygiene — 0 BLOCKING / 2 NON-BLOCKING HYGIENE / 0 SUGGESTION",
+      "findings": [
+        "NON-BLOCKING HYGIENE #1: One curation.json::open_questions answer ('Why are there 5 same-year VP-and-P transitions?') still used the old narrow framing — talked about 'All 5 are cases where the VP succeeded a deceased predecessor in the same calendar year' but did NOT mention the 9 total succession cases or distinguish Ford as the ONLY resignation-succession case. Missed in cycle-2 sweep.",
+        "NON-BLOCKING HYGIENE #2: Current-state prose called JD Vance the 49th VP / said VP roster runs 1-49 in 4 spots across draft.json + curation.json. The live source has Vance as the 50th VP — VP roster runs 1-50. Does NOT affect the staged 15-row intersection but the metadata description is factually wrong."
+      ],
+      "passes": [
+        "Biden/Nixon gap wording correctly fixed in cycle-2",
+        "Main same-year/succession prose is much clearer in cycle-2",
+        "CSV clean (15 rows × 5 cols, unique Person PK)",
+        "schema, source_count=2, source URLs, db_analog, category, claim_type all remain clean"
+      ],
+      "deliverable": "All findings recorded in comments.json. Cycle-3 prose-hygiene repair pass required."
+    },
+    "cycle_3_hygiene_repair": {
+      "task": "Apply cycle-3 prose-hygiene fixes per cycle-2 post-staging audit findings",
+      "deliverable": "Cycle-3 repair complete. Fix #1 (open_questions same-year answer): rewrote the 'Why are there 5 same-year VP-and-P transitions?' answer to reflect cycle-2 precision — 5 same-calendar-year cases are STRICT SUBSET of 9 total succession cases; other 4 succession cases (Fillmore/Coolidge/LBJ death-successions year(s) AFTER VP start; Ford 1974 resignation-succession year-after) explicitly named; Ford specifically called out as the ONLY resignation-succession case in the universe (all other 8 are death-succession); remaining 6 direct-election cases (Adams/Jefferson/Van Buren/Nixon/GHW Bush/Biden) also named. Fix #2 (Vance VP number): corrected 4 spots across draft.json + curation.json from '49th VP' / '1-49' to '50th VP' / '1-50' per current live source — Vance is the 50th VP under Trump 47 (the 49th VP was Kamala Harris under Biden, who succeeded Mike Pence the 48th VP under Trump 45). Each correction explicitly attributed to cycle-3 audit's HYGIENE fix. NO CSV/schema/source/db_analog/category/claim-type changes. Ready for cycle-3 post-staging audit."
+    }
+  },
+  "_curated_by": "claude-code",
+  "_curated_at": "2026-05-21T00:00:00Z"
+}

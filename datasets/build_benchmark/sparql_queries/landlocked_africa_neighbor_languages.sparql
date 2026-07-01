@@ -26,6 +26,11 @@ SELECT DISTINCT ?landlockedLabel ?neighborLabel ?languageLabel WHERE {
   ?landlocked wdt:P47 ?neighbor .         # shares border with
   ?neighbor   wdt:P31 wd:Q6256 .          # neighbor must be a country
   ?neighbor   wdt:P37 ?language .         # neighbor's official language
+  # Exclude the "languages of Guinea" meta-item (Q1339026), which appears in
+  # Guinea's P37 statements but is a Wikimedia list/aspect item, not an actual
+  # official language. Audit-identified artifact (codex, 2026-06-03); the real
+  # value French (Q150) is retained. See curation.json decision_log / verification_log.
+  FILTER(?language != wd:Q1339026)
   SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
 }
 ORDER BY ?landlockedLabel ?neighborLabel ?languageLabel

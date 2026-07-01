@@ -1,0 +1,297 @@
+{
+  "id": "major_industrial_disasters_with_primary_cause_and_death_toll",
+  "claim_type": "partially_supplemented",
+  "claim_type_rationale": "Universe = 15 curator-selected major industrial disasters from the master article's broad-non-exhaustive enumeration of 400+ disasters across 6 industry sections. Curator selection rule = cross-industry balance + canonical historical-significance recognition. Per-row attribute resolution = 1 master + 15 per-disaster Wikipedia articles (join operation). The curator-judgment universe selection + per-row source-grounding = partially_supplemented. Mirrors `decisive_battles_of_world_war_i` + `decisive_battles_of_world_war_ii` causal/multi_hop curator-selected universe pattern.",
+  "collection_summary": {
+    "approach": "Pre-curation design pass (cycle-0 source exploration + audit-cycle-1 design review APPROVE-WITH-AMENDMENTS) produced a source-faithful instance. PIVOT context: prior `major_oil_spills_with_primary_cause_and_environmental_impact` candidate was deferred at cycle-0 due to source-data-quality issues (unit ambiguity + mixed event-types in the 'Largest oil spills' table). Industrial-disasters pivot uses a cleaner source. Audit-cycle-1 issued 5 required amendments + 10 per-question rulings — all incorporated. Staged design is locked.",
+    "universe_size": 15,
+    "industry_category_distribution": {
+      "Mining": 5,
+      "Chemical": 3,
+      "Munitions/Explosives": 2,
+      "Nuclear": 2,
+      "Petroleum/Energy": 2,
+      "Hydroelectric": 1
+    },
+    "year_distribution": {
+      "1900s (1906-1907)": 2,
+      "1910s (1913-1917)": 2,
+      "1940s (1942-1947)": 2,
+      "1960s (1960)": 1,
+      "1970s (1975)": 1,
+      "1980s (1984-1988)": 3,
+      "2000s (2001)": 1,
+      "2010s (2010-2011)": 2,
+      "2020s (2020)": 1
+    },
+    "universe_listing": [
+      {"year": 1906, "disaster": "Courrières mine disaster", "location": "Courrières, France", "industry": "Mining", "cause": "Coal dust explosion", "death_toll": "1,099", "source": "https://en.wikipedia.org/wiki/Courrières_mine_disaster"},
+      {"year": 1907, "disaster": "Monongah mining disaster", "location": "Monongah, West Virginia, United States", "industry": "Mining", "cause": "Coal mine disaster", "death_toll": "362 killed", "source": "https://en.wikipedia.org/wiki/Monongah_mining_disaster", "note": "Cycle-2 fix: Cause + Death Toll corrected to per-disaster infobox verbatim per audit cycle-1 amendment #2 source priority rule. Infobox Cause = 'Coal mine disaster' (generic); lede notes 'official cause not determined' with theorized 'spark or open flame ignited coal dust or methane' but the infobox-level cause stays staged. Death Toll '362 killed' per infobox (cycle-0 added 'estimates up to 500' was lede speculation, not infobox)."},
+      {"year": 1913, "disaster": "Senghenydd colliery disaster", "location": "Senghenydd, Wales, United Kingdom", "industry": "Mining", "cause": "Spark from underground signalling equipment igniting firedamp (most likely per inquiry; official cause unknown)", "death_toll": "439 coal miners and a rescuer", "source": "https://en.wikipedia.org/wiki/Senghenydd_colliery_disaster", "note": "Cycle-2 fix: Disaster name corrected to 'Senghenydd colliery disaster' (lowercase 'colliery disaster' per article title); Cause corrected per lede 'inquiry thought the most likely cause was a spark from underground signalling equipment that could have ignited any firedamp present'; Death Toll corrected to '439 coal miners and a rescuer' per lede (includes the rescuer)."},
+      {"year": 1917, "disaster": "Halifax Explosion", "location": "Halifax, Nova Scotia, Canada", "industry": "Munitions/Explosives", "cause": "Ship collision detonating munitions cargo", "death_toll": "1,782 (confirmed)", "source": "https://en.wikipedia.org/wiki/Halifax_Explosion", "note": "Cycle-2 fix: Death Toll corrected to '1,782 (confirmed)' per infobox (cycle-0 'Approximately 2,000' was unsourced rounding). Cause description from lede preserved (no Cause infobox field)."},
+      {"year": 1942, "disaster": "Benxihu Colliery disaster", "location": "Benxi, Liaoning, China (then Manchukuo)", "industry": "Mining", "cause": "Coal dust and gas explosion", "death_toll": "1,549", "source": "https://en.wikipedia.org/wiki/Benxihu_Colliery", "note": "Per audit URL normalization — article title is 'Benxihu Colliery' (NOT 'Benxihu Colliery disaster'); the 1942 disaster is the major event documented on the colliery article."},
+      {"year": 1947, "disaster": "Texas City disaster", "location": "Texas City, Texas, United States", "industry": "Chemical", "cause": "Ammonium nitrate detonation aboard SS Grandcamp", "death_toll": "At least 581", "source": "https://en.wikipedia.org/wiki/1947_Texas_City_disaster", "note": "Per audit URL normalization — article uses year prefix '1947_Texas_City_disaster' to distinguish from other Texas City events."},
+      {"year": 1960, "disaster": "Coalbrook mining disaster", "location": "Coalbrook, Free State, South Africa", "industry": "Mining", "cause": "Cascading Pillar Failure", "death_toll": "437 dead and unknown number of mules", "source": "https://en.wikipedia.org/wiki/Coalbrook_mining_disaster", "note": "Cycle-2 fix: Cause corrected to 'Cascading Pillar Failure' per infobox (cycle-0 'Rock fall and collapse' was inaccurate); Death Toll corrected to '437 dead and unknown number of mules' per infobox (cycle-0 '435' was an undercount)."},
+      {"year": 1975, "disaster": "1975 Banqiao Dam failure", "location": "Zhumadian, Henan, China", "industry": "Hydroelectric", "cause": "Typhoon Nina, engineering flaws, failures in policy", "death_toll": "26,000–240,000", "source": "https://en.wikipedia.org/wiki/1975_Banqiao_Dam_failure", "note": "Cycle-2 fix: Cause corrected to multi-factor infobox phrasing 'Typhoon Nina, engineering flaws, failures in policy' (cycle-0 single-cause Typhoon framing missed the engineering + policy contributing factors); Death Toll corrected to '26,000–240,000' infobox-verbatim range notation."},
+      {"year": 1984, "disaster": "Bhopal disaster", "location": "Bhopal, Madhya Pradesh, India", "industry": "Chemical", "cause": "Methyl isocyanate gas leak from Union Carbide pesticide plant", "death_toll": "At least 3,787 officially; over 16,000 claimed", "source": "https://en.wikipedia.org/wiki/Bhopal_disaster", "note": "Audit example for Death Toll source-nuance preservation ('At least 3,787; over 16,000 claimed')."},
+      {"year": 1986, "disaster": "Chernobyl disaster", "location": "Pripyat, Ukrainian SSR, Soviet Union", "industry": "Nuclear", "cause": "Reactor design flaw and operator error during safety test", "death_toll": "31 direct; estimates 4,000 to several hundred thousand long-term", "source": "https://en.wikipedia.org/wiki/Chernobyl_disaster", "note": "Direct deaths + long-term cancer estimates both preserved per audit-cycle-1 amendment #4."},
+      {"year": 1988, "disaster": "Piper Alpha", "location": "North Sea, United Kingdom sector", "industry": "Petroleum/Energy", "cause": "Gas condensate leak ignition", "death_toll": "167", "source": "https://en.wikipedia.org/wiki/Piper_Alpha"},
+      {"year": 2001, "disaster": "AZF (factory)", "location": "Toulouse, France", "industry": "Chemical", "cause": "Ammonium nitrate detonation at fertilizer plant", "death_toll": "31", "source": "https://en.wikipedia.org/wiki/AZF_(factory)", "note": "Per audit URL normalization — article title is 'AZF_(factory)' with parenthetical disambiguator."},
+      {"year": 2010, "disaster": "Deepwater Horizon explosion", "location": "Gulf of Mexico, off Louisiana, United States", "industry": "Petroleum/Energy", "cause": "Wellhead blowout and gas explosion", "death_toll": "11", "source": "https://en.wikipedia.org/wiki/Deepwater_Horizon_explosion", "note": "Per audit URL normalization — 'Deepwater_Horizon_explosion' (the fatal event) NOT 'Deepwater_Horizon_oil_spill' (the environmental aftermath)."},
+      {"year": 2011, "disaster": "Fukushima Daiichi nuclear disaster", "location": "Ōkuma, Fukushima Prefecture, Japan", "industry": "Nuclear", "cause": "2011 Tōhoku earthquake and tsunami disabling reactor cooling", "death_toll": "1 suspected from radiation (lung cancer, 4 years later)", "source": "https://en.wikipedia.org/wiki/Fukushima_Daiichi_nuclear_disaster", "note": "Cycle-2 fix: Death Toll corrected to '1 suspected from radiation (lung cancer, 4 years later)' per infobox Deaths field (cycle-0 added '~2,202 disaster-related deaths from evacuation' from external sources but those are NOT in the infobox Deaths field — per audit-cycle-1 amendment #2 source priority rule, infobox is the primary source). Article redirects to 'Fukushima nuclear accident' per audit observation."},
+      {"year": 2020, "disaster": "2020 Beirut explosion", "location": "Port of Beirut, Lebanon", "industry": "Munitions/Explosives", "cause": "Detonation of stockpiled ammonium nitrate", "death_toll": "218; over 7,000 injured", "source": "https://en.wikipedia.org/wiki/2020_Beirut_explosion"}
+    ],
+    "near_miss_exclusions": "Mining-heavy distribution (5 of 15) is documented per audit-cycle-1 per-question ruling — mining is master's largest section and historically dense with mass-casualty events. Near-miss exclusions: Mitsubishi Hōjō mine disaster 1914 (closest Mitsubishi candidate per audit but mining already 5-heavy); Mitsubishi Bibai 1916 (NOT used per audit); Wankie coal mine disaster 1972 + Dhanbad coal mine disaster 1965 (mining redundancy); Marcinelle mining disaster 1956 + Soma mine disaster 2014 (mining redundancy); Oaks Colliery Explosion 1866 (19th century outlier); Mitsui Miike Coal Mine disaster 1963 + Hillcrest mine disaster 1914 + Laobaidong mining disaster 1960 (mining redundancy). Non-mining near-misses considered but not staged: 1984 San Juanico disaster (Mexico LPG explosion); 1979 Three Mile Island accident (lower-severity nuclear; INES 5 vs Chernobyl 7 / Fukushima 7); 2013 Rana Plaza collapse (garment-factory building collapse — different industry-failure category)."
+  },
+  "source_coverage_notes": {
+    "roles": [
+      {
+        "url": "https://en.wikipedia.org/wiki/List_of_industrial_disasters",
+        "roles": ["universe"],
+        "role_note": "universe-only role: defines the master enumeration from which the curator selects 15 disasters. Master is explicitly broad-non-exhaustive (notable list, 400+ entries across 6 industry sections). Does NOT supply per-row Year / Location / Industry / Cause / Death Toll cells — those come from per-disaster articles per audit-cycle-1 amendment #2 source priority rule."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Courrières_mine_disaster",
+        "roles": ["value"],
+        "role_note": "value: supplies Year, Location, Industry, Cause, Death Toll cells for Courrières mine disaster row."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Monongah_mining_disaster",
+        "roles": ["value"],
+        "role_note": "value: supplies cells for Monongah mining disaster row."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Senghenydd_colliery_disaster",
+        "roles": ["value"],
+        "role_note": "value: supplies cells for Senghenydd colliery disaster row. Per audit cycle-2 fix — article title uses lowercase 'colliery disaster'."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Halifax_Explosion",
+        "roles": ["value"],
+        "role_note": "value: supplies cells for Halifax Explosion row."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Benxihu_Colliery",
+        "roles": ["value"],
+        "role_note": "value: supplies cells for Benxihu Colliery disaster (1942) row. Per audit URL normalization."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/1947_Texas_City_disaster",
+        "roles": ["value"],
+        "role_note": "value: supplies cells for Texas City disaster row. Per audit URL normalization with year prefix."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Coalbrook_mining_disaster",
+        "roles": ["value"],
+        "role_note": "value: supplies cells for Coalbrook mining disaster row."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/1975_Banqiao_Dam_failure",
+        "roles": ["value"],
+        "role_note": "value: supplies cells for Banqiao Dam failure row. Per audit URL normalization with year prefix."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Bhopal_disaster",
+        "roles": ["value"],
+        "role_note": "value: supplies cells for Bhopal disaster row."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Chernobyl_disaster",
+        "roles": ["value"],
+        "role_note": "value: supplies cells for Chernobyl disaster row."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Piper_Alpha",
+        "roles": ["value"],
+        "role_note": "value: supplies cells for Piper Alpha row."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/AZF_(factory)",
+        "roles": ["value"],
+        "role_note": "value: supplies cells for AZF Toulouse explosion row. Per audit URL normalization with parenthetical disambiguator."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Deepwater_Horizon_explosion",
+        "roles": ["value"],
+        "role_note": "value: supplies cells for Deepwater Horizon explosion row (the fatal event). Per audit URL normalization — NOT 'Deepwater_Horizon_oil_spill' which is the environmental aftermath."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Fukushima_Daiichi_nuclear_disaster",
+        "roles": ["value"],
+        "role_note": "value: supplies cells for Fukushima Daiichi nuclear disaster row. Per audit observation — article redirects to 'Fukushima nuclear accident'."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/2020_Beirut_explosion",
+        "roles": ["value"],
+        "role_note": "value: supplies cells for 2020 Beirut explosion row."
+      }
+    ],
+    "validation_only_sources": "Industry-specific safety databases (e.g., CSB for chemical accidents in US, IAEA for nuclear accidents, MSHA for US mining), historical accounts, and academic post-mortem analyses consulted as validation context but NOT registered. The 1 master + 15 per-disaster articles fully cover universe-membership + per-row cell values.",
+    "source_count": 16,
+    "source_grounding_summary": "16 registered Wikipedia sources: 1 master (universe-only) + 15 per-disaster articles (value-only for each row). Mirrors WWII/WWI battles instance source-pattern. Per-row attribute resolution uses audit-cycle-1 amendment #2 source priority rule: per-disaster infobox > lede > cause section > master bullet as universe-membership support only."
+  },
+  "decision_log": [
+    {
+      "decision": "claim_type = partially_supplemented (per audit-cycle-1 design review)",
+      "rationale": "Master article is broad-non-exhaustive enumeration of 400+ disasters; curator selects 15 with cross-industry balance + canonical historical-significance recognition. Per-row source-grounding via per-disaster articles. Curator-judgment universe selection + per-row source-grounding = partially_supplemented. Mirror of WWII/WWI battles instances pattern."
+    },
+    {
+      "decision": "PIVOT from oil-spills candidate (cycle-0 source-quality concerns)",
+      "rationale": "Prior `major_oil_spills_with_primary_cause_and_environmental_impact` candidate had cycle-0 source-data-quality issues: 'Largest oil spills' table conflated marine spills with oil fires (Kuwaiti Oil Fires 1991) + land-based gushers (Lakeview Gusher 1910), and tonnes-vs-thousands-of-tonnes units were ambiguous. Industrial-disasters pivot uses cleaner source (broad-non-exhaustive industry-section enumeration with stable per-event Wikipedia pages)."
+    },
+    {
+      "decision": "Universe = 15 curator-selected disasters with industry-category balance",
+      "rationale": "Cross-industry distribution: Mining 5 / Chemical 3 / Munitions-Explosives 2 / Nuclear 2 / Petroleum-Energy 2 / Hydroelectric 1. Mining-heavy weighting (5 of 15) is defensible per audit-cycle-1 per-question ruling — master's Mining section is the largest and historically dense with mass-casualty events. Near-miss exclusions documented in near_miss_exclusions field for transparency."
+    },
+    {
+      "decision": "operation_type = join (per audit-cycle-1 amendment #1)",
+      "rationale": "Cycle-0 proposed operation_type = filter. Audit-cycle-1 amendment #1: the universe is curator-selected and per-row values come from 1 master + per-disaster articles — this mirrors causal `modern_animal_extinctions_since_1900` more than a single-source filter. operation_type = join captures the per-row source-join semantics."
+    },
+    {
+      "decision": "Source priority rule per audit-cycle-1 amendment #2",
+      "rationale": "Some rows lack complete infobox support. Audit-cycle-1 amendment #2 ruled: use per-disaster Wikipedia article infobox when present; otherwise lede / cause section / casualty section; master bullet as universe-membership support only. This rule replaces cycle-0's implied 'infobox-only' extraction."
+    },
+    {
+      "decision": "Title makes 'curator-selected' framing explicit (per audit-cycle-1 amendment #3)",
+      "rationale": "Cycle-0 title implied potential 'top 15 by deaths' or exhaustive canonical-set framing. Audit-cycle-1 amendment #3: title must use wording like '15 curator-selected major industrial disasters from Wikipedia's List of industrial disasters'. Staged title preserves the curator-selected framing + master-source attribution."
+    },
+    {
+      "decision": "Death Toll = categorical/text (NOT numeric midpoint) per audit-cycle-1 amendment #4",
+      "rationale": "Cycle-0 considered numeric-midpoint staging for Death Toll. Audit-cycle-1 amendment #4: preserve source nuance via text categorical. Cycle-2 audit further enforced source-priority rule (per-disaster infobox > lede > master bullet) for the cell-source choice. Post-cycle-2 examples (infobox-grounded): Bhopal 'At least 3,787 officially; over 16,000 claimed'; Banqiao '26,000–240,000' (infobox range-verbatim); Chernobyl '31 direct; estimates 4,000 to several hundred thousand long-term'; Fukushima '1 suspected from radiation (lung cancer, 4 years later)' (infobox Deaths field — cycle-2 dropped cycle-0's evacuation-related figure which was lede/external, not infobox); Halifax '1,782 (confirmed)' (infobox); Monongah '362 killed' (infobox). Text categorical preserves these qualifiers per master Wikipedia convention."
+    },
+    {
+      "decision": "Source URLs normalized per audit-cycle-1 amendment #5",
+      "rationale": "Audit-cycle-1 amendment #5 specified URL normalizations: Benxihu_Colliery (NOT Benxihu_Colliery_disaster); 1947_Texas_City_disaster (year prefix to distinguish from other Texas City events); AZF_(factory) (parenthetical disambiguator); Fukushima_Daiichi_nuclear_disaster (article redirects to Fukushima nuclear accident); Deepwater_Horizon_explosion (fatal event, NOT _oil_spill aftermath); 1975_Banqiao_Dam_failure (year prefix); 2020_Beirut_explosion (year prefix)."
+    },
+    {
+      "decision": "Industry Category = closed 6-value curator-normalized vocab (NOT master-verbatim section names)",
+      "rationale": "Per audit-cycle-1 per-question ruling: curator-normalized closed vocab — Mining / Chemical / Munitions/Explosives / Nuclear / Petroleum/Energy / Hydroelectric. Master uses broader sections (Energy section includes Nuclear + Petroleum + Hydroelectric; Manufacturing section includes Chemical) which don't capture the disaster-type granularity needed for benchmark category-based filtering. Curator-normalized vocab provides clearer benchmark semantic."
+    },
+    {
+      "decision": "Primary Cause = open text source-grounded per row (NOT closed-N vocab)",
+      "rationale": "Per audit-cycle-1 per-question ruling: open text preserves master per-disaster article causality descriptions (e.g., 'Methyl isocyanate gas leak from Union Carbide pesticide plant' for Bhopal; 'Reactor design flaw and operator error during safety test' for Chernobyl; '2011 Tōhoku earthquake and tsunami disabling reactor cooling' for Fukushima). Closed-N vocab would force lossy categorization."
+    },
+    {
+      "decision": "Sort = Year ASC + Disaster ASC tiebreak",
+      "rationale": "Year ASC primary chronological (1906 → 2020). Disaster ASC alphabetical secondary tiebreak (no same-year duplicates in current 15-row universe). Mirrors WWII + WWI battles sort contract."
+    },
+    {
+      "decision": "Domain = Technology/Industrial Safety (per audit-cycle-1 preferred naming)",
+      "rationale": "Audit-cycle-1 explicit preference for 'Technology/Industrial Safety' over alternative 'Technology/Industrial'. Captures the engineering-failure + safety-engineering focus of the universe. NEW subdomain under Technology family."
+    },
+    {
+      "decision": "Entity class = events/industrial-disasters (NEW fine-class)",
+      "rationale": "NEW fine-class within events bucket. Bucket extends 12→13 fine-classes (joining space-missions, financial-crises, epidemics, space-incidents, judicial-decisions, olympics, awards, inventions, battles, empires, recessions, pandemics)."
+    },
+    {
+      "decision": "source_count = 16 (1 master + 15 per-disaster)",
+      "rationale": "Mirrors WWII/WWI battles source pattern. Master = universe-only role; each per-disaster article = value-only role for its row."
+    },
+    {
+      "decision": "Floor-lift target — causal 5/5 → 6/5 (1-over-target)",
+      "rationale": "3rd of 13 floor-lift instances toward 102-target (after epidemics-1M lifting comparative + WWI battles lifting multi_hop). causal was at 5/5 (floor met). This instance pushes to 6/5 (1-over-target). Corpus growth: 90→91→92 from earlier locks; this lock would bring corpus to 92→93."
+    }
+  ],
+  "normalization_decisions": [
+    {
+      "field": "Disaster",
+      "rule": "Per-disaster Wikipedia article title or its disambiguated form, with article-redirect normalization where the canonical title differs from the search-form name. 15 unique values. The rule is NOT pure verbatim-article-title because some articles use redirects + lowercase variants — staged form normalizes to the article's display title where stable. Notable conventions: '1975 Banqiao Dam failure' uses article year prefix; '2020 Beirut explosion' uses article year prefix; 'AZF (factory)' uses article parenthetical disambiguator; 'Halifax Explosion' (capital E per article title); 'Senghenydd colliery disaster' (lowercase 'colliery disaster' per article title — cycle-2 fix corrected from cycle-0's capitalized form); 'Deepwater Horizon explosion' (lowercase 'explosion'); 'Fukushima Daiichi nuclear disaster' (per Wikipedia article title; redirects to 'Fukushima nuclear accident'); 'Benxihu Colliery disaster' (cycle-2 note: staged form uses 'Benxihu Colliery disaster' for the 1942 disaster event; underlying Wikipedia article title is just 'Benxihu Colliery' with the 1942 disaster as a section therein — staged form preserves the disaster-specific framing rather than the colliery-page title). Special-character preservation: 'Courrières' grave accent + acute accent; 'Ōkuma' macron; 'Tōhoku' macron. The audit-cycle-2 HYGIENE finding noted cycle-0's overclaim of 'verbatim article title' — the rule is more accurately article-title-with-normalization-for-redirects-and-disaster-event-framing."
+    },
+    {
+      "field": "Year",
+      "rule": "Integer year (CE). Start year for multi-month/multi-day events (Deepwater Horizon Apr 20 - Jul 15 2010 → 2010; Fukushima Mar 11 2011 + ongoing → 2011; Banqiao Aug 1975 → 1975). Range: 1906 (Courrières) to 2020 (Beirut)."
+    },
+    {
+      "field": "Location",
+      "rule": "Comma-delimited 'City, Region/State, Country' format. Special cases: 'Benxi, Liaoning, China (then Manchukuo)' for 1942 (preserves Manchukuo political context); 'Pripyat, Ukrainian SSR, Soviet Union' for 1986 (preserves USSR context); 'North Sea, United Kingdom sector' for Piper Alpha (offshore); 'Gulf of Mexico, off Louisiana, United States' for Deepwater Horizon (offshore); 'Port of Beirut, Lebanon' for 2020 Beirut. Diacritic preservation: 'Courrières', 'Ōkuma'. CSV-quoted because cells contain commas."
+    },
+    {
+      "field": "Industry Category",
+      "rule": "Closed 6-value curator-normalized vocab: Mining, Chemical, Munitions/Explosives, Nuclear, Petroleum/Energy, Hydroelectric. Distribution: Mining 5 / Chemical 3 / Munitions-Explosives 2 / Nuclear 2 / Petroleum-Energy 2 / Hydroelectric 1. Classification rules: ammonium nitrate at fertilizer plant (AZF Toulouse + Texas City) = Chemical (industrial-use chemical); ammonium nitrate stockpile detonation (2020 Beirut) + ship-collision-igniting-munitions-cargo (Halifax) = Munitions/Explosives (storage/transport of explosive materials). Master's broader Energy section subdivided into Nuclear / Petroleum-Energy / Hydroelectric for benchmark granularity."
+    },
+    {
+      "field": "Primary Cause",
+      "rule": "Open text source-grounded from per-disaster Wikipedia article infobox/lede causality description. Examples: 'Coal dust explosion' (Courrières); 'Methyl isocyanate gas leak from Union Carbide pesticide plant' (Bhopal); 'Reactor design flaw and operator error during safety test' (Chernobyl); '2011 Tōhoku earthquake and tsunami disabling reactor cooling' (Fukushima); 'Wellhead blowout and gas explosion' (Deepwater Horizon); 'Ship collision detonating munitions cargo' (Halifax); 'Detonation of stockpiled ammonium nitrate' (2020 Beirut)."
+    },
+    {
+      "field": "Death Toll",
+      "rule": "Categorical text source-verbatim per audit-cycle-1 amendment #4 + cycle-2 source-priority rule (per-disaster infobox > lede > master bullet). Preserves source nuance (official / claimed / estimated / immediate / long-term / 'suspected' / 'confirmed' qualifiers). Post-cycle-2 examples (infobox-grounded): 'At least 3,787 officially; over 16,000 claimed' (Bhopal); '26,000–240,000' (Banqiao infobox range-verbatim); '31 direct; estimates 4,000 to several hundred thousand long-term' (Chernobyl); '1 suspected from radiation (lung cancer, 4 years later)' (Fukushima infobox Deaths field); '1,782 (confirmed)' (Halifax infobox); '218; over 7,000 injured' (2020 Beirut); '362 killed' (Monongah infobox); '437 dead and unknown number of mules' (Coalbrook infobox); '439 coal miners and a rescuer' (Senghenydd lede). CSV-quoted because cells often contain commas + semicolons + range characters."
+    }
+  ],
+  "open_questions": [
+    {
+      "question": "Per-row commander-style cells (Cause + Death Toll + Location) are best-knowledge initial commits — should cycle-1 post-staging audit verify each against per-disaster Wikipedia article infobox/lede per audit's source priority rule?",
+      "answer": "Yes — per audit-cycle-1 amendment #2 source priority rule: per-disaster infobox > lede > cause section > master bullet as universe-membership support only. Cycle-1 post-staging audit should verify each of the 45+ cells (Year + Location + Industry + Cause + Death Toll for 15 disasters = 75 cell values minus the Disaster PK column). Likely audit-finding-candidates: Death Toll cell wording for Chernobyl (direct vs long-term framing); Death Toll cell wording for Fukushima (cancer vs evacuation-related); Industry Category for Halifax (Munitions/Explosives vs Chemical); Primary Cause wording for various events; Location string for offshore events (Piper Alpha, Deepwater Horizon)."
+    },
+    {
+      "question": "Should the staged universe include closely-related industrial disasters that were not in the curator-selected 15 (e.g., Mitsubishi Hōjō mine disaster 1914, Three Mile Island 1979, Buncefield 2005, Texas City refinery 2005)?",
+      "answer": "Open for future-cycle consideration. The current 15-row universe was curator-balanced across 6 industry categories with mining-heavy weighting documented as defensible per audit-cycle-1. If a future-cycle audit prefers broader universe + extends to 18-20 rows, the candidate additions would include Mitsubishi Hōjō (mining +1) and Three Mile Island (nuclear +1, INES 5 vs Chernobyl/Fukushima INES 7). The current 15-row selection balances comprehensiveness with bounded scope."
+    },
+    {
+      "question": "Should Halifax Explosion be classified as Munitions/Explosives or as Maritime/Transport?",
+      "answer": "Halifax Explosion 1917 was caused by a collision between SS Mont-Blanc (carrying wartime munitions cargo) and SS Imo. While the proximate cause was a maritime collision, the disaster's industrial-engineering-failure character is the explosive-cargo handling/loading, hence the Munitions/Explosives classification. Audit-cycle-1 confirmed Munitions/Explosives categorization. If a future-cycle audit prefers Maritime/Transport, Halifax would shift to a new 7th category — but the cleaner 6-value vocab is preserved."
+    },
+    {
+      "question": "For Banqiao Dam failure, should the cause be staged as Typhoon Nina (natural cause) or as engineering-failure (dam design + spillway capacity)?",
+      "answer": "Multiple factors contributed: Typhoon Nina's extreme rainfall + engineering flaws (spillway design capacity + dam-construction issues) + policy failures (water management decisions). Master's per-disaster article infobox Cause field is multi-factor verbatim: 'Typhoon Nina, engineering flaws, failures in policy'. Cycle-2 fix updated staged Cause from cycle-0's single-factor 'Typhoon Nina extreme rainfall overwhelming dam' to the infobox-verbatim multi-factor phrasing. Industry Category = Hydroelectric (the engineering-system that failed, regardless of natural-disaster trigger)."
+    }
+  ],
+  "proposed_supplements": [],
+  "audit_trail_pre_curation": {
+    "cycle_0_source_exploration": {
+      "task": "Verify source structure for the industrial-disasters candidate (PIVOT from oil-spills source-quality concerns).",
+      "outcome": "Cycle-0 verified the `List of industrial disasters` Wikipedia master article exists with 400+ disasters organized into 6 industry sections (Defense, Energy, Food, Manufacturing, Mining, Other). All canonical major disasters verified present (Bhopal, Chernobyl, Fukushima, Deepwater Horizon, Halifax, Piper Alpha, Texas City, Beirut, Banqiao, AZF Toulouse, Benxihu, Courrières, Mitsubishi Hōjō). Master uses narrative bullet prose (NOT a unified ranked table) — per-disaster Wikipedia articles supply per-row cells.",
+      "deliverable": "Initial design proposal with 15-row curator-balanced universe across 6 industries + 6-col schema + multi_hop-style join pattern + source_count=16."
+    },
+    "cycle_1_audit_design_review": {
+      "task": "Audit agent reviews cycle-0 design proposal BEFORE staging",
+      "verdict": "APPROVE WITH AMENDMENTS (5 required amendments + 10 per-question rulings)",
+      "amendments": [
+        "1. operation_type = join (NOT filter) — universe curator-selected with per-disaster value source-joins.",
+        "2. Do NOT claim 'infobox-only' extraction — use source priority rule: per-disaster infobox > lede > cause section > master bullet as universe-membership support.",
+        "3. Title makes 'curator-selected' framing explicit — NOT 'top 15 by deaths' or exhaustive canonical-set framing.",
+        "4. Death Toll = text categorical (NOT numeric midpoint) — preserve source nuance for wide-range estimates + contested figures + qualifiers.",
+        "5. Source URLs normalized — Benxihu_Colliery, 1947_Texas_City_disaster, AZF_(factory), Fukushima_Daiichi_nuclear_disaster (redirects to Fukushima nuclear accident), Deepwater_Horizon_explosion (fatal event NOT _oil_spill aftermath)."
+      ],
+      "per_question_recommendations": [
+        "Keep 15 rows with documented mining-heavy distribution; near-miss exclusions documented.",
+        "Mitsubishi Hōjō is correct Mitsubishi candidate IF used; Mitsubishi Bibai NOT for this design. Leaving Mitsubishi out is defensible if documented.",
+        "Industry Category = curator-normalized closed vocab (NOT master-verbatim section names).",
+        "Primary Cause = open text source-grounded per row.",
+        "Sort = Year ASC + Disaster ASC tiebreak.",
+        "Domain = Technology/Industrial Safety (audit preferred over Technology/Industrial).",
+        "Entity class = events/industrial-disasters NEW fine-class."
+      ],
+      "source_plan": "16 URLs total = 1 master + 15 per-disaster articles. Access anchor 2026-05-20.",
+      "deliverable": "All 5 required amendments + 10 per-question rulings incorporated. Design locked; staging."
+    },
+    "cycle_2_post_staging_repair": {
+      "task": "Cycle-1 post-staging audit found 2 BLOCKING factual + 1 HYGIENE structural; cycle-2 applied 11 cell-level fixes + 1 prose fix + 1 URL normalization.",
+      "verdict": "Ready (0 BLOCKING); 2 BLOCKING + 1 HYGIENE findings cleaned up in-place during cycle-2.",
+      "fixes_applied": [
+        "1. (BLOCKING / factual) Death Toll cells corrected per audit cycle-1 amendment #2 source priority rule (per-disaster infobox > lede > master bullet). 6 cells fixed: (a) Coalbrook '435' → '437 dead and unknown number of mules' per infobox; (b) Senghenydd '439' → '439 coal miners and a rescuer' per lede; (c) Fukushima '1 confirmed cancer death; ~2,202 disaster-related deaths from evacuation' → '1 suspected from radiation (lung cancer, 4 years later)' per infobox (cycle-0's evacuation-related figure was from external sources not in infobox); (d) Halifax 'Approximately 2,000' → '1,782 (confirmed)' per infobox; (e) Monongah '362 officially; estimates up to 500' → '362 killed' per infobox (cycle-0's '500' was lede speculation, not infobox); (f) Banqiao '26,000 immediate; estimates up to 240,000 with downstream flooding' → '26,000–240,000' per infobox-verbatim range.",
+        "2. (BLOCKING / factual) Primary Cause cells corrected per audit cycle-1 amendment #2. 4 cells fixed: (a) Coalbrook 'Rock fall and collapse' → 'Cascading Pillar Failure' per infobox; (b) Senghenydd 'Methane explosion' → 'Spark from underground signalling equipment igniting firedamp (most likely per inquiry; official cause unknown)' per lede; (c) Monongah 'Mine explosion' → 'Coal mine disaster' per infobox (generic but verbatim); (d) Banqiao 'Typhoon Nina extreme rainfall overwhelming dam' → 'Typhoon Nina, engineering flaws, failures in policy' per infobox multi-factor phrasing.",
+        "3. (HYGIENE / structural) Disaster name + URL normalization: (a) Senghenydd Colliery Disaster → 'Senghenydd colliery disaster' (lowercase 'colliery disaster' per article title); (b) source URL updated from Senghenydd_Colliery_Disaster → Senghenydd_colliery_disaster; (c) normalization_decisions Disaster rule reworded to acknowledge redirect/title-exception cases — no longer overclaims pure verbatim-article-title use."
+      ],
+      "deliverable": "All 11 cell-level fixes + 1 prose fix + 1 URL normalization applied. CSV updated in 6 rows (10 cells: 6 Death Toll + 4 Cause); curation.json updated in 6 universe_listing entries + source_coverage_notes Senghenydd entry + normalization_decisions Disaster rule; draft.json source_urls updated. Cycle-2 left 1 NON-BLOCKING HYGIENE finding (stale pre-cycle-2 example strings in 3 active-prose locations); cleaned up in cycle-3."
+    },
+    "cycle_3_post_staging_hygiene": {
+      "task": "Cycle-2 verification audit found 0 BLOCKING + 1 NON-BLOCKING HYGIENE structural finding (stale pre-cycle-2 example strings in 3 active-prose locations: decision_log Death Toll rationale + normalization_decisions Death Toll rule + open_questions Banqiao answer); cycle-3 applied the prose-only cleanup.",
+      "verdict": "Ready (0 BLOCKING); 1 HYGIENE structural finding cleaned up in-place during cycle-3. CSV + universe_listing + audit_trail cycle-2 narration check out per cycle-2 audit; only 3 active-prose pre-cycle-2-example locations needed cycle-3 cleanup.",
+      "fixes_applied": [
+        "1. (HYGIENE / structural) Stale pre-cycle-2 example strings updated in 3 active-prose locations to use the post-cycle-2 infobox-grounded examples: (a) decision_log Death Toll rationale — examples updated from cycle-0-staged values to post-cycle-2 infobox-verbatim values (Banqiao now '26,000–240,000', Fukushima now '1 suspected from radiation (lung cancer, 4 years later)'); added cycle-2 source-priority-rule context; (b) normalization_decisions Death Toll rule — same example updates + added Coalbrook + Senghenydd examples post-cycle-2; (c) open_questions Banqiao answer — staged-cause string updated to match post-cycle-2 infobox-verbatim multi-factor phrasing 'Typhoon Nina, engineering flaws, failures in policy'. Historical cycle-2 narration in audit_trail describes the pre-cycle-2 → post-cycle-2 transition explicitly and stays unchanged."
+      ],
+      "deliverable": "Prose alignment with cycle-2's corrected cell values complete across all 3 curation.json active-prose locations. Cycle-3 missed 2 draft.json active-prose locations (temporal_note + _extraction_notes Banqiao example) which were caught in cycle-4."
+    },
+    "cycle_4_post_staging_hygiene": {
+      "task": "Cycle-3 verification audit found 0 BLOCKING + 1 NON-BLOCKING HYGIENE structural finding (stale pre-cycle-2 Banqiao example wording '26,000 immediate...' still in draft.json active prose); cycle-4 applied the draft.json prose-only cleanup.",
+      "verdict": "Ready (0 BLOCKING); 1 HYGIENE structural finding cleaned up in-place during cycle-4. CSV + curation.json from cycle-3 check out per cycle-3 audit; only 2 draft.json active-prose Banqiao-example locations needed cycle-4 cleanup.",
+      "fixes_applied": [
+        "1. (HYGIENE / structural) Stale pre-cycle-2 Banqiao example wording updated in 2 draft.json active-prose locations: (a) temporal_note — 'Banqiao 26,000 immediate vs 240,000 with downstream flooding' → 'Banqiao 26,000–240,000 infobox range'; (b) _extraction_notes audit-cycle-1 amendment #4 examples list — \"'26,000 immediate; estimates up to 240,000' for Banqiao\" → \"'26,000–240,000' for Banqiao infobox range-verbatim\". Both updates align draft.json examples with the cycle-2 infobox-grounded CSV cell value."
+      ],
+      "deliverable": "Draft.json prose now aligned with cycle-2 corrected Banqiao Death Toll cell value. Instance is Ready+Clean pending cycle-5 terminal verification."
+    }
+  },
+  "_curated_by": "claude-code",
+  "_curated_at": "2026-05-20T00:00:00Z"
+}

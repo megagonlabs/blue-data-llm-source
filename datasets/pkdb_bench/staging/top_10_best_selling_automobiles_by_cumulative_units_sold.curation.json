@@ -1,0 +1,240 @@
+{
+  "id": "top_10_best_selling_automobiles_by_cumulative_units_sold",
+  "claim_type": "source_defined",
+  "claim_type_rationale": "Per cycle-1 pre-staging audit confirmation. Universe is the closed canonical 10-row top-10 ranking from Wikipedia 'List of best-selling automobiles' master article's 'Best-selling car nameplates of all time' table. Universe predicate is master's Units sold DESC ranking truncated at LIMIT 10. Per the Wikipedia master's own caveat: cumulative vehicle-sales figures have no definitive measurement standard; the staged values are 'per Wikipedia's best-selling car nameplates table' verbatim — NOT an independently authoritative global ranking. This is honest source_defined: the source itself does not claim independent authoritative status, and the benchmark accordingly scopes universe membership + cell values to 'per Wikipedia table' explicit framing. All 5 cell values source-extractive per cycle-1 audit's verbatim 10-row dump (4 cells from master + HQ Country from per-manufacturer implicit join). Mirror precedents for closed-canonical top-K-with-supplement source_defined: `worlds_busiest_airports_by_passenger_traffic` (implicit_join top-K + per-airport metadata), `top_5_oldest_universities_per_continent` (top-K with per-entity supplements).",
+  "collection_summary": {
+    "approach": "Pre-curation design pass (2 rounds of pre-staging design review). F2 cycle-1 BLOCKED: proposed 'List of best-selling plug-in electric cars' Wikipedia source does not exist; Plug-in electric vehicle article mixes BEV+PHEV + Dec-2023 cutoff; 5-row universe below 10-row gate; source_count not deduped. Pivoted F2→F2a (all-time best-selling automobiles instead of BEV-cumulative-through-2024). F2a cycle-1 verdict: 'Approve With Required Edits + Row Dump Provided' — 5 required edits: (1) instance ID + column rename units_produced→units_sold (master uses 'Units sold' not 'Units produced'); (2) staged top-10 identity = master's verbatim ranking (my parametric estimate was wrong at ranks 4, 6, 7, 9, 10); (3) source_count = 5 (deduped: 1 master + 4 unique manufacturers Toyota/Ford/VW/Honda); (4) Cumulative Units Sold staged as numeric millions stripped of 'million' text; (5) Ford HQ normalize from the Ford Motor Company page's infobox 'US' to staged 'United States'. All 5 edits applied at cycle-0 staging using audit's verbatim 10-row dump.",
+    "universe_size": 10,
+    "partition_structure": "Closed canonical 10-row top-10 by Cumulative Units Sold DESC. Single PK Model. Manufacturer dedupe within universe: 4 unique manufacturers (Toyota×3 + Volkswagen×3 + Ford×2 + Honda×2) determine source_count=5 (1 master + 4 manufacturer pages).",
+    "row_count_check": "10 rows match cycle-1 audit's verbatim master-derived dump from Wikipedia 'Best-selling car nameplates of all time' table. Rank-6/rank-7 tie at 22M units between Toyota Camry and Ford Fiesta resolved by master-source-table-row-order ASC tiebreak — master's verbatim sequence presents Camry before Fiesta; CSV preserves this source-faithful order per cycle-2 post-staging audit's tiebreak-prose clarification (NOT alphabetic Model ASC which would put Ford Fiesta first)."
+  },
+  "source_coverage_notes": {
+    "roles": [
+      {
+        "url": "https://en.wikipedia.org/wiki/List_of_best-selling_automobiles",
+        "roles": [
+          "universe",
+          "ranking",
+          "value"
+        ],
+        "role_note": "universe: master 'Best-selling car nameplates of all time' table defines the closed canonical 10-row top-10 by Units sold column. ranking: master sorts by Units sold DESC; staged sort uses Cumulative Units Sold DESC + master-source-table-row-order ASC tiebreak (resolving 22M Camry/Fiesta tie per master's verbatim sequence). value: master table has 4 columns (Nameplate / Production / Units sold / Notes) — staged Model is verbatim from Nameplate column; staged Cumulative Units Sold (millions) is numeric-stripped from Units sold cell; staged Production Years is verbatim from Production column; staged Manufacturer is DETERMINISTICALLY DERIVED from the Nameplate column's leading manufacturer-prefix token (Toyota Corolla → Toyota; Ford F-Series → Ford; etc.) per cycle-2 post-staging audit's source-attribution clarification — there is NO separate Manufacturer column in the master table."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Toyota",
+        "roles": [
+          "value"
+        ],
+        "role_note": "Per-manufacturer Wikipedia page for Toyota (covers 3 universe rows: Toyota Corolla + Toyota Camry + Toyota Hilux). value: supplies HQ Country = 'Japan' verbatim from infobox/headquarters field."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Ford_Motor_Company",
+        "roles": [
+          "value"
+        ],
+        "role_note": "Per-manufacturer Wikipedia page for Ford Motor Company (covers 2 universe rows: Ford F-Series + Ford Fiesta). value: supplies HQ Country = 'United States' (normalized from the Ford Motor Company page's infobox 'US' per cycle-1 audit required edit #5; per-manufacturer page lists 'Dearborn, Michigan, United States')."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Volkswagen",
+        "roles": [
+          "value"
+        ],
+        "role_note": "Per-manufacturer Wikipedia page for Volkswagen (covers 3 universe rows: Volkswagen Golf + Volkswagen Passat + Volkswagen Beetle). value: supplies HQ Country = 'Germany' verbatim from infobox/headquarters field (Wolfsburg, Germany)."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Honda",
+        "roles": [
+          "value"
+        ],
+        "role_note": "Per-manufacturer Wikipedia page for Honda (covers 2 universe rows: Honda Civic + Honda Accord). value: supplies HQ Country = 'Japan' verbatim from infobox/headquarters field (Tokyo, Japan)."
+      }
+    ],
+    "validation_cross_checks": {
+      "rationale": "Per-nameplate Wikipedia articles consulted as validation cross-checks (NOT registered as sources) for select cell values where master vs per-nameplate page may have label-form variants (Ford F-Series hyphen convention; Volkswagen Beetle 1938-2003 production range against historical Type 1 vs New Beetle scope). All 10 staged rows match Wikipedia master's verbatim Units sold ranking."
+    },
+    "source_count": 5,
+    "source_grounding_summary": "5 registered sources: 1 master 'List of best-selling automobiles' (roles=[universe, ranking, value]) + 4 unique manufacturer Wikipedia pages (roles=[value] for HQ Country only). Manufacturer dedupe per cycle-1 audit HYGIENE: 10 model rows span only 4 unique manufacturers (Toyota×3 + Volkswagen×3 + Ford×2 + Honda×2) → 4 manufacturer page-fetches not 10."
+  },
+  "decision_log": [
+    {
+      "decision": "claim_type = source_defined (per Wikipedia 'Best-selling car nameplates of all time' table verbatim — NOT independently authoritative global ranking)",
+      "rationale": "Per cycle-1 audit. Master is closed canonical 10-row table though master itself caveats that cumulative vehicle-sales figures have no definitive measurement standard. Benchmark scope is 'per Wikipedia table' explicit framing preserving source_defined cleanly without overclaiming authority."
+    },
+    {
+      "decision": "F2 → F2a pivot (BEV cumulative-through-2024 → all-time best-selling automobiles)",
+      "rationale": "F2 cycle-1 BLOCKED by audit: proposed 'List of best-selling plug-in electric cars' Wikipedia source does not exist; closest live 'Plug-in electric vehicle' article mixes BEV+PHEV + Dec-2023 cutoff (not end-of-2024); 5-row universe below benchmark's 10-row gate; source_count not deduped. F2a pivot addresses all 4: real Wikipedia master 'List of best-selling automobiles' + 10-row gate + stable lifetime-cumulative figures + 4-unique-manufacturer dedupe = source_count 5."
+    },
+    {
+      "decision": "Instance ID + column = `units_sold` NOT `units_produced` per cycle-1 audit required edit #1",
+      "rationale": "Master column is literally 'Units sold' NOT 'Units produced'. The distinction matters: some models have production figures that diverge from sales figures (export-heavy models, fleet-only models, parallel-production-lines counted in production but not sales). Source-verbatim column naming."
+    },
+    {
+      "decision": "Staged top-10 = master's verbatim ranking per cycle-1 audit required edit #2 (my parametric estimate wrong at 5 ranks)",
+      "rationale": "My pre-audit estimate had: rank-4 Civic (actually VW Passat), rank-5 Beetle (actually Civic), rank-6 Ford Escort (actually Toyota Camry), rank-7 Hilux (actually Ford Fiesta), rank-9 Passat (actually Hilux), rank-10 Chevy Impala (actually Honda Accord). Master's verbatim ranking is the authoritative universe. Lada Classic + Chevrolet Impala + Ford Escort all OUT of top-10 per master's ranking."
+    },
+    {
+      "decision": "source_count = 5 per cycle-1 audit required edit #3 (deduped per audit HYGIENE)",
+      "rationale": "1 master + 4 unique manufacturer Wikipedia pages: Toyota (3 models: Corolla + Camry + Hilux) / Ford Motor Company (2 models: F-Series + Fiesta) / Volkswagen (3 models: Golf + Passat + Beetle) / Honda (2 models: Civic + Accord). Manufacturer dedupe per F2 cycle-1 HYGIENE — 10 models span only 4 unique manufacturers; pulling HQ Country requires 4 page-fetches NOT 10. Inflated source_count=10 would be dishonest."
+    },
+    {
+      "decision": "Cumulative Units Sold (millions) staged as numeric per cycle-1 audit required edit #4",
+      "rationale": "Master uses text 'million' suffix ('50 million' / '43 million' / '21.5 million'). Staged values strip 'million' text → numeric values directly in millions (50 / 43 / 21.5). Column header includes '(millions)' explicit unit marker. Cleaner numeric column for downstream benchmarks vs text-suffix cells."
+    },
+    {
+      "decision": "Ford HQ normalization 'US' → 'United States' per cycle-1 audit required edit #5",
+      "rationale": "The master has no HQ Country column; HQ Country is joined from each manufacturer's Wikipedia page. Ford's manufacturer page (Ford Motor Company) infobox 'Hq Location Country' reads 'US' (compact abbreviation), and its lead lists 'Dearborn, Michigan, United States'. Benchmark consistency: stage normalized sovereign-state form 'United States' matching Toyota's 'Japan' / VW's 'Germany' / Honda's 'Japan' full-name convention. NOT 'US' / 'USA' / 'United States of America' — exactly 'United States' per per-manufacturer-page convention."
+    },
+    {
+      "decision": "Production Years staged as text-range verbatim per master (NOT numeric start year + separate end year)",
+      "rationale": "Master uses text-range format with en-dash separator + 'present' marker for active production ('1966–present' / '1948–present' / etc.) and end-year for discontinued models ('1938–2003' Beetle / '1976–2023' Fiesta). Staging verbatim preserves source-extractive cleanly. Splitting into separate start/end numeric cells would lose 'present' active-marker semantic."
+    },
+    {
+      "decision": "Manufacturer staged as the Nameplate-derived short form (NOT longer corporate form)",
+      "rationale": "Manufacturer is deterministically derived from each Nameplate's leading manufacturer-prefix token ('Toyota Corolla' → 'Toyota', etc.); the master has NO separate Manufacturer column (only Nameplate/Production/Units sold/Notes). The derived short forms 'Toyota' / 'Ford' / 'Volkswagen' / 'Honda' differ from the per-manufacturer Wikipedia pages' longer corporate forms 'Toyota Motor Corporation' / 'Ford Motor Company' / 'Volkswagen AG' / 'Honda Motor Co., Ltd.'. Staged Manufacturer column uses master's short forms preserving source-extractive cleanly. The join to per-manufacturer pages uses `normalize_manufacturer_identity()` intermediate at db_analog level (per cycle-2 PulitzerTonyPlays normalized-identity-join precedent) — raw-label join would miss-match cross-source label-form differences."
+    },
+    {
+      "decision": "Sort = Cumulative Units Sold DESC + master-source-table-row-order ASC tiebreak",
+      "rationale": "Per cycle-2 post-staging audit's tiebreak-prose clarification. Master-native top-K ranking by Units sold DESC. Rank-6/rank-7 tie at 22M units between Toyota Camry + Ford Fiesta resolved by master-source-table-row-order ASC tiebreak — master's verbatim sequence presents Camry before Fiesta; CSV preserves this source-faithful order. NOT alphabetic Model ASC which would put Ford Fiesta first ('F' before 'T'). Preserving master's row order keeps source-extractive cleanliness for the tied pair. This is the only tied-rank pair in the staged 10-row universe."
+    },
+    {
+      "decision": "Category = implicit_join primary + top_k secondary; operation_type = join",
+      "rationale": "Per cycle-1 audit confirmation. implicit_join because user query is about top-selling cars but HQ Country answer requires joining manufacturer back to per-manufacturer page (the join is implicit in the query phrasing). top_k secondary captures the master's top-10 ranking framing. operation_type = join because db_analog uses INNER JOIN between top_10_automobiles CTE and manufacturer_pages."
+    },
+    {
+      "decision": "Domain = Transportation/Automotive NEW subdomain",
+      "rationale": "Transportation family currently has 4 subdomains: Road Traffic (countries_that_drive_on_the_left) + Maritime (ship_canals + container_ports) + Aviation (busiest_airports + wide_body_aircraft) + Logistics (container_ports). Automotive is genuinely NEW. Transportation family extends 4→5 subdomains."
+    },
+    {
+      "decision": "Entity class = vehicles/automobiles NEW fine-class (NOT vehicles/cars)",
+      "rationale": "Per cycle-1 audit recommendation. 'automobiles' is broader than 'cars' and accommodates pickups/light trucks like Ford F-Series + Toyota Hilux that aren't strictly passenger cars but are in the 10-row universe. NEW fine-class extending vehicles bucket from 1 (aircraft) to 2 instances — matures the youngest pkdb_bench entity bucket (vehicles was added 2 cycles ago via wide_body_aircraft)."
+    },
+    {
+      "decision": "Cycle-2 HYGIENE fix #1: Tiebreak documentation changed from 'Model ASC' to 'master-source-table-row-order ASC'",
+      "rationale": "Per cycle-1 post-staging audit's NON-BLOCKING HYGIENE #1. Original prose claimed 'Model ASC tiebreak' but the staged CSV preserves master's source-table order (Toyota Camry before Ford Fiesta at the rank-6/rank-7 22M-tie). True alphabetic Model ASC would put Ford Fiesta first ('F' before 'T'). Cycle-2 fix: change prose to honestly reflect what CSV does — preserve master's verbatim row sequence for tied rows (source-extractive cleanliness). NO CSV cell-value change. Updates across 5 prose spots: draft.json::temporal_note (×2 spots: per-cell-rule + final-sort-statement) + draft.json::_extraction_notes (×2 spots: sort-statement + universe-stability-feature-c) + curation.json::collection_summary::row_count_check + curation.json::source_coverage_notes::role_note + curation.json::decision_log::Sort entry + curation.json::open_questions::db_analog answer. db_analog SQL also updated to use master_row_position ASC tiebreak."
+    },
+    {
+      "decision": "Cycle-2 HYGIENE fix #2: Manufacturer source-attribution clarified as DETERMINISTICALLY DERIVED from Nameplate (NOT separate master column)",
+      "rationale": "Per cycle-1 post-staging audit's NON-BLOCKING HYGIENE #2. Original prose said master supplies a separate Manufacturer column, but Wikipedia master's 'Best-selling car nameplates of all time' table has only 4 columns (Nameplate / Production / Units sold / Notes) — NO separate Manufacturer column. Manufacturer is extracted as the leading manufacturer-prefix token from each Nameplate cell (Toyota Corolla → Toyota; Ford F-Series → Ford; etc.) via mechanical leading-token rule. Cycle-2 fix: prose clarified across draft.json::temporal_note + curation.json::source_coverage_notes::role_note + curation.json::normalization_decisions::Manufacturer + curation.json::open_questions::db_analog answer. db_analog SQL also updated to use `derive_manufacturer_from_nameplate(nameplate)` intermediate. This is still source-grounded (Manufacturer derivation is deterministic + introduces no curator judgment beyond known manufacturer-vocabulary lookup) but documented as derivation NOT separate-column-extraction. source_count = 5 remains unchanged because the per-manufacturer pages are still 4 unique HQ-Country sources (the master+derivation count is 1 master, not 2)."
+    },
+    {
+      "decision": "CYCLE-3 HYGIENE (2026-06-04, audit cleanup) — prose only, no CSV change",
+      "rationale": "Codex audit found 0 BLOCKING + 3 NON-BLOCKING HYGIENE: (1) removed the unsupported rank-10/rank-11 '19.5M Honda Accord vs ~17M Lada Classic' cutoff claim (open_questions[0]) — the master supplies no rank-11 row; (2) removed all 'Type 1 + New Beetle aggregated / New Beetle included in 21.5M' assertions (normalization_decisions Model & Production Years, open_questions[1]) — the master row is the Type 1 only and the New Beetle is a separate successor not in the 21.5M figure; (3) swept residual prose that implied the master has Manufacturer/HQ-Country columns (temporal_note, decision_log Manufacturer & Ford-HQ entries, normalization_decisions HQ Country, open_questions[3]) so Manufacturer is consistently described as derived from Nameplate and HQ Country as joined from manufacturer pages (Ford Motor Company infobox 'US' → 'United States'). No CSV/metadata-value change."
+    }
+  ],
+  "normalization_decisions": [
+    {
+      "field": "Model",
+      "rule": "Model staged verbatim from Wikipedia master's Nameplate column. 10 closed values: 'Toyota Corolla' / 'Ford F-Series' (hyphen between F and Series) / 'Volkswagen Golf' / 'Volkswagen Passat' / 'Honda Civic' / 'Toyota Camry' / 'Ford Fiesta' / 'Volkswagen Beetle' (the master's Volkswagen Beetle row — the 1938–2003 Type 1; the New Beetle is a separate successor model and is NOT included in this row) / 'Toyota Hilux' / 'Honda Accord'. No special-character normalization required (all ASCII)."
+    },
+    {
+      "field": "Manufacturer",
+      "rule": "Manufacturer DETERMINISTICALLY DERIVED from the master's Nameplate column per cycle-2 post-staging audit's source-attribution clarification — Wikipedia master's 'Best-selling car nameplates of all time' table has only 4 columns (Nameplate / Production / Units sold / Notes), NOT a separate Manufacturer column. Manufacturer extraction rule: leading manufacturer-prefix token from each Nameplate cell (Toyota Corolla → Toyota; Ford F-Series → Ford; Volkswagen Golf → Volkswagen; Honda Civic → Honda; etc.) via mechanical leading-token rule — a deterministic curator-derivation that introduces no judgment beyond known manufacturer-vocabulary lookup. Staged Manufacturer values use single-word forms: 'Toyota' / 'Ford' / 'Volkswagen' / 'Honda' (NOT 'Toyota Motor Corporation' / 'Ford Motor Company' / 'Volkswagen AG' / 'Honda Motor Co., Ltd.'). The corporate-name expansion happens implicitly at db_analog join via `normalize_manufacturer_identity()` intermediate (per cycle-2 PulitzerTonyPlays normalized-identity-join precedent). 4 unique manufacturer values across 10 rows: Toyota×3 + Volkswagen×3 + Ford×2 + Honda×2."
+    },
+    {
+      "field": "Cumulative Units Sold (millions)",
+      "rule": "Numeric value in millions, stripped from master's text 'million' suffix per cycle-1 audit required edit #4. Master cells '50 million' → 50; '43 million' → 43; '37 million' → 37; '34 million' → 34; '28 million' → 28; '22 million' → 22 (both Camry and Fiesta tied); '21.5 million' → 21.5 (Beetle, decimal precision preserved); '21 million' → 21; '19.5 million' → 19.5 (Accord, decimal precision preserved). Column header '(millions)' explicit unit marker."
+    },
+    {
+      "field": "Production Years",
+      "rule": "Text-range verbatim per master with en-dash separator (U+2013) + 'present' marker for active-production models: '1966–present' (Corolla, 60 years and counting); '1948–present' (F-Series, 78 years and counting); '1974–present' (Golf); '1973–present' (Passat); '1972–present' (Civic); '1982–present' (Camry); '1976–2023' (Ford Fiesta, recently discontinued — 47-year production run); '1938–2003' (VW Beetle Type 1, the master's 1938–2003 nameplate; the New Beetle successor (1997–2011) is a distinct model and is NOT included in this row); '1968–present' (Hilux); '1976–present' (Accord). 'present' marker covers 8 of 10 rows (active production); 2 rows discontinued (Fiesta 2023 + Beetle 2003)."
+    },
+    {
+      "field": "HQ Country",
+      "rule": "Sovereign-state form verbatim from per-manufacturer Wikipedia page with one explicit normalization: Ford's manufacturer-page (Ford Motor Company) infobox 'US' normalized to staged 'United States' per cycle-1 audit required edit #5 (matches per-manufacturer-page 'Dearborn, Michigan, United States' verbatim sovereign-state form + benchmark consistency with full-name forms 'Japan' for Toyota/Honda + 'Germany' for Volkswagen). 3 unique HQ Country values across 10 rows: Japan (5 rows: Corolla + Camry + Hilux + Civic + Accord), United States (2 rows: F-Series + Fiesta), Germany (3 rows: Golf + Passat + Beetle)."
+    }
+  ],
+  "open_questions": [
+    {
+      "question": "When the Wikipedia master's Units sold values are revised (e.g., Toyota Corolla incrementing past 50M as production continues), should the instance be re-staged?",
+      "answer": "Yes. 8 of 10 rows are active-production nameplates whose cumulative-units-sold increment annually; master may revise Units sold values when manufacturers publish updated cumulative reports. temporal_sensitivity = low because the relative top-10 ordering shifts slowly (the rank-1/rank-2 Corolla/F-Series gap of 7M units is wide enough to be stable; Honda Accord is the tenth and final row of the cited master table at 19.5M, and the instance asserts no cutoff beyond the master's ten rows — the master lists no eleventh row and caveats that cumulative-sales figures have no definitive measurement standard). Re-staging on master revision is straightforward — replace cell values, no schema or universe-identity change needed."
+    },
+    {
+      "question": "Why is the Volkswagen Beetle treated as a single nameplate spanning 1938-2003 when there were Type 1 + New Beetle eras?",
+      "answer": "Per Wikipedia master scope. The master's 'Best-selling car nameplates of all time' table lists 'Volkswagen Beetle | 1938–2003 | 21.5 million' as a single row — this is the Volkswagen Type 1. The staged row reproduces that master row verbatim (1938–2003, 21.5M). The Volkswagen New Beetle (1997–2011) is a separate successor model; per the Volkswagen Beetle and New Beetle Wikipedia pages it is NOT part of the Type 1's 21.5M figure, and the master does not aggregate it into this row. The curator neither splits nor merges the nameplate; the row is exactly the master's Type 1 entry."
+    },
+    {
+      "question": "Why is source_count = 5 not 10? Each row has Manufacturer + HQ Country cells.",
+      "answer": "Per cycle-1 audit required edit #3 (manufacturer dedupe HYGIENE). The 10 model rows span only 4 unique manufacturers: Toyota (3 models: Corolla + Camry + Hilux) + Volkswagen (3 models: Golf + Passat + Beetle) + Ford (2 models: F-Series + Fiesta) + Honda (2 models: Civic + Accord). Pulling HQ Country requires 4 manufacturer-page-fetches NOT 10. source_count = 1 master + 4 unique manufacturer pages = 5. Inflated source_count = 10 (1 + 10 model-rows-each-treated-as-separate-source) would be dishonest — multiple model rows from the same manufacturer share the same HQ Country source."
+    },
+    {
+      "question": "Why is Ford HQ normalized to 'United States' instead of the manufacturer page's verbatim 'US'?",
+      "answer": "Per cycle-1 audit required edit #5. HQ Country is joined from each manufacturer's Wikipedia page, not from the master (which has no HQ column). Ford's manufacturer page (Ford Motor Company) infobox 'Hq Location Country' reads 'US' (compact abbreviation), and its lead lists full 'Dearborn, Michigan, United States'. Benchmark-consistency policy: stage the full sovereign-state form matching the other rows' conventions ('Japan' for Toyota/Honda, 'Germany' for Volkswagen — all full-form). 'US' kept as raw master value would be inconsistent vocabulary; 'United States' matches per-manufacturer-page convention + benchmark cross-instance vocabulary (mirror precedent UNESCO Mixed Sites 'United States of America' but Ford's specific per-manufacturer-page convention is shorter 'United States')."
+    },
+    {
+      "question": "Why is Toyota Hilux at rank 9 not higher? It's a popular global pickup.",
+      "answer": "Per master's verbatim Units sold ranking. Hilux's 21M cumulative units span 1968-present (58 years). Toyota Camry at rank 6 with 22M units across only 1982-present (44 years) reflects higher annual sales-rate; Hilux's slower per-year sales rate is offset partially by its longer production history but not enough to push it above Camry. Master ranks by cumulative Units sold DESC + this is the canonical universe."
+    },
+    {
+      "question": "What's the database structure of the implicit_join framing?",
+      "answer": "Per cycle-2-rewritten db_analog: top_10_automobiles CTE = Wikipedia master rows with Manufacturer DETERMINISTICALLY DERIVED from Nameplate column via leading-prefix token rule (`derive_manufacturer_from_nameplate(nameplate)` per cycle-2 audit clarification — master table has 4 columns Nameplate/Production/Units sold/Notes with NO separate Manufacturer column), sorted by units_sold_millions DESC + master_row_position ASC tiebreak LIMIT 10; INNER JOIN with manufacturer_pages table on `normalize_manufacturer_identity(a.manufacturer) = normalize_manufacturer_identity(m.manufacturer_name)` — the normalize_manufacturer_identity() intermediate accommodates Wikipedia-master derived short forms ('Toyota' / 'Ford' / 'Volkswagen' / 'Honda') vs per-manufacturer-page longer corporate forms ('Toyota Motor Corporation' / 'Ford Motor Company' / 'Volkswagen AG' / 'Honda Motor Co.'); final SELECT extracts Model (from Nameplate) + Manufacturer (derived) + Cumulative Units Sold (millions) + Production Years + HQ Country ordered by Cumulative Units Sold DESC + master_row_position ASC tiebreak. The implicit-join is on manufacturer-identity dimension; HQ Country is value-supplemented from per-manufacturer pages (4 unique manufacturer rows joined to 10 model rows, fanned-out). Mirror precedent: cycle-2 PulitzerTonyPlays normalized-identity-join pattern."
+    }
+  ],
+  "proposed_supplements": [],
+  "audit_trail_pre_curation": {
+    "cycle_0_F2_design_exploration": {
+      "task": "Initial F2 design proposal — Top 5 best-selling EVs cumulative through 2024 with manufacturer HQ",
+      "outcome": "F2 cycle-1 verdict: BLOCKED. Audit found: (1) proposed 'List of best-selling plug-in electric cars' Wikipedia source does not exist; (2) closest live 'Plug-in electric vehicle' article mixes BEV+PHEV + Dec-2023 cutoff (not end-of-2024); (3) 5-row universe below benchmark's 10-row gate; (4) source_count needed dedupe.",
+      "deliverable": "F2 design abandoned per BLOCKING audit verdict."
+    },
+    "cycle_0_F2a_pivot_design": {
+      "task": "F2 → F2a pivot design — Top 10 best-selling automobiles all-time by cumulative units produced with manufacturer HQ",
+      "outcome": "F2a addresses all 4 F2 BLOCKING issues: real Wikipedia master 'List of best-selling automobiles' exists + 10-row gate met + stable lifetime-cumulative figures + 4-unique-manufacturer-dedupe yielding source_count=5.",
+      "deliverable": "F2a design proposal with 5-col schema (Model + Manufacturer + Cumulative Units Produced + Years Produced + HQ Country) + 7 open questions for audit cycle-1."
+    },
+    "cycle_1_F2a_audit_design_review": {
+      "task": "Audit agent reviews F2a cycle-0 design proposal BEFORE staging",
+      "verdict": "Approve With Required Edits + Row Dump Provided",
+      "required_edits": [
+        "1. Rename instance ID + column from 'units_produced' to 'units_sold' (master column is 'Units sold' NOT 'Units produced').",
+        "2. Use master's verbatim top-10 ranking — my parametric estimate wrong at ranks 4, 6, 7, 9, 10 (Lada Classic + Chevy Impala + Ford Escort all OUT; correct top-10 includes Toyota Camry + Ford Fiesta + Honda Accord that I had missing).",
+        "3. source_count = 5 (deduped per audit HYGIENE: 1 master + 4 unique manufacturer pages Toyota/Ford/VW/Honda; 10 models span only 4 unique manufacturers).",
+        "4. Cumulative Units Sold staged as numeric millions stripped of master's 'million' text suffix.",
+        "5. Ford HQ normalize from master's 'US' to staged 'United States' (matches per-manufacturer-page convention + benchmark sovereign-state-form consistency)."
+      ],
+      "master_derived_row_list_dump": "Audit provided 10-row master-derived dump verbatim from Wikipedia 'Best-selling car nameplates of all time' table with all 5 cell values populated. Used at cycle-0 staging.",
+      "deliverable": "All 5 required edits applied at cycle-0 staging using audit's verbatim 10-row dump."
+    },
+    "cycle_0_staging": {
+      "task": "Stage cycle-0 artifacts with F2a cycle-1 fixes applied",
+      "deliverable": "Cycle-0 staging complete. 10 rows × 5 cols. Single PK Model. source_count = 5 (1 master + 4 unique manufacturer pages). gt_construction = manual_wikipedia. NEW Transportation/Automotive subdomain (Transportation family extends 4→5 subdomains). NEW vehicles/automobiles fine-class (vehicles bucket matures 1→2 instances). Chips implicit_join from 9 (1 over original 8 saturation) to 10 (2 over original; toward raised-target ceiling). **Total bench: 101 → 102 unique instances on disk = HITS RAISED TARGET 102 EXACTLY**. Ready for cycle-1 post-staging audit."
+    },
+    "cycle_1_post_staging_audit": {
+      "task": "Audit agent reviews cycle-0 staged artifacts (cycle-1 post-staging audit)",
+      "verdict": "Ready with residual hygiene — 0 BLOCKING / 2 NON-BLOCKING HYGIENE / 0 SUGGESTION",
+      "findings": [
+        "NON-BLOCKING HYGIENE #1: Staged CSV row order keeps source-table order for the 22M rank-6/rank-7 tie (Toyota Camry before Ford Fiesta), but metadata/db_analog claims 'Model ASC tiebreak' — true alphabetic Model ASC would put Ford Fiesta first ('F' before 'T'). Either change CSV to true alphabetic or change prose to reflect source-table-order policy.",
+        "NON-BLOCKING HYGIENE #2: Prose says master supplies a separate Manufacturer column, but the master table has only 4 columns (Nameplate / Production / Units sold / Notes); Manufacturer is deterministically derived from the Nameplate column's leading manufacturer-prefix token."
+      ],
+      "passes": [
+        "All 10 CSV rows match Wikipedia master top-10 table",
+        "Numeric sales cells (50/43/37/34/28/22/22/21.5/21/19.5) match master verbatim with 'million' text stripped",
+        "Production Years cells match master verbatim with en-dash separators preserved",
+        "source_count=5 manufacturer-dedupe correct (1 master + Toyota + Ford + VW + Honda)",
+        "HQ-country values supported by manufacturer pages",
+        "Ford 'US'→'United States' normalization reasonable per benchmark consistency"
+      ],
+      "deliverable": "All findings recorded in comments.json. Cycle-2 prose-hygiene repair pass required."
+    },
+    "cycle_2_hygiene_repair": {
+      "task": "Apply cycle-2 hygiene fixes per cycle-1 post-staging audit findings",
+      "deliverable": "Cycle-2 repair complete. Fix #1 (tiebreak prose): chose source-faithful policy (preserve CSV's master-row-order; rewrite prose) over alphabetic-enforcement policy (swap CSV rows). Updated 5+ prose spots across draft.json + curation.json + db_analog SQL to reflect 'master-source-table-row-order ASC tiebreak' (NOT 'Model ASC tiebreak'). Fix #2 (Manufacturer source-attribution): clarified Manufacturer as DETERMINISTICALLY DERIVED from Nameplate column's leading-token (the master table has 4 columns Nameplate/Production/Units sold/Notes — NO separate Manufacturer column). Updated draft.json::temporal_note + curation.json::source_coverage_notes::role_note + curation.json::normalization_decisions::Manufacturer + curation.json::open_questions::db_analog answer + db_analog SQL `derive_manufacturer_from_nameplate(nameplate)` intermediate. NO CSV cell-value changes. source_count remains 5. Ready for cycle-2 post-staging audit."
+    },
+    "cycle_2_post_staging_audit": {
+      "task": "Audit agent reviews cycle-2 hygiene-repair artifacts (cycle-2 post-staging audit)",
+      "verdict": "Ready with residual hygiene — 0 BLOCKING / 1 NON-BLOCKING HYGIENE / 0 SUGGESTION",
+      "findings": [
+        "NON-BLOCKING HYGIENE: draft.json::table_title still contained the legacy Manufacturer-source-attribution phrasing — 'the master table ranks Models with Manufacturer' + 'Manufacturer (Wikipedia-master verbatim)' — missed in the cycle-2 sweep. Tiebreak repair across CSV + prose + db_analog confirmed clean."
+      ],
+      "passes": [
+        "Tiebreak repair clean across CSV + prose + db_analog (Cumulative Units Sold DESC + master_row_position ASC; Camry before Fiesta preserved)",
+        "Manufacturer attribution repair mostly clean (most spots correctly say deterministically-derived) — only table_title spot missed"
+      ],
+      "deliverable": "All findings recorded in comments.json. Cycle-3 prose-hygiene repair pass required for the one missed table_title spot."
+    },
+    "cycle_3_hygiene_repair": {
+      "task": "Apply cycle-3 hygiene fix per cycle-2 post-staging audit finding",
+      "deliverable": "Cycle-3 repair complete. Single prose fix to draft.json::table_title — rewrote the implicit-join framing paragraph to explicitly state: (a) master table has 4 columns (Nameplate / Production / Units sold / Notes) with NO separate Manufacturer column per cycle-2 audit's source-attribution clarification; (b) Manufacturer is DETERMINISTICALLY DERIVED from each Nameplate cell's leading manufacturer-prefix token; (c) the Manufacturer column description was changed from 'Wikipedia-master verbatim' to 'deterministically derived from master's Nameplate leading-prefix token; no separate Manufacturer column exists in the master'. NO CSV/schema/source/db_analog changes. NO other prose spots changed (cycle-2 sweep had already correctly updated all other Manufacturer-attribution prose; only this table_title spot was missed). Ready for cycle-3 post-staging audit."
+    }
+  },
+  "_curated_by": "claude-code",
+  "_curated_at": "2026-05-20T00:00:00Z"
+}

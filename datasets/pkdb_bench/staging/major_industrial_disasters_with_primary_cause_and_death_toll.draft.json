@@ -1,0 +1,53 @@
+{
+  "id": "major_industrial_disasters_with_primary_cause_and_death_toll",
+  "table_title": "List 15 curator-selected major industrial disasters from Wikipedia's 'List of industrial disasters' master article (a broad, explicitly non-exhaustive enumeration of 400+ notable industrial-engineering-failure events organized into 6 industry sections: Defense, Energy, Food, Manufacturing, Mining, Other). Curator-balanced across 6 industry categories (Mining 5, Chemical 3, Munitions/Explosives 2, Nuclear 2, Petroleum/Energy 2, Hydroelectric 1) for benchmark variety. Per-row values are source-grounded from per-disaster Wikipedia articles using a priority rule: infobox when present; otherwise lede / cause section / casualty section; master bullet as universe-membership support. Year ASC sort + Disaster ASC alphabetical secondary tiebreak. NOT a 'top 15 by deaths' ranking and NOT an exhaustive canonical set.",
+  "columns": [
+    "Disaster",
+    "Year",
+    "Location",
+    "Industry Category",
+    "Primary Cause",
+    "Death Toll"
+  ],
+  "primary_key": [
+    "Disaster"
+  ],
+  "column_types": {
+    "Disaster": "key",
+    "Year": "numeric",
+    "Location": "categorical",
+    "Industry Category": "categorical",
+    "Primary Cause": "categorical",
+    "Death Toll": "categorical"
+  },
+  "query_category": "causal",
+  "secondary_category": null,
+  "db_analog": "SELECT d.disaster_name AS disaster, d.start_year AS year, d.location, d.industry_category, d.primary_cause, d.death_toll FROM industrial_disasters d JOIN disaster_event_details ded ON d.disaster_id = ded.disaster_id WHERE d.disaster_id IN (curator_selected_15_industrial_disaster_ids) ORDER BY d.start_year ASC, d.disaster_name ASC",
+  "operation_type": "join",
+  "source_count": 16,
+  "domain": "Technology/Industrial Safety",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia 'List of industrial disasters' master article + 15 per-disaster Wikipedia articles, all accessed 2026-05-20. Universe = 15 curator-selected major industrial disasters (claim_type = `partially_supplemented`) from the master article's broad-non-exhaustive enumeration of 400+ disasters organized into 6 industry sections (Defense, Energy, Food, Manufacturing, Mining, Other). Curator selection rule = cross-industry balance across 6 curator-normalized Industry Categories (Mining 5, Chemical 3, Munitions/Explosives 2, Nuclear 2, Petroleum/Energy 2, Hydroelectric 1) + recognition as canonical historical-significance disasters spanning 1906-2020. Source priority rule per audit-cycle-1 amendment #2: per-disaster Wikipedia article infobox when present; otherwise lede / cause section / casualty section; master bullet as universe-membership support only. temporal_sensitivity = low because the underlying historical disaster facts (dates, locations, primary causes, death tolls) are stable historiographically — though death-toll estimates have wide ranges for some disasters (Banqiao 26,000–240,000 infobox range; Bhopal 3,787 official vs 16,000+ claimed; Chernobyl 31 direct vs 4,000-hundreds-of-thousands long-term cancer estimates), the master Wikipedia values are stable on benchmark timescales. Per-row Year follows the calendar year of disaster onset (start year per per-disaster Wikipedia article infobox 'Date' field); multi-month events (Deepwater Horizon Apr 20 - Jul 15 2010; Fukushima Mar 11 2011 + ongoing) are staged with their start year. Per-row Death Toll cell is source-verbatim text (NOT numeric midpoint) per audit-cycle-1 amendment #4 — preserves source nuance for wide-range estimates + contested-figure cases + 'officially / claimed / estimated' qualifiers. Industry Category = closed 6-value curator-normalized vocab per audit-cycle-1 amendment (Mining, Chemical, Munitions/Explosives, Nuclear, Petroleum/Energy, Hydroelectric) — NOT master-verbatim section names because master uses broader sections (Energy includes Nuclear + Petroleum + Hydroelectric; Manufacturing includes Chemical). Primary Cause = open text source-grounded per row from per-disaster Wikipedia article infobox/lede causality description. Title makes explicit that the universe is curator-selected (NOT top-15 by deaths, NOT exhaustive canonical set) per audit-cycle-1 amendment #3.",
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/List_of_industrial_disasters",
+    "https://en.wikipedia.org/wiki/Courri%C3%A8res_mine_disaster",
+    "https://en.wikipedia.org/wiki/Monongah_mining_disaster",
+    "https://en.wikipedia.org/wiki/Senghenydd_colliery_disaster",
+    "https://en.wikipedia.org/wiki/Halifax_Explosion",
+    "https://en.wikipedia.org/wiki/Benxihu_Colliery",
+    "https://en.wikipedia.org/wiki/1947_Texas_City_disaster",
+    "https://en.wikipedia.org/wiki/Coalbrook_mining_disaster",
+    "https://en.wikipedia.org/wiki/1975_Banqiao_Dam_failure",
+    "https://en.wikipedia.org/wiki/Bhopal_disaster",
+    "https://en.wikipedia.org/wiki/Chernobyl_disaster",
+    "https://en.wikipedia.org/wiki/Piper_Alpha",
+    "https://en.wikipedia.org/wiki/AZF_(factory)",
+    "https://en.wikipedia.org/wiki/Deepwater_Horizon_explosion",
+    "https://en.wikipedia.org/wiki/Fukushima_Daiichi_nuclear_disaster",
+    "https://en.wikipedia.org/wiki/2020_Beirut_explosion"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-05-20T00:00:00Z",
+  "_extraction_notes": "Causal instance — curator-selected 15 major industrial disasters from 400+ master entries; per-row attribute resolution via 1 master + 15 per-disaster articles (join operation). PIVOT context: prior `major_oil_spills_with_primary_cause_and_environmental_impact` candidate was deferred at cycle-0 due to source-data-quality issues (unit ambiguity + mixed event-types in the 'Largest oil spills' table conflating fires/gushers with marine spills). Industrial-disasters pivot uses a cleaner source (broad-non-exhaustive industry-section enumeration with stable per-event Wikipedia pages). Brings `causal` from 5/5 (floor met, just-saturated by existing 5 instances: crewed_spaceflight_fatal_incidents + major_modern_epidemics_and_pandemics_1918_2025 + modern_animal_extinctions_since_1900 + modern_financial_crises_1929_2025 + politically_unstable_countries_per_continent_fsi_alert) to **6/5** = 3rd of 13 floor-lift instances toward 102-target (after epidemics-1M lifting comparative + WWI battles lifting multi_hop). Technology/Industrial Safety NEW subdomain under Technology family per audit-cycle-1 preferred naming (over Technology/Industrial). events/industrial-disasters NEW fine-class within events bucket extending 12→13 fine-classes (joining space-missions, financial-crises, epidemics, space-incidents, judicial-decisions, olympics, awards, inventions, battles, empires, recessions, pandemics). Schema: 6 cols (Disaster PK + Year numeric + Location categorical + Industry Category categorical + Primary Cause categorical + Death Toll categorical/text). Sort: Year ASC primary (chronological 1906-2020); Disaster ASC alphabetical secondary tiebreak. Audit-cycle-1 amendments applied: (1) operation_type = join (NOT filter); (2) source priority rule = per-disaster infobox > lede > cause section > master bullet as universe-membership support; (3) title makes explicit '15 curator-selected major' framing — NOT 'top 15 by deaths' or exhaustive canonical set; (4) Death Toll = categorical text preserving source nuance ('At least 3,787; over 16,000 claimed' for Bhopal; '26,000–240,000' for Banqiao infobox range-verbatim; '31 direct; estimates 4,000 to several hundred thousand long-term' for Chernobyl); (5) source URLs normalized per audit recommendations (Benxihu_Colliery NOT Benxihu_Colliery_disaster; 1947_Texas_City_disaster with year prefix; AZF_(factory); Deepwater_Horizon_explosion for fatal-event focus; 1975_Banqiao_Dam_failure with year prefix). Per-question rulings applied: (a) 15 rows mining-heavy (5) with mining-heaviness defensible if documented; (b) Industry Category curator-normalized closed vocab; (c) Primary Cause open text source-grounded per row; (d) chronological Year-ASC + Disaster-ASC sort; (e) domain Technology/Industrial Safety per audit preferred; (f) entity class events/industrial-disasters NEW fine-class. Near-miss exclusions documented: Mitsubishi Hōjō mine disaster 1914 (closest Mitsubishi candidate but mining was already 5-heavy; not added per audit's mining-heaviness comment); Mitsubishi Bibai 1916 not used per audit; Wankie 1972 + Dhanbad 1965 not added (mining redundancy); Marcinelle 1956 not added (mining redundancy); Soma 2014 not added (mining redundancy); Oaks Colliery 1866 not added (mining redundancy + 19th century outlier). Year range: 1906 (Courrières) to 2020 (Beirut) — covers 114-year span of industrial-disaster history. Death-toll range: 11 (Deepwater Horizon immediate) to up to 240,000 (Banqiao with downstream flooding contested estimate)."
+}

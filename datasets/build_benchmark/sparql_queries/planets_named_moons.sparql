@@ -1,0 +1,102 @@
+# PKDB-Bench: multi_attribute_projection instance
+# For each planet in the solar system, list its named moons with their
+# diameter (km), orbital period (days), and year of discovery.
+#
+# Universe (named moons of the 8 solar-system planets):
+#   Earth's Moon (Q405) — added explicitly; Earth has only one named natural
+#     satellite and Q405 is typed `regular moon` rather than via a per-planet
+#     `moon of Earth` class.
+#   Mars        — P31 = Q177268    (moon of Mars)        — 2 named (Phobos, Deimos)
+#   Jupiter     — P31 = Q61702557  (moon of Jupiter)
+#   Saturn      — P31 = Q1972      (moon of Saturn)
+#   Uranus      — P31 = Q2152      (moon of Uranus)
+#   Neptune     — P31 = Q2139      (moon of Neptune)
+#   Mercury, Venus — zero rows (no natural satellites).
+#
+# Named-vs-unnamed filter:
+#   Wikidata items whose English label still has a provisional designation
+#   form lack permanent IAU names. Two patterns are excluded:
+#     (1) `S/YYYY <planet-letter> <number>` (e.g., `S/2003 J 24`)
+#     (2) `<Planet> <Roman numeral>` (e.g., `Uranus XXVIII`) — used as a
+#         numbered provisional label when an item has not yet received a
+#         permanent name. Real IAU-named moons are proper nouns and do
+#         not start with their parent planet's name.
+#
+# Per `references/sparql-gotchas.md` § 1: this query uses `wdt:P31` rather
+# than the all-rank `p:P31/ps:P31` for the universe membership clause. That
+# is acceptable here because (a) the per-planet `moon of X` classes are
+# narrow and curated, (b) the universe-size sanity check against Wikipedia's
+# per-planet "Moons of X" articles will catch any silently dropped item.
+# A separate UNION branch handles Earth's single named moon (Q405).
+#
+# Attribute extraction:
+#   Diameter (km) — the post-processor PREFERS `wdt:P2120` (mean radius)
+#     doubled over `wdt:P2386` (diameter), and falls back to P2386 only
+#     when P2120 is absent. This precedence was flipped in cycle-2 audit
+#     repair (was P2386 → P2120 in cycle 1) for two reasons:
+#       (1) `wdt:P2386` on Wikidata is editorially inconsistent for
+#           triaxial bodies — some items store the long axis (e.g.,
+#           Mimas 415.6 km) while others store mean diameter; using
+#           `2 * P2120` yields the canonical mean-diameter convention
+#           used by Wikipedia infoboxes.
+#       (2) `wdt:P2386` carried at least one obvious data error in the
+#           prior pipeline output: Juliet (Uranus) had P2386 = 936 km
+#           against a Wikipedia mean diameter of ~94 km (P2120 = 53,
+#           giving 2*P2120 = 106 km — within the right magnitude). The
+#           radius-doubling path is the cleaner default and the P2386
+#           fallback now only applies to moons that lack a P2120 value.
+#     Both properties are recorded in `Q828224` (kilometre) on Wikidata
+#     for these bodies; the post-processor verifies units.
+#   Orbital period (days) — `p:P2146 / psv:P2146` so the unit can be read.
+#     Wikidata stores the period in `Q573` (day), `Q577` (year), or the
+#     less-common `Q1092296` (annum). The post-processor normalizes all
+#     values to absolute days (retrograde periods are stored as negative
+#     and are taken as |value|).
+#   Discovery year — `wdt:P575` (time of discovery or invention). The
+#     post-processor truncates to year. Earth's Moon has no P575 because
+#     human knowledge of it predates recorded history; the post-processor
+#     emits the literal string "Prehistoric" in that cell.
+#
+# `source_defined` claim type: the universe is "named moons of the 8 planets
+# present in Wikidata as of the snapshot date and having all three of
+# (diameter or radius), (orbital period), and (discovery date or
+# Prehistoric)". Moons missing any of those values in Wikidata are
+# excluded; the post-processor reports the per-planet drop counts.
+
+SELECT DISTINCT ?planetLabel ?moon ?moonLabel ?diameter ?radius
+                ?orbitalPeriod ?orbitalPeriodUnit ?discoveryDate WHERE {
+  {
+    # Per-planet moon classes for the 5 outer planets + Mars
+    VALUES (?planet ?moonClass) {
+      (wd:Q111 wd:Q177268)
+      (wd:Q319 wd:Q61702557)
+      (wd:Q193 wd:Q1972)
+      (wd:Q324 wd:Q2152)
+      (wd:Q332 wd:Q2139)
+    }
+    ?moon wdt:P31 ?moonClass .
+    ?moon wdt:P397 ?planet .
+  } UNION {
+    # Earth's Moon — explicit single-row branch
+    BIND(wd:Q2 AS ?planet)
+    BIND(wd:Q405 AS ?moon)
+  }
+
+  ?moon rdfs:label ?moonLabel . FILTER(LANG(?moonLabel) = "en")
+  FILTER(!STRSTARTS(?moonLabel, "S/"))
+  FILTER(!REGEX(?moonLabel,
+    "^(Mercury|Venus|Earth|Mars|Jupiter|Saturn|Uranus|Neptune)\\s+[IVXLCDM]+\\s*$"))
+
+  ?planet rdfs:label ?planetLabel . FILTER(LANG(?planetLabel) = "en")
+
+  OPTIONAL { ?moon wdt:P2386 ?diameter . }
+  OPTIONAL { ?moon wdt:P2120 ?radius . }
+  OPTIONAL {
+    ?moon p:P2146 ?stmt .
+    ?stmt psv:P2146 ?node .
+    ?node wikibase:quantityAmount ?orbitalPeriod ;
+          wikibase:quantityUnit  ?orbitalPeriodUnit .
+  }
+  OPTIONAL { ?moon wdt:P575 ?discoveryDate . }
+}
+ORDER BY ?planetLabel ?moonLabel

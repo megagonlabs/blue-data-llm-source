@@ -1,0 +1,144 @@
+{
+  "id": "russell_group_universities_attributes",
+  "claim_type": "source_defined",
+  "claim_type_rationale": "Per cycle-1 audit confirmation: 'claim_type = source_defined.' Universe is the closed canonical 24-entry Russell Group membership per Wikipedia `Russell Group` master article. Universe membership = 'university in master article's 24-row member table' — no curator judgment. All 5 cell values (University name + Nation + Year of Joining + Total Students + Total Academic Staff) source-extractive per cycle-1 audit's master-supported schema BLOCKING fix + verbatim 24-row dump. Mirror precedents for closed-canonical office-holder / membership-list source_defined: `nato_secretaries_general_birth_country_terms`, `notable_ship_canals_by_length_km`, `largest_sauropods_by_estimated_mass`.",
+  "collection_summary": {
+    "approach": "Pre-curation design pass (1 round of pre-staging design review). Cycle-1 verdict: 'Revise Before Cycle-0 Staging' with 2 BLOCKING + 2 SUGGESTION fixes. BLOCKING #1: schema must pivot to master-supported attributes — initial design's Founding Year + City + Constituent Country + Enrollment was NOT master-supported (Russell Group master article does not supply Founding Year or City; would require 24 per-university page extraction + reopen ambiguous founding-date issues like Cambridge 1209 vs Oxford 1096 / Queen Mary 1785/1887/1934 / Manchester 2004/1851). BLOCKING #2: source_count = 1 honest only under master-supported schema (would be dishonest under per-university-extraction). SUGGESTION #1: 'London School of Economics' (NOT 'London School of Economics and Political Science') per master-table label. SUGGESTION #2: 'N. Ire.' verbatim (NOT expanded to 'Northern Ireland'). All 4 cycle-1 fixes applied at cycle-0 staging using audit's verbatim 24-row dump. Single-round pre-staging review enabled by audit's clean source-supported-schema pivot + master-derived dump in cycle-1.",
+    "universe_size": 24,
+    "partition_structure": "Closed canonical 24-entry Russell Group universe per Wikipedia master member table. Nation distribution: England 20 / Scotland 2 (Edinburgh, Glasgow) / Wales 1 (Cardiff) / N. Ire. 1 (Queen's Belfast). Year of Joining distribution: 1994 (17 founding members — Birmingham / Bristol / Cambridge / Edinburgh / Glasgow / Imperial / Leeds / Liverpool / LSE / Manchester / Newcastle / Nottingham / Oxford / Sheffield / Southampton / UCL / Warwick); 1998 (2 — Cardiff + King's College); 2006 (1 — Queen's University Belfast); 2012 (4 — Durham + Exeter + Queen Mary + York). Total 24. Single PK University.",
+    "row_count_check": "24 rows match cycle-1 audit's verbatim master-derived dump. Russell Group has been at exactly 24 members since 2012 expansion."
+  },
+  "source_coverage_notes": {
+    "roles": [
+      {
+        "url": "https://en.wikipedia.org/wiki/Russell_Group",
+        "roles": ["universe", "value"],
+        "role_note": "universe: Wikipedia `Russell Group` master article enumerates the closed canonical 24-entry membership in its member table. value: supplies University name + Nation + Year of Joining + Total Students (2021/22) + Total Academic Staff (2022/23) cell values for all 24 staged rows via the master's consolidated 5-column table."
+      }
+    ],
+    "validation_cross_checks": {
+      "rationale": "No validation cross-checks documented for this instance. Per cycle-1 audit confirmation: source_count = 1 with Wikipedia Russell Group master article as the sole authoritative source. Per-university Wikipedia articles exist (University of Cambridge, Imperial College London, etc.) but per cycle-1 audit BLOCKING #1: those pages would NOT add value-role cells matching the master-supported schema — they would only support the rejected Founding-Year + City schema."
+    },
+    "source_count": 1,
+    "source_grounding_summary": "1 registered source (Russell_Group Wikipedia article master member table: roles = [universe, value]). No additional validation cross-checks documented per cycle-1 audit's master-supported schema."
+  },
+  "decision_log": [
+    {
+      "decision": "claim_type = source_defined (closed canonical 24-entry Russell Group membership table)",
+      "rationale": "Per cycle-1 audit confirmation: 'claim_type = source_defined.' Russell Group is a formal UK research-intensive university association with explicit closed membership (24 universities). Universe membership = 'university in Wikipedia Russell Group master article's member table' — no curator judgment. All 5 cells source-extractive."
+    },
+    {
+      "decision": "Schema pivot to master-supported attributes (Nation + Year of Joining + Total Students + Total Academic Staff) — NOT initial Founding Year + City + Enrollment",
+      "rationale": "Per cycle-1 audit BLOCKING #1: 'The Russell Group master article does have a clean 24-row member table, but it does not supply Founding Year or City. It supplies Nation, Year of joining, student counts, academic staff, and TEF award. Using founding years and cities would require 24 per-university pages and would reopen the ambiguous founding-date issues the design already flags.' Locked to master-supported 5-cell schema; avoids ambiguous founding-date issues (Cambridge 1209 vs Oxford 1096 / Queen Mary 1785/1887/1934 / Manchester 2004/1851 / Sheffield 1905/1828)."
+    },
+    {
+      "decision": "source_count = 1 (master only) — honest under master-supported schema",
+      "rationale": "Per cycle-1 audit BLOCKING #2: 'Source Count Must Be Either 1 With Master-Supported Schema, Or 25 With Ambiguous Per-University Extraction.' Master-supported schema chosen → source_count = 1 honest. Russell Group master article carries universe + all value cells. Mirror precedent `notable_ship_canals_by_length_km` (source_count=1 with all cells from Ship canal article's compound table)."
+    },
+    {
+      "decision": "University name 'London School of Economics' (NOT 'London School of Economics and Political Science')",
+      "rationale": "Per cycle-1 audit SUGGESTION #1: 'Use London School of Economics, not London School of Economics and Political Science, because that is the master-table label.' Wikipedia master uses the shorter common form 'London School of Economics' in its member table (the longer form is the institutional full name, used in the LSE Wikipedia article title). Source-verbatim convention preserves master-table label."
+    },
+    {
+      "decision": "Nation 'N. Ire.' kept verbatim (NOT 'Northern Ireland')",
+      "rationale": "Per cycle-1 audit SUGGESTION #2: 'Keep Nation source-verbatim, including N. Ire.. If expanded to Northern Ireland, document it as deterministic normalization.' Master uses the abbreviated 'N. Ire.' in the Nation column for Queen's University Belfast; source-verbatim preservation matches the FAOSTAT 'Sugar cane' verbatim convention + 'Cassava, fresh' / 'Onions and shallots, dry (excluding dehydrated)' precedents in `top_15_most_produced_crops_by_global_production`."
+    },
+    {
+      "decision": "Total Students year-lock = 2021/22; Total Academic Staff year-lock = 2022/23",
+      "rationale": "Per cycle-1 audit master-derived dump: Wikipedia Russell Group master article publishes Total Students for 2021/22 academic year + Total Academic Staff for 2022/23 academic year (different year-locks because the underlying HESA statistics releases come from different reporting cycles). Column titles include the year suffix to preserve year-lock context: 'Total Students (2021/22)' + 'Total Academic Staff (2022/23)'. temporal_sensitivity = medium reflects annual updates."
+    },
+    {
+      "decision": "Year of Joining = year admitted to Russell Group (NOT university founding year)",
+      "rationale": "Per cycle-1 audit master schema. Russell Group founded 1994 with 17 original members (Year of Joining = 1994 for them); expanded in waves 1998 (Cardiff + King's), 2006 (Queen's Belfast), 2012 (Durham + Exeter + Queen Mary + York). Year of Joining captures the Russell-Group-specific membership history (NOT general university founding history which is the ambiguous-date axis rejected in cycle-1 BLOCKING #1)."
+    },
+    {
+      "decision": "Category = multi_attribute_projection primary + set_filter secondary; operation_type = projection",
+      "rationale": "Per cycle-1 audit confirmation: 'query_category = multi_attribute_projection, secondary_category = set_filter, operation_type = projection.' Multi-attribute-projection primary because the row universe has 4 attributes projected per university (Nation + Year of Joining + Total Students + Total Academic Staff) without aggregation or partitioning. set_filter secondary because the universe is set-filtered to Russell Group membership."
+    },
+    {
+      "decision": "Domain = Education/Higher-Education (existing subdomain extension)",
+      "rationale": "Per cycle-1 audit confirmation: 'domain = Education/Higher-Education.' Existing Education/Higher-Education subdomain (current Higher-Education only via `aau_big_ten_intersection_universities`); this brings Higher-Education from 1 to 2 instances. Chips Education family overall from 2 to 3 instances (Higher-Ed 1→2 + EdTech 1)."
+    },
+    {
+      "decision": "Entity class = organizations/universities (existing fine-class extension 1→2)",
+      "rationale": "Per cycle-1 audit confirmation: 'entity_class = organizations/universities.' Extends existing organizations/universities fine-class from 1 instance (`aau_big_ten_intersection_universities`) to 2 instances. organizations bucket grows from 6 to 6 (no NEW fine-class added, just existing extension)."
+    },
+    {
+      "decision": "Sort = University ASC alphabetic",
+      "rationale": "Per cycle-1 audit confirmation: 'Sort: University ASC.' Alphabetic-by-PK sort matches multi_attribute_projection convention for predictable lookup-by-key access. Mirror precedent `twentieth_century_us_presidents_attributes` (multi_attribute_projection, PK-alphabetic sort)."
+    }
+  ],
+  "normalization_decisions": [
+    {
+      "field": "University",
+      "rule": "University name verbatim per Wikipedia Russell Group master article's member table labels. 24 closed values. Notable label conventions per cycle-1 audit SUGGESTION #1: 'London School of Economics' (NOT 'London School of Economics and Political Science' — master uses shorter common form); 'Queen Mary University of London' (full form); 'Queen's University Belfast' (with apostrophe + no 'of'); 'University College London' (NOT 'UCL'); 'Imperial College London' (NOT 'Imperial College'); 'University of Cambridge' / 'University of Oxford' (full 'University of' prefix). Alphabetical sort places C-D-I-K-L-N-Q first, then 14 'University of X' or 'University X' entries."
+    },
+    {
+      "field": "Nation",
+      "rule": "Closed 4-value categorical per master-table Nation column verbatim: 'England' (20 universities) / 'Scotland' (2: Edinburgh + Glasgow) / 'Wales' (1: Cardiff) / 'N. Ire.' (1: Queen's Belfast). 'N. Ire.' verbatim per cycle-1 audit SUGGESTION #2 — NOT expanded to 'Northern Ireland'. The abbreviated form is master-source-verbatim; expansion would introduce curator-normalization NOT in source."
+    },
+    {
+      "field": "Year of Joining",
+      "rule": "Integer year of admission to Russell Group per master member table. 4 closed wave-years: 1994 (17 founding members), 1998 (Cardiff + King's College), 2006 (Queen's University Belfast), 2012 (Durham + Exeter + Queen Mary + York). NOT the universities' founding years (which were rejected at cycle-1 audit BLOCKING #1 due to ambiguous-date issues)."
+    },
+    {
+      "field": "Total Students (2021/22)",
+      "rule": "Integer total student count for 2021/22 academic year per master member table. Range: 12975 (LSE smallest) to 46830 (UCL largest). Year-lock 2021/22 reflects HESA reporting cycle; temporal_sensitivity=medium for annual updates."
+    },
+    {
+      "field": "Total Academic Staff (2022/23)",
+      "rule": "Integer total academic staff count for 2022/23 academic year per master member table. Range: 1095 (LSE smallest) to 6460 (UCL largest). Year-lock 2022/23 distinct from Total Students 2021/22 reflects different underlying HESA reporting-cycle releases for staff vs student stats."
+    }
+  ],
+  "open_questions": [
+    {
+      "question": "Why is 'N. Ire.' kept abbreviated instead of expanded to 'Northern Ireland'?",
+      "answer": "Per cycle-1 audit SUGGESTION #2: 'Keep Nation source-verbatim, including N. Ire.. If expanded to Northern Ireland, document it as deterministic normalization.' The master Wikipedia Russell Group table uses 'N. Ire.' in the Nation column for Queen's University Belfast. Source-verbatim preservation matches established pkdb_bench convention — FAOSTAT crop labels keep verbose forms verbatim; British monarchs use master-table row labels exactly. Curator-expansion to 'Northern Ireland' would introduce judgment NOT in source."
+    },
+    {
+      "question": "Why use Year of Joining instead of University Founding Year?",
+      "answer": "Per cycle-1 audit BLOCKING #1: master Wikipedia Russell Group article does NOT supply Founding Year column. Using Founding Year would require 24 per-university Wikipedia page extraction + reopen ambiguous founding-date issues. Wikipedia per-university articles use different founding-date conventions (oldest predecessor / current institution founding / royal charter). Master-supported Year of Joining preserves source_defined + source_count=1 cleanly."
+    },
+    {
+      "question": "Why two different year-locks (Total Students 2021/22 vs Total Academic Staff 2022/23)?",
+      "answer": "Per cycle-1 audit master-derived dump: Wikipedia Russell Group master article uses HESA (Higher Education Statistics Agency) reporting-cycle data — Student stats and Staff stats are released on different annual cycles, so the master article publishes the most-recent available for each category separately (Students = 2021/22 most-recent at master-update time; Staff = 2022/23 most-recent). Column titles include the year suffix for explicit year-lock documentation."
+    },
+    {
+      "question": "Will the universe expand if Russell Group adds new members?",
+      "answer": "Yes — Russell Group has expanded historically (17 in 1994 → 19 in 1998 → 20 in 2006 → 24 in 2012). Future additions would extend universe. Membership has been stable at 24 since 2012 expansion. When future additions occur, instance can be re-staged. temporal_sensitivity=medium reflects this."
+    }
+  ],
+  "proposed_supplements": [],
+  "audit_trail_pre_curation": {
+    "cycle_0_source_exploration": {
+      "task": "Verify source structure for the Russell Group universities candidate (chip multi_attribute_projection gap-2 + Education family 2→3)",
+      "outcome": "Initial design assumed Founding Year + City + Constituent Country + Enrollment as projected attributes. Cycle-1 audit found this schema is NOT master-supported (Russell Group master article only has Nation + Year of Joining + Total Students + Total Academic Staff + TEF Award columns); pivot to master-supported schema.",
+      "deliverable": "Initial design proposal with 5-col schema {University + Founding Year + City + Constituent Country + Enrollment} + source_count=1. Cycle-1 audit identified 2 BLOCKING + 2 SUGGESTION fixes."
+    },
+    "cycle_1_audit_design_review": {
+      "task": "Audit agent reviews cycle-0 design proposal BEFORE staging",
+      "verdict": "Revise Before Cycle-0 Staging (2 BLOCKING + 2 SUGGESTION)",
+      "blocking_findings": [
+        "BLOCKING #1: Schema must pivot to master-supported attributes — Russell Group master article does NOT supply Founding Year or City. Pivot to Nation + Year of Joining + Total Students (2021/22) + Total Academic Staff (2022/23).",
+        "BLOCKING #2: source_count = 1 honest only under master-supported schema; would have been dishonest under per-university-extraction schema."
+      ],
+      "suggestions": [
+        "SUGGESTION #1: 'London School of Economics' NOT 'London School of Economics and Political Science' per master-table label.",
+        "SUGGESTION #2: Keep 'N. Ire.' verbatim per master, NOT expanded to 'Northern Ireland'."
+      ],
+      "master_derived_row_list_dump": "Audit provided full 24-row master-derived dump verbatim from Russell Group master article's member table with all 5 cell values populated. Used at cycle-0 staging.",
+      "deliverable": "All 2 BLOCKING + 2 SUGGESTION fixes applied at cycle-0 staging using audit's verbatim 24-row dump. No cycle-2 design review needed."
+    },
+    "cycle_0_staging": {
+      "task": "Stage cycle-0 artifacts (CSV + draft.json + curation.json) with cycle-1 fixes applied",
+      "files_written": [
+        "datasets/pkdb_bench/staging/russell_group_universities_attributes.csv (24 rows × 5 cols)",
+        "datasets/pkdb_bench/staging/russell_group_universities_attributes.draft.json (5-col schema + locked properties)",
+        "datasets/pkdb_bench/staging/russell_group_universities_attributes.curation.json (this file)"
+      ],
+      "deliverable": "Cycle-0 staging complete. 24 rows × 5 cols. Single PK University. source_count = 1 (Wikipedia Russell Group master). All 120 cell values committed verbatim per cycle-1 audit's master-derived dump. Sort: University ASC alphabetic. NEW Education/Higher-Education subdomain extension + extends organizations/universities fine-class 1→2. Chips multi_attribute_projection from 8/8 (at target) to 9/10 (gap-1 under raised target 102 ceiling). Ready for cycle-1 post-staging audit."
+    }
+  },
+  "_curated_by": "claude-code",
+  "_curated_at": "2026-05-20T00:00:00Z"
+}

@@ -23,8 +23,8 @@
     "Population basis": "categorical",
     "Year": "text"
   },
-  "query_category": "top_k",
-  "secondary_category": "hierarchical_decomposition",
+  "query_category": "hierarchical_decomposition",
+  "secondary_category": "top_k",
   "db_analog": "SELECT continent, ROW_NUMBER() OVER (PARTITION BY continent ORDER BY population DESC) AS rank, city, country, population, population_basis, year FROM source_defined_continent_city_rankings QUALIFY rank <= 10 ORDER BY continent, rank",
   "operation_type": "projection",
   "source_count": 6,

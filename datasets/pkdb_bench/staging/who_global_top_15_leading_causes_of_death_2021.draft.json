@@ -19,7 +19,7 @@
   "query_category": "top_k",
   "secondary_category": "set_filter",
   "db_analog": "WITH top_15 AS (SELECT cause_of_death, estimated_deaths_2021_millions, who_cause_group, ROW_NUMBER() OVER (ORDER BY estimated_deaths_2021_millions DESC) AS rank FROM who_ghe_2021_global_all_age_all_sex ORDER BY estimated_deaths_2021_millions DESC LIMIT 15) SELECT cause_of_death, rank, estimated_deaths_2021_millions, who_cause_group FROM top_15 ORDER BY rank ASC",
-  "operation_type": "top_k",
+  "operation_type": "projection",
   "source_count": 1,
   "domain": "Health/Public Health",
   "temporal_sensitivity": "medium",

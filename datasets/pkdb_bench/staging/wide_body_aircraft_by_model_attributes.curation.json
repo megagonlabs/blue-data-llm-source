@@ -1,0 +1,162 @@
+{
+  "id": "wide_body_aircraft_by_model_attributes",
+  "claim_type": "source_defined",
+  "claim_type_rationale": "Per cycle-1 audit confirmation: 'claim_type = source_defined.' Universe is the closed canonical 15-entry built/produced wide-body commercial aircraft set per Wikipedia `Wide-body aircraft` master article's comparison table. Universe membership = 'aircraft model in master table AND is built/produced AND has Number Built value' — no curator judgment (Comac C929 excluded because it's projected with empty Number Built per master). All 5 cell values source-extractive per cycle-1 audit's master-supported schema BLOCKING fix + verbatim 15-row dump. Mirror precedents for closed-canonical-table source_defined: `russell_group_universities_attributes` (24-university Wikipedia member table), `notable_ship_canals_by_length_km` (11-canal Ship canal article table).",
+  "collection_summary": {
+    "approach": "Pre-curation design pass (1 round of pre-staging design review). Cycle-1 verdict: 'Revise Before Cycle-0 Staging' with 3 BLOCKING + 2 SUGGESTION fixes. BLOCKING #1: schema must pivot to master-supported attributes — initial design's Manufacturer + First Flight Year + Capacity + Service Status NOT supplied by master (master gives Model, Produced, MTOW, Length, fuselage/cabin widths, seat-across, seat width, Number Built). BLOCKING #2: universe must explicitly decide projected-aircraft inclusion — master table has 16 rows total; Comac C929 (16th row) projected with no Number Built; staged universe locked to 15 built/produced families. BLOCKING #3: source_count=1 honest only under master-supported schema. SUGGESTION #1: keep range/compound cells as text matching master verbatim. SUGGESTION #2: use Produced (year-range + present/end marker) instead of Service Status — captures status without curator interpretation. All cycle-1 fixes applied at cycle-0 staging using audit's verbatim 15-row dump. Single-round pre-staging review pattern matches `russell_group_universities_attributes` precedent (also multi_attribute_projection with master-supported-schema pivot).",
+    "universe_size": 15,
+    "partition_structure": "Closed canonical 15-entry built/produced wide-body aircraft universe per Wikipedia master comparison table. Manufacturer-distribution (informational, NOT staged): Airbus 6 (A300 + A310 + A330 + A340 + A350 + A380); Boeing 4 (747 + 767 + 777 + 787); McDonnell Douglas 2 (DC-10 + MD-11); Ilyushin 2 (Il-86 + Il-96); Lockheed 1 (L-1011 TriStar). Production-status distribution: 5 in-production (A330 / A350 / Boeing 767 / 777 / 787) + 1 limited-production (Il-96) + 9 discontinued (A300 / A310 / A340 / A380 / Boeing 747 / Il-86 / L-1011 / DC-10 / MD-11). Single PK Model.",
+    "row_count_check": "15 rows match cycle-1 audit's verbatim master-derived dump. 16th master-table row (Comac C929 projected 2029-) explicitly excluded per cycle-1 BLOCKING #2 universe lock."
+  },
+  "source_coverage_notes": {
+    "roles": [
+      {
+        "url": "https://en.wikipedia.org/wiki/Wide-body_aircraft",
+        "roles": ["universe", "value"],
+        "role_note": "universe: Wikipedia `Wide-body aircraft` master article's comparison table enumerates 16 wide-body commercial aircraft model rows; staged universe filters to the 15 with built/produced status (Comac C929 16th-row excluded as projected with no Number Built per cycle-1 BLOCKING #2). value: supplies Model + Produced + MTOW (tonnes) + Length + Number Built cell values for all 15 staged rows via the master's consolidated comparison table."
+      }
+    ],
+    "validation_cross_checks": {
+      "rationale": "No validation cross-checks documented for this instance. Per cycle-1 audit confirmation: source_count = 1 with Wikipedia Wide-body aircraft master article as the sole authoritative source. Per-aircraft Wikipedia articles exist (Boeing 747, A380, etc.) but per cycle-1 audit BLOCKING #1: those pages would NOT add value-role cells matching the master-supported schema — they would only support the rejected Manufacturer + First Flight Year + Capacity + Service Status schema."
+    },
+    "source_count": 1,
+    "source_grounding_summary": "1 registered source (Wide-body_aircraft Wikipedia article comparison table: roles = [universe, value]). No additional validation cross-checks documented per cycle-1 audit's master-supported schema."
+  },
+  "decision_log": [
+    {
+      "decision": "claim_type = source_defined (closed canonical 15-entry built/produced wide-body aircraft table)",
+      "rationale": "Per cycle-1 audit confirmation: 'claim_type = source_defined.' Wikipedia `Wide-body aircraft` master article publishes a curated comparison table of 16 wide-body commercial aircraft models with consistent 5-column structure (Model + Produced + MTOW + Length + Number Built among others). Filtering to 15 built/produced (excludes projected C929) is deterministic per master's Number Built column. No curator judgment for universe membership."
+    },
+    {
+      "decision": "Schema pivot to master-supported attributes — NOT initial Manufacturer + First Flight Year + Capacity + Service Status",
+      "rationale": "Per cycle-1 audit BLOCKING #1: 'The Wide-body aircraft article has a strong 16-row comparison table, but it does not supply Manufacturer, First Flight Year, Typical Passenger Capacity (3-class), or Service Status as proposed. It supplies Model, produced, MTOW, Length, fuselage/cabin width, seating-across, seat width, and number built.' Pivoted to master-supported {Model + Produced + MTOW + Length + Number Built}. Initial schema would have required 15 per-aircraft Wikipedia pages + curator-judgment on Capacity (varies by configuration) + Service Status (curator interpretation needed)."
+    },
+    {
+      "decision": "Universe = 15 built/produced (EXCLUDES projected Comac C929)",
+      "rationale": "Per cycle-1 audit BLOCKING #2: 'The master table includes Comac C929 with 2029- (projected) and Number built = -. If the intended universe is built/produced aircraft families, exclude Comac C929 and use 15 rows.' Filter rule = 'has Number Built value (not blank/dash)'. Comac C929 (16th row) explicitly excluded as projected. 15-row universe locked."
+    },
+    {
+      "decision": "source_count = 1 (master only) — honest under master-supported schema",
+      "rationale": "Per cycle-1 audit BLOCKING #3: 'source_count=1 Only Works With Master-Table Columns. If keeping first-flight/capacity/status, the instance needs per-aircraft sources and becomes much less clean. For a source-defined, single-source instance, pivot to the master-supported schema.' Master-supported schema chosen → source_count = 1 honest. Mirror precedent `russell_group_universities_attributes` (source_count=1 with master member-table)."
+    },
+    {
+      "decision": "Range/compound cells kept as TEXT (NOT numeric central values)",
+      "rationale": "Per cycle-1 audit SUGGESTION #1: 'Keep range/compound cells as text, matching the master table.' Master table cells contain range values (Boeing 777 MTOW '351.5–365.7') + compound metric+imperial formats (Length '53.61–54.08 m (175 ft 11 in – 177 ft 5 in)') + numeric+marker formats (Number Built '561 (discontinued)' / '1663 (March 2026)' / '34 (2025)'). Text preservation matches master verbatim — mirror precedent `largest_sauropods_by_estimated_mass` (text-range estimate cells)."
+    },
+    {
+      "decision": "Produced cell (NOT Service Status) — captures status without curator interpretation",
+      "rationale": "Per cycle-1 audit SUGGESTION #2: 'Use Produced instead of Service Status; it captures status without curator interpretation.' Produced cell = year-range with 'present' or end-year marker (e.g., '1974–2007' for retired A300; '1994–present' for in-production A330; '1992-present' for limited-production Il-96 — note hyphen-not-en-dash variant per master verbatim). Service Status would have required curator labels (In service / Retired / Limited production) introducing judgment NOT in master."
+    },
+    {
+      "decision": "Il-96 Produced cell uses hyphen '-' NOT en-dash '–' (master verbatim preservation)",
+      "rationale": "Per cycle-1 audit verbatim dump: Il-96 Produced cell shows '1992-present' with regular hyphen, while all other Produced ranges use en-dash '–' (e.g., A330 '1994–present'). This is a master-source inconsistency preserved verbatim per source-extractive principle. Documented as known variant — curator-normalization to uniform en-dash would introduce normalization NOT in source."
+    },
+    {
+      "decision": "L-1011 Length range '54.17–50.05 m' is DESCENDING (master verbatim)",
+      "rationale": "Per cycle-1 audit verbatim dump: Lockheed L-1011 Length cell shows '54.17–50.05 m (177.7–164.2 ft)' which is descending (54.17 → 50.05). This is unusual — most range cells are ascending (low → high). Master may have listed L-1011 variant lengths in a specific order reflecting variant chronology (L-1011-500 was a shortened version of L-1011 with 50.05 m length while the standard L-1011 was 54.17 m). Audit preserved verbatim; no curator-normalization applied."
+    },
+    {
+      "decision": "Category = multi_attribute_projection primary + set_filter secondary; operation_type = projection",
+      "rationale": "Per cycle-1 audit confirmation: 'query_category = multi_attribute_projection, secondary_category = set_filter, operation_type = projection.' 4 attributes projected per aircraft (Produced + MTOW + Length + Number Built). set_filter secondary because universe is set-filtered to built/produced wide-body aircraft membership."
+    },
+    {
+      "decision": "Domain = Transportation/Aviation existing extension; entity class = vehicles/aircraft NEW",
+      "rationale": "Per cycle-1 audit confirmation: 'Domain: Transportation/Aviation; Entity class: vehicles/aircraft.' Extends existing Transportation/Aviation subdomain (current: `worlds_busiest_airports_by_passenger_traffic`). NEW `vehicles/*` entity bucket added (pkdb_bench grows from 13 to 14 entity buckets) with NEW `vehicles/aircraft` fine-class. vehicles bucket joins countries, subnational-regions, cities-and-capitals, people, physical-features, engineered-structures, events, artifacts, abstract-categories, taxonomic-entities, organizations, time-periods, agricultural-commodities."
+    },
+    {
+      "decision": "Sort = Model ASC alphabetic",
+      "rationale": "Per cycle-1 audit confirmation: 'Sort: Model ASC.' Alphabetic-by-PK sort matches multi_attribute_projection convention for predictable lookup-by-key. Mirror precedent `russell_group_universities_attributes` (University ASC) + `twentieth_century_us_presidents_attributes` (President alphabetic)."
+    }
+  ],
+  "normalization_decisions": [
+    {
+      "field": "Model",
+      "rule": "Aircraft model name verbatim per Wikipedia Wide-body aircraft master comparison table. 15 closed values. Naming convention: 'Manufacturer + Numeric Model Designation' (e.g., 'Boeing 747' not 'B-747' or '747'; 'Airbus A300' not 'A-300'; 'McDonnell Douglas DC-10' not 'DC-10'; 'Lockheed L-1011' not 'L-1011 TriStar' — master uses bare 'L-1011' without TriStar suffix; 'Ilyushin Il-86' / 'Ilyushin Il-96' with hyphen between Il and number). Alphabetical sort places Airbus A300-A380 first, then Boeing 747-787, then Ilyushin, Lockheed, McDonnell Douglas."
+    },
+    {
+      "field": "Produced",
+      "rule": "Text year-range with end-marker per master verbatim. Range format: '[start year]–[end year]' for completed production (e.g., '1974–2007' A300; '1968–2023' Boeing 747); '[start year]–present' for in-production (e.g., '1994–present' A330; '2007–present' Boeing 787). Exception: Ilyushin Il-96 uses hyphen NOT en-dash ('1992-present') — master-source verbatim variant preserved per cycle-1 audit. Mostly en-dash '–' except Il-96."
+    },
+    {
+      "field": "MTOW (tonnes)",
+      "rule": "Maximum Takeoff Weight in metric tonnes per master verbatim. Mostly single-value numeric (e.g., 171.7 A300, 575 A380). Boeing 777 has range '351.5–365.7' reflecting MTOW variation across 777-300ER / 777-9 variants. Text type preserves the range when present (vs forcing numeric central)."
+    },
+    {
+      "field": "Length",
+      "rule": "Compound text format 'metric value(s) m (imperial value(s) ft in)' per master verbatim. Single-value: '46.66 m (153 ft 1 in)' A310; '72.72 m (238.6 ft)' A380. Ranges: '53.61–54.08 m (175 ft 11 in – 177 ft 5 in)' A300 with en-dash and possible spaces around imperial-range em-dash. L-1011 has descending range '54.17–50.05 m (177.7–164.2 ft)' reflecting variant chronology — preserved verbatim. Master uses mixed imperial precision (some 'ft in' notation like '193 ft 0 in', some decimal-feet '218.5 ft'); preserve master's variant per cell."
+    },
+    {
+      "field": "Number Built",
+      "rule": "Text format '[count] ([status/date marker])' per master verbatim. Examples: '561 (discontinued)' A300; '1663 (March 2026)' A330 (in-production count as of master date); '34 (2025)' Il-96 (low-production count); '254 (discontinued)' A380 (final after 2021 production end). Production counts for in-production aircraft (A330 / A350 / 767 / 777 / 787) carry March 2026 or February 2026 dates reflecting recent master update; production-end aircraft carry '(discontinued)' marker."
+    }
+  ],
+  "open_questions": [
+    {
+      "question": "Why is Comac C929 excluded from the universe?",
+      "answer": "Per cycle-1 audit BLOCKING #2: Comac C929 (the 16th row in Wikipedia Wide-body aircraft master comparison table) is projected with 2029- first-flight date AND empty Number Built value. Universe filter locks to 'has Number Built value' = built/produced; C929 fails this filter. When C929 enters service post-2029 and has documented Number Built, universe can extend 15 → 16. Mirror precedent for incumbent/projected exclusion: NATO SG / Chief Justices / British monarchs (current incumbents excluded with similar future-extension provision)."
+    },
+    {
+      "question": "Why is Il-96 Produced cell '1992-present' with hyphen instead of en-dash?",
+      "answer": "Per cycle-1 audit verbatim dump: Wikipedia master Wide-body aircraft comparison table cell for Ilyushin Il-96 uses regular hyphen '-' between '1992' and 'present', while other Produced cells use en-dash '–'. This is a master-source inconsistency preserved verbatim per source-extractive principle. Curator-normalization to uniform en-dash would introduce normalization NOT in source. Documented as known master variant."
+    },
+    {
+      "question": "Why is L-1011 Length range '54.17–50.05 m' descending?",
+      "answer": "Per cycle-1 audit master dump: Lockheed L-1011 (TriStar) had variants — the original L-1011 was 54.17 m; the shortened L-1011-500 long-range variant was 50.05 m. Master appears to list the variant lengths in chronology order (standard first, then shortened variant). The cell is preserved verbatim including the descending order — unusual but source-verbatim."
+    },
+    {
+      "question": "Why no Comac aircraft if China builds wide-bodies?",
+      "answer": "Comac C929 is China's first wide-body project, in development with target 2029 first flight; no Comac wide-body has been built yet (the Comac C919 in service is narrow-body NOT wide-body, so out of scope). When Comac C929 enters service with documented Number Built, universe extends 15→16."
+    },
+    {
+      "question": "What's the difference between Wide-body aircraft and Twin-aisle aircraft scope?",
+      "answer": "'Wide-body' and 'twin-aisle' are equivalent terms in aviation — both describe aircraft with 2 passenger aisles (vs single-aisle narrow-body aircraft like 737 / A320). Master article uses 'Wide-body aircraft' as the canonical term. Universe scopes to commercial passenger families (excludes military variants like KC-10/KC-46, excludes cargo-only conversions, excludes purely freighter-built variants if Wikipedia master excludes them)."
+    }
+  ],
+  "proposed_supplements": [],
+  "audit_trail_pre_curation": {
+    "cycle_0_source_exploration": {
+      "task": "Verify source structure for the wide-body aircraft candidate (NEW vehicles/* entity bucket + chip multi_attribute_projection)",
+      "outcome": "Initial design assumed Manufacturer + First Flight Year + Capacity + Service Status as projected attributes. Cycle-1 audit found master Wide-body aircraft comparison table supplies different columns (Model + Produced + MTOW + Length + width measures + seats + Number Built); schema pivot needed.",
+      "deliverable": "Initial design proposal with 5-col schema {Aircraft Family + Manufacturer + First Flight Year + Capacity + Service Status} + 15-row universe estimate. Cycle-1 audit identified 3 BLOCKING + 2 SUGGESTION fixes."
+    },
+    "cycle_1_audit_design_review": {
+      "task": "Audit agent reviews cycle-0 design proposal BEFORE staging",
+      "verdict": "Revise Before Cycle-0 Staging (3 BLOCKING + 2 SUGGESTION)",
+      "blocking_findings": [
+        "BLOCKING #1: Schema must pivot to master-supported attributes — Wide-body aircraft master supplies Model + Produced + MTOW + Length + width measures + seats + Number Built (NOT Manufacturer / First Flight Year / Capacity / Service Status).",
+        "BLOCKING #2: Universe must explicitly decide projected-aircraft inclusion — master table has 16 rows including Comac C929 (projected 2029-, no Number Built). Lock universe to built/produced = 15 rows.",
+        "BLOCKING #3: source_count=1 honest only under master-supported schema; first-flight/capacity/status would require per-aircraft sources."
+      ],
+      "suggestions": [
+        "SUGGESTION #1: Keep range/compound cells as text matching master verbatim.",
+        "SUGGESTION #2: Use Produced (year-range + marker) instead of Service Status — captures status without curator interpretation."
+      ],
+      "master_derived_row_list_dump": "Audit provided full 15-row master-derived dump verbatim from Wide-body aircraft comparison table with all 5 cell values populated. Used at cycle-0 staging.",
+      "deliverable": "All 3 BLOCKING + 2 SUGGESTION fixes applied at cycle-0 staging using audit's verbatim 15-row dump. No cycle-2 design review needed."
+    },
+    "cycle_0_staging": {
+      "task": "Stage cycle-0 artifacts (CSV + draft.json + curation.json) with cycle-1 fixes applied",
+      "files_written": [
+        "datasets/pkdb_bench/staging/wide_body_aircraft_by_model_attributes.csv (15 rows × 5 cols)",
+        "datasets/pkdb_bench/staging/wide_body_aircraft_by_model_attributes.draft.json (5-col schema + locked properties)",
+        "datasets/pkdb_bench/staging/wide_body_aircraft_by_model_attributes.curation.json (this file)"
+      ],
+      "deliverable": "Cycle-0 staging complete. 15 rows × 5 cols. Single PK Model. source_count = 1 (Wikipedia Wide-body aircraft master). All 75 cell values committed verbatim per cycle-1 audit's master-derived dump including text-range/compound cells. Sort: Model ASC alphabetic. NEW vehicles/* entity bucket + NEW vehicles/aircraft fine-class. Chips multi_attribute_projection from 7 staged → 8 staged closer to raised-target ceiling. Ready for cycle-1 post-staging audit."
+    }
+  },
+  "audit_response": {
+    "audit_cycles": 1,
+    "cycle_history": "No post-staging repair cycles. A pre-staging design review (recorded in audit_trail_pre_curation.cycle_1_audit_design_review) raised 3 BLOCKING + 2 SUGGESTION which were all applied at cycle-0 staging (schema pivot to master-supported columns Model/Produced/MTOW/Length/Number Built; universe locked to the 15 built/produced families, excluding projected Comac C929; source_count=1; text-range/compound cells preserved; Produced cell instead of curator-judged Service Status). Post-staging audits both Ready+Clean: claude-code cycle-1 post-staging (2026-05-20) and codex independent re-audit (2026-06-04) 0/0/0. The codex pass is the independent confirmation. Independently re-verified at finalization: master comparison table has 16 rows and Comac C929 (the only projected / blank-Number-Built row) is correctly the single exclusion; staged 15x5 matches; PK (Model) unique, no blanks, sorted Model ASC, source_count=1; source-verbatim variants confirmed intentional (Ilyushin Il-96 '1992-present' hyphen vs others' en-dash; Lockheed L-1011 descending Length range '54.17-50.05 m').",
+    "final_status": {
+      "quality_clean": true,
+      "lockable": true,
+      "verdict": "Ready+Clean / lockable (0 BLOCKING / 0 NON-BLOCKING HYGIENE / 0 SUGGESTION)",
+      "confirmed_by": "codex",
+      "confirmed_at": "2026-06-04T20:24:53+00:00",
+      "audit_bundle": "Full pre-registration sweep (fresh independent re-audit)",
+      "note": "Termination rule satisfied — independent codex re-audit returned all-zeros and no post-staging repair was ever needed (BLOCKING fixes were resolved pre-staging at cycle-0). Quality-clean and lockable from a quality-audit perspective. Actual registration still requires a separate prepare-registration pass (LLM-knowability + evaluation-fit gates per workflows.md §4)."
+    }
+  },
+  "_curated_by": "claude-code",
+  "_curated_at": "2026-05-20T00:00:00Z"
+}

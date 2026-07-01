@@ -15,9 +15,23 @@
       "summary": "Cycle-2 verification audit: Ready - 0 BLOCKING, 0 NON-BLOCKING HYGIENE, 0 SUGGESTION.\n\nVerdict: Ready+Clean. The cycle-1 prose repair resolved the single hygiene finding, and I found no regressions. T...",
       "source_cited": "",
       "source_fetch_enabled": false
+    },
+    {
+      "at": "2026-06-02T07:33:31Z",
+      "action": "curator_response",
+      "summary": "Curation metadata fix: operation_type top_k→projection. top_k is not in the OPERATION_TYPES enum (app.py:60); it silently coerces to 'join' in the UI and is flagged by validate_operation_query_pair. db_analog is a pure ranked column-...",
+      "source_cited": "",
+      "source_fetch_enabled": false
+    },
+    {
+      "at": "2026-06-04T22:18:35+00:00",
+      "action": "assistant_response",
+      "summary": "T-R5 operation_type re-audit: Ready+Clean — lockable, 0 BLOCKING / 0 NON-BLOCKING HYGIENE / 0 SUGGESTION.\n\nScope audited:\n- Read current `largest_lakes_top20_by_area.csv`, `.draft.json`, `.curation.js...",
+      "source_cited": "",
+      "source_fetch_enabled": false
     }
   ],
-  "chat_summary": "Cycle-2 verification audit: Ready - 0 BLOCKING, 0 NON-BLOCKING HYGIENE, 0 SUGGESTION.\n\nVerdict: Ready+Clean. The cycle-1 prose repair resolved the single hygiene finding, and I found no regressions. T...",
+  "chat_summary": "T-R5 operation_type re-audit: Ready+Clean — lockable, 0 BLOCKING / 0 NON-BLOCKING HYGIENE / 0 SUGGESTION.\n\nScope audited:\n- Read current `largest_lakes_top20_by_area.csv`, `.draft.json`, `.curation.js...",
   "chat_history": [
     {
       "role": "user",
@@ -34,6 +48,22 @@
     {
       "role": "assistant",
       "content": "Cycle-2 verification audit: Ready - 0 BLOCKING, 0 NON-BLOCKING HYGIENE, 0 SUGGESTION.\n\nVerdict: Ready+Clean. The cycle-1 prose repair resolved the single hygiene finding, and I found no regressions. This instance can be marked accept-ready from the audit side.\n\nBundle: Full pre-registration sweep, bounded verification pass.\nGround-truth source checked first: https://en.wikipedia.org/wiki/List_of_lakes_by_area, source_urls[0].\nValidation/discovery pass: bounded Wiki-family re-check found no more direct source that changes the source-defined top-20-by-area universe; the cited master page remains the correct source for this scope.\n\nFindings\n\nNone.\n\nVerification Notes\n\n1. HYGIENE resolved - Type normalization prose.\n\nThe current curation.json::normalization_decisions Type-normalization paragraph no longer contains the stale \"Fresh -> Fresh (15 rows\" claim in a current-state context. It now leads with the two in-universe Saline rows, rank-1 Caspian Sea ('Saline 1.2%' -> 'Saline') and rank-15 Balkhash ('Saline 0.3% (variable)' -> 'Saline'), then states that the other 18 rows are Fresh verbatim. The out-of-universe saline forms for rank-22 Turkana, rank-23 Issyk-Kul, and rank-25 Rukwa are explicitly framed as outside the staged top-20 universe.\n\nThe current draft.json::temporal_note also now limits Type-normalization examples to the staged top-20 universe: Caspian Sea and Balkhash as the only two Saline rows, with the other 18 as Fresh. The old rank-22/rank-23 examples are absent from temporal_note.\n\nSource locator: ground-truth source, List of lakes by area, Conventional list. Caspian Sea rank 1 is Saline 1.2% around lines 167-175; Balkhash rank 15 is Saline 0.3% (variable) around lines 254-258; Turkana rank 22 and Issyk-Kul rank 23 appear after the rank-20 cutoff around lines 298-308; Rukwa rank 25 appears around lines 314-319.\n\n2. Historical decision_log wording accepted.\n\nThe old stale wording appears only inside curation.json::decision_log's historical cycle-1 repair paragraph, where it describes what the cycle-1 audit found and what was changed. That is acceptable audit history, not residual current-state prose.\n\n3. Data-level state reconfirmed.\n\nThe CSV remains 20 rows x 5 columns with unchanged schema: Lake, Continent, Type, Area (km²), Max. depth (m). Lake PK is unique; Area (km²) is sorted descending; numeric columns are integer-parsable; source_count = 1 equals len(source_urls); query_category = top_k and operation_type = top_k remain coherent. Closed Continent vocabulary is intact and all 6 values are populated: North America 10, Africa 3, Asia 3, Europe 2, Antarctica 1, South America 1. Closed Type vocabulary is intact with Fresh 18 / Saline 2.\n\nSeverity counts: BLOCKING 0; NON-BLOCKING HYGIENE 0; SUGGESTION 0.\nIssue-type counts: factual 0; structural 0; scope-related 0.\n\nMinimal fixes recommended: none."
+    },
+    {
+      "role": "user",
+      "content": "Surgical curation metadata fix (pkdb-bench-curation): operation_type for this instance is \"top_k\", which is NOT a valid operation_type. The canonical enum is OPERATION_TYPES = {join, union, intersect, projection, union+filter, filter, aggregation} (curation_ui/app.py:60). An invalid value silently coerces to \"join\" if opened in the curation UI (app.py:1388-1391) and is flagged by validate_operation_query_pair (app.py:655-675). For query_category=\"top_k\", the contract-allowed operation_types are {projection, filter, union+filter}. Set operation_type to the contract-valid value that best matches the db_analog shape (projection for a pure ranked column-selection with no WHERE predicate; filter if a threshold/predicate is applied). Do NOT change CSV rows, query_category, column_types, primary_key, or the db_analog logic."
+    },
+    {
+      "role": "assistant",
+      "content": "Curation metadata fix applied: operation_type top_k→projection.\n\nDefect confirmed: operation_type was \"top_k\", which is not in OPERATION_TYPES (curation_ui/app.py:60 = {join, union, intersect, projection, union+filter, filter, aggregation}). An invalid value coerces to index-0 \"join\" if the instance is opened in the curation UI (app.py:1388-1391) and is flagged by validate_operation_query_pair (app.py:655-675). Note: the prior cycle-1/cycle-2 audits and an earlier decision_log note asserted \"top_k pairs canonically with operation_type=top_k per references/artifact-contract.md\" — that assertion is incorrect; the artifact-contract defines no top_k operation_type.\n\nChosen value: projection. The db_analog is \"SELECT lake, continent, type, area_km2, max_depth_m FROM lakes ORDER BY area_km2 DESC LIMIT 20\" — a pure ranked column-selection (ORDER BY <attr> DESC LIMIT K with NO WHERE predicate). The structural primitive is a single-source multi-column SELECT (projection), not a filter. Verified projection is in validate_operation_query_pair's allowed set for query_category=top_k = {projection, filter, union+filter}.\n\nScope of change: operation_type in draft.json (top_k→projection) plus a decision_log entry in curation.json and this comments note. No CSV rows, query_category (still top_k), secondary_category, primary_key, column_types, db_analog logic, source_count, or source_urls were changed. This edit makes the instance stale; it should get an independent re-audit (not self-certified)."
+    },
+    {
+      "role": "user",
+      "content": "The coordinator & quality check agent raised this instance for re-aduit, here is the output:\nT-R5 op-type re-audit (3 instances) >>>\n  /pkdb-bench-audit — read SKILL.md + references/comments-schema.md + references/audit-bundles.md.\n  Read-only canonical; append-only comments.json; tag audited_by:\"codex\".\n  Re-audit each (a Claude curator changed ONLY operation_type: invalid \"top_k\" → \"projection\"; read the\n  curator_response + full history in each comments.json):\n    datasets/pkdb_bench/staging/largest_lakes_top20_by_area.*\n    datasets/pkdb_bench/staging/largest_sauropods_by_estimated_mass.*\n    datasets/pkdb_bench/staging/who_global_top_15_leading_causes_of_death_2021.*\n  VERIFY per instance: operation_type==\"projection\" is a valid enum value AND a valid pairing for\n  query_category=top_k ({projection,filter,union+filter}); rows/query_category/db_analog unchanged; still\n  0/0/0.\n  (Do NOT re-endorse \"top_k\" as an operation_type — that was the original defect.)\n  Append a re-audit entry per instance; return a 3-line verdict block."
+    },
+    {
+      "role": "assistant",
+      "content": "T-R5 operation_type re-audit: Ready+Clean — lockable, 0 BLOCKING / 0 NON-BLOCKING HYGIENE / 0 SUGGESTION.\n\nScope audited:\n- Read current `largest_lakes_top20_by_area.csv`, `.draft.json`, `.curation.json`, and full `.comments.json` history, including the 2026-06-02 curator_response.\n- Checked authoritative enum evidence: `curation_ui/app.py::OPERATION_TYPES` lists `projection` and does not list `top_k`.\n- Checked top_k pairing contract from the curator_response/prompt: for `query_category=top_k`, allowed operation types are `{projection, filter, union+filter}`.\n\nVerification:\n- Current `draft.json::operation_type` is `projection`; it is a valid enum member and valid for `query_category=top_k`.\n- Current `draft.json::query_category` remains `top_k`; `secondary_category` remains `geographic`.\n- Current `draft.json::db_analog` remains `SELECT lake, continent, type, area_km2, max_depth_m FROM lakes ORDER BY area_km2 DESC LIMIT 20`, a ranked column projection with no WHERE predicate.\n- CSV preflight passes: 20 rows x 5 columns; header matches `draft.json::columns`; `Lake` PK is unique and nonblank; `source_count=1 == len(source_urls)`.\n- Prior source/row verdict remains intact: comments history has cycle-2 Ready+Clean 0/0/0 after source and row checks against `https://en.wikipedia.org/wiki/List_of_lakes_by_area` / Conventional list top-20 rows. This re-audit did not re-open row-source findings because the repair was metadata-only.\n- Historical `operation_type=top_k` statements in the long curation decision history are explicitly superseded by the 2026-06-02 metadata-fix paragraph and by the current draft value; I do not endorse those old statements as valid current metadata.\n\nFindings: none.\nCounts: BLOCKING 0 / NON-BLOCKING HYGIENE 0 / SUGGESTION 0; factual 0 / structural 0 / scope-related 0.\nMinimal fixes: none."
     }
   ],
   "_audit_metadata": {
@@ -51,6 +81,21 @@
         "bundle": "Full pre-registration sweep (cycle-2 bounded verification)",
         "verdict": "Ready",
         "blocking_issue_count": 0
+      },
+      {
+        "audited_by": "codex",
+        "audited_at": "2026-06-04T22:18:35+00:00",
+        "bundle": "T-R5 operation_type re-audit",
+        "verdict": "Ready+Clean / lockable",
+        "blocking_issue_count": 0,
+        "non_blocking_hygiene_count": 0,
+        "suggestion_count": 0,
+        "issue_type_counts": {
+          "factual": 0,
+          "structural": 0,
+          "scope-related": 0
+        },
+        "lockable": true
       }
     ]
   }

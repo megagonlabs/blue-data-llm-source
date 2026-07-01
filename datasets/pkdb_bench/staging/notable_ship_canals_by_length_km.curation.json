@@ -1,0 +1,157 @@
+{
+  "id": "notable_ship_canals_by_length_km",
+  "claim_type": "source_defined",
+  "claim_type_rationale": "Per cycle-1 audit confirmation: 'Claim type: source_defined.' Universe is the closed canonical 11-entry 'Notable ship canals' table from Wikipedia's `Ship canal` master article. Universe membership = 'canal appears in the master article Notable ship canals table' — no curator judgment. Per-row cell values (Canal name + Year Opened + Length km + Maximum Ship Dimensions + Route Endpoints) all source-extractive per cycle-1 audit's verbatim 11-row dump. Mirror precedents for closed-canonical-table source_defined: `decade_volcanoes_by_continent` (IAVCEI 16-entry list), `phanerozoic_periods_by_start_age` (12-period ICS universe), `global_200_tropical_moist_broadleaf_forest_ecoregions_by_realm` (WWF 51-entry list).",
+  "collection_summary": {
+    "approach": "Pre-curation design pass (1 round of pre-staging design review). Cycle-1 verdict: 'Revise Before Cycle-0 Staging' with 2 BLOCKING + 2 SUGGESTION fixes. BLOCKING #1: source-plan pivot from 'List of canals' (broad list-of-lists, not master table) to 'Ship canal' article's 'Notable ship canals' table (uniform 11-row table with 5-cell structure). BLOCKING #2: preview universe corrected to 11 master-table rows (my preview had 6 out-of-scope canals + missed 2 in-scope canals; audit provided verbatim master dump). SUGGESTION #1: ID rename `major_international_ship_canals_by_length_km` → `notable_ship_canals_by_length_km` (master title is 'Notable ship canals'; entries include domestic ship channels like Houston + Welland — 'international' inaccurate). SUGGESTION #2: schema column 'Connecting Bodies of Water' renamed to 'Route Endpoints' per master cell format (master gives start/end points, not consistently seas/oceans/rivers). All 4 cycle-1 fixes applied at cycle-0 staging using audit's verbatim 11-row dump. Single-round pre-staging review enabled by audit's clean master-derived dump in cycle-1.",
+    "universe_size": 11,
+    "partition_structure": "Closed canonical 11-entry 'Notable ship canals' universe per Wikipedia `Ship canal` master article. Length distribution: 600 km (Saint Lawrence Seaway compound waterway) / 227 km (White Sea–Baltic) / 193.3 km (Suez) / 171 km (Rhine–Main–Danube) / 101 km (Volga–Don) / 98 km (Kiel) / 80 km (Houston Ship Channel) / 77 km (Panama) / 64.4 km (Danube–Black Sea) / 58 km (Manchester Ship Canal) / 43.4 km (Welland — shortest, clears 10-row gate). Single PK Canal.",
+    "row_count_check": "11 rows match cycle-1 audit's verbatim master-derived dump. Welland Canal Year Opened = 1932 reflects the Fourth Welland Canal (current) — the original Welland Canal opened 1829 but master shows 1932 per current-canal convention."
+  },
+  "source_coverage_notes": {
+    "roles": [
+      {
+        "url": "https://en.wikipedia.org/wiki/Ship_canal",
+        "roles": ["universe", "value"],
+        "role_note": "universe: Wikipedia `Ship canal` master article's 'Notable ship canals' table enumerates the closed canonical 11-entry universe of notable ship canals worldwide. value: supplies Canal name + Year Opened + Length (km) + Maximum Ship Dimensions (m) + Route Endpoints cell values for all 11 staged rows via the master's consolidated 5-column compound table."
+      }
+    ],
+    "validation_cross_checks": {
+      "rationale": "No validation cross-checks documented for this instance. Per cycle-1 audit confirmation: source_count = 1 with Wikipedia `Ship canal` article's 'Notable ship canals' table as the sole authoritative source. Per-canal Wikipedia articles exist (Suez Canal, Panama Canal, etc.) but would provide redundant context — master table is sufficient for all 5 cell types."
+    },
+    "source_count": 1,
+    "source_grounding_summary": "1 registered source (Ship_canal Wikipedia article's 'Notable ship canals' table: roles = [universe, value]). No additional validation cross-checks documented — master article's compound table is authoritative for all 5 cell types."
+  },
+  "decision_log": [
+    {
+      "decision": "claim_type = source_defined (closed canonical 11-entry 'Notable ship canals' table)",
+      "rationale": "Per cycle-1 audit confirmation: 'Claim type: source_defined.' The Wikipedia `Ship canal` article's 'Notable ship canals' table is a closed 11-entry curated table maintained as the canonical reference for notable ship canals. Universe membership = 'in the master Notable ship canals table' — no curator judgment. All 5 cells source-extractive."
+    },
+    {
+      "decision": "Source pivot from 'List of canals' to 'Ship canal' article's 'Notable ship canals' table",
+      "rationale": "Per cycle-1 audit BLOCKING fix #1: 'Wikipedia's List of canals by country is a broad list-of-lists plus country bullets, not a uniform master table with length/opening/connection cells. List of waterways is explicitly marked incomplete. The clean Wikipedia master for this design is the Ship canal article's Notable ship canals table, which has a closed 11-row table with canal name, year opened, length, maximum ship dimensions, start point, and end point.' Pivot accepted. Audit-provided URL: https://en.wikipedia.org/wiki/Ship_canal."
+    },
+    {
+      "decision": "Universe = 11 master-table rows exactly (NOT length-threshold-filtered subset of broader canal list)",
+      "rationale": "Per cycle-1 audit BLOCKING fix #2: 'Use the 11 master-table rows exactly; no separate length threshold is needed. The shortest listed row is Welland Canal at 43.4 km, so the table already clears the 10-row gate.' Several preview rows were out of scope (Grand Canal of China, Erie Canal, Rideau Canal, Göta Canal, Albert Canal, Caledonian Canal — all NOT in master 'Notable ship canals' table). Conversely Houston Ship Channel + Danube–Black Sea Canal + Saint Lawrence Seaway were in master but missing from my preview. Cycle-1 audit's verbatim 11-row dump used at cycle-0 staging."
+    },
+    {
+      "decision": "ID rename: `major_international_ship_canals_by_length_km` → `notable_ship_canals_by_length_km`",
+      "rationale": "Per cycle-1 audit SUGGESTION #1: 'Avoid international in the ID/title. The source table is notable ship canals, and several entries are domestic waterways.' Houston Ship Channel + Welland Canal + Manchester Ship Canal are domestic ship channels (not international). Master title 'Notable ship canals' is the canonical phrasing."
+    },
+    {
+      "decision": "Schema 5-col: Canal + Year Opened + Length (km) + Maximum Ship Dimensions (m) + Route Endpoints (NOT 'Connecting Bodies of Water')",
+      "rationale": "Per cycle-1 audit SUGGESTION #2: 'Avoid Connecting Bodies of Water unless it is renamed to Route Endpoints; the master table gives start/end points, not consistently seas/oceans/rivers.' Master cell format is 'Country: Start — Country: End' with em-dash separator. Renamed column to 'Route Endpoints' to match master's text format. Maximum Ship Dimensions (m) is master's compound cell format 'length x beam x draft' (e.g., '226 x 24 x 8'). Both cells kept as text type."
+    },
+    {
+      "decision": "Welland Canal Year Opened = 1932 (current Fourth Welland Canal — NOT 1829 original)",
+      "rationale": "Per cycle-1 audit master-derived dump: Welland Canal Year Opened in master = 1932 reflecting the current Fourth Welland Canal (opened 1932 after 1913-1932 construction). The original Welland Canal opened 1829 (First Welland Canal); subsequent rebuilds: Second 1845, Third 1887, Fourth 1932. Master article uses current-canal convention (Fourth Welland Canal). Documented in normalization_decisions."
+    },
+    {
+      "decision": "Category = comparative primary + set_filter secondary; operation_type = filter",
+      "rationale": "Per cycle-1 audit confirmation: 'Category: comparative, Secondary: set_filter, operation_type: filter.' Comparative primary because the row universe is ordered by a numeric attribute (Length km) — mirror precedent `worlds_tallest_dams_by_structural_height` (Height DESC), `skyscrapers_at_least_500_meters_worldwide` (≥500m threshold). set_filter secondary because the universe is set-filtered to 'Notable ship canals' membership. operation_type = filter (universe selection by master-table membership)."
+    },
+    {
+      "decision": "Domain = Transportation/Maritime (existing); entity class = engineered-structures/canals (NEW fine-class)",
+      "rationale": "Per cycle-1 audit confirmation: 'Domain: Transportation/Maritime; Entity class: engineered-structures/canals.' Transportation/Maritime is existing subdomain (alongside Aviation, Logistics, Road-Traffic). NEW engineered-structures/canals fine-class extending engineered-structures bucket from 5 to 6 instances (joining bridges, buildings, dams, airports + parallel-agent additions)."
+    },
+    {
+      "decision": "Sort = Length (km) DESC (curator-normalized; NOT master's native order)",
+      "rationale": "Per cycle-1 audit confirmation: 'Sort: Length (km) DESC.' This is a **curator-normalized sort** — the Wikipedia `Ship canal` article's 'Notable ship canals' table is NOT natively length-sorted; the staged Length DESC ordering is applied during curation for benchmark-consistent natural-ranking presentation. Mirror precedent for curator-normalized DESC sort on engineered-structures comparative instances: `worlds_tallest_dams_by_structural_height` (Height DESC), `largest_asteroids_with_geometric_mean_diameter_above_250_km` (Diameter DESC) — both apply curator-normalized DESC sort even when master display order differs."
+    }
+  ],
+  "normalization_decisions": [
+    {
+      "field": "Canal",
+      "rule": "Canal name verbatim per master 'Notable ship canals' table row labels. 11 closed values: Saint Lawrence Seaway / White Sea–Baltic Canal / Suez Canal / Rhine–Main–Danube Canal / Volga–Don Canal / Kiel Canal / Houston Ship Channel / Panama Canal / Danube–Black Sea Canal / Manchester Ship Canal / Welland Canal. Note en-dash characters ('–' not '-') in multi-name canals: 'White Sea–Baltic', 'Rhine–Main–Danube', 'Volga–Don', 'Danube–Black Sea'. 'Houston Ship Channel' (NOT 'Houston Canal' — Wikipedia article + master use 'Ship Channel'). 'Saint Lawrence Seaway' (compound waterway — included per master)."
+    },
+    {
+      "field": "Year Opened",
+      "rule": "Integer year of opening per master table. For canals with multiple historical versions (Welland Canal: First 1829, Second 1845, Third 1887, Fourth 1932), master uses current-canal version (Welland = 1932 for Fourth Welland Canal). All staged Year Opened values per cycle-1 audit's verbatim dump."
+    },
+    {
+      "field": "Length (km)",
+      "rule": "Numeric length in kilometers per master table. Range: 600 km (Saint Lawrence Seaway, longest compound waterway) → 43.4 km (Welland Canal, shortest in master — clears 10-row gate). Decimal precision varies per master: most are integers, two are 1-decimal (193.3 Suez; 64.4 Danube–Black Sea; 43.4 Welland)."
+    },
+    {
+      "field": "Maximum Ship Dimensions (m)",
+      "rule": "Text in compound format 'length x beam x draft' per master cell convention (e.g., '226 x 24 x 8' for Saint Lawrence Seaway = max ship dimensions 226m length × 24m beam × 8m draft). Suez Canal has 'Unlimited x 78 x 20' = no length limit (only beam + draft constraints). Houston Ship Channel '305 x 161 x 14' (note: 161m beam reflects the wide channel; some sources interpret differently). Preserved verbatim per master cell."
+    },
+    {
+      "field": "Route Endpoints",
+      "rule": "Text in format 'Country: Start point — Country: End point' per master cell convention, with em-dash separator '—' (NOT hyphen). For single-country canals: 'Russia: Lake Onega — White Sea in Belomorsk' (one country prefix, then continuation phrasing). For Panama Canal: 'Panama: Caribbean — Pacific Ocean' (oceanic endpoints). For Suez Canal: 'Egypt: Port Said — Port Tewfik' (two ports). For Saint Lawrence Seaway: 'Canada: Port Colborne — Canada: Montreal' (both endpoints in same country). Country prefix convention follows master."
+    }
+  ],
+  "open_questions": [
+    {
+      "question": "Why does the Saint Lawrence Seaway show 600 km when it's a compound waterway (river + canals + locks)?",
+      "answer": "Per cycle-1 audit's master dump: Wikipedia's Ship canal article includes Saint Lawrence Seaway in 'Notable ship canals' table with 600 km length representing the navigable channel from Port Colborne (Lake Erie) to Montreal. The Seaway is a compound waterway including the Welland Canal + parts of the St. Lawrence River + multiple locks; master treats it as one entry."
+    },
+    {
+      "question": "Why is the Grand Canal of China (1776 km, ancient) NOT in this instance despite being the world's longest canal?",
+      "answer": "Per cycle-1 audit's master-derived dump: Wikipedia's 'Ship canal' article's 'Notable ship canals' table does NOT include the Grand Canal of China. The Grand Canal is in other Wikipedia lists ('List of canals', UNESCO World Heritage Sites) but the strict-master-table universe for this instance excludes it. The 'Ship canal' article's curated 'Notable ship canals' table appears to focus on modern industrial-era ship canals; the ancient Grand Canal (~600 CE) may be classified differently in Wikipedia's canal categorization."
+    },
+    {
+      "question": "Why is Welland Canal Year Opened = 1932 instead of 1829 (original)?",
+      "answer": "Per cycle-1 audit master dump: Wikipedia master uses the Fourth Welland Canal opening year (1932) which is the current operational canal. The First Welland Canal opened 1829; rebuilt 1845 (Second), 1887 (Third), 1932 (Fourth/current). Master's current-canal convention used."
+    },
+    {
+      "question": "What about the Erie Canal, Rideau Canal, Caledonian Canal — why excluded?",
+      "answer": "Per cycle-1 audit: those canals are NOT in Wikipedia's 'Ship canal' article 'Notable ship canals' table. Erie Canal (584 km, 1825) is famous historically but the master table excludes it — possibly because it's no longer used for ship transit and is now primarily heritage/recreational. Rideau Canal (Canada, 1832) is UNESCO World Heritage but not in master 'Notable ship canals' table. Caledonian Canal (Scotland, 1822) similarly excluded. Strict-master-table policy preserves source_defined cleanly."
+    },
+    {
+      "question": "Why is Houston Ship Channel included alongside major international canals like Suez/Panama?",
+      "answer": "Per cycle-1 audit's master-derived dump: Wikipedia's 'Ship canal' article's 'Notable ship canals' table includes Houston Ship Channel (80 km, opened 1914 — same year as Panama Canal coincidentally) reflecting its status as one of the busiest US ship channels handling significant ocean-going traffic. The 'notable' framing in master title encompasses ship-channel infrastructure broadly, not just international/iconic canals."
+    }
+  ],
+  "proposed_supplements": [],
+  "audit_trail_pre_curation": {
+    "cycle_0_source_exploration": {
+      "task": "Verify source structure for the major canals candidate (extend engineered-structures bucket 5→6 with NEW canals fine-class)",
+      "outcome": "Initial design assumed 'List of canals' or 'List of major canals' as master. Cycle-1 audit pivot pointed to 'Ship canal' article's 'Notable ship canals' table as the proper closed-canonical 11-row master.",
+      "deliverable": "Initial design proposal with 5-col schema + length threshold filter + 'major international canals' framing. Cycle-1 audit identified 2 BLOCKING + 2 SUGGESTION fixes."
+    },
+    "cycle_1_audit_design_review": {
+      "task": "Audit agent reviews cycle-0 design proposal BEFORE staging",
+      "verdict": "Revise Before Cycle-0 Staging (2 BLOCKING + 2 SUGGESTION)",
+      "blocking_findings": [
+        "BLOCKING #1: Source/universe mismatch — 'List of canals by country' is a broad list-of-lists (not uniform master table); 'List of waterways' is explicitly incomplete. Pivot to 'Ship canal' article's 'Notable ship canals' table (closed 11-row master with 5-cell structure).",
+        "BLOCKING #2: Preview universe contains out-of-scope rows — 6 canals in my preview not in master table (Grand Canal, Erie Canal, Rideau Canal, Göta Canal, Albert Canal, Caledonian Canal); master includes Houston Ship Channel + Danube–Black Sea Canal which I missed; Saint Lawrence Seaway should be included per master. Use 11 master-table rows exactly."
+      ],
+      "suggestions": [
+        "SUGGESTION #1: Avoid 'international' in ID/title — master is 'notable ship canals', several entries are domestic (Houston Ship Channel + Welland Canal). Rename to `notable_ship_canals_by_length_km`.",
+        "SUGGESTION #2: Schema column 'Connecting Bodies of Water' should be renamed 'Route Endpoints' per master cell format (master gives start/end points, not consistently seas/oceans/rivers)."
+      ],
+      "master_derived_row_list_dump": "Audit provided full 11-row master-derived 'Notable ship canals' dump verbatim with all 5 cell values populated. Used at cycle-0 staging.",
+      "deliverable": "All 2 BLOCKING + 2 SUGGESTION fixes applied at cycle-0 staging using audit's verbatim 11-row dump. No cycle-2 design review needed."
+    },
+    "cycle_0_staging": {
+      "task": "Stage cycle-0 artifacts (CSV + draft.json + curation.json) with cycle-1 fixes applied",
+      "files_written": [
+        "datasets/pkdb_bench/staging/notable_ship_canals_by_length_km.csv (11 rows × 5 cols)",
+        "datasets/pkdb_bench/staging/notable_ship_canals_by_length_km.draft.json (5-col schema + locked properties)",
+        "datasets/pkdb_bench/staging/notable_ship_canals_by_length_km.curation.json (this file)"
+      ],
+      "deliverable": "Cycle-0 staging complete. 11 rows × 5 cols. Single PK Canal. source_count = 1 (Wikipedia Ship canal article master). All 55 cell values committed verbatim per cycle-1 audit's master-derived dump. Sort: Length (km) DESC. Ready for cycle-1 post-staging audit."
+    },
+    "cycle_1_post_staging_audit": {
+      "task": "Audit agent reviews staged artifacts (full pre-registration sweep)",
+      "verdict": "Ready with residual hygiene — 0 BLOCKING / 1 NON-BLOCKING HYGIENE / 0 SUGGESTION. All 11 CSV rows match Wikipedia Ship canal 'Notable ship canals' table; PK uniqueness, schema, source_count=1, source URL, category, sort correct; edge cells pass (Welland 1932, Suez 'Unlimited x 78 x 20', Houston '305 x 161 x 14', en-dashes / diacritics / em-dash endpoints all preserved).",
+      "hygiene_findings": [
+        "HYGIENE (prose-only): curation.json::decision_log Sort entry incorrectly characterized Length DESC as 'Master's native sort order', but the Wikipedia Ship canal 'Notable ship canals' table is NOT natively length-sorted. The staged sort is correct (Length DESC), but the rationale prose should say 'curator-normalized Length (km) DESC sort' not master-native. Prose-only correction; no CSV / schema / source repair needed."
+      ],
+      "deliverable": "Cycle-2 hygiene repair required: rewrite decision_log Sort entry rationale to characterize Length DESC as curator-normalized sort (NOT master-native)."
+    },
+    "cycle_2_post_staging_repair": {
+      "task": "Apply cycle-1 NON-BLOCKING HYGIENE prose-only fix",
+      "changes_made": [
+        "curation.json::decision_log Sort entry rationale rewritten: removed 'Master's native sort order' claim; replaced with explicit 'curator-normalized sort — the Wikipedia Ship canal article Notable ship canals table is NOT natively length-sorted; the staged Length DESC ordering is applied during curation for benchmark-consistent natural-ranking presentation' framing. Mirror-precedent references preserved (worlds_tallest_dams + largest_asteroids both apply curator-normalized DESC sort) with added clarification 'even when master display order differs'.",
+        "Decision title updated: 'Sort = Length (km) DESC' → 'Sort = Length (km) DESC (curator-normalized; NOT master's native order)' for explicit characterization.",
+        "No CSV cells, schema, source_urls, source_count, claim_type, category, operation_type, gt_construction, domain, entity class, or PK changed in cycle-2 — single prose-only fix to decision_log Sort entry rationale."
+      ],
+      "deliverable": "Cycle-2 hygiene repair complete. Sort attribution now correctly characterized as curator-normalized (not master-native). Ready for cycle-2 verification audit."
+    }
+  },
+  "_curated_by": "claude-code",
+  "_curated_at": "2026-05-19T00:00:00Z"
+}

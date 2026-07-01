@@ -95,11 +95,11 @@
   "normalization_decisions": [
     {
       "field": "Event",
-      "rule": "Verbatim from master's 'Epidemics/pandemics' column. 19 unique event names. Includes special-character preservation: '1918 \"Spanish\" influenza pandemic' with double-quotes around 'Spanish' (CSV-escaped); 'Cocoliztli epidemic 1545–1548' + 'Cocoliztli epidemic of 1576' as two distinct events; '735–737 Japanese smallpox epidemic' with em-dash. Event names preserve master's capitalization + plural/singular conventions."
+      "rule": "Verbatim from master's 'Epidemics/pandemics' column. 19 unique event names. Includes special-character preservation: '1918 \"Spanish\" influenza pandemic' with double-quotes around 'Spanish' (CSV-escaped); 'Cocoliztli epidemic of 1545–1548' + 'Cocoliztli epidemic of 1576' as two distinct events (both with the 'of' connector per master); '735–737 Japanese smallpox epidemic' with em-dash. Event names preserve master's capitalization + plural/singular conventions."
     },
     {
       "field": "Disease",
-      "rule": "Verbatim from master's Disease column. Multi-disease cells preserved with master's 'or' delimiter ('Smallpox or measles' for Antonine Plague; 'Influenza or human coronavirus OC43' for 1889-90). Specific-strain notation preserved ('Influenza A/H1N1', 'Influenza A/H2N2', 'Influenza A/H3N2'). Unidentified-pathogen disclaimer preserved ('Cocoliztli (unidentified pathogen)' for the 1545-1548 entry — parenthetical disclaimer is master-native)."
+      "rule": "Verbatim from master's Disease column. Multi-disease cells preserved with master's 'or' delimiter ('Smallpox or measles' for Antonine Plague; 'Influenza or human coronavirus OC43' for 1889-90). Specific-strain notation preserved ('Influenza A/H1N1', 'Influenza A/H2N2', 'Influenza A/H3N2'). Unidentified-pathogen disclaimer preserved ('Cocoliztli, caused by an unidentified pathogen' for the 1545–1548 entry — the comma-separated 'caused by an unidentified pathogen' phrase is master-native; the 1576 Cocoliztli entry uses just 'Cocoliztli' without disclaimer)."
     },
     {
       "field": "Death Toll",
@@ -111,7 +111,7 @@
     },
     {
       "field": "Location",
-      "rule": "Source-verbatim text. Multi-region cells preserved with master's comma-space delimiter ('North Africa, Europe, Western Asia'; 'Europe, Asia, North Africa'). Generic 'Worldwide' preserved for global pandemics. Region-specific labels preserved verbatim ('Roman Empire', 'Persia', 'Southern Italy', 'Mexico')."
+      "rule": "Source-verbatim text. Multi-region cells preserved with master's comma-space + final-'and' Oxford-style delimiter ('North Africa, Europe, and Western Asia' for Plague of Justinian; 'Europe, Asia, and North Africa' for Black Death). Generic 'Worldwide' preserved for global pandemics. Region-specific labels preserved verbatim ('Roman Empire', 'Persia', 'Southern Italy', 'Mexico')."
     }
   ],
   "open_questions": [
@@ -172,7 +172,15 @@
         "  (d) Antonine Plague Years: '165–180' → '165–180 (possibly up to 190)' (preserved master's parenthetical date-uncertainty disclaimer).",
         "Fixes applied to CSV (4 rows) + curation.json::universe_listing (4 entries). draft.json unchanged (no cell-level data in draft prose; only universe-level metadata). The 19-row × 5-col universe + PK uniqueness + source_count=1 + sort order preserved unchanged."
       ],
-      "deliverable": "4 cell-level fixes applied. Instance is Ready+Clean pending cycle-3 verification."
+      "deliverable": "4 cell-level fixes applied. Cycle-2 left 1 NON-BLOCKING HYGIENE finding (stale pre-repair example strings in active prose); cleaned up in cycle-3."
+    },
+    "cycle_3_post_staging_hygiene": {
+      "task": "Cycle-2 verification audit found 0 BLOCKING + 1 NON-BLOCKING HYGIENE structural finding (stale pre-repair example strings in active metadata prose); cycle-3 applied the prose-only cleanup.",
+      "verdict": "Ready (0 BLOCKING); 1 HYGIENE structural finding cleaned up in-place during cycle-3. The 4 cell-level fixes from cycle-2 landed cleanly in the CSV per cycle-2 audit verification; only the active-prose example strings needed cycle-3 cleanup.",
+      "fixes_applied": [
+        "1. (HYGIENE / structural) Cleaned up stale pre-repair example strings in 4 active-prose locations: (a) draft.json::temporal_note Location example list — 'North Africa, Europe, Western Asia'; 'Europe, Asia, North Africa' → 'North Africa, Europe, and Western Asia'; 'Europe, Asia, and North Africa' (added 'and' to match cycle-2's corrected Location cells); (b) curation.json::normalization_decisions Event rule — 'Cocoliztli epidemic 1545–1548' → 'Cocoliztli epidemic of 1545–1548' (added 'of' to match cycle-2 fix); (c) curation.json::normalization_decisions Disease rule — 'Cocoliztli (unidentified pathogen)' → 'Cocoliztli, caused by an unidentified pathogen' (full master phrase to match cycle-2 fix); (d) curation.json::normalization_decisions Location rule — added Oxford-style 'and' delimiter description with corrected example pair. Historical cycle-2 narration in audit_trail describes the pre-repair → post-repair transition explicitly and stays unchanged."
+      ],
+      "deliverable": "Prose alignment with cycle-2's corrected cell values complete. Instance is Ready+Clean pending cycle-4 terminal verification."
     }
   },
   "_curated_by": "claude-code",

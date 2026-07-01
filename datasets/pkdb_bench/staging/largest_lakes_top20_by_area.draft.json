@@ -21,7 +21,7 @@
   "query_category": "top_k",
   "secondary_category": "geographic",
   "db_analog": "SELECT lake, continent, type, area_km2, max_depth_m FROM lakes ORDER BY area_km2 DESC LIMIT 20",
-  "operation_type": "top_k",
+  "operation_type": "projection",
   "source_count": 1,
   "domain": "Geography/Lakes",
   "temporal_sensitivity": "low",

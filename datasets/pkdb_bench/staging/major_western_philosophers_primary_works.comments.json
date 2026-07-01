@@ -29,9 +29,30 @@
       "summary": "Cycle-4 bounded verification pass: Ready with 1 residual HYGIENE that is acceptable at this bounded-verification stage.\n\nVerdict: Ready for registration. This is not `Fully verified Ready+Clean (0 res...",
       "source_cited": "",
       "source_fetch_enabled": false
+    },
+    {
+      "at": "2026-06-03T18:41:52Z",
+      "action": "assistant_response",
+      "summary": "Cycle-5 re-audit: Not ready for lock - 0 blocking, 1 residual hygiene finding.\n\nScope and method\n- Used pkdb-bench-audit in append-only mode. Read SKILL.md, comments-schema.md, audit-bundles.md, curre...",
+      "source_cited": "",
+      "source_fetch_enabled": false
+    },
+    {
+      "at": "2026-06-03T18:46:03+00:00",
+      "action": "repair_applied",
+      "summary": "Cleanup cycle 6 (addresses codex cycle-5 residual HYGIENE H1): replaced the 4 remaining current-state 'Primary Work' phrases (temporal_note opener, _extraction_notes criterion 1, normalization_decisions criterion c, open_questions item 3) with the agreed 'curator-selected single work from source-listed major works' framing. Wording-only...",
+      "source_cited": "",
+      "source_fetch_enabled": false
+    },
+    {
+      "at": "2026-06-03T18:51:03Z",
+      "action": "assistant_response",
+      "summary": "Cycle-6 final confirmation re-audit: Ready and lockable - 0 findings.\n\nScope and method\n- Used pkdb-bench-audit in append-only mode. Read SKILL.md, comments-schema.md, audit-bundles.md, current CSV/dr...",
+      "source_cited": "",
+      "source_fetch_enabled": false
     }
   ],
-  "chat_summary": "Cycle-4 bounded verification pass: Ready with 1 residual HYGIENE that is acceptable at this bounded-verification stage.\n\nVerdict: Ready for registration. This is not `Fully verified Ready+Clean (0 res...",
+  "chat_summary": "Cycle-6 final confirmation re-audit: Ready and lockable - 0 findings.\n\nScope and method\n- Used pkdb-bench-audit in append-only mode. Read SKILL.md, comments-schema.md, audit-bundles.md, current CSV/dr...",
   "chat_history": [
     {
       "role": "user",
@@ -64,6 +85,22 @@
     {
       "role": "assistant",
       "content": "Cycle-4 bounded verification pass: Ready with 1 residual HYGIENE that is acceptable at this bounded-verification stage.\n\nVerdict: Ready for registration. This is not `Fully verified Ready+Clean (0 residual findings)` because one minor current-state provenance wording residue remains, but there are 0 BLOCKING findings. The cycle-3 fixes for the `180 CE` open-question example and the four named Primary Work provenance locations mostly landed cleanly, and preflight still passes.\n\nFindings:\n1. Residual current-state `most-canonical` / source-identified-primary-work wording remains outside the four repaired locations.\n   - Type/severity: structural, NON-BLOCKING HYGIENE.\n   - Evidence from staged artifacts: `draft.json::temporal_note` now includes the corrected curator-selected sentence, but the same field still opens with `each paired with their most-canonical primary work`. `curation.json::normalization_decisions` still says the universe criteria require `each has a single most-cited primary work that the Wikipedia article identifies in the lead paragraph or 'Notable works' section`, even though the later Primary Work normalization paragraph correctly says this is curator judgment rather than a Wikipedia-source-defined designation. `curation.json::open_questions` item 3 still says `curator-selected most-canonical work`.\n   - Scope of this finding: the four locations named in the cycle-4 prompt are largely corrected: `temporal_note` contains the new curator-selected sentence, `_extraction_notes` step 3 says the source lists and curator selects, `source_coverage_notes` says the article lists multiple major works from which the curator selects one, and `decision_log` Risks/adaptation bullet (b) says the Primary Work cell is curator-selected from the source-listed set. The remaining phrasing is residual polish outside that core repair.\n   - Impact: no registration blocker. The CSV/source plan are unchanged, `claim_type=candidate_rebuild` still honestly declares the curator-bounded universe, and the detailed Primary Work normalization paragraph makes the curator-selection rule explicit. Per the cycle-4 prompt, this is acceptable at the bounded-verification stage.\n   - Minimal cleanup, if ever touched again: replace `most-canonical primary work`, `single most-cited primary work that the Wikipedia article identifies`, and `curator-selected most-canonical work` with `curator-selected single work from source-listed major works` or similar.\n\nVerification checks:\n- Primary Work provenance, four requested locations: PASS with the residual wording caveat above. `temporal_note`, `_extraction_notes` step 3, `source_coverage_notes`, and `decision_log` Risks/adaptation bullet (b) now use the curator-selects-from-source-listed framing requested by cycle 4.\n- `open_questions` item 4 BCE/CE example: PASS. It now says `375 BCE`, `180 CE`, negative integer `-375`, and positive integer `180`.\n- Stale `175` / `-340` sweep: PASS for current-state contexts. Residual `175` and `-340` occurrences are confined to the historical cycle-1 / cycle-2 supersession paragraphs in `decision_log`; those are intentional historical record per the audit prompt. Current-state Year prose uses Aristotle `-322` / 335-322 BCE and Marcus Aurelius `180` / `180 AD`.\n- Source-count/source-pattern check: PASS. `draft.json::source_count = 32 = len(source_urls)`, and current-state prose uses the 16 per-philosopher + 16 per-work URL pattern.\n- No new CSV/source issues introduced: PASS. CSV remains 16 rows x 4 columns with Aristotle `-322` and Marcus Aurelius `180`; source_urls remain 32 URLs.\n- Preflight: PASS. Primary key `Philosopher` is unique; no blank cells; CSV header equals `draft.json::columns`; `source_count == len(source_urls) == 32`; row count is >= 10; `query_category=qualitative`, `secondary_category=temporal`, and `operation_type=projection`; `claim_type=candidate_rebuild`; CSV is alphabetically sorted; `domain=Culture/Philosophy` is a valid `Family/Subdomain`-style label and is not misleading.\n\nFinal counts:\n- Severity: BLOCKING 0 / NON-BLOCKING HYGIENE 1 / SUGGESTION 0.\n- Issue type counts: factual 0 / structural 1 / scope-related 0.\n- Ready / Not ready: Ready.\n- Bounded-verification status: Ready with 1 residual HYGIENE that is acceptable at this bounded-verification stage.\n"
+    },
+    {
+      "role": "user",
+      "content": "Re-auidt previous instance:\nmajor_western_philosophers_primary_works >>>\n  /pkdb-bench-audit — read SKILL.md + references/comments-schema.md + references/audit-bundles.md.\n  Read-only on canonical artifacts; append-only to comments.json; tag audited_by:\"codex\".\n  You are the audit half of a curation-audit pair; collaborate with the curator until you return 0/0/0.\n\n  FIRST read the FULL history:\n  datasets/pkdb_bench/staging/major_western_philosophers_primary_works.curation.json\n  (decision_log, normalization_decisions) + .comments.json (ALL audit cycles + chat_history).\n\n  Target: datasets/pkdb_bench/staging/major_western_philosophers_primary_works.*\n    16 rows × 4 cols (Philosopher PK | Primary Work, Year, Tradition);\n  query_category=qualitative/temporal;\n    operation_type=projection; claim_type=candidate_rebuild; source_count=32.\n  Status: cycle-4 audit was Ready with 1 residual NON-BLOCKING HYGIENE (structural). Curator is clearing\n  it\n  (curation prose only; NO CSV/data/metadata change).\n\n  Verify the curator's fix resolved the hygiene:\n    - The \"Primary Work\" column framing must be CONSISTENT across all current-state curation fields\n      (temporal_note, _extraction_notes step 3, source_coverage_notes, decision_log Risks bullet) — all\n  using\n      the \"curator-selected single work from source-listed major works\" framing.\n    - Confirm NO residual current-state phrasings remain: \"most-canonical primary work\" / \"single\n  most-cited\n      primary work that the Wikipedia article identifies\" / \"curator-selected most-canonical work\".\n      (Historical cycle-1/2 supersession paragraphs may keep old wording — that's intentional record, not\n  a finding.)\n  Then re-check preflight: PK Philosopher unique (16 rows); CSV header == draft columns;\n  source_count=32=len;\n  CSV alphabetically sorted; CSV/data unchanged.\n  Append a re-audit entry; return condensed verdict (Ready 0/0/0, or Not ready + the remaining finding)."
+    },
+    {
+      "role": "assistant",
+      "content": "Cycle-5 re-audit: Not ready for lock - 0 blocking, 1 residual hygiene finding.\n\nScope and method\n- Used pkdb-bench-audit in append-only mode. Read SKILL.md, comments-schema.md, audit-bundles.md, current CSV/draft/curation/comments, all prior audit cycles in _audit_metadata, and the full chat_history.\n- This bounded pass only verifies the cycle-4 residual Primary Work prose cleanup and preflight invariants; it does not re-open row-level philosophy/source choices that earlier cycles accepted.\n\nFinding H1 - Residual current-state Primary Work prose still uses the old most-canonical/source-identified framing. (structural, NON-BLOCKING HYGIENE)\n- Evidence from staged artifacts, not an external validation source: draft.json::temporal_note still says the 16 philosophers are \"each paired with their most-canonical primary work\" before the later corrected curator-selected sentence.\n- Evidence from staged artifacts: draft.json::_extraction_notes pipeline step (1) still says the selection criteria require that \"each has a clear single-most-cited primary work\". Step (3) itself is corrected, but the current-state pipeline criteria are not fully aligned.\n- Evidence from staged artifacts: curation.json::normalization_decisions still says criterion (c) is that \"each has a single most-cited primary work that the Wikipedia article identifies in the lead paragraph or 'Notable works' section\".\n- Evidence from staged artifacts: curation.json::open_questions item 3 still asks whether Primary Work should be a \"curator-selected most-canonical work\".\n- Historical cycle-1/cycle-2 supersession paragraphs were ignored per instruction. The listed occurrences are current-state prose fields, so the cycle-4 structural hygiene item is not resolved to 0/0/0.\n- Minimal repair: replace the remaining current-state phrases with the already-approved framing, e.g. \"curator-selected single work from source-listed major works\" / \"source lists multiple major works; curator selects one by the documented most-anthologized criterion\". Sweep temporal_note, _extraction_notes criteria, normalization_decisions criteria, and open_questions item 3.\n\nVerification checks\n- Required four-location framing: partial pass. _extraction_notes step (3), source_coverage_notes role block, and decision_log Risks/adaptation bullet now use curator-selects-from-source-listed framing; temporal_note contains the corrected sentence but still also has the residual \"most-canonical primary work\" opening phrase.\n- Prohibited current-state phrase sweep: fail for current-state prose. The exact/near-exact prohibited phrases remain as listed in H1.\n- Preflight: pass. CSV remains 16 rows x 4 columns. Primary key Philosopher is unique. Header equals draft.columns. source_count == len(source_urls) == 32. query_category=qualitative, secondary_category=temporal, operation_type=projection, claim_type=candidate_rebuild. CSV is alphabetically sorted by Philosopher. No blank cells.\n- Data/source invariant: pass at this bounded scope. CSV row set and source_count/source_urls remain in the accepted cycle-4 state; no CSV/data/metadata regression was observed.\n\nVerdict\n- Not ready for lock / not 0/0/0.\n- Counts by severity: BLOCKING 0; NON-BLOCKING HYGIENE 1; SUGGESTION 0.\n- Counts by issue type: factual 0; structural 1; scope-related 0.\n- Minimal fixes: replace the remaining current-state Primary Work phrasing in temporal_note, _extraction_notes criteria, normalization_decisions criteria, and open_questions item 3 with \"curator-selected single work from source-listed major works\" wording.\n- Path written: datasets/pkdb_bench/staging/major_western_philosophers_primary_works.comments.json."
+    },
+    {
+      "role": "user",
+      "content": "You are an INDEPENDENT auditor (Agent B) for PKDB-Bench, running a FINAL confirmation re-audit\n  after a hygiene cleanup (curator cycle 6). Your cycle-5 re-audit returned 0 BLOCKING with 1\n  residual NON-BLOCKING HYGIENE (current-state \"Primary Work\" prose). The curator has now swept it.\n  Confirm whether the instance is lockable (0/0/0). Read the CURRENT files on disk.\n\n  Read/follow: .claude/skills/pkdb-bench-audit/SKILL.md ; references/comments-schema.md ;\n  references/audit-bundles.md. AUDITOR IDENTITY: \"audited_by\":\"codex\".\n  GUARDRAILS: APPEND-ONLY; never delete/modify .csv/.draft.json/.curation.json; no /tmp scripts;\n  operate ONLY on datasets/pkdb_bench/staging/major_western_philosophers_primary_works.*\n  comments.json has prior history (5 audits + repair_applied events + 10 chat_history turns) —\n  PRESERVE it and APPEND your re-audit (new chat_events entry; this prompt as a \"user\" chat_history\n  turn + your audit as an \"assistant\" turn; update chat_summary; append a NEW _audit_metadata.audits\n  entry).\n\n  Curator cycle 6 replaced the 4 flagged current-state \"Primary Work\" phrases with the agreed\n  framing\n  \"curator-selected single work from source-listed major works\":\n  1. draft.json temporal_note opening phrase (was \"each paired with their most-canonical primary\n  work\").\n  2. draft.json _extraction_notes pipeline criterion (1) (was \"each has a clear single-most-cited\n  primary work\").\n  3. curation.json normalization_decisions criterion (c) (was \"each has a single most-cited primary\n  work\n     that the Wikipedia article identifies...\").\n  4. curation.json open_questions item 3 (was \"curator-selected most-canonical work\").\n\n  Confirm:\n  1. HYGIENE RESOLUTION: all four current-state locations now use the curator-selected-from-source-\n     listed framing, and NO current-state prose field (temporal_note, _extraction_notes criteria,\n     normalization_decisions criteria, open_questions) still asserts a \"most-canonical /\n  single-most-\n     cited primary work\" as an objective designation. NOTE: the normalization_decisions\n  justification\n     sentence that says the curator-selected framing is \"more honest than 'most-canonical'\" is the\n     agreed rationale and should REMAIN — it is not a violation. Likewise ignore historical\n     cycle-supersession paragraphs.\n  2. NO REGRESSION: 16 rows x 4 cols; PK=Philosopher unique; header==draft.columns; claim_type=\n     candidate_rebuild; query_category=qualitative; no CSV value changed by this cleanup.\n\n  Tag any finding on both axes. TERMINATION: lockable only if 0 BLOCKING + 0 NON-BLOCKING HYGIENE +\n  0 SUGGESTION. End with a condensed verdict block (Ready/Not ready; lockable=all-zeros?; counts by\n  severity; counts by issue type; any fixes; path written)."
+    },
+    {
+      "role": "assistant",
+      "content": "Cycle-6 final confirmation re-audit: Ready and lockable - 0 findings.\n\nScope and method\n- Used pkdb-bench-audit in append-only mode. Read SKILL.md, comments-schema.md, audit-bundles.md, current CSV/draft/curation/comments, and prior audit metadata/history.\n- This pass is bounded to the cycle-6 Primary Work prose cleanup plus no-regression preflight checks.\n\nHygiene-resolution check\n- Resolved. draft.json::temporal_note now says the 16 philosophers are each paired with \"a curator-selected single work from the major works listed in their Wikipedia article\" and the detailed Primary Work sentence says the cell is curator-selected from the set of major works listed in the philosopher article.\n- Resolved. draft.json::_extraction_notes pipeline criterion (1) now says each philosopher has one or more major works listed in their Wikipedia article, from which the curator selects a single Primary Work by the documented most-anthologized criterion; step (3) continues to say the source lists multiple major works and the curator selects one.\n- Resolved. curation.json::normalization_decisions criterion (c) now says each philosopher has one or more major works listed in the Wikipedia article lead / Notable works section, from which the curator selects a single Primary Work by the documented criterion.\n- Resolved. curation.json::open_questions item 3 now asks whether Primary Work should be a \"curator-selected single work from the source-listed major works\" or a comprehensive list.\n- Prohibited current-state phrasing check passed for the requested fields: no current-state temporal_note, _extraction_notes criteria, normalization_decisions criteria, or open_questions field still asserts an objective \"most-canonical\" or \"single-most-cited\" Primary Work designation. The retained normalization_decisions rationale that the curator-selected framing is more honest than \"most-canonical\" is acceptable per prompt.\n\nNo-regression checks\n- CSV remains 16 rows x 4 columns.\n- Primary key Philosopher is unique: 0 duplicate PKs.\n- CSV header equals draft.columns exactly.\n- source_count == len(source_urls) == 32.\n- claim_type=candidate_rebuild; query_category=qualitative; secondary_category=temporal; operation_type=projection.\n- CSV remains alphabetically sorted by Philosopher and matches the previously accepted row/value set; no CSV value change was observed in this prose-only cleanup.\n\nFindings\n- None.\n\nVerdict\n- Ready.\n- Lockable: yes, all-zero audit.\n- Counts by severity: BLOCKING 0; NON-BLOCKING HYGIENE 0; SUGGESTION 0.\n- Counts by issue type: factual 0; structural 0; scope-related 0.\n- Minimal fixes: none.\n- Path written: datasets/pkdb_bench/staging/major_western_philosophers_primary_works.comments.json."
     }
   ],
   "_audit_metadata": {
@@ -104,6 +141,65 @@
         "blocking_issue_count": 0,
         "non_blocking_hygiene_count": 1,
         "suggestion_count": 0
+      },
+      {
+        "audited_by": "codex",
+        "audited_at": "2026-06-03T18:41:52Z",
+        "bundle": "Cycle-5 re-audit / bounded prose-cleanup verification",
+        "cycle": 5,
+        "audit_mode": "re_audit_after_primary_work_prose_cleanup",
+        "target_instance": "major_western_philosophers_primary_works",
+        "verdict": "Not ready",
+        "ready": false,
+        "lockable": false,
+        "blocking_issue_count": 0,
+        "non_blocking_hygiene_count": 1,
+        "suggestion_count": 0,
+        "counts_by_severity": {
+          "BLOCKING": 0,
+          "NON-BLOCKING HYGIENE": 1,
+          "SUGGESTION": 0
+        },
+        "counts_by_issue_type": {
+          "factual": 0,
+          "structural": 1,
+          "scope-related": 0
+        },
+        "findings": [
+          {
+            "id": "H1",
+            "type": "structural",
+            "severity": "NON-BLOCKING HYGIENE",
+            "summary": "Residual current-state Primary Work prose still uses most-canonical/source-identified wording instead of the curator-selected-from-source-listed framing."
+          }
+        ],
+        "path_written": "datasets/pkdb_bench/staging/major_western_philosophers_primary_works.comments.json"
+      },
+      {
+        "audited_by": "codex",
+        "audited_at": "2026-06-03T18:51:03Z",
+        "bundle": "Cycle-6 final confirmation re-audit / prose-cleanup verification",
+        "cycle": 6,
+        "audit_mode": "final_confirmation_after_primary_work_hygiene_cleanup",
+        "target_instance": "major_western_philosophers_primary_works",
+        "verdict": "Ready",
+        "ready": true,
+        "lockable": true,
+        "blocking_issue_count": 0,
+        "non_blocking_hygiene_count": 0,
+        "suggestion_count": 0,
+        "counts_by_severity": {
+          "BLOCKING": 0,
+          "NON-BLOCKING HYGIENE": 0,
+          "SUGGESTION": 0
+        },
+        "counts_by_issue_type": {
+          "factual": 0,
+          "structural": 0,
+          "scope-related": 0
+        },
+        "findings": [],
+        "path_written": "datasets/pkdb_bench/staging/major_western_philosophers_primary_works.comments.json"
       }
     ]
   }

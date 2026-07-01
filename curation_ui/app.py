@@ -19,17 +19,29 @@ from bs4 import BeautifulSoup
 
 ROOT = Path(__file__).resolve().parents[1]
 PKDB_DIR = ROOT / "datasets" / "pkdb_bench"
+DOCS_DIR = PKDB_DIR / "docs"
 CFG_PATH = PKDB_DIR / "cfg.json"
 TABLES_DIR = PKDB_DIR / "tables"
 STAGING_DIR = PKDB_DIR / "staging"
 REVIEW_LOGS_DIR = PKDB_DIR / "review_logs"
-CATEGORIES_PATH = ROOT / "md_claude_code" / "pkdb_bench" / "categories.txt"
+DOMAIN_TAXONOMY_PATH = DOCS_DIR / "domain_taxonomy.md"
+CATEGORIES_PATH = DOCS_DIR / "categories.txt"
 
 APP_TITLE = "PKDB-Bench Curation UI"
 CHAT_REQUEST_TIMEOUT_SECONDS = 60
 SOURCE_FETCH_TIMEOUT_SECONDS = 15
 MAX_SOURCE_CHARS_PER_URL = 4000
 MAX_TOTAL_SOURCE_CONTEXT_CHARS = 20000
+MAX_DOMAIN_TAXONOMY_CHARS = 8000
+BENCHMARK_TARGET_TOTAL = 82
+BENCHMARK_CATEGORY_COUNT = 15
+CATEGORY_TARGETS = {
+    "set_operation": 8,
+    "implicit_join": 8,
+    "multi_attribute_projection": 8,
+    "factual_lookup": 3,
+}
+DEFAULT_CATEGORY_TARGET = 5
 
 CHAT_PROVIDERS = {
     "Anthropic": {
@@ -152,7 +164,7 @@ CHAT_PROMPT_LIBRARY = {
     "Validate metadata": (
         "Review the benchmark registration draft against the table and sources using the current benchmark protocol, not an idealized external standard. "
         "Treat approved source tiers as acceptable when they are honestly declared in metadata, and focus on whether the instance is accurate and non-misleading under current policy. "
-        "Check whether table_title, query_category, db_analog, operation_type, primary_key, column_types, source_count, domain, temporal_sensitivity, gt_construction, temporal_note, and source_urls accurately describe the current instance. "
+        "Check whether table_title, query_category, db_analog, operation_type, primary_key, column_types, source_count, domain (using datasets/pkdb_bench/docs/domain_taxonomy.md), temporal_sensitivity, gt_construction, temporal_note, and source_urls accurately describe the current instance. "
         "Separate blocking metadata issues under current policy from non-blocking improvement suggestions, and flag any metadata that would mislead later benchmark analysis."
     ),
     "Suggest db_analog": (
@@ -236,7 +248,7 @@ CHAT_PROMPT_BUNDLES = {
         "Do not equate 'non-authoritative' with 'invalid' if the current source tier is allowed and honestly declared, but keep coverage checks rigorous: assess whether the cited sources actually support every row and the claimed scope. "
         "Before concluding, run a bounded Wiki-family source discovery pass (linked/sibling Wikipedia pages, individual entity pages, Wikidata pages, or SPARQL sanity checks) and decide whether the staged source set is missing a more direct Wikipedia or Wikidata source. "
         "In one response, do all of the following:\n"
-        "1. summarize what each cited source contributes,\n"
+        "1. summarize what each cited source contributes, including its role (universe / ranking / value / validation / entity-detail) per the curation skill's artifact-contract Source Roles convention, and flag any multi-source instance with no clearly identified universe source,\n"
         "2. assess whether the table is complete for the stated query scope,\n"
         "3. estimate the expected coverage or row-count range implied by the sources, including per-partition counts for partitioned queries,\n"
         "4. identify any mismatch between the query wording and what the sources actually support,\n"
@@ -251,7 +263,7 @@ CHAT_PROMPT_BUNDLES = {
         "Separate blocking issues under current policy from non-blocking improvement suggestions. "
         "In one response, do all of the following:\n"
         "1. validate the benchmark registration draft against the table and sources,\n"
-        "2. assess whether db_analog, query_category, operation_type, primary_key, column_types, gt_construction, temporal_note, temporal_sensitivity, source_count, and source_urls are correct,\n"
+        "2. assess whether db_analog, query_category, operation_type, primary_key, column_types, gt_construction, temporal_note, temporal_sensitivity, source_count, domain (using datasets/pkdb_bench/docs/domain_taxonomy.md), and source_urls are correct,\n"
         "3. assess whether the current total and per-partition row count / expected cardinality story is documented clearly enough for registration,\n"
         "4. assess whether the content is appropriate for LLM parametric-knowledge benchmarking,\n"
         "5. check whether the instance would support later per-type and calibration analysis without misleading metadata,\n"
@@ -269,9 +281,9 @@ CHAT_PROMPT_BUNDLES = {
         "3. normalization, table-shape quality, and column-type consistency,\n"
         "4. expected total and per-partition row-count / cardinality estimate, partition sanity, and unique-key sanity,\n"
         "5. missing Wiki-family source check: whether a more direct Wikipedia or Wikidata source exists and would change scope, coverage, ranking, or provenance,\n"
-        "6. source quality, source tier, and source-to-query scope match,\n"
+        "6. source quality, source tier, source-to-query scope match, and whether each source_urls entry has a documented role (universe / ranking / value / validation / entity-detail) per the curation skill's artifact-contract Source Roles convention,\n"
         "7. table completeness for the intended scope,\n"
-        "8. cfg metadata correctness,\n"
+        "8. cfg metadata correctness, including whether domain follows datasets/pkdb_bench/docs/domain_taxonomy.md closely enough for benchmark stratification,\n"
         "9. LLM-knowable fit for the benchmark,\n"
         "10. whether this instance helps the benchmark's intended multi-source / structured extraction story,\n"
         "11. final Ready / Not ready judgment, clearly separating blocking issues under current policy from non-blocking upgrade suggestions.\n"
@@ -427,6 +439,10 @@ def delete_staged_instance(instance_id: str) -> None:
             path.unlink()
 
 
+def has_staged_instance_files(instance_id: str) -> bool:
+    return any((STAGING_DIR / f"{instance_id}{suffix}").exists() for suffix in [".csv", ".draft.json", ".comments.json", ".curation.json"])
+
+
 def clean_registered_entry(draft: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in draft.items() if not k.startswith("_")}
 
@@ -456,6 +472,61 @@ def register_instance(instance_id: str, df: pd.DataFrame, draft: Dict[str, Any],
     df.to_csv(TABLES_DIR / f"{instance_id}.csv", index=False)
     write_json(REVIEW_LOGS_DIR / f"{instance_id}.review.json", build_review_log(instance_id, draft, comments, curation))
     delete_staged_instance(instance_id)
+
+
+def stage_registered_instance(instance_id: str) -> Tuple[bool, str]:
+    cfg = load_cfg()
+    registered = cfg.get(instance_id)
+    if not registered:
+        return False, f"`{instance_id}` is not present in cfg.json."
+
+    table_path = TABLES_DIR / f"{instance_id}.csv"
+    if not table_path.exists():
+        return False, f"Cannot stage `{instance_id}` because `{table_path}` is missing."
+
+    if has_staged_instance_files(instance_id):
+        return False, f"`{instance_id}` already has staging files. Delete or register those first."
+
+    review_log = read_json(REVIEW_LOGS_DIR / f"{instance_id}.review.json", {})
+    timestamp = now_iso()
+    draft = copy.deepcopy(registered)
+    draft.setdefault("id", instance_id)
+    if review_log.get("extraction_notes") and not draft.get("_extraction_notes"):
+        draft["_extraction_notes"] = review_log["extraction_notes"]
+    else:
+        draft.setdefault("_extraction_notes", f"Restaged from registered cfg.json and tables/{instance_id}.csv on {timestamp}.")
+    draft["_staged_by"] = "curation_ui:restage_registered"
+    draft["_staged_at"] = timestamp
+    draft["_restaged_from_registered"] = True
+    draft["_restaged_from_registered_at"] = review_log.get("registered_at", "")
+
+    curation = copy.deepcopy(review_log.get("curation_record", {}))
+    if not isinstance(curation, dict):
+        curation = {}
+    for key, value in CURATION_TEMPLATE.items():
+        curation.setdefault(key, copy.deepcopy(value))
+    if not curation.get("collection_summary"):
+        curation["collection_summary"] = f"Restaged registered instance `{instance_id}` for review or repair."
+
+    comments = default_comments()
+    if isinstance(review_log, dict):
+        comments["chat_events"] = copy.deepcopy(review_log.get("chat_events", []))
+        comments["comments"] = copy.deepcopy(review_log.get("comments", []))
+        comments["doubts"] = copy.deepcopy(review_log.get("open_doubts_overridden", []))
+    summary = f"Restored registered instance `{instance_id}` to staging from cfg.json and tables/{instance_id}.csv for review or repair."
+    comments["chat_events"].append(
+        {
+            "at": timestamp,
+            "action": "restage_registered",
+            "summary": summary,
+        }
+    )
+    comments["chat_summary"] = summary
+    comments["chat_history"].append({"role": "assistant", "content": summary})
+
+    df = pd.read_csv(table_path)
+    save_staged_instance(instance_id, df, draft, comments, curation)
+    return True, f"Restored `{instance_id}` to staging."
 
 
 def build_row_flags(df: pd.DataFrame, comments: Dict[str, Any], selected_rows: Optional[List[int]] = None) -> pd.DataFrame:
@@ -626,7 +697,8 @@ def validate_state(instance_id: str, df: pd.DataFrame, draft: Dict[str, Any], co
         errors.append("CSV columns match cfg columns")
     if any(col not in column_types for col in columns):
         errors.append("column_types complete")
-    if instance_id in cfg:
+    restaged_registered = bool(draft.get("_restaged_from_registered")) and instance_id in cfg
+    if instance_id in cfg and not restaged_registered:
         errors.append("id not already in cfg.json")
     if instance_id != draft.get("id", ""):
         errors.append("id matches staging filename")
@@ -645,6 +717,8 @@ def validate_state(instance_id: str, df: pd.DataFrame, draft: Dict[str, Any], co
         warnings.append("Open doubt flags remain")
     if len(df) > 500:
         warnings.append("Rows > 500; justify in temporal_note")
+    if restaged_registered:
+        warnings.append("Restaged registered instance; registration will update the existing cfg/table entry.")
 
     gt_msg = validate_gt_construction_alignment(str(draft.get("gt_construction", "")), source_urls)
     if gt_msg:
@@ -656,35 +730,30 @@ def validate_state(instance_id: str, df: pd.DataFrame, draft: Dict[str, Any], co
     return errors, warnings
 
 
-def compute_category_coverage(cfg: Dict[str, Dict[str, Any]]) -> pd.DataFrame:
+def compute_category_coverage(cfg: Dict[str, Dict[str, Any]], staged_ids: Optional[List[str]] = None) -> pd.DataFrame:
     counts = Counter(item.get("query_category", "") for item in cfg.values())
-    targets = {
-        "set_operation": 6,
-        "implicit_join": 4,
-        "multi_attribute_projection": 4,
-        "aggregation": 3,
-        "set_filter": 3,
-        "top_k": 3,
-        "multi_hop": 3,
-        "temporal": 3,
-        "hierarchical_decomposition": 3,
-        "comparative": 3,
-        "scaled_enumeration": 3,
-        "qualitative": 3,
-        "geographic": 3,
-        "causal": 3,
-        "factual_lookup": 2,
-    }
+    staged_ids = staged_ids or []
+    staged_counts: Counter[str] = Counter()
+    for instance_id in staged_ids:
+        draft = read_json(STAGING_DIR / f"{instance_id}.draft.json", {})
+        category = draft.get("query_category", "")
+        if category:
+            staged_counts[category] += 1
+
     rows = []
     for category in parse_categories():
-        target = targets.get(category, 3)
+        target = CATEGORY_TARGETS.get(category, DEFAULT_CATEGORY_TARGET)
         registered = counts.get(category, 0)
+        staged = staged_counts.get(category, 0)
+        planning_total = registered + staged
         rows.append(
             {
                 "Category": category,
                 "Registered": registered,
+                "Staged": staged,
+                "Planning Total": planning_total,
                 "Target": target,
-                "Gap": max(target - registered, 0),
+                "Gap": max(target - planning_total, 0),
             }
         )
     return pd.DataFrame(rows)
@@ -864,6 +933,15 @@ def validate_evidence_coverage(diffs: List[Dict[str, Any]], citation: Dict[str, 
     return None
 
 
+@st.cache_data(show_spinner=False)
+def load_domain_taxonomy_context() -> str:
+    try:
+        text = DOMAIN_TAXONOMY_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    return text[:MAX_DOMAIN_TAXONOMY_CHARS]
+
+
 def build_system_prompt(
     instance_id: str,
     draft: Dict[str, Any],
@@ -889,11 +967,15 @@ def build_system_prompt(
         "columns": draft.get("columns", []),
         "column_types": draft.get("column_types", {}),
     }
+    domain_taxonomy_context = load_domain_taxonomy_context()
     prompt = f"""You are a curation assistant for PKDB-Bench, a benchmark for LLM parametric knowledge extraction.
 You help validate and improve ground-truth tables before they are registered.
 
 Benchmark registration view:
 {json.dumps(benchmark_view, indent=2)}
+
+Domain taxonomy guidance for draft.json::domain:
+{domain_taxonomy_context or "(domain_taxonomy.md unavailable; treat domain checks as best-effort.)"}
 
 Current table (CSV):
 {dataframe_to_csv_text(df)}
@@ -916,6 +998,7 @@ Rules:
 - When you propose a cfg field change, state the field name, new value, and the reason clearly.
 - Treat the benchmark registration view as the current candidate metadata, not as ground truth about the curation process.
 - Use the curation record for source interpretation, working assumptions, collection notes, and decision history.
+- When evaluating or proposing draft.json::domain, use the domain taxonomy guidance above rather than relying only on the file path reference.
 - Flag any row you are uncertain about rather than silently guessing.
 - For country/territory key columns, use country_converter short_name for canonical names. Never shorten to abbreviations.
 """
@@ -1881,10 +1964,13 @@ def render_actions(instance_id: str) -> None:
 
 def render_coverage_tab(cfg: Dict[str, Dict[str, Any]], staged_ids: List[str]) -> None:
     st.subheader("Coverage")
-    coverage_df = compute_category_coverage(cfg)
+    coverage_df = compute_category_coverage(cfg, staged_ids)
     categories_covered = int((coverage_df["Registered"] > 0).sum()) if not coverage_df.empty else 0
+    planning_categories_covered = int((coverage_df["Planning Total"] > 0).sum()) if not coverage_df.empty else 0
     st.caption(
-        f"Registered: {len(cfg)} / 82 · Categories covered: {categories_covered} / 15 · "
+        f"Registered: {len(cfg)} / {BENCHMARK_TARGET_TOTAL} · "
+        f"Registered categories: {categories_covered} / {BENCHMARK_CATEGORY_COUNT} · "
+        f"Planning categories: {planning_categories_covered} / {BENCHMARK_CATEGORY_COUNT} · "
         f"Staged: {len(staged_ids)} pending"
     )
     st.dataframe(coverage_df, use_container_width=True, hide_index=True)
@@ -1902,7 +1988,7 @@ def render_coverage_tab(cfg: Dict[str, Dict[str, Any]], staged_ids: List[str]) -
         with st.expander(f"{category} ({row['Registered']} registered)"):
             registered = [
                 {
-                    "id": item["id"],
+                    "id": item.get("id", ""),
                     "table_title": item.get("table_title", ""),
                     "sources": ", ".join(item.get("source_urls", [])),
                 }
@@ -1911,6 +1997,27 @@ def render_coverage_tab(cfg: Dict[str, Dict[str, Any]], staged_ids: List[str]) -
             ]
             if registered:
                 st.dataframe(pd.DataFrame(registered), use_container_width=True, hide_index=True)
+                registered_ids = [item["id"] for item in registered if item.get("id")]
+                if registered_ids:
+                    selected_registered = st.selectbox(
+                        "Registered instance",
+                        options=registered_ids,
+                        key=f"restage_select::{category}",
+                    )
+                    already_staged = has_staged_instance_files(selected_registered)
+                    button_label = "Already in staging" if already_staged else "Restore registered to staging"
+                    if st.button(
+                        button_label,
+                        disabled=already_staged,
+                        key=f"restage_button::{category}",
+                        help="Restore a registered instance into mutable staging files for review or repair. This is not a duplicate benchmark instance; the registered entry is left in place until you re-register an update.",
+                    ):
+                        ok, message = stage_registered_instance(selected_registered)
+                        if ok:
+                            st.success(message)
+                            st.rerun()
+                        else:
+                            st.error(message)
             else:
                 st.write("No registered instances yet.")
             prompt = SUGGESTED_PROMPTS.get(category, "Stage a new PKDB-Bench instance for this category with authoritative source grounding.")

@@ -16,8 +16,8 @@
     "Qualifies (>5)": "categorical",
     "Example Medalists": "text"
   },
-  "query_category": "comparative",
-  "secondary_category": "aggregation",
+  "query_category": "aggregation",
+  "secondary_category": "comparative",
   "db_analog": "SELECT affiliation_country AS country, COUNT(*) AS fields_medalists, CASE WHEN COUNT(*) > 5 THEN 'Yes' ELSE 'No' END AS qualifies FROM fields_medalists_with_affiliation_when_awarded WHERE year BETWEEN 1936 AND 2022 AND affiliation_country IS NOT NULL GROUP BY affiliation_country ORDER BY fields_medalists DESC, country ASC",
   "operation_type": "aggregation",
   "source_count": 1,

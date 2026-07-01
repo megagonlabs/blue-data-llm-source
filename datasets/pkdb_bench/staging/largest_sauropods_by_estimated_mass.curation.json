@@ -1,0 +1,137 @@
+{
+  "id": "largest_sauropods_by_estimated_mass",
+  "claim_type": "source_defined",
+  "claim_type_rationale": "Per cycle-1 audit confirmation: 'Claim type: source_defined.' Universe is the closed canonical 10-entry 'Table of the largest sauropods' from Wikipedia's `Largest and heaviest animals` master article. Universe membership = 'sauropod in the master article's largest-sauropods compound table' — no curator judgment. All 4 cell values source-extractive per cycle-1 audit's verbatim 10-row dump, including Animal slash-combined PK entries + text-range estimate columns. Mirror precedents for closed-canonical-table source_defined with master-derived dump: `notable_ship_canals_by_length_km` (Ship canal 11-row table), `who_global_top_15_leading_causes_of_death_2021` (WHO GHE 15-row top-N), `top_15_most_produced_crops_by_global_production` (FAOSTAT 15-row top-N).",
+  "collection_summary": {
+    "approach": "Pre-curation design pass (1 round of pre-staging design review). Cycle-1 verdict: 'Revise Before Cycle-0 Staging' with 3 BLOCKING + 2 SUGGESTION fixes. BLOCKING #1: source pivot — 'List of largest dinosaurs' redirects to 'Dinosaur size' which is cleanup-flagged for outdated/unreliable overestimates + prose/range-based (NOT deterministic top-N table); cleanest master is 'Largest and heaviest animals' article's 'Table of the largest sauropods' (closed 10-row compound table). BLOCKING #2: estimate columns must be text ranges (NOT numeric central values) — sauropod mass + length estimates are inherently uncertainty-bound per fragmentary fossil record. BLOCKING #3: scope shift from all-dinosaurs-by-body-length to sauropods-only-by-mass — master table is sauropod-only mass-ranked, not all-dinosaurs by length; instance renamed accordingly. SUGGESTION #1: keep estimate columns as text ranges. SUGGESTION #2: Animal PK uses source-verbatim labels including slash-combined rows reflecting taxonomic uncertainty. All cycle-1 fixes applied at cycle-0 staging using audit's verbatim 10-row dump. Single-round pre-staging review enabled by audit's clean source pivot + master-derived dump in cycle-1.",
+    "universe_size": 10,
+    "partition_structure": "Closed canonical 10-entry 'Table of the largest sauropods' universe per Wikipedia `Largest and heaviest animals` master article. Mass-ranked (Rank 1-10 by Estimated mass tonnes DESC). Note: Rank does NOT correlate perfectly with body length — Barosaurus/Supersaurus has largest length (45-50m) but ranks #5 by mass; Bruhathkayosaurus rank #1 by mass (110-170 tonnes) has length 44.1-45m (#2 longest); this mass-vs-length discrepancy is part of what makes the dataset distinctive. Single PK Animal.",
+    "row_count_check": "10 rows match cycle-1 audit's verbatim master-derived dump. All 10 rows are sauropods (no theropods like Spinosaurus / T-rex which are much smaller — under ~20 tonnes — and would not enter top-10 by mass)."
+  },
+  "source_coverage_notes": {
+    "roles": [
+      {
+        "url": "https://en.wikipedia.org/wiki/Largest_and_heaviest_animals",
+        "roles": ["universe", "value"],
+        "role_note": "universe: Wikipedia `Largest and heaviest animals` article's 'Table of the largest sauropods' enumerates the closed canonical 10-entry universe of largest sauropods ranked by estimated mass. value: supplies Animal name + Rank + Estimated mass [tonnes] + Estimated total length [m (ft)] cell values for all 10 staged rows via the master's compound 4-column table."
+      }
+    ],
+    "validation_cross_checks": {
+      "rationale": "No validation cross-checks documented for this instance. Per cycle-1 audit confirmation: source_count = 1 with Wikipedia `Largest and heaviest animals` article as the sole authoritative source. Per-species Wikipedia articles exist (Argentinosaurus, Patagotitan, etc.) but would provide redundant + potentially conflicting size estimates — master table's curated table is the deliberate source-defined choice over per-species article ranges. Note: the alternative source 'Dinosaur size' was rejected at cycle-1 because it's cleanup-flagged as outdated + unreliable + prose-based; the 'Largest and heaviest animals' compound table is the cleaner master."
+    },
+    "source_count": 1,
+    "source_grounding_summary": "1 registered source (Largest_and_heaviest_animals Wikipedia article's 'Table of the largest sauropods': roles = [universe, value]). No additional validation cross-checks documented — master article's compound 10-row table is authoritative for all 4 cell types per cycle-1 audit's source pivot + verbatim dump."
+  },
+  "decision_log": [
+    {
+      "decision": "claim_type = source_defined (closed canonical 10-entry sauropod mass-ranked table)",
+      "rationale": "Per cycle-1 audit confirmation: 'Claim type: source_defined.' The Wikipedia `Largest and heaviest animals` article's 'Table of the largest sauropods' is a closed 10-entry curated table maintained as the canonical reference for largest sauropods. Universe membership = 'in the master sauropod-mass-ranked compound table' — no curator judgment. All 4 cells source-extractive including the text-range estimate cells per cycle-1 SUGGESTION."
+    },
+    {
+      "decision": "Source pivot from 'List of largest dinosaurs' to 'Largest and heaviest animals' article's 'Table of the largest sauropods'",
+      "rationale": "Per cycle-1 audit BLOCKING #1: 'List of largest dinosaurs currently redirects to Dinosaur size, not a clean ranked list page. Dinosaur size is also explicitly cleanup-flagged for Outdated information and unreliable overestimates, and its size discussion is prose/range-based, not a deterministic top-N table. That is not strong enough for source_defined top-N by body length.' Cycle-1 audit found 'Largest and heaviest animals' has a 10-row compound table with 'Animal, Rank, Estimated mass [tonnes], Estimated total length [m (ft)]' columns — clean canonical master."
+    },
+    {
+      "decision": "Universe = 10 master-table rows exactly (NOT broader dinosaur set)",
+      "rationale": "Per cycle-1 audit BLOCKING #3: 'Clean Wikipedia table is mass-ranked sauropods, not body-length-ranked dinosaurs.' Master table is sauropod-only — does NOT include theropods (Spinosaurus, T-rex, Giganotosaurus all ~12-18m and under 20 tonnes; would not enter top-10 by mass). Instance renamed `largest_dinosaurs_by_body_length` → `largest_sauropods_by_estimated_mass` to match master scope."
+    },
+    {
+      "decision": "Estimate columns kept as TEXT ranges (NOT numeric central values)",
+      "rationale": "Per cycle-1 audit BLOCKING #2 + SUGGESTION #1: 'Single central length/mass values are not source-extractive. Dinosaur size says sauropod size estimates are difficult because fossils are fragmentary, that estimates can conflict, and that some figures are highest estimate values from individual papers rather than central consensus values. Keep estimate columns as text ranges, not numeric central values.' Estimated mass cells stored as text ranges: '110–170' (Bruhathkayosaurus), '80–120' (Maraapunisaurus), '75–80' (Argentinosaurus), etc. Estimated total length cells stored as compound text with metric primary + imperial parenthetical: '44.1–45 (144.6–148)' for Bruhathkayosaurus. This is the FIRST pkdb_bench instance to keep estimate cells as text ranges (NOT central numeric values) — novel convention reflecting source-extractive integrity when source itself publishes ranges."
+    },
+    {
+      "decision": "Animal PK = source-verbatim labels including slash-combined rows",
+      "rationale": "Per cycle-1 audit SUGGESTION #2: 'Use Animal as the PK exactly as the source table labels it, even for slash-combined rows. This preserves source_defined cleanly.' Slash-combined entries reflect real taxonomic ambiguity in paleontology: (a) 'Maraapunisaurus fragillimus/Amphicoelias fragilimus' — the species was originally described as Amphicoelias fragillimus (1878 Cope); in 2018 Carpenter reclassified to a new genus Maraapunisaurus; both names appear in literature, master preserves both via slash. (b) 'Barosaurus lentus/Supersaurus vivianae BYU 9024' — the BYU 9024 specimen is a fragmentary giant sauropod tentatively assigned to either Barosaurus lentus or Supersaurus vivianae; master uses slash for taxonomic uncertainty. Verbatim preservation per source-extractive principle."
+    },
+    {
+      "decision": "Category = comparative primary + top_k secondary; operation_type = top_k",
+      "rationale": "Per cycle-1 audit confirmation: 'Category: comparative, Secondary: top_k or set_filter, operation_type: top_k.' Chose top_k secondary because the source's native ranking is top-N by Rank column (Mass DESC ordering). Mirror precedent: `largest_asteroids_with_geometric_mean_diameter_above_250_km` (comparative primary). operation_type = top_k (universe selected by top-10 ranking)."
+    },
+    {
+      "decision": "Domain = Science/Paleontology NEW subdomain; entity class = taxonomic-entities/dinosaurs NEW fine-class",
+      "rationale": "Per cycle-1 audit confirmation: 'Domain: Science/Paleontology; Entity class: taxonomic-entities/dinosaurs.' Science/Paleontology is a NEW subdomain (no paleontology in pkdb_bench previously — closest neighbors Science/Astronomy + Science/Chemistry + Science/Geology). NEW `taxonomic-entities/dinosaurs` fine-class extending taxonomic-entities bucket from 5 to 6 instances (joining moons, species, nutrients, stars, asteroids). Note: chose 'dinosaurs' as fine-class (NOT 'sauropods') for broader bench-search compatibility — though master is sauropod-only, the entity class is the broader 'dinosaurs' category that future paleontology instances could extend (theropods, ornithischians, etc.)."
+    },
+    {
+      "decision": "Sort = Rank ASC (= Mass DESC per master native ordering)",
+      "rationale": "Per cycle-1 audit confirmation: 'Sort: Rank ASC.' Master table's native ordering is Rank 1-10 by Estimated mass tonnes DESC. Sort matches source verbatim (master-native NOT curator-normalized — distinguishes from notable_ship_canals where curator-normalized DESC sort was needed)."
+    },
+    {
+      "decision": "operation_type top_k→projection (metadata fix, 2026-06-02)",
+      "rationale": "Structural fix. operation_type was previously 'top_k', but top_k is NOT in OPERATION_TYPES; the canonical enum is {join, union, intersect, projection, union+filter, filter, aggregation} (curation_ui/app.py:60). An invalid value silently coerces to index-0 'join' if the instance is opened in the curation UI (app.py:1388-1391) and is flagged by validate_operation_query_pair (app.py:655-675). The earlier decision_log entry 'Category = comparative primary + top_k secondary; operation_type = top_k' (citing a cycle-1 audit confirmation of operation_type=top_k) was based on a non-existent vocabulary value. For query_category=top_k (the secondary_category here), the contract-allowed operation_types are {projection, filter, union+filter}. Chose projection because the db_analog is a pure ranked column-selection over the closed master table (SELECT animal_name, rank, estimated_mass_tonnes_range, estimated_total_length_m_ft_compound FROM wiki_largest_heaviest_animals_largest_sauropods_table ORDER BY rank ASC — ORDER BY with NO WHERE predicate); the structural primitive is a multi-column SELECT (projection), not a filter. Verified projection ∈ validate_operation_query_pair allowed set for top_k = {projection, filter, union+filter}; note projection is also valid for the primary query_category=comparative (allowed {projection, join}). No CSV rows, query_category (still comparative), secondary_category (still top_k), primary_key, column_types, db_analog logic, source_count, or source_urls changed; only operation_type + this decision_log entry."
+    }
+  ],
+  "normalization_decisions": [
+    {
+      "field": "Animal",
+      "rule": "Animal name verbatim per Wikipedia master 'Table of the largest sauropods' row labels. 10 closed values including 2 slash-combined entries reflecting taxonomic uncertainty: 'Maraapunisaurus fragillimus/Amphicoelias fragilimus' (genus reclassification debate 2018) and 'Barosaurus lentus/Supersaurus vivianae BYU 9024' (specimen-level taxonomic uncertainty for the BYU 9024 specimen). Forward-slash separator '/' preserved per source. Other 8 entries are single-genus or genus+species: Bruhathkayosaurus matleyi, Argentinosaurus huinculensis, Mamenchisaurus (genus only — no species qualifier in master), Patagotitan mayorum, Notocolossus gonzalezparejasi, Puertasaurus reuili, Sauroposeidon proteles, Dreadnoughtus schrani."
+    },
+    {
+      "field": "Rank",
+      "rule": "Integer 1-10 per master table column 'Rank'. Rank determined by Estimated mass tonnes DESC. Note: Rank does NOT correlate perfectly with body length — Barosaurus/Supersaurus has largest length range (45-50m) but ranks #5 by mass; Bruhathkayosaurus rank #1 by mass (110-170 tonnes) has length 44.1-45m which is #2 longest. The mass-length-discrepancy is a benchmark calibration feature."
+    },
+    {
+      "field": "Estimated mass [tonnes]",
+      "rule": "Text range cell per master verbatim. En-dash separator '–' between low and high estimate values. Examples: '110–170' (Bruhathkayosaurus largest range), '80–120' (Maraapunisaurus), '75–80' (Argentinosaurus narrower range), '50–80' (Mamenchisaurus), '60–66' (Barosaurus/Supersaurus), '55–69' (Patagotitan), '44.9–75.9' (Notocolossus), '50–60' (Puertasaurus), '40–60' (Sauroposeidon), '22.1–59.3' (Dreadnoughtus widest relative range). Sauropod mass estimates published in paleontology papers are inherently range-bound per fragmentary fossil record; central-value extraction would NOT be source-extractive per cycle-1 audit BLOCKING #2."
+    },
+    {
+      "field": "Estimated total length [m (ft)]",
+      "rule": "Compound text cell per master verbatim with format 'metric range (imperial range)'. Examples: '44.1–45 (144.6–148)' (Bruhathkayosaurus), '35–40 (115–131)' (Maraapunisaurus), '35–39.7 (115–130)' (Argentinosaurus), '26–35 (85–115)' (Mamenchisaurus), '45–50 (148–160)' (Barosaurus/Supersaurus — largest length range), '33–37 (108–121)' (Patagotitan), '28 (92)' (Notocolossus single-value), '27–30 (89–98)' (Puertasaurus), '27–34 (89–112)' (Sauroposeidon), '26 (85)' (Dreadnoughtus single-value). En-dash separator within ranges; parentheses for imperial conversion. Notocolossus + Dreadnoughtus have single-value rather than range — these are noted in source's narrative as point estimates rather than uncertainty-bound ranges."
+    }
+  ],
+  "open_questions": [
+    {
+      "question": "Why are slash-combined animal names (e.g., 'Maraapunisaurus fragillimus/Amphicoelias fragilimus') preserved instead of choosing one canonical name?",
+      "answer": "Per cycle-1 audit SUGGESTION #2: slash-combined entries reflect real taxonomic uncertainty in paleontology — the Wikipedia master preserves both names because (a) Maraapunisaurus = Amphicoelias reclassified in 2018; both names appear in active literature; (b) BYU 9024 fragmentary specimen could be assigned to either Barosaurus lentus or Supersaurus vivianae. Curator-resolving to single names would introduce judgment NOT in the source — slash preservation is source-extractive."
+    },
+    {
+      "question": "Why is the universe sauropods-only (not all dinosaurs)?",
+      "answer": "Per cycle-1 audit BLOCKING #3: the Wikipedia master 'Table of the largest sauropods' is sauropod-only mass-ranked. Theropods (T-rex, Spinosaurus, Giganotosaurus) are much smaller (~12-18m, under 20 tonnes) and would not enter top-10 by mass. The master table's scope is sauropods because sauropods are the dinosaur clade with the largest individual species; mass-based ranking naturally selects them."
+    },
+    {
+      "question": "Why are estimate columns text ranges instead of numeric central values?",
+      "answer": "Per cycle-1 audit BLOCKING #2: sauropod size estimates are inherently uncertainty-bound per fragmentary fossil record (most species are known from incomplete skeletons; mass extrapolation from limb bones or vertebrae carries ±25% or wider uncertainty). The Wikipedia master publishes ranges (110–170 tonnes for Bruhathkayosaurus, etc.) rather than central values. Single-central-value extraction would (a) lose information; (b) introduce curator judgment NOT in source; (c) weaken source_defined claim_type. Text ranges preserve source-extractive integrity. This is the FIRST pkdb_bench instance to use text-range estimate cells; novel convention for fragmentary-fossil-record domain."
+    },
+    {
+      "question": "Why is Bruhathkayosaurus ranked #1 when its estimates are controversial?",
+      "answer": "Per master table: Bruhathkayosaurus matleyi is ranked #1 by estimated mass (110–170 tonnes) based on a 1989 fossil description from India. Some paleontologists have questioned the original measurements and identification (the fossils may have been misidentified petrified wood). However, the master table includes Bruhathkayosaurus at rank #1 reflecting the published estimates; this is the source-defined choice. Future fossil discoveries or re-examinations could update the ranking."
+    },
+    {
+      "question": "Could this instance be extended to all-dinosaurs-by-mass or sauropods-by-length?",
+      "answer": "Yes, but those would be separate instances. Wikipedia masters for all-dinosaurs-by-mass don't exist as clean tables (would require curator-combination across multiple per-clade tables); sauropods-by-length would re-order the same 10 entries by Length cell (Barosaurus/Supersaurus would rise to top with 45-50m). Current instance locks to master's native mass-ranked sauropod-only universe."
+    }
+  ],
+  "proposed_supplements": [],
+  "audit_trail_pre_curation": {
+    "cycle_0_source_exploration": {
+      "task": "Verify source structure for the largest-dinosaurs candidate (NEW Science/Paleontology subdomain + taxonomic-entities/dinosaurs NEW)",
+      "outcome": "Initial design assumed 'List of largest dinosaurs' as master. Cycle-1 audit found this redirects to 'Dinosaur size' which is cleanup-flagged + prose-based. Pivot to 'Largest and heaviest animals' article's 'Table of the largest sauropods' compound 10-row table.",
+      "deliverable": "Initial design proposal with 5-col schema + numeric central estimates + all-dinosaurs-by-length scope. Cycle-1 audit identified 3 BLOCKING + 2 SUGGESTION fixes."
+    },
+    "cycle_1_audit_design_review": {
+      "task": "Audit agent reviews cycle-0 design proposal BEFORE staging",
+      "verdict": "Revise Before Cycle-0 Staging (3 BLOCKING + 2 SUGGESTION)",
+      "blocking_findings": [
+        "BLOCKING #1: 'List of largest dinosaurs' redirects to 'Dinosaur size' (cleanup-flagged + prose/range-based, NOT deterministic top-N). Pivot to 'Largest and heaviest animals' article's 'Table of the largest sauropods' (10-row compound table with Rank + Mass + Length).",
+        "BLOCKING #2: Single central length/mass values are NOT source-extractive — sauropod estimates are inherently range-bound per fragmentary fossil record. Keep estimate columns as text ranges.",
+        "BLOCKING #3: Master table is mass-ranked sauropods (NOT body-length-ranked all-dinosaurs). Instance scope must match — rename `largest_dinosaurs_by_body_length` → `largest_sauropods_by_estimated_mass`."
+      ],
+      "suggestions": [
+        "SUGGESTION #1: Keep estimate columns as text ranges, not numeric central values (reinforces BLOCKING #2).",
+        "SUGGESTION #2: Use Animal as PK exactly as source table labels it, even for slash-combined rows (Maraapunisaurus fragillimus/Amphicoelias fragilimus; Barosaurus lentus/Supersaurus vivianae BYU 9024) — preserves source_defined cleanly."
+      ],
+      "master_derived_row_list_dump": "Audit provided full 10-row master-derived dump verbatim from 'Largest and heaviest animals' compound table with all 4 cell values populated. Used at cycle-0 staging.",
+      "deliverable": "All 3 BLOCKING + 2 SUGGESTION fixes applied at cycle-0 staging using audit's verbatim 10-row dump. No cycle-2 design review needed."
+    },
+    "cycle_0_staging": {
+      "task": "Stage cycle-0 artifacts (CSV + draft.json + curation.json) with cycle-1 fixes applied",
+      "files_written": [
+        "datasets/pkdb_bench/staging/largest_sauropods_by_estimated_mass.csv (10 rows × 4 cols)",
+        "datasets/pkdb_bench/staging/largest_sauropods_by_estimated_mass.draft.json (4-col schema + locked properties)",
+        "datasets/pkdb_bench/staging/largest_sauropods_by_estimated_mass.curation.json (this file)"
+      ],
+      "deliverable": "Cycle-0 staging complete. 10 rows × 4 cols. Single PK Animal (with 2 slash-combined entries). source_count = 1 (Wikipedia Largest and heaviest animals article master). All 40 cell values committed verbatim per cycle-1 audit's master-derived dump. Sort: Rank ASC (= Mass DESC native). Estimate columns stored as text ranges per cycle-1 audit. NEW Science/Paleontology subdomain + NEW taxonomic-entities/dinosaurs fine-class. Ready for cycle-1 post-staging audit."
+    }
+  },
+  "_curated_by": "claude-code",
+  "_curated_at": "2026-05-20T00:00:00Z"
+}

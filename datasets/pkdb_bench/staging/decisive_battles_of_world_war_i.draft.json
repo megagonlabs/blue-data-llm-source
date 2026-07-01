@@ -1,0 +1,57 @@
+{
+  "id": "decisive_battles_of_world_war_i",
+  "table_title": "List 18 decisive battles of World War I with each battle's year, front (theater), strategic outcome, primary Entente commander, and primary Central Powers commander. Universe is drawn from Wikipedia's 'List of military engagements of World War I' master article (a broad, explicitly-incomplete enumeration of hundreds of WWI engagements covering terrestrial, maritime, and aerial conflicts), curator-selected for cross-front balance across a 6-value curator-collapsed front vocabulary (Western Front 8, Eastern Front 3, Italian Front 2, Middle Eastern Theatre 2, Balkan Front 1, Naval 2 = 18). Mirrors the existing `decisive_battles_of_world_war_ii` sibling-instance pattern: multi_hop + partially_supplemented + per-battle source-join for commanders + outcome cells.",
+  "columns": [
+    "Battle",
+    "Year",
+    "Front",
+    "Strategic Outcome",
+    "Entente Commander",
+    "Central Powers Commander"
+  ],
+  "primary_key": [
+    "Battle"
+  ],
+  "column_types": {
+    "Battle": "key",
+    "Year": "numeric",
+    "Front": "categorical",
+    "Strategic Outcome": "categorical",
+    "Entente Commander": "categorical",
+    "Central Powers Commander": "categorical"
+  },
+  "query_category": "multi_hop",
+  "secondary_category": null,
+  "db_analog": "SELECT b.battle_name AS battle, b.start_year AS year, b.front, b.strategic_outcome, ec.commander_name AS entente_commander, cpc.commander_name AS central_powers_commander FROM wwi_battles b JOIN commanders ec ON b.battle_id = ec.battle_id AND ec.side = 'Entente' JOIN commanders cpc ON b.battle_id = cpc.battle_id AND cpc.side = 'Central_Powers' WHERE b.battle_id IN (curator_selected_decisive_battle_ids) ORDER BY b.start_year ASC, b.battle_name ASC",
+  "operation_type": "join",
+  "source_count": 19,
+  "domain": "History/Military",
+  "temporal_sensitivity": "low",
+  "gt_construction": "manual_wikipedia",
+  "temporal_note": "Wikipedia 'List of military engagements of World War I' master article + 18 per-battle Wikipedia articles, all accessed 2026-05-19. Universe = 18 curator-selected decisive WWI battles (claim_type = `partially_supplemented`) from the master article's broad-incomplete enumeration of hundreds of engagements across 1914-1918, chosen for cross-front balance across a 6-value curator-collapsed front vocabulary (Western Front 8, Eastern Front 3, Italian Front 2, Middle Eastern Theatre 2, Balkan Front 1, Naval 2 = 18). temporal_sensitivity = low because the underlying historical facts (battle dates, commanders, outcomes) are stable historiographically — minor framing shifts can occur (e.g., 'decisive' vs 'major' framing, contested-outcome wording for ambiguous battles like the Somme or Jutland) but the core attribute values do not shift year-over-year. Per-row Year follows the calendar year of battle commencement (start year per per-battle Wikipedia article infobox 'Date' field); multi-year battles (Gallipoli 1915-1916, Verdun Feb-Dec 1916, Somme Jul-Nov 1916) are staged with their start year only for numeric-integer-Year-column compatibility. Per-row Front follows a 6-value curator-collapsed vocabulary aligned with the master article's 11-section theater partition (Western Front, Eastern Front, Italian Front, Balkan Front, Middle Eastern Theatre, Naval) per audit-cycle-1 amendment #5 — Gallipoli campaign is classified under Middle Eastern Theatre (NOT a separate 'Gallipoli' front value) per audit recommendation. Per-row Strategic Outcome follows a 3-value vocabulary per audit-cycle-1 amendment #3 + #4: 'Entente' for Entente-victory rows, 'Central Powers' for Central Powers-victory rows, 'Contested / Mixed' for inconclusive or strategically-mixed outcomes (Somme 1916, Jutland 1916 strategic-Entente-vs-tactical-German, Passchendaele 1917) — WWI has too many canonical 'decisive' but inconclusive battles for a strict 2-value winner column. Outcome distribution (post-cycle-2): Entente 10, Central Powers 4, Contested / Mixed 4 — reflects the eventual Entente victory + the strategically-mixed character of several grinding battles (Somme + Jutland + Passchendaele + First Ypres). Per-row Entente + Central Powers Commander follow the audit-cycle-1 amendment #7 rule: first per-side operational commander from per-battle article infobox/lead; overrides + alternatives documented in curation.json::open_questions. Notable commander multi-roles (post-cycle-2 fixes): Ferdinand Foch staged 3 times (German spring offensive, Second Marne, Hundred Days — Allied supreme commander 1918); Erich Ludendorff staged 4 times (Passchendaele, German spring offensive, Second Marne, Hundred Days — German operational command 1917-1918); Douglas Haig 2 times (Somme, Passchendaele — BEF commander); Erich von Falkenhayn 3 times (First Ypres 1914, Gorlice–Tarnów 1915, Verdun 1916 — German Chief of Staff; cycle-2 added Gorlice–Tarnów per audit fix). Otto Liman von Sanders 1 time (Megiddo 1918 only — cycle-2 removed Gallipoli per audit fix, replaced with Enver Pasha)."
+  ,
+  "source_urls": [
+    "https://en.wikipedia.org/wiki/List_of_military_engagements_of_World_War_I",
+    "https://en.wikipedia.org/wiki/Battle_of_Tannenberg",
+    "https://en.wikipedia.org/wiki/Battle_of_the_Falkland_Islands",
+    "https://en.wikipedia.org/wiki/First_Battle_of_the_Marne",
+    "https://en.wikipedia.org/wiki/First_Battle_of_Ypres",
+    "https://en.wikipedia.org/wiki/Gallipoli_campaign",
+    "https://en.wikipedia.org/wiki/Gorlice%E2%80%93Tarn%C3%B3w_offensive",
+    "https://en.wikipedia.org/wiki/Battle_of_Jutland",
+    "https://en.wikipedia.org/wiki/Battle_of_the_Somme",
+    "https://en.wikipedia.org/wiki/Battle_of_Verdun",
+    "https://en.wikipedia.org/wiki/Brusilov_offensive",
+    "https://en.wikipedia.org/wiki/Battle_of_Caporetto",
+    "https://en.wikipedia.org/wiki/Battle_of_Passchendaele",
+    "https://en.wikipedia.org/wiki/Battle_of_Dobro_Pole",
+    "https://en.wikipedia.org/wiki/Battle_of_Megiddo_(1918)",
+    "https://en.wikipedia.org/wiki/Battle_of_Vittorio_Veneto",
+    "https://en.wikipedia.org/wiki/German_spring_offensive",
+    "https://en.wikipedia.org/wiki/Hundred_Days_Offensive",
+    "https://en.wikipedia.org/wiki/Second_Battle_of_the_Marne"
+  ],
+  "_staged_by": "claude-code",
+  "_staged_at": "2026-05-19T00:00:00Z",
+  "_extraction_notes": "Multi_hop instance — mirrors existing `decisive_battles_of_world_war_ii` sibling pattern. PIVOT from rejected tunnels multi_hop framing (cycle-1 audit ruled Tunnel→Country→Decade was top_k/projection because Country + Year are same-row master attributes + Decade is mechanical numeric derivation). The WWI battles pivot inherits the WWII-approved multi_hop framing: per-battle source-join for commander + outcome cells where each cell requires cross-source reasoning (master article doesn't carry commander/outcome — only per-battle articles do). Brings `multi_hop` from 5/5 (floor met, just-saturated by existing 5 instances: major_historical_empires_founder_capital_century + decisive_battles_of_world_war_ii + notable_robotic_spacecraft_missions + apollo_lunar_landing_mission_crews + landlocked_africa_neighbor_languages) to **6/5** = 2nd of 13 floor-lift instances toward 102-target. History/Military EXISTING subdomain (joins `decisive_battles_of_world_war_ii`); History family extends. events/battles EXISTING fine-class extends 1→2 instances (held by WWII battles); bucket events at 12 fine-classes stays unchanged. Schema: 6 cols (Battle PK + Year numeric + Front categorical + Strategic Outcome categorical + Entente Commander categorical + Central Powers Commander categorical) mirroring WWII. Sort: Year ASC primary (chronological); Battle ASC alphabetical secondary tiebreaker. Year distribution: 1914 (4 battles), 1915 (2), 1916 (4), 1917 (2), 1918 (6) — covers all 5 war years. Audit-cycle-1 amendments applied: (1) ID = `decisive_battles_of_world_war_i`; (2) multi_hop + join + partially_supplemented; (3+4) Strategic Outcome (NOT Winning Side) 3-value vocab (Entente / Central Powers / Contested / Mixed) — WWI has too many decisive-but-inconclusive battles for strict 2-value; (5) Front vocab 6-value (Western Front / Eastern Front / Italian Front / Balkan Front / Middle Eastern Theatre / Naval) — Gallipoli classified under Middle Eastern Theatre (NOT separate front value); (6) start-year convention for multi-year engagements; (7) first per-side operational commander from per-battle article infobox/lead. Universe = audit-suggested 18-row list verbatim. Commander multi-role context (post-cycle-2 fixes): Ferdinand Foch 3×, Erich Ludendorff 4×, Douglas Haig 2×, Erich von Falkenhayn 3× (cycle-2 added Gorlice–Tarnów per audit fix), Otto Liman von Sanders 1× (cycle-2 removed Gallipoli per audit fix replaced with Enver Pasha) — reflects per-side operational command continuity across multiple 1914-1918 battles. Strategic Outcome distribution (post-cycle-2): Entente 10, Central Powers 4 (Tannenberg, Gallipoli, Gorlice-Tarnów, Caporetto), Contested / Mixed 4 (Jutland, Somme, Passchendaele, First Ypres) — cycle-2 fix added First Ypres to Contested / Mixed per audit cycle-1 finding (article infobox Result = 'Indecisive'). NOTE for cycle-1 post-staging audit: per-row commander values are best-knowledge initial commits; each commander cell should be verified against per-battle Wikipedia article infobox/lead per amendment #7 — staged commanders may need adjustment if first-listed-per-side conflicts with curator's selection."
+}

@@ -1,0 +1,80 @@
+{
+  "doubts": [],
+  "comments": [],
+  "chat_events": [
+    {
+      "at": "2026-05-20T07:21:34.094735+00:00",
+      "action": "assistant_response",
+      "summary": "Cycle-1 post-staging audit: Ready with residual hygiene — 0 BLOCKING / 1 NON-BLOCKING HYGIENE / 0 SUGGESTION.\n\nSource and CSV checks pass. I fetched the registered ground-truth source, Wikipedia `Ship...",
+      "source_cited": "",
+      "source_fetch_enabled": false
+    },
+    {
+      "at": "2026-05-20T07:38:40.299893+00:00",
+      "action": "assistant_response",
+      "summary": "Cycle-2 verification audit: Ready+Clean — 0 BLOCKING / 0 NON-BLOCKING HYGIENE / 0 SUGGESTION.\n\nThe cycle-1 hygiene issue is fixed. The active `curation.json::decision_log` sort entry now reads `Sort =...",
+      "source_cited": "",
+      "source_fetch_enabled": false
+    }
+  ],
+  "chat_summary": "Cycle-2 verification audit: Ready+Clean — 0 BLOCKING / 0 NON-BLOCKING HYGIENE / 0 SUGGESTION.\n\nThe cycle-1 hygiene issue is fixed. The active `curation.json::decision_log` sort entry now reads `Sort =...",
+  "chat_history": [
+    {
+      "role": "user",
+      "content": "Here is curatio agent's oputput:\n  To: PKDB-Bench audit agent\n  Re: Cycle-1 post-staging audit — notable_ship_canals_by_length_km\n  Mode: audit-instance (read + append-only to <id>.comments.json)\n\n  Cycle-1 design review verdict was \"Revise Before Cycle-0 Staging\" with 2 BLOCKING + 2\n  SUGGESTION fixes. All 4 fixes applied at cycle-0 using cycle-1 audit's verbatim 11-row\n  master-derived dump.\n\n  Artifacts to read:\n  - datasets/pkdb_bench/staging/notable_ship_canals_by_length_km.csv (11 rows × 5 cols)\n  - datasets/pkdb_bench/staging/notable_ship_canals_by_length_km.draft.json\n  - datasets/pkdb_bench/staging/notable_ship_canals_by_length_km.curation.json\n\n  Locked properties:\n  - Single PK = Canal; query_category = comparative; secondary = set_filter; operation_type =\n  filter; claim_type = source_defined; gt_construction = manual_wikipedia\n  - source_count = 1: Wikipedia Ship canal article master URL\n  - universe: 11-entry \"Notable ship canals\" master table (strict-master-table membership)\n  - domain = Transportation/Maritime (existing subdomain)\n  - entity class = engineered-structures/canals NEW fine-class\n  - Sort: Length (km) DESC\n\n  All 4 cycle-1 fixes applied (please verify):\n  1. Source pivot from List of canals → Ship canal article's Notable ship canals table\n  2. Universe = 11 master rows verbatim (Grand Canal / Erie Canal / Rideau Canal / Göta Canal /\n   Albert Canal / Caledonian Canal EXCLUDED; Houston Ship Channel + Danube–Black Sea Canal +\n  Saint Lawrence Seaway INCLUDED)\n  3. ID renamed major_international_* → notable_ship_canals_by_length_km\n  4. Schema column renamed \"Connecting Bodies of Water\" → \"Route Endpoints\" with country-prefix\n   format per master\n\n  Please verify:\n  1. All 11 rows × 5 cells match cycle-1 audit's verbatim master-derived dump\n  2. Special characters preserved: en-dash in \"White Sea–Baltic Canal\" / \"Rhine–Main–Danube\n  Canal\" / \"Volga–Don Canal\" / \"Danube–Black Sea Canal\"; umlaut in \"Brunsbüttel\"; diacritic in\n  \"Cernavodă\"\n  3. Welland Canal Year Opened = 1932 (current Fourth Welland Canal — NOT 1829 original)\n  4. Suez Canal Maximum Ship Dimensions = \"Unlimited x 78 x 20\" (unlimited length convention)\n  5. Houston Ship Channel Maximum Ship Dimensions = \"305 x 161 x 14\" (compound cell)\n  6. Route Endpoints em-dash separator preserved (not hyphen)\n  7. PK uniqueness, sort order, schema consistency, source_count=1\n\n  Expected outcome: Ready+Clean (0/0/0) — single-cycle convergence per master-verbatim staging\n  pattern (mirror phanerozoic_periods_by_start_age +\n  global_200_tropical_moist_broadleaf_forest_ecoregions_by_realm +\n  who_global_top_15_leading_causes_of_death_2021 + english_and_british_monarchs_since_1066_*\n  precedents). Extends engineered-structures/* bucket from 5 to 6 fine-classes with NEW canals\n  fine-class."
+    },
+    {
+      "role": "assistant",
+      "content": "Cycle-1 post-staging audit: Ready with residual hygiene — 0 BLOCKING / 1 NON-BLOCKING HYGIENE / 0 SUGGESTION.\n\nSource and CSV checks pass. I fetched the registered ground-truth source, Wikipedia `Ship canal`, and parsed its `Notable ship canals` table. The staged CSV has 11 rows × 5 columns, unique `Canal` PK values, and all 11 staged rows match the source table after extracting the kilometer value from the source Length cell and joining the source Start point + End point cells into `Route Endpoints` with the staged em-dash format. Source locator: `Ship canal` → `Notable ship canals` table.\n\nThe universe repair is correctly applied. The staged universe is exactly the 11 master-table rows: Saint Lawrence Seaway, White Sea–Baltic Canal, Suez Canal, Rhine–Main–Danube Canal, Volga–Don Canal, Kiel Canal, Houston Ship Channel, Panama Canal, Danube–Black Sea Canal, Manchester Ship Canal, and Welland Canal. The out-of-scope preview rows are absent, and Houston Ship Channel, Danube–Black Sea Canal, and Saint Lawrence Seaway are present.\n\nRequested edge checks pass: special characters are preserved (`White Sea–Baltic Canal`, `Rhine–Main–Danube Canal`, `Volga–Don Canal`, `Danube–Black Sea Canal`, `Brunsbüttel`, `Cernavodă`); Welland Canal uses 1932; Suez Canal uses `Unlimited x 78 x 20`; Houston Ship Channel uses `305 x 161 x 14`; and route endpoint cells preserve the em dash separator.\n\nLocked metadata checks pass: `query_category=comparative`, `secondary_category=set_filter`, `operation_type=filter`, `claim_type=source_defined`, `gt_construction=manual_wikipedia`, `source_count=1`, source URL `https://en.wikipedia.org/wiki/Ship_canal`, domain `Transportation/Maritime`, and schema columns are consistent. Sort order in the CSV is correctly `Length (km) DESC`.\n\nNON-BLOCKING HYGIENE — structural prose: `curation.json::decision_log` has the sort rationale `Master's native sort order`, but the source table's native row order is not length-descending. The staged CSV sort is correct as a curator-normalized sort, not as a source-native sort. Source locator: `Ship canal` → `Notable ship canals` table, whose first rows are White Sea–Baltic Canal, Rhine–Main–Danube Canal, Suez Canal, etc., while the staged CSV correctly starts with the longest row, Saint Lawrence Seaway. Recommended metadata-only fix: change that rationale sentence to say `curator-normalized Length (km) DESC sort` or equivalent.\n\nFinding count by issue type: factual=0 / structural=1 / scope-related=0.\n\nFinal verdict: Ready with residual hygiene. No CSV/schema/source repair is needed; only the one curation-prose sentence should be cleaned up before calling this Ready+Clean."
+    },
+    {
+      "role": "user",
+      "content": "Here is the curation agent's output:\n  To: PKDB-Bench audit agent\n  Re: Cycle-2 verification audit — notable_ship_canals_by_length_km\n  Mode: audit-instance (read + append-only to <id>.comments.json)\n\n  Cycle-1 verdict was \"Ready with residual hygiene — 0 BLOCKING / 1 NON-BLOCKING HYGIENE / 0\n  SUGGESTION\" — decision_log Sort entry incorrectly claimed \"Master's native sort order\" but\n  master table is not natively length-sorted. Prose-only fix applied; no CSV/schema/source\n  changes.\n\n  Cycle-2 hygiene repair applied:\n  - curation.json::decision_log Sort entry rationale rewritten — removed \"Master's native sort\n  order\" claim; replaced with \"curator-normalized sort — the Wikipedia Ship canal article's\n  'Notable ship canals' table is NOT natively length-sorted; the staged Length DESC ordering is\n   applied during curation for benchmark-consistent natural-ranking presentation\"\n  - Decision title updated: \"Sort = Length (km) DESC\" → \"Sort = Length (km) DESC\n  (curator-normalized; NOT master's native order)\"\n  - Mirror-precedent reference preserved (worlds_tallest_dams + largest_asteroids both use\n  curator-normalized DESC sort) with clarification \"even when master display order differs\"\n  - audit_trail updated with cycle_1_post_staging_audit + cycle_2_post_staging_repair entries\n\n  Please verify:\n  1. Active decision_log Sort entry now correctly characterizes Length DESC as\n  curator-normalized (NOT master-native)\n  2. Remaining \"master's native\" / \"natively length-sorted\" mentions are in audit_trail\n  historical entries only (cycle-history convention)\n  3. No CSV cells, schema, source_urls, source_count = 1, claim_type, category, operation_type,\n   gt_construction, domain, entity class, PK uniqueness, sort order — all unchanged from\n  cycle-1-passed state\n\n  Expected outcome: Ready+Clean (0/0/0) — single hygiene fix terminal. Extends\n  engineered-structures/* bucket from 5 to 6 fine-classes with NEW canals fine-class."
+    },
+    {
+      "role": "assistant",
+      "content": "Cycle-2 verification audit: Ready+Clean — 0 BLOCKING / 0 NON-BLOCKING HYGIENE / 0 SUGGESTION.\n\nThe cycle-1 hygiene issue is fixed. The active `curation.json::decision_log` sort entry now reads `Sort = Length (km) DESC (curator-normalized; NOT master's native order)`, and its rationale explicitly states that Wikipedia's `Ship canal` / `Notable ship canals` table is not natively length-sorted. The rationale now correctly frames the staged Length DESC ordering as curator-normalized for benchmark-consistent natural-ranking presentation.\n\nThe remaining stale wording about `Master's native sort order` appears only in historical audit-trail context: the cycle-1 post-staging audit entry and cycle-2 repair entry describe the prior issue and its repair. That is acceptable cycle-history preservation, not active current-state prose.\n\nNo data or locked metadata regression found. The CSV remains 11 rows × 5 columns, `Canal` remains unique, and the CSV is still sorted by `Length (km) DESC` from Saint Lawrence Seaway (600 km) through Welland Canal (43.4 km). Schema, `source_urls`, `source_count=1`, `claim_type=source_defined`, `query_category=comparative`, `secondary_category=set_filter`, `operation_type=filter`, `gt_construction=manual_wikipedia`, and domain `Transportation/Maritime` are unchanged from the cycle-1-passed state.\n\nFinding count by issue type: factual=0 / structural=0 / scope-related=0.\n\nFinal verdict: Ready+Clean for registration."
+    }
+  ],
+  "_audit_metadata": {
+    "audits": [
+      {
+        "audited_by": "codex",
+        "audited_at": "2026-05-20T07:21:34.094735+00:00",
+        "bundle": "Full pre-registration sweep",
+        "verdict": "Ready with residual hygiene",
+        "blocking_issue_count": 0,
+        "non_blocking_hygiene_count": 1,
+        "suggestion_count": 0,
+        "issue_type_counts": {
+          "factual": 0,
+          "structural": 1,
+          "scope-related": 0
+        },
+        "sources_checked": [
+          {
+            "url": "https://en.wikipedia.org/wiki/Ship_canal",
+            "role": "ground_truth",
+            "locator": "Notable ship canals table"
+          }
+        ],
+        "notes": "All 11 CSV rows and locked metadata pass; one curation-prose hygiene item remains because the sort rationale says master-native sort even though Length DESC is curator-normalized."
+      },
+      {
+        "audited_by": "codex",
+        "audited_at": "2026-05-20T07:38:40.299893+00:00",
+        "bundle": "Cycle-2 verification audit",
+        "verdict": "Ready+Clean",
+        "blocking_issue_count": 0,
+        "non_blocking_hygiene_count": 0,
+        "suggestion_count": 0,
+        "issue_type_counts": {
+          "factual": 0,
+          "structural": 0,
+          "scope-related": 0
+        },
+        "notes": "Verified active sort rationale repair and confirmed CSV/schema/source/category metadata unchanged."
+      }
+    ]
+  }
+}
