@@ -1,96 +1,15 @@
-# Python
+.DS_Store
+.idea/
+.vscode/
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# Virtual environments
-venv/
-env/
-ENV/
-.venv
-
-# Conda
-.conda/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
-
-# LLM Cache
-cache/
-.cache_llm/
-*.cache
-
-# Environment variables and secrets
-.env
-.env.local
-*.env
-secrets/
-credentials/
-*.token
-api.env
-
-# Jupyter Notebook
-.ipynb_checkpoints
-*.ipynb
-
-# Testing
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
 htmlcov/
-.tox/
-.hypothesis/
-
-# Logs
-*.log
-logs/
-*.out
-
-# outputs
-results/
-outputs/
-
-# third party repositories
-third_parties/
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-cache*
-.cache*
-
-# OS
-.DS_Store
-Thumbs.db
-
-# experiments
-exp_results/
-examples/
-datasets/
-exp_*/
-
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
