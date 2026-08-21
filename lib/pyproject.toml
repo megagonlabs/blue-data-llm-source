@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blue-data-llm-source"
+version = "1.0.0"
+description = "Blue Data LLM Source Layer"
+requires-python = ">=3.10"
+dependencies = [
+    "blue-data>=0.1.0",
+    "tenacity>=9.0.0",
+]
+
+[project.optional-dependencies]
+llm  = ["litellm", "diskcache"]
+dev  = ["pytest", "pytest-asyncio", "pytest-cov", "ruff", "pyright", "build", "twine"]
+all  = ["litellm", "diskcache"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+blue_data_llm_source = ["py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pyright]
+pythonVersion = "3.10"
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = ""
+pythonpath = ["src", "."]
+testpaths = ["tests/unit"]
+
+[tool.coverage.run]
+source = ["src"]

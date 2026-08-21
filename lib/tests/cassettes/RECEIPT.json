@@ -1,0 +1,40 @@
+{
+  "model": "gpt-4o-mini",
+  "ceiling_usd": 1.0,
+  "total_cost_usd": 0.000229,
+  "cassettes": [
+    {
+      "name": "president_no_attrs",
+      "model": "gpt-4o-mini",
+      "cost_usd": 5.3e-05,
+      "latency_seconds": 1.6,
+      "prompt_tokens": 170,
+      "completion_tokens": 45
+    },
+    {
+      "name": "president_with_attrs",
+      "model": "gpt-4o-mini",
+      "cost_usd": 5e-05,
+      "latency_seconds": 1.028,
+      "prompt_tokens": 180,
+      "completion_tokens": 38
+    },
+    {
+      "name": "president_with_context",
+      "model": "gpt-4o-mini",
+      "cost_usd": 4.5e-05,
+      "latency_seconds": 0.705,
+      "prompt_tokens": 183,
+      "completion_tokens": 29
+    },
+    {
+      "name": "three_presidents",
+      "model": "gpt-4o-mini",
+      "cost_usd": 8.2e-05,
+      "latency_seconds": 1.387,
+      "prompt_tokens": 188,
+      "completion_tokens": 89
+    }
+  ],
+  "note": "Recorded by tests/record_cassettes.py. Responses only; no request bodies and no credentials are stored."
+}

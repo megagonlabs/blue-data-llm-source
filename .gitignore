@@ -1,15 +1,41 @@
-.DS_Store
-.idea/
-.vscode/
+# Python
 __pycache__/
 *.py[cod]
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
+*.egg-info/
+
+# Virtual environments
 .venv/
 venv/
-dist/
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Type checking
+.pyright/
+.mypy_cache/
+
+# Ruff
+.ruff_cache/
+
+# Distribution / packaging
 build/
-*.egg-info/
+dist/
+*.whl
+
+# Environment & secrets
+.env
+.envrc
+*.local
+
+# Caches written by the library
+.llm_cache/
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store

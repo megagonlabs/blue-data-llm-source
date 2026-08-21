@@ -1,0 +1,40 @@
+{
+  "id": "chatcmpl-E7br6a0HGeUmiSmkOQqZmLkSkpEwP",
+  "created": 1785482520,
+  "model": "gpt-4o-mini-2024-07-18",
+  "object": "chat.completion",
+  "system_fingerprint": "fp_3cb74a061c",
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "[\n    {\n        \"first name\": \"Joe\",\n        \"last name\": \"Biden\",\n        \"age\": 80,\n        \"party\": \"Democratic\"\n    }\n]",
+        "role": "assistant",
+        "tool_calls": null,
+        "function_call": null,
+        "provider_specific_fields": {
+          "refusal": null
+        },
+        "annotations": []
+      },
+      "provider_specific_fields": {}
+    }
+  ],
+  "usage": {
+    "completion_tokens": 38,
+    "prompt_tokens": 180,
+    "total_tokens": 218,
+    "completion_tokens_details": {
+      "accepted_prediction_tokens": 0,
+      "audio_tokens": 0,
+      "reasoning_tokens": 0,
+      "rejected_prediction_tokens": 0
+    },
+    "prompt_tokens_details": {
+      "audio_tokens": 0,
+      "cached_tokens": 0
+    }
+  },
+  "service_tier": "default"
+}

@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blue-data-llm-mcp"
+version = "1.0.0"
+description = "MCP server for the Blue Data LLM Source Layer"
+requires-python = ">=3.10"
+dependencies = [
+    "blue-data-llm-source[llm]>=1.0.0",
+    # Pinned, not floored. The low-level Server's decorator API this module is built on
+    # was removed in mcp 2.0, so ">=1.0" resolves to a release where the server cannot
+    # import at all. blue-data-ops pins the same version for the same reason.
+    "mcp==1.27.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "pytest-cov", "jsonschema", "ruff", "pyright", "build", "twine"]
+
+[project.scripts]
+blue-data-llm-mcp = "blue_data_llm_mcp.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pyright]
+pythonVersion = "3.10"
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+# Same two roots pytest puts on the path below, so the checker sees the library's real
+# types instead of treating every import from it as Unknown.
+extraPaths = ["src", "../../lib/src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = ""
+pythonpath = ["src", "../../lib/src"]
+testpaths = ["tests/unit"]
+
+[tool.coverage.run]
+source = ["src"]

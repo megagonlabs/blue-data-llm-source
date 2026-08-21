@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blue-data-llm-cli"
+version = "1.0.0"
+description = "Command line interface for the Blue Data LLM Source Layer"
+requires-python = ">=3.10"
+dependencies = [
+    "blue-data-llm-source[llm]>=1.0.0",
+    "click>=8.0",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "pytest-cov", "ruff", "pyright", "build", "twine"]
+
+[project.scripts]
+llm = "blue_data_llm_cli.commands:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pyright]
+pythonVersion = "3.10"
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+# Same two roots pytest puts on the path below, so the checker sees the library's real
+# types instead of treating every import from it as Unknown.
+extraPaths = ["src", "../../lib/src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = ""
+pythonpath = ["src", "../../lib/src"]
+testpaths = ["tests/unit"]
+
+[tool.coverage.run]
+source = ["src"]
