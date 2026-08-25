@@ -109,14 +109,14 @@ INTENDED_VARIANCE = {
     ("translate_nl_to_native_query", "llm_fn"): ("Any", "same as execute_query_nl"),
     ("execute_nl_tool", "->"): (
         "Any",
-        "upstream leaves the return unannotated because each tool returns its own shape; "
-        "this source refuses every tool, so the annotation is for strict typing only",
+        "upstream leaves the return unannotated because each tool returns its own shape, "
+        "and the four served here return three different ones",
     ),
     ("execute_query_nl_tools", "llm_fn"): ("Any", "same as execute_query_nl"),
     ("execute_query_nl_tools", "extra_tool_fn"): (
         "Any",
-        "upstream leaves it unannotated; this source refuses the whole tool path, so the "
-        "annotation exists to satisfy strict typing rather than to describe a contract",
+        "upstream leaves it unannotated; this source refuses this method, so the annotation "
+        "exists to satisfy strict typing rather than to describe a contract",
     ),
     ("translate_nl_to_native_query", "->"): (
         "str|None",

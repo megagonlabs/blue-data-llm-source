@@ -59,11 +59,11 @@
 
 Interface adapters sit in front of LlmSource and delegate to the core library. They share no internal logic, and each is a translation layer over the Python API. Each is a separately versioned package that depends on the library, so the library carries no CLI or server dependency of its own.
 
-**Python Library** — Native Python API (`LlmSource` and the types it returns), published as `blue-data-llm-source`. This is the canonical interface, and every other interface wraps it.
+**Python Library** — Native Python API (`LlmSource` and the types it returns), distributed as `blue-data-llm-source` (built, not yet published; install from source). This is the canonical interface, and every other interface wraps it.
 
-**MCP Server** — Published as `blue-data-llm-mcp`, speaking MCP over stdio. Exposes two tools, `llm_fetch` and `llm_info`, so an LLM agent can query the source within an agentic context. Internally split so that the tool definitions and the argument translation import nothing from the protocol SDK, and one module owns the transport.
+**MCP Server** — Distributed as `blue-data-llm-mcp` (built, not yet published), speaking MCP over stdio. Exposes three tools — `llm_fetch`, `llm_estimate`, and `llm_info` — so an LLM agent can query the source within an agentic context, size a request before running it, and bound what one costs. Internally split so that the tool definitions and the argument translation import nothing from the protocol SDK, and one module owns the transport.
 
-**CLI** — Published as `blue-data-llm-cli`, providing the `llm` command with `fetch` and `info` subcommands. Built with Click for argument parsing and Rich for output. Option translation is separated from command declaration, so one module maps what a person typed onto library arguments and the other declares options and prints.
+**CLI** — Distributed as `blue-data-llm-cli` (built, not yet published), providing the `llm` command with `fetch` and `info` subcommands. Built with Click for argument parsing and Rich for output. Option translation is separated from command declaration, so one module maps what a person typed onto library arguments and the other declares options and prints.
 
 **REST API** — Not implemented and not scheduled. No HTTP application, route handlers, or server dependencies exist in any package.
 
@@ -71,7 +71,7 @@ Interface adapters sit in front of LlmSource and delegate to the core library. T
 
 The facade, and the only class most callers touch. It inherits `blue_data.source.source.DataSource`, so it is a source of the data layer by type rather than by resemblance. Its constructor initialises connection properties and accepts an optional client; its methods are short and delegate to the modules below.
 
-The base order is load-bearing rather than cosmetic, and it is the one thing about the inheritance worth stating twice. `DataSource` is a plain class, not an abstract one. Most of its methods return an empty result rather than raising, so one left unoverridden here answers nothing instead of failing. That is not true of all of them any more: the transaction methods raise `NotImplementedError` naming this source, and the orchestrator-tool methods carry real behaviour, which is why this source overrides those three with a refusal rather than inheriting them. Where a method does return empty: a registry walking the source would find one that reports no databases and returns no records, silently. `DataSource` is therefore the base and this class's own implementations come first in the method resolution order, which a test asserts for every method on the shared surface.
+The base order is load-bearing rather than cosmetic, and it is the one thing about the inheritance worth stating twice. `DataSource` is a plain class, not an abstract one. Most of its methods return an empty result rather than raising, so one left unoverridden here answers nothing instead of failing. That is not true of all of them any more: the transaction methods raise `NotImplementedError` naming this source, and the orchestrator-tool methods carry real behaviour, which is why this source overrides those three rather than inheriting them: two are narrowed to the tools it can answer, and `execute_query_nl_tools` is refused. Where a method does return empty: a registry walking the source would find one that reports no databases and returns no records, silently. `DataSource` is therefore the base and this class's own implementations come first in the method resolution order, which a test asserts for every method on the shared surface.
 
 - Presents three surfaces over the same core. The library surface is `afetch` (async) and `fetch` (a synchronous wrapper over it). The sizing surface is `estimate`, which contacts nothing. The source surface is `execute_query` and `execute_query_nl`, inherited from `DataSource` and overridden here, plus `translate_nl_to_native_query`, which is the identity because natural language is this source's native form.
 - Holds the connection properties that report `protocol` and `variant`. Protocol names the source family and is fixed at `llm`; variant names the implementation within it and defaults to `openai`.
@@ -140,7 +140,7 @@ The line the dependency does not cross is the one above the data layer. Nothing 
 
 ## What the architecture deliberately does not contain
 
-- A planning layer. There is no query rewriter, schema identifier, cardinality estimator, or partitioner. One request becomes one model call.
+- A planning layer. There is no query rewriter, schema identifier, cardinality estimator, or partitioner. One request becomes one completion, taking up to `limits.max_retries + 1` provider attempts.
 - An execution layer. There is no task tree, no fan-out runner, no pagination loop, and no empty-partition fallback.
 - A validator stack. Format verification against declared types ships; factual verification does not, and per-run reporting is not a substitute for it.
 - A retrieval or grounding path. The premise is closed-book.

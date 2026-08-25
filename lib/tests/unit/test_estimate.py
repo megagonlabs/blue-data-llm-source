@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -211,8 +212,13 @@ def test_the_readme_client_example_produces_a_bounded_estimate() -> None:
     sized = source.estimate("the member states of the European Union", attrs=["country"])
 
     assert sized.bounded, sized.reason
-    # The per-attempt bound the example declares, times the attempts a fetch permits.
-    assert sized.max_cost == pytest.approx(per_attempt * 3)
+    # Accumulated once per attempt, the way the ledger accumulates it — not multiplied.
+    # The two agree exactly at three attempts and diverge above five, so asserting the
+    # accumulation is what pins the rule rather than a value both happen to produce here.
+    accumulated = 0.0
+    for _ in range(3):
+        accumulated += per_attempt
+    assert sized.max_cost == accumulated
 
 
 def test_a_configured_injected_client_estimates_what_it_will_admit() -> None:
@@ -359,3 +365,35 @@ def test_a_client_that_will_not_respect_the_attempt_allowance_is_unestimable() -
     sized = LlmSource(client=WithoutTheClaim()).estimate("who?")
     assert sized.bounded is False
     assert sized.reason
+
+
+def test_no_shipped_file_describes_the_whole_fetch_bound_as_a_product() -> None:
+    """The bound accumulates; nothing may tell a caller to multiply.
+
+    Six files said "times the attempts" after one of them was corrected to say
+    "accumulated". Both phrasings name the same quantity and agree numerically below six
+    attempts, so nothing failed and no reader could tell which to size a ceiling against.
+    Fixing them one at a time is what let that happen twice, so the rule is a test.
+    """
+    import re
+
+    root = Path(__file__).resolve().parents[3]
+    wrong = re.compile(
+        r"max_cost_per_attempt \* max_attempts"
+        r"|per-attempt (?:bound|figure) times"
+        r"|multipl(?:y|ies|ied) it by the attempts"
+        r"|times the attempts",
+        re.IGNORECASE,
+    )
+    offenders: list[str] = []
+    for path in root.rglob("*"):
+        if path.suffix not in {".py", ".md", ".toml"} or ".venv" in path.parts:
+            continue
+        if path.resolve() == Path(__file__).resolve():
+            continue  # this file names the phrasings in order to forbid them
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            if wrong.search(line):
+                offenders.append(f"{path.relative_to(root)}:{number}")
+    assert not offenders, "the whole-fetch bound accumulates, it is not a product: " + ", ".join(
+        offenders
+    )

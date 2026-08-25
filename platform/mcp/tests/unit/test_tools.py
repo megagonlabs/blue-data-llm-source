@@ -205,7 +205,7 @@ def test_the_withdrawn_rate_key_is_refused_before_the_source_is_touched(
     for caught in (sync_error, async_error):
         message = str(caught.value)
         assert "llm.rate_limit" in message
-        assert "v1.1" in message
+        assert "v2.0" in message
         assert "max_parallel" in message
     assert client.usages == [], "the source was reached despite an unsupported argument"
 
@@ -256,7 +256,7 @@ def test_a_nested_extra_in_an_attribute_is_refused_on_both_paths(make_source: An
 
     with pytest.raises(tools.ToolError) as caught:
         tools.dispatch("llm_fetch", nested_deferred, source=source)
-    assert "v1.1" in str(caught.value)
+    assert "v2.0" in str(caught.value)
     assert "max_parallel" in str(caught.value)
     assert client.usages == [], "the source was reached despite an invalid attribute"
 

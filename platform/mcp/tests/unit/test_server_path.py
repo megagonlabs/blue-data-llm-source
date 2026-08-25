@@ -6,7 +6,7 @@ synchronously, so the library refused every fetch with "called from inside a run
 event loop". These tests drive the same coroutine the SDK would await.
 
 The MCP package is not installed here, so the handler is reconstructed from the module's
-own source rather than mocked. No candidate behaviour is stubbed.
+own source rather than mocked. None of the server's own behaviour is stubbed.
 """
 
 from __future__ import annotations
@@ -205,6 +205,48 @@ def test_the_sdk_is_pinned_not_floored() -> None:
     assert "mcp>=" not in pyproject
 
 
+def test_a_dotted_ceiling_name_survives_the_protocol_layer() -> None:
+    """The ceilings are advertised under names containing a dot, which nothing else here is.
+
+    A property name is a wire-level detail once it leaves this package: it goes into the
+    advertised `inputSchema` and comes back in a client's arguments. The direct-dispatch
+    tests never see either. This drives the shipped server through the installed SDK, and it
+    is `llm_estimate` because that one answers with no credential and contacts nothing.
+
+    Guarded like its siblings below: the suite is specified to run without the protocol SDK.
+    """
+    pytest.importorskip("mcp")
+
+    from mcp import types
+
+    from blue_data_llm_mcp import server as shipped
+
+    async def listed() -> Any:
+        request = types.ListToolsRequest(method="tools/list")
+        return await shipped.server.request_handlers[types.ListToolsRequest](request)
+
+    async def estimated() -> Any:
+        request = types.CallToolRequest(
+            method="tools/call",
+            params=types.CallToolRequestParams(
+                name="llm_estimate", arguments={"query": "who?", "limits.max_calls": 1}
+            ),
+        )
+        return await shipped.server.request_handlers[types.CallToolRequest](request)
+
+    advertised = {tool.name: tool.inputSchema for tool in asyncio.run(listed()).root.tools}
+    assert set(advertised) == {"llm_fetch", "llm_estimate", "llm_info"}
+    for name in ("llm_fetch", "llm_estimate"):
+        assert "limits.max_cost" in advertised[name]["properties"]
+
+    result = asyncio.run(estimated()).root
+    assert not result.isError, result.content[0].text
+    payload = json.loads(result.content[0].text)
+    # Narrowed to one attempt by the ceiling that arrived with the call, which is the whole
+    # round trip: advertised name out, same name back, read by the library.
+    assert payload["max_attempts"] == 1
+
+
 def test_the_real_sdk_handler_gives_the_deferred_answer_not_a_schema_error() -> None:
     """Through the installed SDK request handler, not `dispatch` alone.
 
@@ -238,5 +280,5 @@ def test_the_real_sdk_handler_gives_the_deferred_answer_not_a_schema_error() -> 
 
     assert result.isError
     assert "llm.rate_limit" in message
-    assert "v1.1" in message
+    assert "v2.0" in message
     assert "max_parallel" in message

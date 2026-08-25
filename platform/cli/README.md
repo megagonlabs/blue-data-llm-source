@@ -33,7 +33,7 @@ Prints the protocol, the variant, and the version of the library underneath:
 ```text
 protocol  llm
 variant   openai
-version   1.0.0
+version   1.1.0
 ```
 
 ```bash
@@ -105,7 +105,7 @@ llm fetch "the member states of the European Union" --format json
 
 Careful with that pipe. The provider library writes its own coloured banners to standard output on some failure paths, and this package has no hook to suppress them, so a JSON reader on the other end of the pipe can choke on lines the CLI did not print. Redirecting standard error does not help, because the banners are on standard output. Anything scripted should read the accounting through the library rather than out of a pipe.
 
-The model and the spending limits are options, not configuration files. All three are claimed before a call, so a request that would cross one is refused rather than reported afterwards. A call's price is not known until it returns, so `--limit-cost` is claimed against an upper bound on what the call can cost rather than against an estimate of what it is likely to cost, and that bound is reconciled against the real figure once the call returns. The difference matters: an estimate tuned to the average is exceeded by ordinary input, and a ceiling resting on one is crossed by the call that crosses it. A request refused this way prints no records and exits 0, since a ceiling is an answer rather than an error; `--verbose` names it as `stopped by: max_cost`.
+The model and the spending limits are options, not configuration files. All three are claimed before a call, so a request that would cross one is refused rather than reported afterwards. A call's price is not known until it returns, so `--limit-cost` is claimed against an upper bound on what the call can cost rather than against an estimate of what it is likely to cost, and that bound is reconciled against the real figure once the call returns. The difference matters: an estimate tuned to the average is exceeded by ordinary input, and a ceiling resting on one is crossed by the call that crosses it. A request refused this way prints no records and exits 7, the code for a run a ceiling ended; `--verbose` names it as `stopped by: max_cost`.
 
 ```bash
 llm fetch "the member states of the European Union" \
@@ -116,7 +116,7 @@ llm fetch "the member states of the European Union" \
 
 ### --verbose
 
-`--verbose` is global, so it goes before the subcommand. It adds the outcome, which is always printed, plus five things reported only when there is something to say: keys the model returned that no requested attribute matched, keys it renamed on the way in, the limit that stopped the run, values that did not match a declared attribute type, and values dropped because two returned keys answered the same attribute.
+`--verbose` is global, so it goes before the subcommand. It adds the outcome, which is always printed, plus six things reported only when there is something to say: keys the model returned that no requested attribute matched, keys it renamed on the way in, the limit that stopped the run, values that did not match a declared attribute type, values dropped because two returned keys answered the same attribute, and declared type names this library cannot check.
 
 ```bash
 llm --verbose fetch "the member states of the European Union" \
@@ -165,9 +165,9 @@ llm: TransportError: litellm.InternalServerError: OpenAIException - Missing cred
 
 **Exit 2 is Click's, not this package's.** An unknown or syntactically wrong option — a misspelled `--limit-cst`, a `--limit-cost` that is not a number, a `--max-tokens` below one — never reaches the library, so it exits 2 with Click's own message and suggestion.
 
-Code 4 covers a value that parsed and the library then rejected: a negative or non-finite ceiling, an unknown `llm.*` override, a setting deferred to v1.1, a cost ceiling whose bound cannot be established, and a missing optional extra.
+Code 4 covers a value that parsed and the library then rejected: a negative or non-finite ceiling, an unknown `llm.*` override, a setting deferred to v2.0, a cost ceiling whose bound cannot be established, and a missing optional extra.
 
-A limit that stops a run is not an error. `fetch` reports it in `stopped_by` and exits 0 with whatever records were collected, which is why exit 7 is unreachable here.
+A cost, time, or call ceiling that stops a run exits 7. Whatever records were collected are printed first and the run is reported in `stopped_by`, so nothing is hidden, but the code is what a script branches on and a stopped run must not look like a completed one. The row cap is the exception: it is the one ceiling that leaves a usable result, so `--max-records` reports `outcome: truncated` and exits 0.
 
 ## Tests
 

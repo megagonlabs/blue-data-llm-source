@@ -8,7 +8,7 @@
 
 Entry point for everything the package does. It inherits `blue_data.source.source.DataSource` and remains instantiable on its own, since that base class has no abstract members either. It holds connection properties, resolves a model client per request, and delegates rendering, parsing, alignment, and verification to the modules below.
 
-The base order is load-bearing, which is worth saying at the top rather than in a footnote. `DataSource` defines every method this class also defines. Most of its methods return an empty result rather than raising, so one left unoverridden here answers nothing instead of failing. That is not true of all of them any more: the transaction methods raise `NotImplementedError` naming this source, and the orchestrator-tool methods carry real behaviour, which is why this source overrides those three with a refusal rather than inheriting them. If the bases were listed the other way round, or a method were left unwritten, those empty implementations would win the method resolution order and `fetch_databases` would return an empty list while `execute_query` returned no records, without a model ever being called and without anything reporting a problem. A test walks the shared surface and asserts each method resolves to `LlmSource`, which is what turns an ordering mistake into a failing test instead of a source that quietly answers nothing.
+The base order is load-bearing, which is worth saying at the top rather than in a footnote. `DataSource` defines every method this class also defines. Most of its methods return an empty result rather than raising, so one left unoverridden here answers nothing instead of failing. That is not true of all of them any more: the transaction methods raise `NotImplementedError` naming this source, and the orchestrator-tool methods carry real behaviour, which is why this source overrides those three rather than inheriting them: two are narrowed to the tools it can answer, and `execute_query_nl_tools` is refused. If the bases were listed the other way round, or a method were left unwritten, those empty implementations would win the method resolution order and `fetch_databases` would return an empty list while `execute_query` returned no records, without a model ever being called and without anything reporting a problem. A test walks the shared surface and asserts each method resolves to `LlmSource`, which is what turns an ordering mistake into a failing test instead of a source that quietly answers nothing.
 
 Inheriting the base class is not the same as being constructible by protocol name. `DataRegistry.connect_source` returns the registered instance, or rebuilds one from the recorded class path when the live entry is gone; `DataRegistry.register_source` takes a built instance and reads only `name` and `properties`, which is the route that works.
 
@@ -158,6 +158,26 @@ Runs a natural language query and returns `list[dict]`. Argument extraction matc
 #### `translate_nl_to_native_query(query, schema, llm_fn)`
 
 Returns `query` unchanged, or `None` when it is empty. This is the documented override point for sources needing a different translation strategy; for this source the identity is the correct implementation.
+
+### Orchestrator tool surface
+
+#### `get_nl_tools(database=None, collection=None)`
+
+Returns the base class's own tool definitions for the four tools this source can answer: `list_databases`, `list_collections`, `get_schema`, and `execute_query`. The other four are filtered out. `get_metadata`, `get_column_stats`, and `get_relations` would answer with an empty result and no explanation, which leaves the model calling them unable to tell "nothing here" from "wrong question", and `get_sample` raises a `TypeError` because the base dispatcher passes `row_sample_size` to a `fetch_entity_stats` that takes no such argument.
+
+Filtered rather than rewritten, because the base dispatcher is what reads the input. A schema written here would be a second copy of its contract, and the copy is what drifts: a key renamed or a `required` entry added upstream would leave this source advertising a call the dispatcher then rejects. Filtering also fails in the safe direction: a tool added upstream stays unadvertised until someone here has checked that it answers, and one renamed upstream drops out of the advertisement instead of being advertised and then failing when called.
+
+#### `execute_nl_tool(name, tool_input, database=None, collection=None, optional_properties=None)`
+
+Serves the four by delegating to the base dispatcher, and refuses any other name with a `ConfigError` listing what is available. The served set is read from `get_nl_tools`, so what is advertised and what runs cannot diverge.
+
+Nothing on this path leaves the `LlmSourceError` hierarchy. The base dispatcher raises `ValueError` for an unknown name, `KeyError` for a required input it indexes directly, and `AttributeError` for a `tool_input` that is not a mapping, none of which a caller written against this library's documented errors can catch. A missing required key is reported by name, read off the advertised schema rather than listed locally; `database` and `collection` are excluded from that check because the dispatcher falls back to the arguments of the same name.
+
+`execute_query` is the one advertised tool that reaches a provider. It takes a ceiling where the query surface takes one: a `limits.*` key in `optional_properties` is handed to `execute_query` by the dispatcher and binds that call alone. A misspelled ceiling key is refused on every tool rather than only on the one that spends, for the reason `execute_query` checks the key set before reading the op — a key accepted on one call and refused on the next is a ceiling a caller believes they have set.
+
+#### `execute_query_nl_tools(...)`
+
+Raises `ConfigError`. It drives a loop of up to ten provider calls that this source's ceilings do not govern, so serving it would put an unbounded spend path behind a method this package never chose to offer. `execute_query_nl` is the bounded natural-language route, and the refusal names it.
 
 ### Metadata surface
 
@@ -467,11 +487,17 @@ The bound is computed only when it will be enforced. `remaining_cost()` returnin
 
 Reservation is per provider attempt rather than per operation. Reserving once around the whole retry loop would let a run configured for two retries make three times the calls its limit allows, which is the difference between a limit and a suggestion. The same placement is what makes the time limit hold across a slow retry sequence: each attempt rechecks the deadline before it reserves, and the timeout it hands the provider is never longer than the time the run has left. Everything that can fail locally happens before the reservation, so such a failure is uncharged. The order is admit, import, claim: the bound is checked against the budget without taking anything, so a request the ceiling refuses never reaches the network, and the claim itself is the last step before the provider is entered. Claiming before the import instead made the claim visible to a sibling sharing the budget, which was then refused on an allowance the final ledger said was free.
 
-Everything after the provider entry point is invoked sits inside one guard, including materialising the response into a mapping. Wrapping only the call itself left a response that failed to materialise with its claim outstanding, so the retry reserved again and the headroom it had taken never came back. The rule is that a reservation resolves on every path out of the attempt.
+Everything after the provider entry point is invoked sits inside one guard, including reading a stream to its end, reassembling it, and materialising the result into a mapping. Wrapping only the call itself left a response that failed to materialise with its claim outstanding, so the retry reserved again and the headroom it had taken never came back. The rule is that a reservation resolves on every path out of the attempt.
 
 **Accepted `llm.*` overrides**
 
 `model`, `temperature`, `max_tokens`, `stream`, `timeout`, `cache`, `cache_dir`, `max_parallel`, `price_per_input_token`, `price_per_output_token`. The set is closed and an unknown name raises `ConfigError` listing the accepted ones. The last five are consumed locally and never forwarded, the two price keys among them, which is what lets a caller bound a model `pricing.PRICES` does not carry. Transport-shaped names are stripped after every merge. That strip is unreachable in practice, because the closed key set refuses those names first; it stands as a second line rather than as the defence, and the closed set is the defence.
+
+**Streaming**
+
+`stream` is forwarded like any other provider setting, and a truthy value changes only how the answer arrives. The chunks are drained, handed to the provider library's assembler, and the single response that comes back goes down the path a non-streamed response takes, so nothing after this point knows the difference. It is there for provider configurations and proxies that require a stream; it cannot make a fetch faster, because a fetch parses a whole document and has nothing to give a caller until the last chunk lands.
+
+The accounting is the part that needed a decision. Whether the provider priced the call is read from the chunks, not from the assembled response, because the assembler always attaches a usage block and fills the counts in from a local tokenizer when the stream sent none. A stream with no accounting of its own therefore takes the route every unreadable cost takes — the reservation is kept at its bound and `cost_known` is false — instead of settling a figure that was computed here and charged nowhere.
 
 **Retry**
 

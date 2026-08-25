@@ -11,7 +11,12 @@ from tests.doubles.network import (
     install_network_guard,
     install_offline_guard,
 )
-from tests.doubles.provider import LitellmStub, chat_payload, install_litellm
+from tests.doubles.provider import (
+    LitellmStub,
+    chat_payload,
+    install_litellm,
+    stream_chunks,
+)
 
 __all__ = [
     "FailingClient",
@@ -25,4 +30,5 @@ __all__ = [
     "install_litellm",
     "install_network_guard",
     "install_offline_guard",
+    "stream_chunks",
 ]

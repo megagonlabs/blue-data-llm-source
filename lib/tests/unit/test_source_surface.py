@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from blue_data.source.source import DataSource  # pyright: ignore[reportMissingTypeStubs]
 
 from blue_data_llm_source import Budget, Capability, Limits, LlmSource
 from blue_data_llm_source import _constants as C
@@ -456,9 +457,8 @@ def test_accounting_is_known_only_when_the_answering_client_can_attest() -> None
 @pytest.mark.parametrize(
     ("properties", "match"),
     [
-        ({"llm.stream": True}, "deferred to v1.1"),
         ({"llm.max_parallel": 0}, "max_parallel"),
-        ({"llm.rate_limit": 10}, "deferred to v1.1"),
+        ({"llm.rate_limit": 10}, "deferred to v2.0"),
         ({"llm.nosuchkey": 1}, "unknown adapter override"),
     ],
 )
@@ -468,9 +468,8 @@ def test_an_injected_clients_own_properties_cross_the_same_boundary(
     """A deliberate setting on an injected client is still configuration.
 
     Validation ran on what the caller passed and then the client's own properties were merged
-    in afterwards, so they reached the provider having crossed nothing: `llm.stream=True` was
-    forwarded instead of refused by name, and `llm.max_parallel=0` built a semaphore with no
-    permits and waited.
+    in afterwards, so they reached the provider having crossed nothing: `llm.max_parallel=0`
+    built a semaphore with no permits and waited, and a misspelled key was accepted silently.
     """
     from blue_data_llm_source.llm.client import DefaultLlmClient
 
@@ -933,29 +932,149 @@ def test_a_type_name_this_library_cannot_check_is_reported_once_not_per_value() 
     assert checked.meta.unchecked_types == []
 
 
-def test_this_source_offers_no_orchestrator_tools() -> None:
-    """The base class advertises a relational tool surface this source cannot serve.
+# ------------------------------------------------------------- the tool path --
+SERVED_TOOLS = ["list_databases", "list_collections", "get_schema", "execute_query"]
 
-    Inherited unchanged it offered eight tools: three answered with an empty result and no
-    explanation, and one raised a bare `TypeError` out of a defect in the base class's own
-    dispatcher. Answering with silence is the failure this package exists to prevent, so
-    v1.0 advertises nothing and refuses clearly if a tool is called anyway.
+# What a call to each advertised tool looks like. Keyed by name so a tool advertised without
+# an entry here fails the tests below rather than going unexercised.
+TOOL_INPUTS: dict[str, dict[str, Any]] = {
+    "list_databases": {},
+    "list_collections": {"database": C.DATABASE},
+    "get_schema": {"database": C.DATABASE, "collection": C.COLLECTION},
+    "execute_query": {"query": "who?"},
+}
+
+
+def test_the_advertised_tools_are_the_ones_this_source_can_answer() -> None:
+    """The base advertises eight of them and this source answers four.
+
+    `get_metadata`, `get_column_stats` and `get_relations` return an empty result with
+    nothing said, and `get_sample` raises a bare `TypeError` out of the base dispatcher,
+    which hands `row_sample_size` to a `fetch_entity_stats` that takes no such argument.
+    Advertising any of those puts a tool in front of an orchestrating model that it cannot
+    use and is not told why.
+    """
+    assert [tool["name"] for tool in LlmSource().get_nl_tools()] == SERVED_TOOLS
+
+
+def test_an_advertised_schema_is_the_base_class_own() -> None:
+    """Filtered, never rewritten.
+
+    The base dispatcher is what reads the input, so a schema written here would be a second
+    copy of its contract and the copy is what drifts: a key renamed or a `required` entry
+    added upstream would leave this source advertising a call the dispatcher then refuses.
+    """
+    base_tools = cast(
+        "list[dict[str, Any]]",
+        DataSource.get_nl_tools(LlmSource()),  # pyright: ignore[reportUnknownMemberType]
+    )
+    upstream = {tool["name"]: tool for tool in base_tools}
+
+    for tool in LlmSource().get_nl_tools():
+        assert tool == upstream[tool["name"]], "an advertised schema has drifted from upstream"
+
+    # Called out because the tool path routes a call by them, and a filter that dropped them
+    # would leave an orchestrator no way to say which database it means.
+    by_name = {tool["name"]: tool for tool in LlmSource().get_nl_tools()}
+    assert set(by_name["get_schema"]["input_schema"]["properties"]) == {"database", "collection"}
+
+
+def test_every_advertised_tool_returns_something_a_caller_can_use() -> None:
+    """Answering with silence is the failure the filter exists to prevent."""
+    source = LlmSource(client=ScriptedClient([TWO_RECORDS]))
+    answers = {
+        str(tool["name"]): source.execute_nl_tool(tool["name"], TOOL_INPUTS[tool["name"]])
+        for tool in source.get_nl_tools()
+    }
+
+    assert answers["list_databases"] == [C.DATABASE]
+    assert answers["list_collections"] == [C.COLLECTION]
+    assert answers["get_schema"]["entities"], "a schema with no entities in it is silence"
+    assert answers["execute_query"] == [{"name": "Ada"}, {"name": "Grace"}]
+    assert all(answers.values()), "every advertised tool has to answer with something"
+
+
+def test_a_tool_this_source_does_not_advertise_is_refused_by_name() -> None:
+    """And the refusal names what a caller can reach instead.
+
+    The caller here is a model that sees only the message text, so a refusal that does not
+    say what is available leaves it guessing at its next move.
     """
     source = LlmSource()
-    assert source.get_nl_tools() == []
 
-    # The refusal matters more than the empty list. `execute_query_nl_tools` drives a loop of
-    # up to ten provider calls that this source's ceilings never see, so leaving it inherited
-    # would have put an unbounded spend path behind a method nobody chose to offer.
-    with pytest.raises(ConfigError, match="serves no orchestrator tools"):
+    for name in ("get_sample", "get_metadata", "get_column_stats", "get_relations", "invented"):
+        with pytest.raises(ConfigError, match="is not a tool this source serves"):
+            source.execute_nl_tool(name, {"entity": "x"})
+
+    with pytest.raises(ConfigError, match="list_databases"):
         source.execute_nl_tool("get_sample", {"entity": "x"})
-    with pytest.raises(ConfigError, match="tool-driven query path"):
-        source.execute_query_nl_tools("who?")
 
-    # Both refusals are in the documented hierarchy, which the inherited versions were not.
-    for call in (
-        lambda: source.execute_nl_tool("get_sample", {}),
+
+def test_no_tool_call_escapes_the_documented_hierarchy() -> None:
+    """`except LlmSourceError` is the promise, and the base dispatcher does not keep it.
+
+    Left to the base, an unknown name arrives as `ValueError`, a missing required key as
+    `KeyError`, and a `tool_input` that is not a mapping as `AttributeError`. None of those
+    is catchable by a caller written against this library's documented errors.
+    """
+    source = LlmSource(client=ScriptedClient([TWO_RECORDS]))
+    calls: list[Callable[[], Any]] = [
+        lambda: source.execute_nl_tool("no_such_tool", {}),
+        lambda: source.execute_nl_tool("execute_query", {}),
+        lambda: source.execute_nl_tool("execute_query", {"query": 7}),
+        lambda: source.execute_nl_tool("execute_query", cast("dict[str, Any]", ["query"])),
+        lambda: source.execute_nl_tool(cast("str", {"execute_query": 1}), {}),
         lambda: source.execute_query_nl_tools("who?"),
-    ):
+    ]
+
+    for call in calls:
         with pytest.raises(LlmSourceError):
             call()
+
+    # The missing key is named, rather than reaching the caller as a dictionary lookup.
+    with pytest.raises(QueryError, match="execute_query requires query"):
+        source.execute_nl_tool("execute_query", {})
+
+
+def test_the_tool_driven_query_loop_is_still_refused() -> None:
+    """The one tool method that stays refused, and for spend rather than shape.
+
+    It drives a loop of up to ten provider calls that this source's ceilings never see, so
+    serving it would put an unbounded spend path behind a method nobody here chose to offer.
+    """
+    with pytest.raises(ConfigError, match="tool-driven query path"):
+        LlmSource().execute_query_nl_tools("who?")
+
+
+def test_a_ceiling_supplied_with_a_tool_call_binds_the_tool_that_spends() -> None:
+    """`execute_query` is the one advertised tool that reaches a provider.
+
+    It takes its ceilings where the query surface takes them — `limits.*` in
+    `optional_properties` — and the base dispatcher hands them on. A tool that spends with no
+    reachable ceiling is a tool an orchestrator can run until the bill arrives.
+    """
+    refused = ScriptedClient([TWO_RECORDS], cost=0.02)
+    stopped = LlmSource(client=refused).execute_nl_tool(
+        "execute_query", {"query": "who?"}, optional_properties={"limits.max_cost": 0.000001}
+    )
+    assert stopped == []
+    assert refused.prompts == [], "a spend ceiling has to bind before the provider is contacted"
+
+    allowed = ScriptedClient([TWO_RECORDS], cost=0.02)
+    assert LlmSource(client=allowed).execute_nl_tool(
+        "execute_query", {"query": "who?"}, optional_properties={"limits.max_cost": 1.0}
+    ) == [{"name": "Ada"}, {"name": "Grace"}]
+
+    capped = ScriptedClient([TWO_RECORDS])
+    assert LlmSource(client=capped).execute_nl_tool(
+        "execute_query", {"query": "who?"}, optional_properties={"limits.max_rows": 1}
+    ) == [{"name": "Ada"}]
+
+
+def test_a_misspelled_ceiling_is_refused_on_every_tool_not_only_the_one_that_spends() -> None:
+    """A key accepted on one call and refused on the next is a ceiling a caller believes in."""
+    source = LlmSource(client=ScriptedClient([TWO_RECORDS]))
+
+    for name, tool_input in TOOL_INPUTS.items():
+        with pytest.raises(ConfigError, match="unknown limit"):
+            source.execute_nl_tool(name, tool_input, optional_properties={"limits.max_cst": 1})

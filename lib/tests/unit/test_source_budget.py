@@ -1083,7 +1083,7 @@ def test_client_side_rate_limiting_is_refused_by_name() -> None:
         # The key, the deferral, and something to do instead. A bare "max_parallel" match
         # would also be satisfied by the generic accepted-keys list in an unknown-key error.
         assert "llm.rate_limit" in message, message
-        assert "deferred to v1.1" in message, message
+        assert "deferred to v2.0" in message, message
         assert "llm.max_parallel" in message, message
 
 

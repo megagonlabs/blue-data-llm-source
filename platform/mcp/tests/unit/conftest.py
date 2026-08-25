@@ -40,12 +40,17 @@ class FakeClient:
         prompt_tokens: int = 12,
         completion_tokens: int = 34,
         cost: float = 0.0012,
+        capabilities: frozenset[str] = Capability.ALL,
     ) -> None:
         self.response = response
         self.model = model
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
         self.cost = cost
+        # Narrowed by a test that needs a client which cannot price an attempt in advance,
+        # which is a real client shape rather than a hypothetical one: only a client driving
+        # the provider itself knows the model and the rates a call will use.
+        self.capabilities = capabilities
         # Budget-aware, like the client it stands in for: it claims against the run's
         # budget so the ceilings the interface exposes actually bind in these tests.
         self.budget = Budget()
@@ -54,8 +59,17 @@ class FakeClient:
         self.usages: list[Usage] = []
 
     def budget_capabilities(self) -> frozenset[str]:
-        """Every axis: this double claims against the budget it is handed, like the real client."""
-        return Capability.ALL
+        """Every axis by default: this double claims against the budget it is handed."""
+        return self.capabilities
+
+    def bound_for_attempt(self, prompt: str, properties: dict[str, Any]) -> float:
+        """What one attempt could cost at most, which for this double is what it charges.
+
+        Declaring ``Capability.ESTIMATE`` commits a client to answering this, so a double
+        that declares it and cannot answer would report no bound at all — and every test of
+        the estimate surface would be a test of the answer given when there is none.
+        """
+        return self.cost
 
     def complete(self, prompt: str, properties: dict[str, Any] | None = None) -> str:
         merged = dict(properties or {})

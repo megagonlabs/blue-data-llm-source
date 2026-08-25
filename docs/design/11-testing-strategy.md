@@ -45,12 +45,12 @@ lib/tests/
   cassettes/                   # four recorded provider responses and a spend receipt
   doubles/
     clients.py                 # ScriptedClient, FailingClient — satisfy LlmClientProtocol
-    provider.py                # LitellmStub, chat_payload, install_litellm
+    provider.py                # LitellmStub, chat_payload, stream_chunks, install_litellm
     cache.py                   # a cache double
     network.py                 # the offline guard, its record, and its errors
   unit/
     test_source_fetch.py       # the fetch path: prompt, parse, align, verify, dedupe, meta
-    test_source_surface.py     # execute_query op dispatch, execute_query_nl, metadata surface
+    test_source_surface.py     # execute_query op dispatch, execute_query_nl, the tool path, metadata
     test_source_budget.py      # limits reaching the result, stopped_by, which clients they bind
     test_source_fixtures.py    # the worked examples from the source specification
     test_cassette_fixtures.py  # the same examples replayed from the recordings
@@ -71,6 +71,7 @@ lib/tests/
       test_client_cache.py     # hit, miss, per-directory binding, zero budget consumption
       test_client_diskcache.py # the llm.cache branch against the real backend
       test_client_transport.py # retry, transport errors, malformed response shapes
+      test_client_stream.py    # a streamed call: same records, same pricing, unpriced when unpriceable
       test_client_usage.py     # token, cost, latency, and cache-hit accounting
       test_function_client.py  # the llm_fn path
     cache/
@@ -115,6 +116,8 @@ A plain callable covers the `llm_fn` path, which reaches the model through `Func
 Because the import is lazy and the stub replaces it, the client's whole surface is testable with the provider package absent, which is how CI runs it.
 
 Response-shape defences use constructed payloads rather than recordings, because the interesting cases are the ones a provider produces rarely: a response with no `choices` list, an empty `choices` list, and a choice with no message content. Each must raise a `TransportError` naming the shape.
+
+The same stub answers a call that asked for a stream, yielding the chunks it was built with through an ordinary iterator on the synchronous path and an asynchronous one on the other, and it carries the chunk assembler the client calls. One property of that assembler is deliberate rather than incidental: it always attaches a usage block, counting the assembled text itself when the chunks carried none, because the real one does. A double that simply left usage out would let a client that priced the assembled block pass here and settle an invented figure against a real provider, so the double reproduces the trap rather than smoothing it away. Removing that behaviour is enough on its own to stop the accounting tests failing when the client's handling of it is reverted, which is what makes it load-bearing.
 
 ### The cache
 
@@ -185,10 +188,10 @@ Every configuration key has a test proving that changing it changes observable b
 |-----|---------------------------|
 | `llm.model` | Appears in the call arguments and in `ExecMeta.model` |
 | `llm.temperature`, `llm.max_tokens`, `llm.timeout` | Forwarded to the provider call arguments |
-| `llm.stream` | `False` is forwarded; a truthy value is refused by name, since streaming is deferred |
+| `llm.stream` | Both values are forwarded; a streamed call returns the records the same unstreamed call does, is priced when the provider sends usage, and keeps its reservation when it does not |
 | `llm.cache`, `llm.cache_dir` | Second identical call is a cache hit; a different directory is a miss |
 | `llm.max_parallel` | Bounds in-flight calls under concurrent fetches |
-| `llm.rate_limit` | Refused with `ConfigError` naming the v1.1 deferral |
+| `llm.rate_limit` | Refused with `ConfigError` naming the v2.0 deferral |
 | `limits.*` and `max_records` | Stop a run and name themselves in `stopped_by` |
 | `connection.variant` | Reported by the `variant` property and by `LLM.MODELS` |
 
@@ -214,7 +217,7 @@ Each platform package tests its own translation layer and nothing below it. Both
 
 **CLI.** Tests cover the `fetch` and `info` commands through Click's runner, the option translation in isolation, and the error-to-exit-code mapping for each classified error kind. One further test reads the CLI README, extracts every `llm` command from its shell blocks, and runs each one against a scripted client. Install and tooling blocks are not executed. A command that stops working there fails the suite rather than surviving as a false claim about the product.
 
-**MCP.** Tests cover the two tool handlers, the dispatcher's behaviour on an unknown tool name, and the input schemas, which are validated with `jsonschema` because they are hand-written and are the contract an agent actually reads. A separate test asserts the import boundary: the module holding the tool definitions and the translation must not import the protocol SDK, which is what keeps that module testable without it.
+**MCP.** Tests cover the three tool handlers, the ceilings binding through the tool path, the dispatcher's behaviour on an unknown tool name, and the input schemas, which are validated with `jsonschema` because they are hand-written and are the contract an agent actually reads. A separate test asserts the import boundary: the module holding the tool definitions and the translation must not import the protocol SDK, which is what keeps that module testable without it.
 
 ---
 

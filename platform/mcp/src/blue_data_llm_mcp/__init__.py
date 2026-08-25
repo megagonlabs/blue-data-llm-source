@@ -8,6 +8,6 @@ from __future__ import annotations
 
 from blue_data_llm_mcp.tools import TOOLS, ToolError, ToolSpec, dispatch
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = ["TOOLS", "ToolError", "ToolSpec", "__version__", "dispatch"]

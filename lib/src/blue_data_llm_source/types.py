@@ -157,10 +157,14 @@ class Estimate:
     figure that can be exceeded is not a bound, and a decision made against one is a
     decision made against a guess.
 
-    ``max_cost`` bounds the whole fetch: ``max_cost_per_attempt * max_attempts``. A fetch
-    may retry, so the per-attempt figure each reservation claims is not what a caller should
+    ``max_cost`` bounds the whole fetch: the per-attempt figure accumulated once per
+    attempt, added the way the budget ledger adds it rather than multiplied. A fetch may
+    retry, so the per-attempt figure each reservation claims is not what a caller should
     size a ceiling against — reporting it as the fetch's meant a request sized against its
-    own estimate was refused when a single transient failure consumed the ceiling.
+    own estimate was refused when a single transient failure consumed the ceiling. The
+    accumulation is not pedantry: repeated addition and multiplication diverge above five
+    attempts, and a ceiling set from the product would refuse the final attempt of a
+    request sized against its own estimate.
 
     ``bounded`` is False when no bound can be established at all, with ``reason`` saying
     what is missing. That is a normal answer rather than an error, because "how much might
@@ -173,9 +177,10 @@ class Estimate:
     model: str = ""
     prompt_bytes: int = 0
     max_output_tokens: int = 0
-    # A fetch may retry, so the whole-fetch bound is the per-attempt bound times the
-    # attempts a fetch is allowed. Both are reported: a caller sizing a ceiling needs the
-    # first, and a caller reading a receipt afterwards will see the second.
+    # A fetch may retry, so the whole-fetch bound is the per-attempt bound accumulated once
+    # per attempt allowed, matching how the ledger accumulates it. Both are reported: a
+    # caller sizing a ceiling needs the first, and a caller reading a receipt afterwards
+    # will see the second.
     max_attempts: int = 1
     max_cost_per_attempt: float | None = None
 

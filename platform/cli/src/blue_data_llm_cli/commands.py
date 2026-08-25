@@ -61,7 +61,7 @@ def cli(ctx: click.Context, verbose: bool) -> None:
     # Accepted so it can be refused with an answer. Left undeclared, it produced click's
     # generic "no such option", which tells a caller the flag is wrong but not that the
     # ceiling they wanted is unavailable in this build or what to reach for instead.
-    help="Not supported in v1.0; deferred to v1.1. Kept so the refusal can say what to use.",
+    help="Not supported in v1.1; deferred to v2.0. Kept so the refusal can say what to use.",
 )
 @click.option(
     "--format",
@@ -89,7 +89,7 @@ def fetch(
     """Fetch records for QUERY from the model's own knowledge."""
     if rate_limit is not None:
         raise click.BadParameter(
-            "client-side call spacing is deferred to v1.1. Cap concurrency with the "
+            "client-side call spacing is deferred to v2.0. Cap concurrency with the "
             "library's 'llm.max_parallel', or throttle above this command where the whole "
             "request sequence is visible.",
             param_hint="--rate-limit",

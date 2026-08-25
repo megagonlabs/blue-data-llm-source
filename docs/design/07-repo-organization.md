@@ -161,7 +161,7 @@ Each external interface is an independent deployable unit under `platform/`. The
 | Service | Package | State | Notes |
 |---------|---------|-------|-------|
 | `cli/` | `blue-data-llm-cli` | Implemented | `llm fetch` and `llm info`; Click and Rich |
-| `mcp/` | `blue-data-llm-mcp` | Implemented | `llm_fetch` and `llm_info` over stdio |
+| `mcp/` | `blue-data-llm-mcp` | Implemented | `llm_fetch`, `llm_estimate`, and `llm_info` over stdio |
 | `api/` | — | Not implemented | No REST adapter is scheduled |
 
 Each service follows the same internal structure:

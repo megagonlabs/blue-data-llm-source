@@ -1,6 +1,6 @@
 # LlmSource — API / Interface Spec
 
-Three external interfaces exist over the core library: the Python library itself, an MCP server, and a CLI, each published as its own package. A REST API is **not implemented and not scheduled**. No business logic belongs in any interface layer; each is a translation layer over the Python library, and each passes the library's own error messages through unreworded. Authentication and authorisation are left to the deployment layer, and no interface reads or forwards a provider credential.
+Three external interfaces exist over the core library: the Python library itself, an MCP server, and a CLI, each built as its own package, none of them published yet. A REST API is **not implemented and not scheduled**. No business logic belongs in any interface layer; each is a translation layer over the Python library, and each passes the library's own error messages through unreworded. Authentication and authorisation are left to the deployment layer, and no interface reads or forwards a provider credential.
 
 ---
 
@@ -8,7 +8,7 @@ Three external interfaces exist over the core library: the Python library itself
 
 The canonical interface. Every other interface delegates to it. `LlmSource` inherits `blue_data.source.source.DataSource` and remains directly instantiable, since that base class has no abstract members. One method, `afetch`, is a coroutine and must be awaited; everything else, `estimate` included, is synchronous.
 
-The base order matters and is not cosmetic. `DataSource` defines every method this class also defines. Most of its methods return an empty result rather than raising, so one left unoverridden here answers nothing instead of failing. That is not true of all of them any more: the transaction methods raise `NotImplementedError` naming this source, and the orchestrator-tool methods carry real behaviour, which is why this source overrides those three with a refusal rather than inheriting them. This class's own implementations therefore come first in the method resolution order, and a test asserts it for every method on the shared surface. Inheriting the base class does not make the source constructible by protocol name: `DataRegistry.connect_source` returns the registered instance and rebuilds one from the recorded class path when the live entry is gone, so the integration route is `register_source` with a built instance and the registration is durable.
+The base order matters and is not cosmetic. `DataSource` defines every method this class also defines. Most of its methods return an empty result rather than raising, so one left unoverridden here answers nothing instead of failing. That is not true of all of them any more: the transaction methods raise `NotImplementedError` naming this source, and the orchestrator-tool methods carry real behaviour, which is why this source overrides those three rather than inheriting them: two are narrowed to the tools it can answer, and `execute_query_nl_tools` is refused. This class's own implementations therefore come first in the method resolution order, and a test asserts it for every method on the shared surface. Inheriting the base class does not make the source constructible by protocol name: `DataRegistry.connect_source` returns the registered instance and rebuilds one from the recorded class path when the live entry is gone, so the integration route is `register_source` with a built instance and the registration is durable.
 
 ### Constructor
 
@@ -45,6 +45,11 @@ class LlmSource:
     def execute_query(self, query: Any, database: str | None = None, collection: str | None = None, optional_properties: dict[str, Any] | None = None) -> list[dict[str, Any]]: ...
     def execute_query_nl(self, query: str, database: str | None = None, collection: str | None = None, schema: dict[str, Any] | None = None, llm_fn: Any = None, optional_properties: dict[str, Any] | None = None) -> list[dict[str, Any]]: ...
     def translate_nl_to_native_query(self, query: str, schema: dict[str, Any] | None, llm_fn: Any) -> str | None: ...
+
+    # Orchestrator tool surface, covered in section 1a
+    def get_nl_tools(self, database: str | None = None, collection: str | None = None) -> list[dict[str, Any]]: ...
+    def execute_nl_tool(self, name: str, tool_input: dict[str, Any], database: str | None = None, collection: str | None = None, optional_properties: dict[str, Any] | None = None) -> Any: ...
+    def execute_query_nl_tools(self, query: str, database: str | None = None, collection: str | None = None, llm_fn: Any = None, optional_properties: dict[str, Any] | None = None, max_iterations: int = 10, extra_tools: list[dict[str, Any]] | None = None, extra_tool_fn: Any = None) -> list[dict[str, Any]]: ...
 
     # Metadata surface
     def fetch_metadata(self) -> dict[str, Any]: ...
@@ -115,12 +120,12 @@ Properties may be set on the instance or per call, with per-call values winning.
 | `llm.model` | `str` | `gpt-4o` | Model name, forwarded to the provider |
 | `llm.temperature` | `float` | `0` | Forwarded to the provider |
 | `llm.max_tokens` | `int` | `4096` | Forwarded to the provider |
-| `llm.stream` | `bool` | `False` | Forwarded to the provider. `True` is **not supported in v1.0** and is refused with `ConfigError`; deferred to v1.1 |
+| `llm.stream` | `bool` | `False` | Forwarded to the provider. `True` is accepted for compatibility with provider configurations and proxies that require a stream; it does not make a fetch faster, and a stream the provider sends no usage with cannot be priced, so it reports `accounting_known=False`. See [streaming](../../lib/README.md#streaming) |
 | `llm.timeout` | `float` | provider default | Per-call timeout, forwarded to the provider. When `limits.max_seconds` is set, the value actually sent is the smaller of this and the wall-clock time the run has left |
 | `llm.cache` | `bool` | off | Enables the `diskcache` response cache; requires the `llm` extra |
 | `llm.cache_dir` | `str` | `.llm_cache` | Directory for that cache |
 | `llm.max_parallel` | `int` | `8` | Concurrency bound per event loop |
-| `llm.rate_limit` | — | — | **Not supported in v1.0.** Refused with `ConfigError`; deferred to v1.1. Use `llm.max_parallel`, or throttle above the library |
+| `llm.rate_limit` | — | — | **Not supported in v1.1.** Refused with `ConfigError`; deferred to v2.0. Use `llm.max_parallel`, or throttle above the library |
 | `cache_store` | `CacheStore` | none | A cache with `get` and `set`, taking precedence over `llm.cache`. `MemoryCache` and `FileCache` ship for this slot, and any object with the two methods is accepted |
 | `limits.max_retries` | `int` | `2` | Retries on a transport failure; the client makes this many plus one attempt, narrowed to the smallest depth along the budget chain, and reserves budget for each |
 | `limits.max_rows` | `int` | unlimited | Row ceiling; overridden by a `max_records` argument. Enforced by the source itself, so it binds any client |
@@ -254,11 +259,30 @@ All inherit from `LlmSourceError`, defined in `types.py`.
 
 ---
 
-## 1a. Orchestrator tools — not served
+## 1a. Orchestrator tools — four of the eight
 
-`DataSource` offers `get_nl_tools`, `execute_nl_tool` and `execute_query_nl_tools`, a tool-calling interface for an orchestrating model. It is built around the relational shape the rest of the data layer has: databases, collections, columns, row samples, foreign keys. A source answering from a model's own knowledge has none of those.
+`DataSource` offers `get_nl_tools`, `execute_nl_tool` and `execute_query_nl_tools`, a tool-calling interface for an orchestrating model. It is built around the relational shape the rest of the data layer has: databases, collections, columns, row samples, foreign keys. A source answering from a model's own knowledge has only part of that, so four of the eight tools are advertised and four are not.
 
-This source therefore advertises no tools, and refuses with `ConfigError` if one is called. The refusal is the part that matters: `execute_query_nl_tools` drives a loop of up to ten provider calls that this source's ceilings do not govern, so inheriting it would place an unbounded spend path behind a method this package never chose to offer. `execute_query_nl` is the natural-language surface here, and its spend and time ceilings are enforced.
+| Tool | Served | Behaviour |
+|------|--------|-----------|
+| `list_databases` | yes | `["llm"]`, the one virtual database |
+| `list_collections` | yes | `["public"]`, the one virtual collection |
+| `get_schema` | yes | `{"entities": {...}, "relations": {}}` for the virtual entity |
+| `execute_query` | yes | `execute_query(tool_input["query"], ...)`, the one tool that reaches a provider |
+| `get_metadata` | no | Would return `{}` |
+| `get_column_stats` | no | Would return `None` |
+| `get_relations` | no | Would return `{}` |
+| `get_sample` | no | Raises `TypeError`: the base dispatcher passes `row_sample_size` to `fetch_entity_stats`, which takes no such argument |
+
+A tool that answers with an empty result and no explanation is worse than one that is absent, because the model calling it has no way to tell "nothing here" from "wrong question". The four unserved ones are therefore filtered out of the advertisement rather than answered.
+
+`get_nl_tools` returns the base class's own definitions for the four, filtered by name. They are not rewritten here: the base dispatcher is what reads the input, so a schema written locally would be a second copy of its contract, and a key renamed or a `required` entry added upstream would leave this source advertising a call the dispatcher then rejects. `database` and `collection` stay in the schemas as upstream declares them, and the dispatcher reads each from the tool input with a fallback to the argument of the same name.
+
+`execute_nl_tool` serves those four by delegating to the base dispatcher, and refuses any other name with a `ConfigError` listing the ones that are available. Nothing on this path leaves the `LlmSourceError` hierarchy: an unknown name, a `name` that is not a string, a `tool_input` that is not a mapping, and a missing required key all arrive as `ConfigError`, `QueryError`, or `LlmSourceError`, which the base's own `ValueError`, `KeyError`, and `AttributeError` do not.
+
+Ceilings reach the `execute_query` tool the way they reach the query surface. A `limits.*` key in `optional_properties` is handed to `execute_query` by the dispatcher and binds that call and no other; a misspelled one is refused on every tool rather than only on the one that spends.
+
+`execute_query_nl_tools` is not served and raises `ConfigError`. It drives a loop of up to ten provider calls that this source's ceilings do not govern, so serving it would place an unbounded spend path behind a method this package never chose to offer. `execute_query_nl` is the natural-language surface here, and its spend and time ceilings are enforced.
 
 ## 2. REST API — not implemented
 
@@ -268,9 +292,11 @@ This source therefore advertises no tools, and refuses with `ConfigError` if one
 
 ## 3. MCP Server
 
-Package `blue-data-llm-mcp`, entry point `blue-data-llm-mcp`, speaking MCP over stdio. It exposes the source to LLM agents as two tools and holds no logic beyond moving values across the boundary.
+Package `blue-data-llm-mcp`, entry point `blue-data-llm-mcp`, speaking MCP over stdio. It exposes the source to LLM agents as three tools. Beyond moving values across the boundary it holds one piece of logic of its own: it enforces the schema it advertises.
 
-Argument validation is the library's, which matters here in particular: an agent supplies arguments programmatically and sees only the exception text as its tool result, so every rejection names the offending value and the accepted form, and the message is passed through unchanged.
+Argument validation is split by kind. The server checks shape against the published JSON schema, before the library sees the call: that the arguments are an object, that no key outside the advertised set appears at any depth, that a declared object carries its required keys, that each value matches its declared JSON type, and that a numeric value clears its declared `minimum`. It does this itself rather than leaving it to the SDK, whose prevalidator is switched off for this handler — running first, it answered a withdrawn key such as `llm.rate_limit` with a generic schema error instead of the message naming what to use instead, so the server's own checker has to do the whole job. The library keeps domain and configuration validation: whether a query is empty, whether an `llm.*` override is a name it accepts, whether a ceiling is a finite positive number the resolved client can be held to, whether a model can be priced, and whether the model's answer parses.
+
+That split shows in the messages, which matters here in particular: an agent supplies arguments programmatically and sees only the exception text as its tool result. A library rejection is passed through unchanged, so it reaches the agent naming the offending value and the accepted form in the library's own words. A shape rejection is the server's own message and names the argument, what arrived, and what the schema declares.
 
 The low-level server is used rather than the schema-deriving one, because the tool schemas are written by hand. Deriving a schema from a handler signature would put the contract in a Python signature instead of in the JSON a client reads.
 
@@ -316,19 +342,119 @@ The low-level server is used rather than the schema-deriving one, because the to
         "type": "integer",
         "minimum": 1,
         "description": "Stop after this many records."
+      },
+      "limits.max_cost": {
+        "type": "number",
+        "minimum": 0,
+        "description": "Refuse a call that would take this run's spend past this many dollars. The output allowance is reserved in full, so llm_estimate reports the floor a ceiling has to clear."
+      },
+      "limits.max_seconds": {
+        "type": "number",
+        "minimum": 0,
+        "description": "Refuse a call once the run has been going this long."
+      },
+      "limits.max_calls": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Refuse more than this many provider calls, retries included."
       }
     }
   }
 }
 ```
 
+The three ceilings are the library's own property names, unrenamed. They are passed through as the call's properties, which is the same route `optional_properties` takes on the query surface and `--limit-*` takes on the command line: merged over the source's properties for this call and not written back, so one agent's ceiling cannot bind the next call over the same server. A key this layer did not recognise would never reach the library's own limit validation, so a translated name would have been dropped in silence rather than refused — which is why there is no translation.
+
 **Returns:** JSON text content, `{"records": [...], "meta": {...}}`. The meta object always carries `outcome`, `model`, `calls`, `prompt_tokens`, `completion_tokens`, `cost`, and `elapsed_seconds`. Two keys are sparse: `accounting_known` appears only when it is false, so its absence means the accounting is known, and `unchecked_types` appears only when the request declared a type this library cannot check. Both are present whether or not verbose output was asked for, because each is a warning rather than detail. It additionally carries `type_mismatches`, `unmapped_keys`, `remapped_keys`, `key_collisions`, `truncated_to`, and `stopped_by` when there is something to report.
 
 An empty result is not an error. A budget stop returns an empty record list with `outcome` of `stopped_by_limit` and `stopped_by` naming the limit. An empty or whitespace `query` returns an empty record list with `outcome` of `empty_query`, and no model is called. An agent can therefore tell a ceiling, an empty ask, and a model that knows nothing apart from each other and from a failure, without parsing a message.
 
-The input schema is the whole of what this tool exposes, and `max_records` is the only ceiling in it. The server constructs its source with no properties, so no cost, time, or call ceiling is configurable over MCP by an agent or by the client that launched it, and neither is `LLM.ESTIMATE`: an agent over this transport cannot ask what a request would cost before making it. A deployment that needs either embeds the library instead, or wraps this server in a process that constructs the source itself.
+A ceiling reaches the ledger the same way one configured on a source does: claimed before the provider is contacted, so a call that would cross one is refused rather than accounted for afterwards. `max_records` is not one of them and is not counted as one — it caps the rows in the result, not the spend, which is why it reports `truncated` rather than `stopped_by_limit`.
+
+The input schema is the whole of what this tool exposes, and the ceilings in it are per call. The server constructs its source with no properties, so a call that names no ceiling has none: nothing is configured out of band on the agent's behalf, by the client that launched the server or by anything else. A deployment that cannot leave the ceiling to the agent embeds the library instead, or wraps this server in a process that constructs the source itself.
 
 **On error:** a failed tool call whose text is the error kind followed by the library's message, for example `QueryError: attrs[0] is an empty attribute name`.
+
+---
+
+### Tool: `llm_estimate`
+
+```json
+{
+  "name": "llm_estimate",
+  "description": "Bound what one llm_fetch of the same request could cost, without calling the model. Returns an upper bound on the whole fetch, retries included.",
+  "inputSchema": {
+    "type": "object",
+    "required": [],
+    "additionalProperties": false,
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "What to ask the model for, in plain language."
+      },
+      "attrs": {
+        "type": "array",
+        "description": "Attributes every record must carry. Omit to let the model choose keys.",
+        "items": {
+          "oneOf": [
+            { "type": "string", "description": "Attribute name." },
+            {
+              "type": "object",
+              "description": "Attribute name with a declared value type.",
+              "required": ["name"],
+              "additionalProperties": false,
+              "properties": {
+                "name": { "type": "string", "description": "Attribute name." },
+                "type": { "type": "string", "description": "Declared type: int, float, bool, date, or text." }
+              }
+            }
+          ]
+        }
+      },
+      "context": {
+        "type": "string",
+        "description": "Extra text that clarifies the query or an attribute name."
+      },
+      "limits.max_cost": {
+        "type": "number",
+        "minimum": 0,
+        "description": "Refuse a call that would take this run's spend past this many dollars. The output allowance is reserved in full, so llm_estimate reports the floor a ceiling has to clear."
+      },
+      "limits.max_seconds": {
+        "type": "number",
+        "minimum": 0,
+        "description": "Refuse a call once the run has been going this long."
+      },
+      "limits.max_calls": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Refuse more than this many provider calls, retries included."
+      }
+    }
+  }
+}
+```
+
+The request half of the schema is the same object `llm_fetch` declares, shared between the two so they cannot drift into pricing one request and running another. The ceilings are there because a call ceiling narrows the attempts a fetch may make and so narrows what a fetch can cost. `max_records` is absent: `estimate` takes no row cap, and advertising an input that cannot change the answer is how a caller comes to believe it asked for something it did not get.
+
+**Returns:** JSON text content carrying the `Estimate` fields, every one of them, set or not: `bounded`, `max_cost`, `max_cost_per_attempt`, `max_attempts`, `reason`, `model`, `prompt_bytes`, `max_output_tokens`.
+
+```json
+{
+  "bounded": true,
+  "max_cost": 0.12924,
+  "max_cost_per_attempt": 0.04308,
+  "max_attempts": 3,
+  "reason": null,
+  "model": "gpt-4o",
+  "prompt_bytes": 784,
+  "max_output_tokens": 4096
+}
+```
+
+Neither cost is rounded, unlike the spend in a fetch's `meta`. That one is a measurement of what was already paid; these are upper bounds, and rounding a bound to six places can round it down. An agent that set `limits.max_cost` to a figure this tool understated would have the last attempt that figure accounted for refused.
+
+`bounded` is `false` with a `reason` when no bound can be established, which is a successful call rather than an error, for the reason §1 gives for the method. Nothing on this path contacts the provider, so an agent can size a request without paying for the question.
 
 ---
 
@@ -347,7 +473,7 @@ The input schema is the whole of what this tool exposes, and `max_records` is th
 }
 ```
 
-**Returns:** JSON text content, `{"protocol": "llm", "variant": "openai", "version": "1.0.0"}`.
+**Returns:** JSON text content, `{"protocol": "llm", "variant": "openai", "version": "1.1.0"}`.
 
 Requesting a tool that does not exist returns `UnknownTool` and names the ones that do. Nothing in either tool exposes a credential, a provider endpoint, or the contents of a configured property beyond protocol, variant, and version.
 

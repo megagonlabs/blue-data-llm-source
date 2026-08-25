@@ -38,6 +38,13 @@ SKIP = {".venv", "build", "__pycache__", ".pytest_cache", ".ruff_cache", "casset
 # scanned.
 HISTORICAL = {"13-decision-log.md"}
 
+# The changelog is half record and half current guidance, so it is split rather than
+# exempted. A released section describes the release it names and stays true about it;
+# scanning one would make rewriting a shipped release the only way to pass, which is the
+# opposite of what a changelog is for. The unreleased section is a claim about what is
+# about to ship, and is scanned like anything else.
+CHANGELOG = "CHANGELOG.md"
+
 FALSE_CLAIMS = [
     (
         r"every method (it defines |on it )?returns an empty result"
@@ -53,6 +60,39 @@ FALSE_CLAIMS = [
         r"no `llm` arm|no ``llm`` arm|hardcoded (list of )?protocol|Unsupported source protocol",
         "the registry reaches this source through the class path recorded at registration, "
         "not through protocol-name dispatch. Proven by the registry round-trip assertions.",
+    ),
+    (
+        r"advertises no tools"
+        r"|serves no (orchestrator )?tools"
+        r"|no orchestrator tool surface"
+        r"|`?get_nl_tools`? returns (nothing|an empty)"
+        r"|refuses (every tool|the whole tool path)"
+        r"|overrides (those three|them locally) with a refusal",
+        "this source advertises four of the base class's eight tools — list_databases, "
+        "list_collections, get_schema and execute_query — and execute_nl_tool serves them "
+        "by delegating to the base dispatcher. Only execute_query_nl_tools is refused. "
+        "Proven by test_the_advertised_tools_are_the_ones_this_source_can_answer.",
+    ),
+    (
+        r"streaming is deferred"
+        r"|`?llm\.stream(=True)?`? is not supported"
+        r"|`llm\.stream=True` is refused"
+        r"|`True` is refused and deferred"
+        r"|a truthy value is refused",
+        "llm.stream=True is accepted. The chunks are read to the end, reassembled by the "
+        "provider library's helper, and handed to the same path a non-streamed response "
+        "takes. It buys compatibility with providers and proxies that require a stream and "
+        "makes nothing faster; a stream carrying no usage reports accounting_known=False "
+        "rather than being refused. Proven by the tests in llm/test_client_stream.py.",
+    ),
+    (
+        r"not supported in v1\.0|deferred to v1\.1|v1\.1 deferral",
+        "llm.rate_limit is refused by this release, and this release is 1.1, so a refusal "
+        "or a table deferring it to v1.1 sends a caller to the version they are already "
+        "running. It is deferred to v2.0, and the setting is unsupported in 1.1. Proven by "
+        "test_client_side_rate_limiting_is_refused_by_name. The claim was written in ten "
+        "files — two refusal messages, a Click help string, five documents and two READMEs "
+        "— which is why it is scanned rather than corrected one file at a time.",
     ),
 ]
 
@@ -73,12 +113,31 @@ def _shipped_text_files() -> list[Path]:
     return out
 
 
+def _current_lines(path: Path) -> list[tuple[int, str]]:
+    """The lines of *path* that speak about now, numbered from one.
+
+    Everything except the changelog's released sections, for the reason recorded above
+    the CHANGELOG constant.
+    """
+    numbered = list(enumerate(path.read_text(encoding="utf-8").splitlines(), 1))
+    if path.name != CHANGELOG:
+        return numbered
+    out: list[tuple[int, str]] = []
+    released = False
+    for number, line in numbered:
+        if line.startswith("## "):
+            released = "unreleased" not in line
+        if not released:
+            out.append((number, line))
+    return out
+
+
 @pytest.mark.parametrize(("pattern", "why"), FALSE_CLAIMS)
 def test_no_shipped_file_repeats_a_claim_the_runtime_contradicts(pattern: str, why: str) -> None:
     compiled = re.compile(pattern, re.IGNORECASE)
     hits: list[str] = []
     for path in _shipped_text_files():
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        for number, line in _current_lines(path):
             if compiled.search(line):
                 hits.append(f"{path.relative_to(REPO_ROOT)}:{number}")
     assert not hits, (
@@ -105,3 +164,27 @@ def test_the_scan_actually_reaches_the_repository() -> None:
     relative = {str(p.relative_to(REPO_ROOT)) for p in files}
     for anchor in ("CHANGELOG.md", "docs/design/01-overview.md", "lib/README.md"):
         assert anchor in relative, f"scan is not reaching {anchor}"
+
+
+def test_the_changelog_is_scanned_up_to_the_first_released_section() -> None:
+    """Narrowing a scan is only safe if it narrows to what it meant to.
+
+    The released sections are skipped and the unreleased one is not, and a carve-out that
+    quietly swallowed the whole file would pass every pattern for the wrong reason.
+    """
+    path = REPO_ROOT / CHANGELOG
+    headings = [
+        (number, line)
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if line.startswith("## ")
+    ]
+    unreleased = [number for number, line in headings if "unreleased" in line]
+    released = [number for number, line in headings if "unreleased" not in line]
+    assert unreleased and released, (
+        "the changelog no longer has both an unreleased and a released section, so this "
+        "check is no longer testing what it claims to"
+    )
+
+    scanned = {number for number, _ in _current_lines(path)}
+    assert unreleased[0] in scanned, "the unreleased section must still be scanned"
+    assert released[0] not in scanned, "a released section is a record and is not scanned"

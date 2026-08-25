@@ -2,7 +2,7 @@
 
 ## Overview
 
-Three PyPI packages ship from this repository.
+Three packages are built from this repository. **None of them is published yet** — not to PyPI and not to an internal index — so every install today is from source, and the routes below describe how they are intended to be distributed rather than how they currently reach anyone. `lib/README.md` and the interface READMEs are the current install instructions.
 
 | Package | Contents | Entry point |
 |---------|----------|-------------|
@@ -30,7 +30,7 @@ The package follows [Semantic Versioning](https://semver.org/) (`MAJOR.MINOR.PAT
 
 A change to the prompt is treated as MINOR at least, because it changes what the source returns for an unchanged request, and a caller with its own recorded expectations needs the signal.
 
-The version is declared in two places, as `version` in `lib/pyproject.toml` and as `__version__` in `lib/src/blue_data_llm_source/__init__.py`, and the two are kept in step by hand. A test reads both and fails when they disagree, so a release cannot ship two different numbers. Deriving one from the other is still the better fix and is not done.
+Each of the three packages declares its version twice, as `version` in its `pyproject.toml` and as `__version__` in its top-level module, and the pairs are kept in step by hand. A test reads all six and fails when a package's two disagree, so a release cannot ship a package that reports one number to `pip` and another to `import`. It also checks that the version quoted in the `llm info` and `llm_info` examples is the one the library exports, because those outputs are read as fact. Deriving the declarations from one another is still the better fix and is not done.
 
 ---
 
@@ -100,7 +100,8 @@ The full property table is in [09-api-interface-spec.md](09-api-interface-spec.m
 |----------|--------------------|
 | `llm.model` | Which model answers, and therefore what a call costs |
 | `llm.max_parallel` | Concurrency bound per event loop; the main lever against provider rate limiting |
-| `llm.rate_limit` | Not supported in v1.0. Refused with `ConfigError`; deferred to v1.1 |
+| `llm.rate_limit` | Not supported in v1.1. Refused with `ConfigError`; deferred to v2.0 |
+| `llm.stream` | Set it when the provider configuration or proxy in front of you requires a stream. It buys nothing else: a fetch has no answer until the last chunk lands, and a stream the provider sends no token counts with cannot be priced, so the run reports `accounting_known` false and its cost ceiling is enforced against the reserved bound |
 | `llm.cache`, `llm.cache_dir` | Local response cache and where it is written |
 | `llm.max_tokens` | The output allowance, and therefore the floor of every cost claim and of every estimate; the main lever on whether a cost ceiling binds or refuses |
 | `llm.price_per_input_token`, `llm.price_per_output_token` | Rates for a model the shipped price table does not carry; both required together, and consumed locally rather than forwarded |
@@ -146,7 +147,7 @@ Size `limits.max_cost` above the floor described above and set `llm.max_tokens` 
 
 A service that wants one ceiling over a sequence of requests, rather than a bound on each, constructs a `Budget` and passes it to each `fetch` as `budget=`; each fetch derives a child from it and can never spend more than the parent has left. That is a different question from the one above and answers it differently, so reach for it when the total is what matters. Deployments that fan out over many requests should also set `llm.max_parallel`, since the budget bounds spend but does not bound the rate at which it is spent. `llm.max_parallel` caps how many calls are in flight at once, which is the lever this version offers; anything finer belongs above this library, where the whole request sequence is visible rather than one call at a time.
 
-A ceiling is also not available everywhere the source is. The MCP server constructs its source with no properties and exposes no ceiling in its tool schema beyond `max_records`, and it exposes no estimate either, so an operator that needs either over that path wraps the server in a process that constructs the source itself.
+Over MCP the ceiling is the caller's to set. The `llm_fetch` schema carries `limits.max_cost`, `limits.max_seconds`, and `limits.max_calls`, and `llm_estimate` sizes a request before it runs, both reaching the same code described above. What the server does not do is set them: it constructs its source with no properties, so a call that names no ceiling has none. An operator who cannot leave that to the agent wraps the server in a process that constructs the source itself.
 
 ---
 
@@ -194,7 +195,7 @@ The CI/CD platform is not yet selected. Regardless of platform, the pipeline def
 
 ## 8. Release Process
 
-1. Bump the version in `lib/pyproject.toml`, in `lib/src/blue_data_llm_source/__init__.py`, and in each interface package's `pyproject.toml`.
+1. Bump the version in all six declarations: `lib/pyproject.toml` and `lib/src/blue_data_llm_source/__init__.py`, `platform/cli/pyproject.toml` and `platform/cli/src/blue_data_llm_cli/__init__.py`, `platform/mcp/pyproject.toml` and `platform/mcp/src/blue_data_llm_mcp/__init__.py`. The two interface modules are the ones that get missed; the version test in `lib/tests/unit/test_version.py` fails the release if they are.
 2. Update `CHANGELOG.md`, calling out any prompt change explicitly.
 3. Merge to the default branch.
 4. Push a semver tag.

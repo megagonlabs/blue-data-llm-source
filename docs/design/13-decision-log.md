@@ -76,7 +76,7 @@ Architectural decisions are recorded here as they are made, throughout the desig
 ## ADR-006 — `llm_fn` Is the Model Client, Not a Translator
 
 **Date:** 2026-07-29
-**Status:** Accepted
+**Status:** Accepted, amended by [ADR-022](#adr-022--a-bound-or-a-refusal-and-capability-declared-per-axis) — a callable declares the **row** axis only. The four-axis statement below was true of the intent and never of the code.
 
 **Decision:** When `execute_query_nl` receives an `llm_fn`, that callable is used as the model client for the request, wrapped in a `FunctionClient`. The configured client answers when none is supplied. `translate_nl_to_native_query` returns the request unchanged.
 
@@ -115,7 +115,7 @@ record what changed and why.
 
 **Consequences:** `Budget` and `Limits` are separate from the client, so a client of any kind can be handed one. Reservation and settlement are two steps, which means a client must release what it reserved and does not spend. A configured `max_calls` counts provider attempts, so a caller reading it as logical operations will find a retrying run reaching the ceiling sooner than expected; that is the intended reading. Returning rather than raising on a limit makes a ceiling a normal outcome a caller handles in the same branch as an empty answer, at the cost of one field to check. Retry depth is carried on `Limits` alongside the four axes and read by the client, rather than fixed in the client, so that a configured retry count is a setting the code honours rather than one it accepts and ignores.
 
-**Correction (ADR-024):** the wall-clock statement above is narrowed. The time axis bounds admission and the cooperative waits in `DefaultLlmClient.acomplete`, not the whole run. The decision text stands as accepted; [ADR-024](#adr-024--the-time-ceiling-bounds-waiting-not-the-whole-run) and `lib/README.md` state what it covers and what it excludes. The row, cost and call axes are unaffected.
+**Correction (ADR-024):** the wall-clock statement above is narrowed. The time axis bounds admission and the cooperative waits in `DefaultLlmClient.acomplete`, not the whole run. The decision text stands as accepted; [ADR-024](#adr-024--the-time-ceiling-bounds-waiting-not-the-whole-run) and [what the time ceiling actually bounds](../../lib/README.md#what-the-time-ceiling-actually-bounds) state what it covers and what it excludes. The row, cost and call axes are unaffected.
 
 ---
 
@@ -200,7 +200,7 @@ record what changed and why.
 ## ADR-015 — One Model Call per Request in This Release
 
 **Date:** 2026-07-29
-**Status:** Accepted
+**Status:** Accepted, with one term corrected — this release makes one **completion** per request, taking up to `limits.max_retries + 1` provider attempts, three by default. `meta.calls` counts attempts, and it is attempts that consume the call and cost ceilings. Everything else below stands.
 
 **Decision:** This release makes exactly one model call per request. Query rewriting, automatic schema identification, cardinality estimation, request partitioning, hierarchical task creation, concurrent execution, pagination, empty-partition fallback, cross-partition entity resolution, coverage accounting, and per-field confidence are **not** in this release. Sub-request caching is not either; the only caching is whole-response caching inside the client.
 
@@ -213,7 +213,7 @@ record what changed and why.
 ## ADR-016 — Distribution: PyPI Package with Extras, No Server Image
 
 **Date:** 2026-07-29
-**Status:** Accepted
+**Status:** Accepted as the intended route; **not executed**. None of the three packages is published, to PyPI or to an internal index, and every install is from source. Read the tenses below as intent.
 
 **Decision:** Three PyPI packages ship: the library with optional extras, the CLI, and the MCP server. Each interface package depends on the library and adds only its own framework. No container image is published.
 
@@ -273,7 +273,7 @@ Binding every client path identically is the same principle applied one level ou
 
 ---
 
-**Correction (ADR-024):** the wall-clock statement above is narrowed. The time axis bounds admission and the cooperative waits in `DefaultLlmClient.acomplete`, not the whole run. The decision text stands as accepted; [ADR-024](#adr-024--the-time-ceiling-bounds-waiting-not-the-whole-run) and `lib/README.md` state what it covers and what it excludes. The row, cost and call axes are unaffected.
+**Correction (ADR-024):** the wall-clock statement above is narrowed. The time axis bounds admission and the cooperative waits in `DefaultLlmClient.acomplete`, not the whole run. The decision text stands as accepted; [ADR-024](#adr-024--the-time-ceiling-bounds-waiting-not-the-whole-run) and [what the time ceiling actually bounds](../../lib/README.md#what-the-time-ceiling-actually-bounds) state what it covers and what it excludes. The row, cost and call axes are unaffected.
 
 ## ADR-020 — An Absent Answer and a Null Answer Are Different Facts
 
@@ -359,7 +359,7 @@ The rest are defects in the machinery around those two decisions, each of the sa
 
 **Consequences:** A cost ceiling now has a floor that a caller must size against, and it is the whole `max_tokens` allowance at the model's output rate, independent of the prompt. With the shipped defaults that floor is about $0.041, so a small `limits.max_cost` against a large `llm.max_tokens` refuses every call before making one. That is the correct behaviour for a bound and it is a surprise if it is not written down, so it is stated wherever a ceiling is documented, along with the remedy, which is to lower `llm.max_tokens` rather than to raise the ceiling.
 
-A cost or time ceiling on a run that supplies `llm_fn` is now refused. ADR-006 recorded that all four axes applied to that path; two of them did not, and the version that appeared to apply them did so by settling at zero. The migration is to inject a client declaring those axes, or to bound the run on calls and rows.
+A cost or time ceiling on a run that supplies `llm_fn` is now refused. ADR-006 recorded that all four axes applied to that path; two of them did not, and the version that appeared to apply them did so by settling at zero. The migration is to inject a client declaring those axes, or to bound the run on rows. Not calls: an earlier wording of this sentence said calls and rows, which contradicts the rows-only correction three paragraphs above and the shipped `FunctionClient`.
 
 The caller-supplied price keys are documented and not currently reachable through the shipped client, which validates `llm.*` overrides against a closed set that does not include them and does so before the bound is computed. The escape hatch exists in `pricing` and is available to a client of one's own; wiring it through `DefaultLlmClient` is a small change that has not been made, and it is recorded here rather than left for a caller to discover from a `ConfigError` naming the accepted overrides.
 
@@ -396,6 +396,8 @@ Base-class order becomes load-bearing. `DataSource` is a plain class whose every
 Inheriting does not make this source reachable by protocol name. An instance is reached through `register_source`.
 
 **Updated 2026-08-21.** Two statements above described the base class as it stood when this decision was taken, and it has since moved. `connect_source` no longer depends on a protocol arm: registration records the source class, and a later `connect_source` returns the live instance or rebuilds an equivalent one from that record, so a registration outlives the object that made it. And the base class is no longer uniformly empty: its transaction methods raise `NotImplementedError` naming this source, and its orchestrator-tool methods carry real behaviour that this source overrides with a refusal. The decision itself stands; only the description of what surrounds it has aged.
+
+**Updated for 1.1.** The four tools this source can serve — `list_databases`, `list_collections`, `get_schema` and `execute_query` — are advertised again, with their definitions taken from the base class so the schemas cannot drift from its dispatcher. The tool-driven query loop stays refused, because it drives provider calls this source's ceilings do not govern. The sentence above describes 1.0.
 
 `compat.blue_data.BlueDataLlmSource` becomes an alias for `LlmSource`. It existed to add inheritance for callers who installed an optional extra; a subclass would now be a second class to test and a second method resolution order to get wrong, for no behaviour the class does not already have.
 
@@ -453,5 +455,21 @@ unaffected, and so is everything else this decision says.
 
 **Consequences:** A caller who needs a hard wall-clock stop imposes it above this library, in a task
 or process it can cancel. `stopped_by: max_seconds` remains truthful about which ceiling was crossed
-and may be reported well after it. The cost, call and row axes are unaffected: each is claimed
+and may be reported well after it. The cost and call axes are unaffected: each is claimed
 before the provider is contacted and none depends on interrupting work in flight.
+
+## ADR-025 — A Stream Whose Cost Cannot Be Read Is Charged At Its Bound
+
+**Status:** Accepted in 1.1, when `llm.stream=True` stopped being refused. Applies the same rule ADR-021 sets for an unreadable cost, to a case that looks different and is not.
+
+**Context:** Streaming exists here for compatibility rather than speed. Records are parsed from a complete JSON document, so a stream is accumulated in full before anything else happens and no caller sees a partial result. Some provider configurations and proxies require or default to streaming, and without support those callers cannot use the package at all.
+
+The accounting is the part that needed deciding. A provider streaming a response may send no usage figures with it. The obvious approach — assemble the chunks into a response and price that — produces a number, and the number is wrong: the assembler fills the usage block from a local tokenizer when the stream carried none, and the pricing function then prices that estimate as though the provider had reported it. Stripping the block instead is no better, because pricing a response with no usage returns zero, and zero settles as a free call.
+
+Both failures are quiet. One overcharges or undercharges by an invented amount, the other reports a billed call as free, and each leaves a ceiling acting on a figure that does not describe what happened.
+
+**Decision:** Whether usage was reported is read from the raw chunks, before assembly, and carried alongside the payload. A stream that reported usage is priced normally. A stream that did not keeps its reservation at the bound the attempt reserved, exactly as an unreadable cost does on the non-streaming path, and the result reports `accounting_known` false.
+
+**Consequences:** A caller streaming from a provider that sends no usage is charged the reserved bound rather than the real cost, which is higher than the truth and is the only direction that is safe for a ceiling. The figure is honest about being a bound because `accounting_known` says so. Nothing was added to the provider call to improve the odds of receiving usage — an extra transport option could break the very proxies this feature exists for.
+
+The rule is one rule, not two: an unreadable cost is charged at its bound wherever it occurs.

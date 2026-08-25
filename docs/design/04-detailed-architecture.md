@@ -4,18 +4,18 @@
 
 `LlmSource` is declared as `class LlmSource(DataSource)`, taking `blue_data.source.source.DataSource` as its base, which is the same base every other source in the data layer takes. `blue-data>=0.1.0` is a declared core dependency for that reason, alongside `tenacity>=9.0.0`, and it brings `pandas`, `numpy`, and `jsonpath-ng` into the install. `blue_data` is imported in exactly one module, `source.py`, and nothing in the package imports `blue` or `blue_data_ops`, which a test asserts: depending on the data layer this source belongs to is one thing, and depending on the orchestrator that queries it is another.
 
-The base order carries weight that is easy to miss. `DataSource` is a plain class rather than an abstract one. Most of its methods return an empty result rather than raising, so one left unoverridden here answers nothing instead of failing. That is not true of all of them any more: the transaction methods raise `NotImplementedError` naming this source, and the orchestrator-tool methods carry real behaviour, which is why this source overrides those three with a refusal rather than inheriting them. Listed the other way round, or simply left unwritten, `fetch_databases` would return an empty list and `execute_query` would return no records without a model ever being contacted, and nothing would report a problem. A test walks the shared surface and asserts each method resolves to `LlmSource`, which is what turns an ordering mistake into a failing test rather than a silently empty source.
+The base order carries weight that is easy to miss. `DataSource` is a plain class rather than an abstract one. Most of its methods return an empty result rather than raising, so one left unoverridden here answers nothing instead of failing. That is not true of all of them any more: the transaction methods raise `NotImplementedError` naming this source, and the orchestrator-tool methods carry real behaviour, which is why this source overrides those three rather than inheriting them: two are narrowed to the tools it can answer, and `execute_query_nl_tools` is refused. Listed the other way round, or simply left unwritten, `fetch_databases` would return an empty list and `execute_query` would return no records without a model ever being contacted, and nothing would report a problem. A test walks the shared surface and asserts each method resolves to `LlmSource`, which is what turns an ordering mistake into a failing test rather than a silently empty source.
 
 Inheritance does not extend to construction by protocol name. `DataRegistry.connect_source` returns the live instance while it is registered, and reconstructs one from the class path recorded at registration once it is not, so the registration outlives the object. `DataRegistry.register_source` takes an already-built instance, stores it under its name, and reads only `name` and `properties`, which is the route that works. A protocol-name arm would be an upstream change, and is not needed: reconstruction goes through the recorded class.
 
 ## External Interfaces
 
-All interfaces are thin adapters over the Python library and ultimately call `LlmSource.afetch`. Neither exposes `estimate`, so a caller sizing a request before running it reaches the library directly.
+All interfaces are thin adapters over the Python library. Every path that fetches records ultimately calls `LlmSource.afetch`; the MCP server also exposes `estimate` as its `llm_estimate` tool, which answers what a request would cost without contacting a provider. The CLI has no equivalent, so a caller sizing a request from the command line reaches the library directly.
 
 | Interface | Package | Technology | Primary Use | State |
 |-----------|---------|-----------|-------------|-------|
 | Python Library | `blue-data-llm-source` | Native Python API | Embedding the source in applications, planners, and operators | Shipped |
-| MCP Server | `blue-data-llm-mcp` | MCP over stdio | LLM agent tool use, through `llm_fetch` and `llm_info` | Shipped |
+| MCP Server | `blue-data-llm-mcp` | MCP over stdio | LLM agent tool use, through `llm_fetch`, `llm_estimate`, and `llm_info` | Shipped |
 | CLI | `blue-data-llm-cli` | Click + Rich | Interactive exploration, debugging, scripting | Shipped |
 | REST API | — | — | — | Not implemented, not scheduled |
 
@@ -215,16 +215,24 @@ The consequence for a caller is that the floor of the bound is the whole `max_to
 | `llm.model` | yes | Model name; defaults to `gpt-4o` |
 | `llm.temperature` | yes | Sampling temperature |
 | `llm.max_tokens` | yes | Response length ceiling |
-| `llm.stream` | yes | Streaming flag, forwarded as `False`; `True` is refused and deferred to v1.1 |
+| `llm.stream` | yes | Streaming flag, defaulting to `False`. `True` is accepted: the chunks are read to the end and reassembled into one response before anything downstream sees them |
 | `llm.timeout` | yes | Per-call timeout, checked as a finite positive number and then capped at the time the budget has left |
 | `llm.cache` | no | Enables the `diskcache` response cache |
 | `llm.cache_dir` | no | Directory for that cache; defaults to `.llm_cache` |
 | `llm.max_parallel` | no | Concurrency bound per event loop; defaults to 8 |
-| `llm.rate_limit` | — | Not supported in v1.0; refused with `ConfigError` and deferred to v1.1 |
+| `llm.rate_limit` | — | Not supported in v1.1; refused with `ConfigError` and deferred to v2.0 |
 | `llm.price_per_input_token` | no | Input rate for a model `pricing.PRICES` does not carry |
 | `llm.price_per_output_token` | no | Output rate for the same model |
 
 The set is closed. An `llm.*` name outside it raises rather than passing through, because a setting that is accepted and ignored produces a run whose recorded configuration does not describe what happened. Transport-shaped names are stripped after every merge, so no override reaches the provider under a name the client did not choose to send.
+
+**Streaming**
+
+Nothing about a fetch is incremental, so a stream cannot make one faster. The records come from parsing one whole JSON document, and the caller sees an answer only when the last chunk has arrived. `llm.stream` is supported because some provider configurations and proxies require or default to a stream, and a package that refused one shut those callers out entirely.
+
+Both entry points read the chunks to the end — the async path through the response's asynchronous iterator, the synchronous path through its ordinary one — and hand them to the provider library's own assembler. What comes back is an ordinary response object, so pricing, reservation settlement, row counting, caching, and usage recording are the same code they were before, and a stream that cannot be assembled, arrives empty, or rebuilds into a response of the wrong shape fails the same shape checks inside the same retry guard.
+
+What differs is whether the call can be priced at all. A provider sends token counts with a stream only if it chooses to, and the assembler papers over the gap by counting the assembled text with a local tokenizer. Those counts are not what was billed, and neither is a price derived from them, so whether accounting exists is read from the chunks rather than from the assembled response: the filled-in block is dropped, the reservation stays at its bound instead of settling, and the usage record and the fetch both report the accounting as unknown. This is the treatment any unreadable cost already gets. Settling an unpriced stream at zero would be the specific failure the reservation model exists to prevent — a ceiling admitting every remaining attempt while the running total stays where it started.
 
 **Cache selection**
 

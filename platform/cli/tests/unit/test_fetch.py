@@ -240,7 +240,7 @@ def test_the_withdrawn_rate_option_is_refused_with_an_alternative() -> None:
         assert "--rate-limit" in result.output, value
         # Typed as a float, click rejected a non-numeric value before the handler ran and
         # answered "not a valid float" — true, and not what the caller needed to know.
-        assert "v1.1" in result.output, value
+        assert "v2.0" in result.output, value
         assert "max_parallel" in result.output, value
 
 

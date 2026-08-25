@@ -18,7 +18,7 @@ result = source.fetch(
 # result.meta.model, result.meta.calls, result.meta.cost describe what it took
 ```
 
-The request becomes one prompt and one model call. The response is stripped of any code fence, parsed as JSON, aligned to the two requested attributes, coerced to the declared types, and deduplicated. This is the shape most requests take, and it is the one the release is built around.
+The request becomes one prompt and one completion, taking up to `limits.max_retries + 1` provider attempts — three by default. The response is stripped of any code fence, parsed as JSON, aligned to the two requested attributes, coerced to the declared types, and deduplicated. This is the shape most requests take, and it is the one the release is built around.
 
 ---
 
@@ -103,7 +103,7 @@ Its connection properties report protocol `llm` and variant `openai`, following 
 
 What the base class does not buy is construction by protocol name, and the two registry paths differ on exactly that. `register_source` takes an instance, stores it under its name, and reads only `name` and `properties`, so handing it an `LlmSource` works. `connect_source` returns the live instance while it is registered, and otherwise reconstructs one from the class path recorded at registration, with the properties it was registered with. Protocol-name dispatch is a legacy path for older records and is not how this source is reached. Adding that arm is a change in `blue-data`, so the supported integration is to build the source and register the instance, which is what it was before this package took the dependency.
 
-Base-class order carries the weight that inheritance does buy, and it is worth stating because getting it wrong fails quietly. `DataSource` is a plain class rather than an abstract one. Most of its methods return an empty result rather than raising, so one left unoverridden here answers nothing instead of failing. That is not true of all of them any more: the transaction methods raise `NotImplementedError` naming this source, and the orchestrator-tool methods carry real behaviour, which is why this source overrides those three with a refusal rather than inheriting them. Where a method does return empty: a registry walking the source would find a working source that reports no databases and returns no records. `LlmSource` is declared with `DataSource` as its base so its own implementations come first, and a test asserts that every method on the shared surface resolves to this class.
+Base-class order carries the weight that inheritance does buy, and it is worth stating because getting it wrong fails quietly. `DataSource` is a plain class rather than an abstract one. Most of its methods return an empty result rather than raising, so one left unoverridden here answers nothing instead of failing. That is not true of all of them any more: the transaction methods raise `NotImplementedError` naming this source, and the orchestrator-tool methods carry real behaviour, which is why this source overrides those three rather than inheriting them: two are narrowed to the tools it can answer, and `execute_query_nl_tools` is refused. Where a method does return empty: a registry walking the source would find a working source that reports no databases and returns no records. `LlmSource` is declared with `DataSource` as its base so its own implementations come first, and a test asserts that every method on the shared surface resolves to this class.
 
 ---
 
@@ -213,20 +213,23 @@ source.execute_query({"op": "LLM.ESTIMATE", "query": "...", "attrs": ["country"]
 
 ## Scenario 9: A tool-using agent reaches the source over MCP
 
-An agent in another framework has the MCP server configured. It sees two tools: `llm_fetch`, which fetches records for a request, and `llm_info`, which reports the protocol, the variant, and the library version. Each carries a JSON input schema, and the agent calls them the way it calls any other tool. Argument validation is the library's, which matters here in particular: an agent supplies arguments programmatically and sees only the exception text as its tool result, so every rejection names the offending value and the accepted form and is passed through unreworded.
+An agent in another framework has the MCP server configured. It sees three tools: `llm_fetch`, which fetches records for a request, `llm_estimate`, which bounds what one such fetch could cost without making it, and `llm_info`, which reports the protocol, the variant, and the library version. Each carries a JSON input schema, and the agent calls them the way it calls any other tool. Argument validation is the library's, which matters here in particular: an agent supplies arguments programmatically and sees only the exception text as its tool result, so every rejection names the offending value and the accepted form and is passed through unreworded.
 
 **Example:**
 
 ```json
 { "query": "the member states of the European Union",
   "attrs": ["country", {"name": "accession_year", "type": "int"}],
-  "max_records": 5 }
+  "max_records": 5,
+  "limits.max_cost": 0.25 }
 ```
 
 ```json
 { "records": [{"country": "France", "accession_year": 1958}],
   "meta": {"outcome": "ok", "model": "gpt-4o", "calls": 1, "prompt_tokens": 12, "completion_tokens": 34, "cost": 0.0012, "elapsed_seconds": 0.31} }
 ```
+
+The ceiling is the agent's to set. `llm_fetch` takes `limits.max_cost`, `limits.max_seconds`, and `limits.max_calls`, and the server configures none of them itself, so a request that names no ceiling has none — an agent that has to stay inside one asks `llm_estimate` first and sets it.
 
 `outcome` is on every result. An empty record list is not an error here, so an agent reads that field to tell an empty request from a model that returned nothing, a result reduction filtered away, and a run a ceiling stopped.
 
@@ -264,7 +267,7 @@ Every command shown in the CLI README is executed by a test that reads the READM
 
 A caller asks for all commercial airports in France with their IATA code and the region they serve. There are roughly a hundred and fifty. A single model call returns twenty to forty, stops at a plausible place, and reports no problem.
 
-This release does not solve that. It makes one model call per request, and a request whose answer exceeds what one completion enumerates comes back short. What the caller does get is the accounting to notice it: the returned record count, the model and call count, and any limit that fired. What it does not get is an estimate of how many records there should have been, so nothing in this release can distinguish a short answer from a complete one on its own.
+This release does not solve that. It makes one completion per request — up to `limits.max_retries + 1` provider attempts of it — and a request whose answer exceeds what one completion enumerates comes back short. What the caller does get is the accounting to notice it: the returned record count, the model and call count, and any limit that fired. What it does not get is an estimate of how many records there should have been, so nothing in this release can distinguish a short answer from a complete one on its own.
 
 Decomposing a request into partitioned sub-requests, deriving a schema when none is supplied, and estimating the size of an answer before fetching it are the next release. They are described here as absent rather than omitted, because a caller planning around this source needs to know which of its own checks it still has to perform.
 

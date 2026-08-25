@@ -169,6 +169,43 @@ def _accumulated(per_attempt: float, attempts: int) -> float:
     return total
 
 
+# The base class's tool set is relational — databases, collections, columns, row samples,
+# foreign keys — and four of its eight tools answer usefully from a source whose only
+# knowledge is a model's. Of the rest, three return an empty result with nothing said, and
+# `get_sample` raises a bare TypeError out of the base dispatcher itself, which passes
+# `row_sample_size` to a `fetch_entity_stats` that has no such parameter. Advertising a tool
+# that answers with silence is the defect this package exists to prevent, so what is
+# advertised is these four.
+_SERVED_NL_TOOLS = frozenset({"list_databases", "list_collections", "get_schema", "execute_query"})
+
+# Keys a tool schema can require that `execute_nl_tool` also takes as arguments. The base
+# dispatcher reads each from the tool input and falls back to the argument, so a call
+# supplying them the second way is complete and must not be refused as incomplete.
+_TOOL_KEYS_FROM_ARGUMENTS = frozenset({"database", "collection"})
+
+
+def _missing_tool_input(tool: dict[str, Any], tool_input: dict[str, Any]) -> list[str]:
+    """Required keys this call did not supply, read off the advertised schema.
+
+    Listing them here instead would be a second copy of the schema the caller was handed, and
+    the copy is what drifts. The check is worth making because the base dispatcher indexes a
+    required key directly — ``tool_input["query"]`` — so an absent one otherwise arrives as a
+    ``KeyError`` naming a dictionary key, and the caller here is a model that sees only the
+    message text.
+    """
+    schema = tool.get("input_schema")
+    if not isinstance(schema, dict):
+        return []
+    required = cast("dict[str, Any]", schema).get("required")
+    if not isinstance(required, list):
+        return []
+    return [
+        str(key)
+        for key in cast("list[Any]", required)
+        if key not in _TOOL_KEYS_FROM_ARGUMENTS and key not in tool_input
+    ]
+
+
 class LlmSource(DataSource):
     """Fetch structured records from a model's own knowledge.
 
@@ -180,8 +217,9 @@ class LlmSource(DataSource):
     Base-class order matters and is not cosmetic. ``DataSource`` defines every method this
     class also defines. Most of its implementations return an empty result, so anything left
     unoverridden silently answers nothing rather than failing; the transaction methods raise
-    instead, and the orchestrator-tool methods carry behaviour this class overrides with a
-    refusal. The contract test asserts that the methods this source must answer resolve here.
+    instead, and the orchestrator-tool methods carry behaviour this class narrows to the part
+    it can answer. The contract test asserts that the methods this source must answer resolve
+    here.
     """
 
     def __init__(
@@ -570,9 +608,10 @@ class LlmSource(DataSource):
         three orders of magnitude for an injected client.
 
         A *fetch* is bounded, not an attempt. A fetch may retry, so the figure is the
-        per-attempt bound times the attempts a fetch is permitted — with the shipped retry
-        default that is three times what one attempt costs, and reporting the per-attempt
-        figure as the fetch's meant a request sized against it was refused when it ran.
+        per-attempt bound accumulated once per attempt permitted, added the way the ledger
+        adds it — with the shipped retry default that is three attempts' worth, and
+        reporting the per-attempt figure as the fetch's meant a request sized against it
+        was refused when it ran.
 
         Returns an unbounded :class:`Estimate` with a reason rather than raising: asking
         what a request might cost is reasonable even where the answer is unknown, and the
@@ -855,21 +894,32 @@ class LlmSource(DataSource):
     # The shared base class grew a tool-calling interface for orchestrators: a source
     # advertises tools, and a caller invokes them one at a time. It is built around the
     # relational shape the rest of the data layer has — databases, collections, columns,
-    # samples, foreign keys — and a source answering from a model's own knowledge has none
-    # of those. Inherited unchanged, this source advertised eight tools of which three
-    # answered with silence and one raised a bare TypeError from a defect in the base
-    # class's own dispatcher.
+    # samples, foreign keys — and a source answering from a model's own knowledge has only
+    # part of that. `_SERVED_NL_TOOLS` records which of the eight it can answer and what the
+    # others do instead.
     #
-    # v1.0 answers honestly instead: no tools, and a clear refusal if one is called. The
-    # refusal matters more than the empty list. `execute_query_nl_tools` drives a loop of up
-    # to ten provider calls that this source's ceilings never see, so inheriting it would
-    # have put an unbounded spend path behind a method nobody here chose to offer.
+    # Both methods below lean on the base rather than reimplementing it. The advertisement is
+    # the base's own definitions filtered by name, so a published schema cannot drift from the
+    # dispatcher that reads it, and the dispatch is the base's own. Filtering is also the safe
+    # direction to fail in: a tool added upstream stays unadvertised until someone here has
+    # checked it answers, and one renamed upstream drops out of the advertisement rather than
+    # being advertised and then failing when called.
+    #
+    # `execute_query_nl_tools` is the exception and stays refused. It drives a loop of up to
+    # ten provider calls that this source's ceilings never see, so serving it would put an
+    # unbounded spend path behind a method nobody here chose to offer.
 
     def get_nl_tools(
         self, database: str | None = None, collection: str | None = None
     ) -> list[dict[str, Any]]:
-        """No tools. This source has no schema to inspect and no rows to sample."""
-        return []
+        """The base class's tool definitions, less the ones this source cannot answer."""
+        offered = cast(
+            "list[dict[str, Any]]",
+            super().get_nl_tools(  # pyright: ignore[reportUnknownMemberType]
+                database=database, collection=collection
+            ),
+        )
+        return [tool for tool in offered if tool.get("name") in _SERVED_NL_TOOLS]
 
     def execute_nl_tool(
         self,
@@ -879,11 +929,45 @@ class LlmSource(DataSource):
         collection: str | None = None,
         optional_properties: dict[str, Any] | None = None,
     ) -> Any:
-        """Refuse by name, since :meth:`get_nl_tools` advertises none."""
-        raise ConfigError(
-            f"this source serves no orchestrator tools, so {name!r} cannot be called. "
-            f"Use fetch, or execute_query_nl for the natural-language surface"
-        )
+        """Run one advertised tool, or refuse by name.
+
+        The served set is read from :meth:`get_nl_tools`, so what is advertised and what runs
+        cannot diverge. ``execute_query`` is the one tool here that reaches the provider, and
+        it takes its ceilings the way the query surface does: ``limits.*`` in
+        *optional_properties*, which the base dispatcher hands on unchanged.
+        """
+        # Everything is inside the chokepoint, not only the delegation. A name that is not a
+        # string, a tool input that is not a mapping, and a required key the dispatcher
+        # indexes directly all leave here as an LlmSourceError, which is what four documents
+        # promise and what an orchestrating model's `except` clause is written against.
+        with _in_hierarchy():
+            served = {str(tool["name"]): tool for tool in self.get_nl_tools(database, collection)}
+            if name not in served:
+                raise ConfigError(
+                    f"{name!r} is not a tool this source serves. Available: "
+                    f"{', '.join(sorted(served))}. Use execute_query_nl for the "
+                    f"natural-language surface"
+                )
+            # Checked for every tool rather than only the one that spends, for the reason
+            # execute_query checks it before reading the op: a ceiling key accepted on one
+            # call and refused on the next is a ceiling a caller believes they have set.
+            self._check_limit_keys(dict(optional_properties or {}))
+            missing = _missing_tool_input(served[name], tool_input)
+            if missing:
+                raise QueryError(
+                    f"{name} requires {', '.join(missing)}, and this call supplied "
+                    f"{sorted(tool_input) or 'nothing'}"
+                )
+            return cast(
+                "Any",
+                super().execute_nl_tool(  # pyright: ignore[reportUnknownMemberType]
+                    name,
+                    tool_input,
+                    database=database,
+                    collection=collection,
+                    optional_properties=optional_properties,
+                ),
+            )
 
     def execute_query_nl_tools(
         self,

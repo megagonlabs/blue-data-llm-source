@@ -22,7 +22,7 @@ The core depends on `blue-data` and `tenacity`. `blue-data` supplies the `DataSo
 LlmSource(name="llm", properties=None, client=None)
 ```
 
-`LlmSource` inherits `blue_data.source.source.DataSource`, so it is a data source by type rather than by resemblance. The base class is a plain class rather than an abstract one, which makes the base order load-bearing. Most of its methods return an empty result rather than raising, so one left unoverridden here answers nothing instead of failing. That is not true of all of them any more: the transaction methods raise `NotImplementedError` naming this source, and the orchestrator-tool methods carry real behaviour that this source overrides with a refusal. which is why this source overrides those three with a refusal rather than inheriting them. Where a method does return empty, and a registry walking the surface would see a source that works and returns nothing. This class is declared with `DataSource` as its base so its own implementations come first, and a test asserts that the methods this source must answer resolve here rather than to the base.
+`LlmSource` inherits `blue_data.source.source.DataSource`, so it is a data source by type rather than by resemblance. The base class is a plain class rather than an abstract one, which makes the base order load-bearing. Most of its methods return an empty result rather than raising, so one left unoverridden here answers nothing instead of failing. That is not true of all of them any more: the transaction methods raise `NotImplementedError` naming this source, and the orchestrator-tool methods carry real behaviour, which is why this source overrides those three rather than inheriting them: two are narrowed to the tools it can answer, and `execute_query_nl_tools` is refused. Where a method does return empty, a registry walking the surface would see a source that works and returns nothing. This class is declared with `DataSource` as its base so its own implementations come first, and a test asserts that the methods this source must answer resolve here rather than to the base.
 
 Inheriting the base class does not make the source reachable by protocol name. `DataRegistry.connect_source` returns the live registered instance while one is present, and reconstructs an equivalent source from the recorded class path once it is not. The route is to build the source yourself and hand the instance to `register_source`. That is enough: the registry records the class alongside `name` and `properties`, and rebuilds an `LlmSource` from that record, so a source registered this way survives a round trip through the registry.
 
@@ -50,7 +50,7 @@ Returns a `FetchResult` with `records` and `meta`.
 estimate(query, attrs=None, context=None, properties=None, llm_fn=None) -> Estimate
 ```
 
-What one fetch of `query` could cost at most, answered without contacting anything. It builds the prompt this source would actually send and bounds it, so the figure belongs to the request you are asking about rather than to an average of requests like it, and it bounds the whole fetch rather than one attempt. A fetch may retry, so `max_cost` is `max_cost_per_attempt * max_attempts`: the per-attempt figure is what each reservation claims, and the product is what a ceiling has to accommodate. Sizing a ceiling against the per-attempt figure means one transient failure consumes it and the retry is refused.
+What one fetch of `query` could cost at most, answered without contacting anything. It builds the prompt this source would actually send and bounds it, so the figure belongs to the request you are asking about rather than to an average of requests like it, and it bounds the whole fetch rather than one attempt. A fetch may retry, so `max_cost` is the per-attempt figure accumulated once per attempt — added the way the budget ledger adds it, not multiplied. Below six attempts the two are identical in binary floating point. From six upward they diverge, and the gap widens with the attempt count — about half of all per-attempt figures differ by one unit in the last place at six attempts, and nearly all of them differ by more at a hundred. Any of it is enough to refuse the final attempt of a request sized against its own estimate. The shipped default is three attempts, so this is latent until someone raises `limits.max_retries` past four. The estimate accumulates the way the thing it is checked against accumulates, so it cannot drift out from under a caller who does. Sizing a ceiling against the per-attempt figure means one transient failure consumes it and the retry is refused.
 
 `llm_fn` is accepted so the estimate is asked of whatever would actually answer, and a callable cannot price itself, so a request against one is reported unestimable. The same is true of an injected client that does not implement `bound_for_attempt`.
 
@@ -109,6 +109,31 @@ print(bounded)
 print(unbounded)
 ```
 
+### The orchestrator tool surface
+
+```text
+get_nl_tools(database=None, collection=None) -> list[dict]
+execute_nl_tool(name, tool_input, database=None, collection=None,
+                optional_properties=None) -> Any
+```
+
+`DataSource` offers a tool-calling interface for an orchestrating model: a source advertises tools, and the caller invokes them one at a time. Its tool set describes a relational source — databases, collections, columns, row samples, foreign keys — and four of its eight tools answer here.
+
+| Tool | Returns |
+|------|---------|
+| `list_databases` | `["llm"]`, the one virtual database |
+| `list_collections` | `["public"]`, the one virtual collection |
+| `get_schema` | The virtual entity with its one text attribute, and an empty relation map |
+| `execute_query` | The records for `tool_input["query"]`, fetched through the query surface |
+
+The other four are not advertised. `get_metadata`, `get_column_stats`, and `get_relations` would answer with an empty result and no explanation, and `get_sample` raises a `TypeError` from the base dispatcher, which passes `row_sample_size` to a `fetch_entity_stats` that takes no such argument. The four definitions above are the base class's own, filtered by name rather than rewritten here, so an advertised schema cannot drift from the dispatcher that reads it.
+
+`execute_nl_tool` refuses any other name with a `ConfigError` naming the four that are served. Nothing on this path raises outside `LlmSourceError`, including a name that is not a string and a `tool_input` missing a key the tool requires.
+
+`execute_query` is the one tool here that reaches a provider, and it takes its ceilings where the query surface takes them: a `limits.*` key in `optional_properties` reaches `execute_query` and binds that call.
+
+`execute_query_nl_tools` is not served and raises `ConfigError`. It drives a loop of up to ten provider calls that this source's ceilings do not govern, so serving it would put an unbounded spend path behind a method this package never chose to offer. `execute_query_nl` is the natural-language route, and its spend and time ceilings are enforced.
+
 ### Metadata
 
 `fetch_databases()` returns one virtual database, `fetch_database_collections()` one virtual collection, and `fetch_database_collection_entities()` one virtual entity with one text attribute, so a registry sync has a hierarchy to walk. `fetch_metadata()` returns the protocol and variant. The remaining `fetch_*` methods return empty.
@@ -141,7 +166,7 @@ class InjectedClient(Protocol):
 `bound_for_attempt` is what makes `estimate` and the run agree: the estimate and each
 reservation both call it, so the figure a caller sizes against and the figure a ceiling
 enforces cannot be computed two different ways. It returns the most one attempt at *prompt*
-could cost, and `estimate` multiplies it by the attempts a fetch permits. A client that
+could cost, and `estimate` accumulates it once per attempt a fetch permits. A client that
 cannot price itself simply omits it — `estimate` then returns `bounded=False` with a reason,
 which is the honest answer to a question it cannot answer, and a cost ceiling against that
 client is refused separately by `budget_capabilities`. `DefaultLlmClient` implements it from
@@ -203,7 +228,7 @@ source = LlmSource(
     client=MyClient(),
 )
 sized = source.estimate("the member states of the European Union", attrs=["country"])
-print(sized.bounded, sized.max_cost)  # True 0.006 — the per-attempt bound times the attempts
+print(sized.bounded, sized.max_cost)  # True 0.006 — per-attempt, accumulated over the attempts
 
 result = source.fetch("the member states of the European Union", attrs=["country"])
 print(result.records)
@@ -221,7 +246,7 @@ Provider settings are `llm.*` keys in `properties`. The accepted set is closed, 
 | Key | Meaning |
 |---|---|
 | `llm.model` | Model name. Defaults to `gpt-4o` |
-| `llm.temperature`, `llm.max_tokens`, `llm.stream`, `llm.timeout` | Passed to the provider; `llm.stream=True` is refused, see below |
+| `llm.temperature`, `llm.max_tokens`, `llm.stream`, `llm.timeout` | Passed to the provider; what `llm.stream=True` does to the accounting is [below](#streaming) |
 | `llm.cache`, `llm.cache_dir` | Enable and locate the on-disk cache |
 | `llm.max_parallel` | Concurrency bound, per event loop |
 
@@ -229,9 +254,19 @@ Provider settings are `llm.*` keys in `properties`. The accepted set is closed, 
 
 Each distinct `llm.cache_dir` opens an on-disk backend holding file descriptors. A client keeps at most eight open and closes the coldest beyond that, and `DefaultLlmClient.close()` releases them all — it is also a context manager. A short-lived script needs neither; a long-lived service that rotates cache directories, one per tenant or per day, does, because nothing else releases those handles and the process eventually runs out of descriptors for anything at all.
 
-**`llm.stream=True` is not supported in v1.0** and is refused with a `ConfigError`. This layer materialises one response per attempt so it can price it, settle its reservation and count its rows; a stream arrives as an object with no choices and every attempt fails as a transport error, after spending every retry. `llm.stream=False` is accepted and forwarded, which is what the source has always sent. Deferred to v1.1.
+### Streaming
 
-`llm.rate_limit` is **not supported in v1.0**. Client-side call spacing has to reconcile with per-attempt budget admission and every arrangement tried let one corrupt the other, so it is refused by name with a `ConfigError` and deferred to v1.1. Cap concurrency with `llm.max_parallel`, or throttle above this library where the whole request sequence is visible.
+`llm.stream=True` is accepted. It exists for compatibility and **it does not make anything faster.** A fetch parses one whole JSON document into records, so there is no partial result for a caller to receive: the chunks are read to the end, reassembled into a single response, and handed to the same path a non-streamed response takes. The same records come back, priced the same way, at the same time or slightly later. The reason to set it is that some provider configurations and proxies require or default to a stream, and until now those callers could not use this package at all.
+
+One thing does change, and it is worth knowing before you set it. A stream carries the provider's token counts only if the provider chooses to send them, and many do not. When none arrive the call cannot be priced: the reservation stays at the bound claimed for the attempt rather than settling at zero, the usage record reports `cost_known=False`, and the fetch reports `accounting_known=False`. That is the same treatment any call whose cost cannot be read already gets — an unreadable price is not a free call. A stream that does carry usage is priced exactly like a non-streamed one, and reports its accounting as known.
+
+The reassembled response is not priced from a token count computed here. The provider library's assembler fills in a usage block from a local tokenizer when the stream sent none, and neither those counts nor a price derived from them is what was billed, so both are dropped rather than reported as measurements.
+
+`llm.stream=False` remains the default and is what the source sends unless you ask otherwise.
+
+### Rate limiting
+
+`llm.rate_limit` is **not supported in v1.1**. Client-side call spacing has to reconcile with per-attempt budget admission and every arrangement tried let one corrupt the other, so it is refused by name with a `ConfigError` and deferred to v2.0. Cap concurrency with `llm.max_parallel`, or throttle above this library where the whole request sequence is visible.
 
 ## Limits
 
@@ -274,7 +309,7 @@ The key names are a closed set, and an unknown one raises `ConfigError` listing 
 
 ### The cost bound
 
-`llm/pricing.py` produces a genuine upper bound on one call, or refuses. The bound is the prompt's length in UTF-8 bytes plus a framing allowance at the model's published input rate, plus the whole `llm.max_tokens` allowance at its output rate. Counting bytes rather than dividing them by an average bytes-per-token figure is what makes it a bound: a byte-pair tokenizer merges byte sequences, so every token it emits consumes at least one byte of the encoded prompt and no tokenizer can exceed the count, while an average is exceeded by text of short words, punctuation, or non-Latin script. Counting characters would not have been a bound, although it reads like one, because a tokenizer splits a character whose encoding it has no merge for. The bound is reserved before the attempt and reconciled against the real cost afterwards, which releases the overshoot. `estimate` reports this same figure, so a request sized against it and a run bounded by it cannot disagree.
+`llm/pricing.py` produces an upper bound on one call *against the rates it holds*, or refuses. Those rates are a static snapshot of published list prices with no effective date and no freshness check, so everything below bounds the call's size correctly and is only as accurate as the table's prices. If a listed price rises, or an alias or proxy bills differently, the reservation is too small and the difference appears at settlement. Supply `llm.price_per_input_token` and `llm.price_per_output_token` to bound against rates you maintain. The bound is the prompt's length in UTF-8 bytes plus a framing allowance at the model's published input rate, plus the whole `llm.max_tokens` allowance at its output rate. Counting bytes rather than dividing them by an average bytes-per-token figure is what makes it a bound: a byte-pair tokenizer merges byte sequences, so every token it emits consumes at least one byte of the encoded prompt and no tokenizer can exceed the count, while an average is exceeded by text of short words, punctuation, or non-Latin script. Counting characters would not have been a bound, although it reads like one, because a tokenizer splits a character whose encoding it has no merge for. The bound is reserved before the attempt and reconciled against the real cost afterwards, which releases the overshoot. `estimate` reports this same figure, so a request sized against it and a run bounded by it cannot disagree with *each other* — both compute from the same table, and neither is a claim about what the provider will invoice.
 
 Where the bound cannot be established, `limits.max_cost` raises `ConfigError` rather than claiming an invented figure. That happens when the model has no published price, since a model this table has never heard of may cost more than anything in it, and when `llm.max_tokens` is not a finite positive number, since output with no cap can run until the provider stops it. `pricing.rates_for` returns `None` for an unlisted model and `pricing.can_bound` answers the question without raising. No bound is computed at all when no cost ceiling is configured, so a run bounded on calls or rows is never refused over an unfamiliar model.
 
@@ -323,7 +358,9 @@ Each fetch derives a child from that budget, so it spends from what the parent h
 
 `FetchResult` holds `records` and `meta`, and supports `len()` and iteration over the records.
 
-`ExecMeta` reports `outcome`, `model`, `calls`, `prompt_tokens`, `completion_tokens`, `cost`, `latency_seconds`, `cache_hits`, `requested_attrs`, `observed_keys`, `remapped_keys`, `unmapped_keys`, `type_mismatches`, `key_collisions`, `unchecked_types`, `truncated_to`, and `stopped_by`.
+`ExecMeta` reports `outcome`, `model`, `calls`, `prompt_tokens`, `completion_tokens`, `cost`, `latency_seconds`, `cache_hits`, `requested_attrs`, `observed_keys`, `remapped_keys`, `unmapped_keys`, `type_mismatches`, `key_collisions`, `unchecked_types`, `truncated_to`, `stopped_by`, and `accounting_known`.
+
+**Read `accounting_known` before reading `cost`.** It is `False` when the answer came from a caller-supplied `llm_fn`, because a callable may answer from memory, contact one provider, or fan out to several, and none of that is visible from here. When it is `False` the accounting fields describe this library's own bookkeeping and nothing else — so a `cost` of `0.0` means "not measured", not "free", and a `calls` of `1` counts one invocation of your callable rather than one provider request.
 
 `unmapped_keys` matters. When the model returns a key that cannot be matched to a requested attribute, the key is reported there rather than dropped in silence. `key_collisions` is the same idea for the opposite problem: when two returned keys map to one requested attribute, the first wins and the second is reported with the value it carried, because which spelling the model meant is not knowable here. Two occurrences of the identical key inside one JSON object are a different case and raise `ParseError`, since there the two values have nothing to tell them apart by and Python's decoder would otherwise keep the last of the pair without a trace.
 
@@ -357,10 +394,10 @@ Unit tests only. Every I/O boundary is doubled and no test touches the network. 
 
 `tests/unit/compat/test_contract.py` compares this source's method signatures against `blue_data.source.source.DataSource` and fails when they drift.
 
-`LlmSource` inherits that base class, so most divergence is already a type error. The contract test covers what inheritance does not: a signature that still type-checks because the base method is untyped, and a method that resolves to the base class rather than to this one. Most `DataSource` methods return an empty result, so one left unoverridden answers nothing instead of failing, which is the quietest way a source can be broken. Not all of them: six transaction methods are recorded in the test's `OUT_OF_SCOPE` map and refuse by name, and the three orchestrator-tool methods carry real behaviour, which is why this source overrides them locally with a refusal rather than inheriting them.
+`LlmSource` inherits that base class, so most divergence is already a type error. The contract test covers what inheritance does not: a signature that still type-checks because the base method is untyped, and a method that resolves to the base class rather than to this one. Most `DataSource` methods return an empty result, so one left unoverridden answers nothing instead of failing, which is the quietest way a source can be broken. Not all of them: six transaction methods are recorded in the test's `OUT_OF_SCOPE` map and refuse by name, and the three orchestrator-tool methods carry real behaviour, which is why this source overrides them locally rather than inheriting them.
 
 It prints the path of the `blue_data` it compared against, and names that path in any failure. Check it before changing this source to match a signature: an installed copy can be older than a checkout, and confirming against a version nobody runs is worse than not checking at all.
 
 ## Not published
 
-The package is not yet on PyPI. Install from source.
+None of the three packages is on PyPI or on an internal index. Install from source, and note that `blue-data` must be installed first — see [Install](#install) above and the dependency section of the top-level [README](../README.md). Where a design document describes how these are "distributed", it is describing the intended route rather than one you can use today.

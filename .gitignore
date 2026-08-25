@@ -39,3 +39,7 @@ dist/
 
 # OS
 .DS_Store
+
+# Cloud-sync scratch. The drive client writes partial copies here, and one of them
+# was a document that has no business in this repository.
+.tmp*

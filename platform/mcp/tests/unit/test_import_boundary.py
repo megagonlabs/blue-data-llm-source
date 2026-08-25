@@ -35,7 +35,11 @@ def test_tools_imports_with_mcp_unavailable() -> None:
     sys.meta_path.insert(0, blocker)
     try:
         reloaded: ModuleType = importlib.reload(tools)
-        assert [spec.name for spec in reloaded.TOOLS] == ["llm_fetch", "llm_info"]
+        assert [spec.name for spec in reloaded.TOOLS] == [
+            "llm_fetch",
+            "llm_estimate",
+            "llm_info",
+        ]
         assert reloaded.llm_info()["protocol"] == "llm"
     finally:
         sys.meta_path.remove(blocker)

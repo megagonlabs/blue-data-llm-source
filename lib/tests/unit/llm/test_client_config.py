@@ -110,23 +110,13 @@ def test_a_per_call_property_overrides_the_constructed_one() -> None:
     assert client._call_kwargs("who?", merged)["model"] == "per-call"
 
 
-def test_asking_for_a_stream_is_refused_rather_than_failing_three_times() -> None:
-    """A documented, typed, accepted configuration that cannot produce a result.
+@pytest.mark.parametrize("asked", [True, False])
+def test_the_stream_flag_reaches_the_provider_as_given(
+    client: DefaultLlmClient, asked: bool
+) -> None:
+    """Both values are forwarded, because both are things a provider may need to be told.
 
-    The flag was forwarded, the provider returned a streaming wrapper, and `_materialize`
-    accepts only a mapping with a choices list — so every attempt failed as a transport
-    error and the run spent its whole retry allowance before saying nothing useful.
+    `True` was refused by name for a while, which left the callers whose provider
+    configuration or proxy requires a stream unable to use the package at all.
     """
-    from blue_data_llm_source import LlmSource
-    from blue_data_llm_source.types import ConfigError
-
-    def answer(prompt: str) -> str:
-        return "[]"
-
-    for properties in ({"llm.stream": True}, {"llm.stream": 1}):
-        with pytest.raises(ConfigError, match="deferred to v1.1"):
-            LlmSource(properties=properties).fetch("who?", llm_fn=answer)
-
-    # False is the value this source has always sent, and it stays accepted.
-    result = LlmSource(properties={"llm.stream": False}).fetch("who?", llm_fn=answer)
-    assert result.meta.outcome is not None
+    assert client._call_kwargs("who?", {"llm.stream": asked})["stream"] is asked

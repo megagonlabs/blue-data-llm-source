@@ -14,10 +14,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
 
-from blue_data_llm_source import ExecMeta, LlmSource, LlmSourceError
+from blue_data_llm_source import Estimate, ExecMeta, LlmSource, LlmSourceError
 from blue_data_llm_source import __version__ as library_version
 
 FETCH = "llm_fetch"
+ESTIMATE = "llm_estimate"
 INFO = "llm_info"
 
 
@@ -58,33 +59,76 @@ ATTR_SCHEMA: dict[str, Any] = {
     ]
 }
 
+# The request itself: what a fetch asks for, and what an estimate prices. Shared by both
+# schemas so the two tools cannot drift into pricing one request and running another.
+REQUEST_PROPERTIES: dict[str, Any] = {
+    "query": {
+        "type": "string",
+        "description": "What to ask the model for, in plain language.",
+    },
+    "attrs": {
+        "type": "array",
+        "description": "Attributes every record must carry. Omit to let the model choose keys.",
+        "items": ATTR_SCHEMA,
+    },
+    "context": {
+        "type": "string",
+        "description": "Extra text that clarifies the query or an attribute name.",
+    },
+}
+
+# The library's own property names, spelled exactly as they are on a source or on the
+# command line, so a ceiling means one thing everywhere. A renamed key here would be read
+# by nothing: the library validates the keys it is given, and a tool argument the handlers
+# do not recognise never reaches it, so the run would go unbounded in silence.
+LIMIT_PROPERTIES: dict[str, Any] = {
+    "limits.max_cost": {
+        "type": "number",
+        "description": (
+            "Refuse a call that would take this run's spend past this many dollars. The "
+            "output allowance is reserved in full, so llm_estimate reports the floor a "
+            "ceiling has to clear."
+        ),
+        "minimum": 0,
+    },
+    "limits.max_seconds": {
+        "type": "number",
+        "description": "Refuse a call once the run has been going this long.",
+        "minimum": 0,
+    },
+    "limits.max_calls": {
+        "type": "integer",
+        "description": "Refuse more than this many provider calls, retries included.",
+        "minimum": 0,
+    },
+}
+
+LIMIT_KEYS: tuple[str, ...] = tuple(LIMIT_PROPERTIES)
+
 FETCH_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "query": {
-            "type": "string",
-            "description": "What to ask the model for, in plain language.",
-        },
-        "attrs": {
-            "type": "array",
-            "description": (
-                "Attributes every record must carry. Omit to let the model choose keys."
-            ),
-            "items": ATTR_SCHEMA,
-        },
-        "context": {
-            "type": "string",
-            "description": "Extra text that clarifies the query or an attribute name.",
-        },
+        **REQUEST_PROPERTIES,
         "max_records": {
             "type": "integer",
             "description": "Stop after this many records.",
             "minimum": 1,
         },
+        **LIMIT_PROPERTIES,
     },
     # No required key. The source treats a missing or empty query as a normal outcome and
     # reports it as `empty_query`, which the README documents; declaring it required told a
     # generated client something the server does not enforce and would not want to.
+    "required": [],
+    "additionalProperties": False,
+}
+
+# No `max_records` here, and deliberately: `estimate` takes no row cap, so accepting one
+# would advertise an input that changes nothing about the answer. A row cap does not bound
+# spend anyway — the model is asked once and the surplus records are dropped on arrival.
+ESTIMATE_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {**REQUEST_PROPERTIES, **LIMIT_PROPERTIES},
     "required": [],
     "additionalProperties": False,
 }
@@ -106,6 +150,14 @@ TOOLS: tuple[ToolSpec, ...] = (
         input_schema=FETCH_INPUT_SCHEMA,
     ),
     ToolSpec(
+        name=ESTIMATE,
+        description=(
+            "Bound what one llm_fetch of the same request could cost, without calling the "
+            "model. Returns an upper bound on the whole fetch, retries included."
+        ),
+        input_schema=ESTIMATE_INPUT_SCHEMA,
+    ),
+    ToolSpec(
         name=INFO,
         description="Report the protocol, the variant, and the library version.",
         input_schema=INFO_INPUT_SCHEMA,
@@ -116,6 +168,18 @@ TOOLS: tuple[ToolSpec, ...] = (
 def build_source() -> LlmSource:
     """Construct the source a tool call runs against."""
     return LlmSource()
+
+
+def limit_properties(args: dict[str, Any]) -> dict[str, Any] | None:
+    """The ceilings in *args*, as the per-call properties the library reads.
+
+    None rather than an empty dict when the caller set none, so a call without a ceiling
+    reaches the library exactly as it did before there was one to set. The library merges
+    these over the source's own properties for this call and does not write them back, so
+    one agent's ceiling cannot leak into the next call over the same server.
+    """
+    properties = {key: args[key] for key in LIMIT_KEYS if key in args}
+    return properties or None
 
 
 def meta_summary(meta: ExecMeta) -> dict[str, Any]:
@@ -174,6 +238,7 @@ async def allm_fetch(
             attrs=args.get("attrs"),
             context=args.get("context"),
             max_records=args.get("max_records"),
+            properties=limit_properties(args),
         )
     except LlmSourceError as error:
         raise ToolError(str(error), kind=type(error).__name__) from error
@@ -191,10 +256,56 @@ def llm_fetch(arguments: dict[str, Any] | None = None, source: Any | None = None
             attrs=args.get("attrs"),
             context=args.get("context"),
             max_records=args.get("max_records"),
+            properties=limit_properties(args),
         )
     except LlmSourceError as error:
         raise ToolError(str(error), kind=type(error).__name__) from error
     return {"records": list(result.records), "meta": meta_summary(result.meta)}
+
+
+def estimate_summary(estimate: Estimate) -> dict[str, Any]:
+    """Shape Estimate for a tool result: every field, whether or not it is set.
+
+    The two costs are published unrounded, unlike the spend in ``meta_summary``. That one is
+    a measurement and rounding it loses nothing a caller can act on; these are upper bounds,
+    and rounding a bound to six places can round it *down*. An agent that then set
+    ``limits.max_cost`` to the figure it was given would have the last attempt that figure
+    accounted for refused.
+    """
+    return {
+        "bounded": estimate.bounded,
+        "max_cost": estimate.max_cost,
+        "max_cost_per_attempt": estimate.max_cost_per_attempt,
+        "max_attempts": estimate.max_attempts,
+        "reason": estimate.reason,
+        "model": estimate.model,
+        "prompt_bytes": estimate.prompt_bytes,
+        "max_output_tokens": estimate.max_output_tokens,
+    }
+
+
+def llm_estimate(
+    arguments: dict[str, Any] | None = None, source: Any | None = None
+) -> dict[str, Any]:
+    """Bound what one fetch of this request could cost, contacting no provider.
+
+    Synchronous on both dispatch paths, and safe there in a way ``fetch`` is not: this
+    awaits nothing and reaches no transport, so there is no loop for it to be called from
+    inside of.
+    """
+    args = arguments or {}
+    target = source if source is not None else build_source()
+    query: Any = args.get("query")  # same boundary as llm_fetch
+    try:
+        estimate = target.estimate(
+            query,
+            attrs=args.get("attrs"),
+            context=args.get("context"),
+            properties=limit_properties(args),
+        )
+    except LlmSourceError as error:
+        raise ToolError(str(error), kind=type(error).__name__) from error
+    return estimate_summary(estimate)
 
 
 def llm_info(arguments: dict[str, Any] | None = None, source: Any | None = None) -> dict[str, Any]:
@@ -209,6 +320,7 @@ def llm_info(arguments: dict[str, Any] | None = None, source: Any | None = None)
 
 _HANDLERS: dict[str, Callable[[dict[str, Any] | None, Any | None], dict[str, Any]]] = {
     FETCH: llm_fetch,
+    ESTIMATE: llm_estimate,
     INFO: llm_info,
 }
 
@@ -219,7 +331,15 @@ async def _allm_info(
     return llm_info(arguments, source)
 
 
-_ASYNC_HANDLERS = {"llm_fetch": allm_fetch, "llm_info": _allm_info}
+async def _allm_estimate(
+    arguments: dict[str, Any] | None = None, source: Any | None = None
+) -> dict[str, Any]:
+    return llm_estimate(arguments, source)
+
+
+# Keyed by the same constants as the synchronous table, so the two cannot drift into
+# offering different tools on the two dispatch paths.
+_ASYNC_HANDLERS = {FETCH: allm_fetch, ESTIMATE: _allm_estimate, INFO: _allm_info}
 
 
 # Withdrawn before release. Named here as well as in the library because a tool call never
@@ -227,7 +347,7 @@ _ASYNC_HANDLERS = {"llm_fetch": allm_fetch, "llm_info": _allm_info}
 # the rest, so an unrecognised key arrived as silence rather than as a refusal.
 _DEFERRED_ARGS = {
     "llm.rate_limit": (
-        "client-side call spacing is deferred to v1.1. Use 'llm.max_parallel' to cap "
+        "client-side call spacing is deferred to v2.0. Use 'llm.max_parallel' to cap "
         "concurrency, or throttle above this server where the whole request sequence is visible"
     ),
 }
@@ -305,8 +425,8 @@ def _check_value(label: str, value: Any, spec: dict[str, Any]) -> Any:
     The SDK validates ``inputSchema`` before the decorated handler runs, which meant a
     deferred key was answered with a generic schema error instead of the message naming what
     to use instead. Turning that prevalidation off is only safe if this does the whole job,
-    so this covers every construct the two shipped schemas actually use — and the schema
-    tests assert that no other construct appears.
+    so this covers every construct the shipped schemas actually use — and the schema tests
+    assert that no other construct, and no other declared type, appears.
     """
     branches = spec.get("oneOf") or spec.get("anyOf")
     if branches is not None:
@@ -335,9 +455,14 @@ def _check_value(label: str, value: Any, spec: dict[str, Any]) -> Any:
             value = int(value)
         if not isinstance(value, int):
             raise ToolError(f"{label} must be an integer, got {kind}", kind="ConfigError")
-        minimum = spec.get("minimum")
-        if minimum is not None and value < cast("int", minimum):
-            raise ToolError(f"{label} must be at least {minimum}, got {value}", kind="ConfigError")
+        _check_minimum(label, value, spec)
+    if declared == "number":
+        # bool is an int is a number in Python, and a flag is never a ceiling. The schema
+        # validators a client generates arguments against exclude it too, so accepting it
+        # here would make this server accept what its own published contract refuses.
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ToolError(f"{label} must be a number, got {kind}", kind="ConfigError")
+        _check_minimum(label, value, spec)
     if declared == "array":
         if not isinstance(value, list):
             raise ToolError(f"{label} must be an array, got {kind}", kind="ConfigError")
@@ -360,6 +485,13 @@ def _check_value(label: str, value: Any, spec: dict[str, Any]) -> Any:
             )
     # The value as it should be used, which is the same object unless a branch narrowed it.
     return cast("Any", value)
+
+
+def _check_minimum(label: str, value: float, spec: dict[str, Any]) -> None:
+    """Enforce a declared lower bound, for whichever numeric type declared it."""
+    minimum = spec.get("minimum")
+    if minimum is not None and value < cast("float", minimum):
+        raise ToolError(f"{label} must be at least {minimum}, got {value}", kind="ConfigError")
 
 
 def _refuse_extras(extra: list[str], name: str, schema: dict[str, Any], within: str = "") -> None:

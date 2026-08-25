@@ -20,7 +20,7 @@ import json
 import math
 import time
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import AsyncIterable, Callable, Iterable
 from typing import Any, ClassVar, Protocol, cast
 
 from tenacity import (
@@ -75,7 +75,7 @@ _CONTROL = {
 # than one that is absent and says so, so it is refused by name and deferred.
 _DEFERRED = {
     "rate_limit": (
-        "client-side call spacing is deferred to v1.1. Use 'llm.max_parallel' to cap "
+        "client-side call spacing is deferred to v2.0. Use 'llm.max_parallel' to cap "
         "concurrency, or throttle above this library where the whole request sequence is "
         "visible"
     ),
@@ -91,11 +91,6 @@ def check_adapter_keys(properties: dict[str, Any]) -> None:
     only the built-in client reaches that builder: a typo alongside an injected client or an
     ``llm_fn`` was accepted and ignored, which is exactly what a closed key set is for.
     """
-    # Refused by value, not by key: `llm.stream` is accepted and forwarded as False, which
-    # is what this source has always sent, and only asking for a stream is unsupported.
-    # Materialising one response per attempt is how the call is priced, its reservation
-    # settled and its rows counted; a stream arrives with no choices list, so every attempt
-    # failed as a transport error and the run spent its whole retry allowance.
     parallel = properties.get("llm.max_parallel")
     if parallel is not None and (
         isinstance(parallel, bool) or not isinstance(parallel, int) or parallel < 1
@@ -106,12 +101,6 @@ def check_adapter_keys(properties: dict[str, Any]) -> None:
         # a time ceiling happened to be set.
         raise ConfigError(
             f"'llm.max_parallel' must be a whole number of at least 1, got {parallel!r}"
-        )
-    if properties.get("llm.stream"):
-        raise ConfigError(
-            "'llm.stream' is not supported: streaming is deferred to v1.1. This layer "
-            "materialises one response per attempt so it can price it, settle its "
-            "reservation and count its rows. Read the records from the returned result"
         )
     deferred = sorted(key for key in properties if key.startswith("llm.") and key[4:] in _DEFERRED)
     if deferred:
@@ -131,7 +120,7 @@ DEFAULT_MODEL = "gpt-4o"
 
 
 class _Provider(Protocol):
-    """The two litellm entry points this client calls.
+    """The litellm entry points this client calls.
 
     litellm carries its own annotations, but many of them are bare ``List`` and ``dict``,
     so a strict checker sees the whole signature as unknown. Declaring the surface we
@@ -142,6 +131,8 @@ class _Provider(Protocol):
     def completion(self, **kwargs: Any) -> Any: ...
 
     async def acompletion(self, **kwargs: Any) -> Any: ...
+
+    def stream_chunk_builder(self, chunks: list[Any]) -> Any: ...
 
 
 class _StopAtDeadline(stop_base):
@@ -721,8 +712,7 @@ class DefaultLlmClient:
                 # holds a handle that will resolve it — where an interrupt landed.
                 with effective.attempt(bound) as reservation:
                     try:
-                        response: Any = provider.completion(**call_kwargs)
-                        payload, cost = _materialize(response)
+                        payload, cost = _call_provider(provider, call_kwargs)
                     except TransportError:
                         # Contacted and failed. The estimate stands as the charge rather than
                         # being released, or every failed retry would be free.
@@ -774,8 +764,7 @@ class DefaultLlmClient:
                 # holds a handle that will resolve it — where an interrupt landed.
                 with effective.attempt(bound) as reservation:
                     try:
-                        response: Any = await provider.acompletion(**call_kwargs)
-                        payload, cost = _materialize(response)
+                        payload, cost = await _acall_provider(provider, call_kwargs)
                     except TransportError:
                         reservation.keep_unpriced()
                         self._record_unpriced(kwargs, merged)
@@ -797,7 +786,111 @@ class DefaultLlmClient:
         raise TransportError("retry policy exhausted without a result", code="no_result")
 
 
-def _materialize(response: Any) -> tuple[dict[str, Any], float | None]:
+def _call_provider(
+    provider: _Provider, call_kwargs: dict[str, Any]
+) -> tuple[dict[str, Any], float | None]:
+    """One attempt, as a payload and what it cost, however the provider chose to send it."""
+    response: Any = provider.completion(**call_kwargs)
+    if not call_kwargs.get("stream"):
+        return _materialize(response)
+    assembled, usage_reported = _assemble(provider, _drain(response))
+    return _materialize(assembled, usage_reported=usage_reported)
+
+
+async def _acall_provider(
+    provider: _Provider, call_kwargs: dict[str, Any]
+) -> tuple[dict[str, Any], float | None]:
+    response: Any = await provider.acompletion(**call_kwargs)
+    if not call_kwargs.get("stream"):
+        return _materialize(response)
+    assembled, usage_reported = _assemble(provider, await _adrain(response))
+    return _materialize(assembled, usage_reported=usage_reported)
+
+
+def _drain(response: Any) -> list[Any]:
+    """Read a streamed response into memory, chunk by chunk.
+
+    Nothing partial can be handed back from here. A fetch parses one whole JSON document
+    into records, so the caller sees an answer only after the last chunk has arrived, and a
+    stream therefore takes at least as long as the same call unstreamed. It is supported
+    because some provider configurations and proxies require or default to it, not to make
+    anything arrive sooner.
+    """
+    if not hasattr(response, "__iter__"):
+        raise TransportError(
+            "'llm.stream' was set but the provider did not return a stream",
+            code="bad_response",
+        )
+    return list(cast("Iterable[Any]", response))
+
+
+async def _adrain(response: Any) -> list[Any]:
+    """The same, for a provider that hands back an asynchronous iterator."""
+    if hasattr(response, "__aiter__"):
+        return [chunk async for chunk in cast("AsyncIterable[Any]", response)]
+    # A wrapper that is only synchronously iterable is read as one. Reading it holds the
+    # loop, which is the exclusion `acomplete` already documents for work that does not
+    # yield, and is better than refusing a stream this path can plainly read.
+    return _drain(response)
+
+
+def _assemble(provider: _Provider, chunks: list[Any]) -> tuple[Any, bool]:
+    """One complete response rebuilt from *chunks*, and whether the provider priced it.
+
+    The provider library's own assembler does the rebuilding, so what comes back carries the
+    same fields a non-streamed response does and nothing downstream needs to know which it
+    was. Hand-assembling the chunks would be a second copy of a contract this package does
+    not own.
+
+    Whether the call can be priced is read from the chunks, not from the assembled response.
+    The assembler always attaches a usage block, counting the text with a local tokenizer
+    when the stream carried no figures of its own, and a price computed from those counts is
+    not what the provider charged.
+    """
+    usage_reported = any(_carries_usage(chunk) for chunk in chunks)
+    try:
+        assembled: Any = provider.stream_chunk_builder(chunks)
+    except Exception as e:
+        raise TransportError(
+            "provider stream could not be assembled into a response",
+            code="bad_response",
+            provider_error=e,
+        ) from e
+    if assembled is None:
+        # What the assembler answers for a stream that carried no chunks at all.
+        raise TransportError("provider returned an empty stream", code="bad_response")
+    return assembled, usage_reported
+
+
+_USAGE_COUNTS = ("prompt_tokens", "completion_tokens", "total_tokens")
+
+
+def _carries_usage(chunk: Any) -> bool:
+    """Whether one chunk brought the provider's own accounting with it.
+
+    Presence of a usage container is not accounting. A provider may stream an empty one, or
+    one whose counts are all zero, and the assembler then fills the figures in from a local
+    tokenizer — so reading presence as "the provider reported this" settles a number the
+    provider never sent. It is the same fabrication the raw-chunk check exists to avoid,
+    arriving through a container rather than through a missing key.
+
+    Only counts that are actually there count.
+    """
+    reported = getattr(chunk, "usage", None)
+    if reported is None and isinstance(chunk, dict):
+        reported = cast("dict[str, Any]", chunk).get("usage")
+    if reported is None:
+        return False
+    carrier: Any = reported
+    if isinstance(reported, dict):
+        block = cast("dict[str, Any]", reported)
+        counts: list[Any] = [block.get(name) for name in _USAGE_COUNTS]
+    else:
+        counts = [getattr(carrier, name, None) for name in _USAGE_COUNTS]
+    return any(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in counts)
+
+
+def _materialize(response: Any, usage_reported: bool = True) -> tuple[dict[str, Any], float | None]:
     try:
         raw: Any = response.model_dump() if hasattr(response, "model_dump") else response
     except Exception as e:
@@ -828,6 +921,14 @@ def _materialize(response: Any) -> tuple[dict[str, Any], float | None]:
     # a permanently cached failure, which is the thing the check exists to prevent.
     if not isinstance(cast("dict[str, Any]", message).get("content"), str):
         raise TransportError("provider response message content is not text", code="bad_response")
+    if not usage_reported:
+        # A stream that carried no accounting of its own. The assembled response still has a
+        # usage block, because the assembler fills one in from a local tokenizer, and neither
+        # those counts nor a price derived from them is what the provider billed. Dropping it
+        # puts the call on the path every unreadable cost already takes: the reservation
+        # stands at its bound and the result reports its accounting as unknown. Pricing the
+        # filled-in block instead would settle a figure nobody was charged.
+        return {key: value for key, value in payload.items() if key != "usage"}, None
     return payload, _cost_of(response)
 
 

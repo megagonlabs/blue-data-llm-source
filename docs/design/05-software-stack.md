@@ -1,6 +1,6 @@
 # LlmSource — Software Stack
 
-Three packages ship from this repository: the library, an MCP server, and a CLI. Each is independently versioned and depends on the library, so the library itself carries no server or CLI dependency.
+Three packages are built from this repository, none of them published yet: the library, an MCP server, and a CLI. Each is independently versioned and depends on the library, so the library itself carries no server or CLI dependency.
 
 ---
 
@@ -71,6 +71,8 @@ There is no `blue-data` extra. It existed to gate the compatibility adapter whil
 
 `litellm` is imported inside the call that uses it rather than at module import, so the package installs, imports, and runs its tests with no provider SDK present. It is a transport shim rather than a framework: the client builds its own call arguments, owns its own retry, cache, concurrency, and accounting, and does not adopt a provider-agnostic abstraction layer over the request itself.
 
+Two pieces of it are used as more than transport, and both are places where writing our own would mean keeping a second copy of somebody else's contract. `completion_cost` reads what a call was billed. `stream_chunk_builder` rebuilds one response from the chunks of a streamed call, which is what lets `llm.stream=True` be supported without a separate downstream path. Neither is trusted blindly: an unreadable cost is reported as unknown rather than as zero, and the assembler's habit of filling in token counts from a local tokenizer is worked around rather than repeated as accounting. `04-detailed-architecture.md` has the detail.
+
 One behaviour of that dependency reaches the outside world and is worth recording. On some failure paths `litellm` writes its own coloured banners to standard output rather than to standard error, and this package has no hook to suppress them. Anything reading a process's standard output as machine-readable text, such as the CLI under `--format json`, can therefore receive lines this package did not write.
 
 The model boundary is a structural protocol with two methods:
@@ -115,9 +117,9 @@ The `llm.cache` switch is not wired to either of them and still opens `diskcache
 |---------|--------|
 | Library | `mcp==1.27.2`, the official MCP Python SDK |
 | Server | Low-level server over stdio |
-| Tools | `llm_fetch`, `llm_info` |
+| Tools | `llm_fetch`, `llm_estimate`, `llm_info` |
 | Entry point | `blue-data-llm-mcp` |
-| Dependencies | `blue-data-llm-source[llm]>=1.0.0`, `mcp==1.27.2` |
+| Dependencies | `blue-data-llm-source[llm]>=1.1.0`, `mcp==1.27.2` |
 
 The low-level server is used rather than the decorator-derived one because the tool schemas are written by hand. Deriving a schema from a handler signature would put the tool contract in a Python signature instead of in the JSON a client actually sees, and that JSON is the contract an agent reads.
 
@@ -133,7 +135,7 @@ The `mcp` import is confined to the transport module. Tool definitions and argum
 | Output formatting | `rich>=13.0` |
 | Commands | `llm fetch`, `llm info` |
 | Entry point | `llm` |
-| Dependencies | `blue-data-llm-source[llm]>=1.0.0`, `click>=8.0`, `rich>=13.0` |
+| Dependencies | `blue-data-llm-source[llm]>=1.1.0`, `click>=8.0`, `rich>=13.0` |
 
 Click commands are synchronous and call the library's synchronous wrapper. Rich markup is disabled on output, because a record value containing square brackets is data rather than a style tag.
 
