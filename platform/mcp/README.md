@@ -114,7 +114,7 @@ What one `llm_fetch` of the same request could cost, without calling the model. 
 No inputs. Returns the protocol, the variant, and the version of the library underneath:
 
 ```json
-{"protocol": "llm", "variant": "openai", "version": "1.1.0"}
+{"protocol": "llm", "variant": "openai", "version": "1.1.1"}
 ```
 
 ## Ceilings

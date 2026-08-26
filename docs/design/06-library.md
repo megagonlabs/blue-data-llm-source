@@ -8,11 +8,11 @@
 
 Entry point for everything the package does. It inherits `blue_data.source.source.DataSource` and remains instantiable on its own, since that base class has no abstract members either. It holds connection properties, resolves a model client per request, and delegates rendering, parsing, alignment, and verification to the modules below.
 
-The base order is load-bearing, which is worth saying at the top rather than in a footnote. `DataSource` defines every method this class also defines. Most of its methods return an empty result rather than raising, so one left unoverridden here answers nothing instead of failing. That is not true of all of them any more: the transaction methods raise `NotImplementedError` naming this source, and the orchestrator-tool methods carry real behaviour, which is why this source overrides those three rather than inheriting them: two are narrowed to the tools it can answer, and `execute_query_nl_tools` is refused. If the bases were listed the other way round, or a method were left unwritten, those empty implementations would win the method resolution order and `fetch_databases` would return an empty list while `execute_query` returned no records, without a model ever being called and without anything reporting a problem. A test walks the shared surface and asserts each method resolves to `LlmSource`, which is what turns an ordering mistake into a failing test instead of a source that quietly answers nothing.
+The base order is load-bearing. If the bases were listed the other way round, or a method were left unwritten, `DataSource`'s empty implementations would win the method resolution order and `fetch_databases` would return an empty list while `execute_query` returned no records, without a model ever being called and without anything reporting a problem. A test walks the shared surface and asserts each method resolves to `LlmSource`, which turns an ordering mistake into a failing test rather than a source that quietly answers nothing. The rest of the account is in [The Source Base Class](04-detailed-architecture.md#the-source-base-class).
 
 Inheriting the base class is not the same as being constructible by protocol name. `DataRegistry.connect_source` returns the registered instance, or rebuilds one from the recorded class path when the live entry is gone; `DataRegistry.register_source` takes a built instance and reads only `name` and `properties`, which is the route that works.
 
-### Constructor
+### `LlmSource` constructor
 
 ```python
 LlmSource(
@@ -131,7 +131,7 @@ Two properties of this are the reason it exists. It builds the real prompt rathe
 
 Refusing to raise on an unpriceable model is the other deliberate part. `bound_cost` raises because a ceiling built on an invented figure is not a ceiling, but a caller asking what a request might cost is not asking for a ceiling, and "I cannot tell you, because this model has no published price" is a usable answer where an exception is not.
 
-### Source surface
+### `LlmSource` source surface
 
 These override the methods `DataSource` declares, so an instance answers on the same surface every other source in the layer answers on, and a signature that drifts from upstream is a type error here rather than a runtime failure in someone else's integration.
 
@@ -444,7 +444,7 @@ Both are passed to the client through the `cache_store` property. The `llm.cache
 
 Calls a provider and reports what each call cost.
 
-### Constructor
+### `DefaultLlmClient` constructor
 
 ```python
 DefaultLlmClient(properties: dict[str, Any] | None = None, budget: Budget | None = None)
@@ -463,9 +463,9 @@ DefaultLlmClient(properties: dict[str, Any] | None = None, budget: Budget | None
 
 `usages` is the client's own history and is not what a fetch reads. When a call carries a `usage_sink` property, this client appends that call's `Usage` to the supplied list as well, and the fetch reads only from there, because one client instance can serve several concurrent fetches and a shared history cannot be sliced back into per-request totals.
 
-### Methods
+### `DefaultLlmClient` methods
 
-#### `budget_capabilities()`
+#### `DefaultLlmClient.budget_capabilities()`
 
 Returns `Capability.ALL`. This client makes the provider call, so it can enforce every axis. Cost is included because `pricing.bound_cost` either produces a figure that cannot be exceeded or refuses, and the refusal reaches the caller as a `ConfigError` naming what is missing rather than as a ceiling that quietly does not hold.
 
@@ -509,7 +509,7 @@ Transport errors are retried with exponential backoff and then re-raised. The de
 
 Wraps a plain `(prompt: str) -> str` callable as a client.
 
-### Constructor
+### `FunctionClient` constructor
 
 ```python
 FunctionClient(fn, budget: Budget | None = None)
@@ -517,9 +517,9 @@ FunctionClient(fn, budget: Budget | None = None)
 
 `LlmSource` builds one of these per fetch and hands it the run's budget. Without one, a fresh unlimited `Budget` is used.
 
-### Methods
+### `FunctionClient` methods
 
-#### `budget_capabilities()`
+#### `FunctionClient.budget_capabilities()`
 
 Returns rows and nothing else. This wraps a function the caller supplied: it can prove it invoked that function once, and it cannot know whether the function contacts a provider, how many times, what it is billed, or how to stop it when a deadline passes. A call, cost, or time ceiling against an `llm_fn` is therefore refused with a `ConfigError` rather than reported as holding. Calls were declared here at first, on the reasoning that one invocation is one call, which is the same guess as reporting the cost at zero: `limits.max_calls` counts provider entries everywhere else, and a callable may answer from memory, contact one provider, or fan out to several.
 

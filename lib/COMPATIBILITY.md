@@ -1,8 +1,10 @@
 # Compatibility
 
-What this library does differently from the LLM source in the Blue monolith, and from the data-source design document, with the reason for each. Anyone porting a caller should read this first.
+What this library does differently from the LLM source in the Blue monolith, and from the Blue data-source specification, with the reason for each. Anyone porting a caller should read this first.
 
-## Relationship to the data-source design document
+## Relationship to the data-source specification
+
+The specification referred to throughout this file is the Blue team's internal data-source design document. It is not shipped with this package and is not quoted here beyond what each difference below needs, so the differences are stated in full rather than by reference.
 
 **The source inherits from `DataSource`, as the document specifies.** `LlmSource` extends `blue_data.source.source.DataSource` directly, and `blue-data>=0.1.0` is a declared core dependency alongside `tenacity>=9.0.0`. The `[blue-data]` extra that used to gate the base class is gone. An earlier version of this package declared no dependency on the data layer and matched the query surface by shape instead; anything you have read describing this package as standalone, or the data layer as optional to it, belongs to that version and is no longer true.
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import tempfile
 from pathlib import Path
@@ -96,10 +97,10 @@ def test_an_output_cap_that_is_not_a_finite_positive_number_is_refused(cap: obje
 
 
 def test_the_bound_is_never_below_a_real_token_count() -> None:
-    """The property everything else rests on: tokens never outnumber characters.
+    """The property everything else rests on: tokens never outnumber UTF-8 bytes.
 
     A recorded call in this suite used 188 prompt and 89 completion tokens on gpt-4o-mini.
-    Any prompt producing 188 tokens is at least 188 characters, so the bound for the
+    Any prompt producing 188 tokens encodes to at least 188 bytes, so the bound for the
     shortest such prompt must still exceed what that call cost.
     """
     input_rate, output_rate = pricing.PRICES["gpt-4o-mini"]
@@ -109,13 +110,15 @@ def test_the_bound_is_never_below_a_real_token_count() -> None:
 
 @pytest.mark.parametrize("text", ["a b c d e f g h", "!@#$ %^&* ()", "日本語のテキスト", ""])
 def test_the_bound_holds_for_text_that_tokenizes_densely(text: str) -> None:
-    """Short words and punctuation tokenize close to one token per character.
+    """Short words and punctuation tokenize close to one token per byte.
 
-    An estimate tuned to the three-characters-per-token average is exceeded by exactly
-    this kind of input, which is why the bound counts characters instead.
+    An estimate tuned to the three-characters-per-token average is exceeded by exactly this
+    kind of input, which is why the bound counts UTF-8 bytes. Characters do not bound it: a
+    tokenizer with no merge for a character emits several tokens for it, which is what the
+    non-Latin case here covers.
     """
     input_rate, output_rate = pricing.PRICES["gpt-4o-mini"]
-    worst_case_tokens = len(text)
+    worst_case_tokens = len(text.encode("utf-8"))
     floor = worst_case_tokens * input_rate + 10 * output_rate
     assert pricing.bound_cost(text, "gpt-4o-mini", 10) >= floor
 
@@ -156,6 +159,10 @@ def test_caller_supplied_rates_reach_the_estimator_through_the_client() -> None:
     assert kwargs["model"] == "brand-new-model"
 
 
+_O200K_BLOBPATH = "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken"
+"""Where the encoding these tests cross-check against comes from. Never fetched here."""
+
+
 def _tokenizer_data_is_cached() -> bool:
     """Whether the encoding table is already on this machine, without going to look for it.
 
@@ -165,11 +172,16 @@ def _tokenizer_data_is_cached() -> bool:
     afterwards still fails the run at teardown. This mirrors how tiktoken resolves its own
     cache directory.
     """
+    # This table specifically, not any table. A machine holding a different encoding is not
+    # a machine that can run this cross-check offline, and treating it as one turns the call
+    # below into the network request this guard exists to avoid. tiktoken files each cached
+    # blob under the SHA-1 of its URL, so the question is answerable without asking for it.
+    key = hashlib.sha1(_O200K_BLOBPATH.encode()).hexdigest()
     for var in ("TIKTOKEN_CACHE_DIR", "DATA_GYM_CACHE_DIR"):
         configured = os.environ.get(var)
         if configured is not None:
-            return bool(configured) and any(Path(configured).glob("*"))
-    return any(Path(tempfile.gettempdir(), "data-gym-cache").glob("*"))
+            return bool(configured) and (Path(configured) / key).is_file()
+    return (Path(tempfile.gettempdir(), "data-gym-cache") / key).is_file()
 
 
 def _encoder() -> Any:

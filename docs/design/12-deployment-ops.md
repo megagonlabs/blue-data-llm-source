@@ -100,7 +100,7 @@ The full property table is in [09-api-interface-spec.md](09-api-interface-spec.m
 |----------|--------------------|
 | `llm.model` | Which model answers, and therefore what a call costs |
 | `llm.max_parallel` | Concurrency bound per event loop; the main lever against provider rate limiting |
-| `llm.rate_limit` | Not supported in v1.1. Refused with `ConfigError`; deferred to v2.0 |
+| `llm.rate_limit` | Not supported. Refused with `ConfigError`; deferred to v2.0 |
 | `llm.stream` | Set it when the provider configuration or proxy in front of you requires a stream. It buys nothing else: a fetch has no answer until the last chunk lands, and a stream the provider sends no token counts with cannot be priced, so the run reports `accounting_known` false and its cost ceiling is enforced against the reserved bound |
 | `llm.cache`, `llm.cache_dir` | Local response cache and where it is written |
 | `llm.max_tokens` | The output allowance, and therefore the floor of every cost claim and of every estimate; the main lever on whether a cost ceiling binds or refuses |
@@ -180,7 +180,9 @@ One caution for anything scraping the CLI's machine-readable output. The provide
 
 ## 7. CI/CD Pipeline
 
-The CI/CD platform is not yet selected. Regardless of platform, the pipeline defines these stages:
+No CI/CD platform is configured and no automated publication path exists yet. The table below is a
+proposed pipeline rather than a description of one that runs; the stages are written down now so that
+whichever platform is chosen implements the same ones.
 
 | Stage | Trigger | Actions |
 |-------|---------|---------|
@@ -189,7 +191,9 @@ The CI/CD platform is not yet selected. Regardless of platform, the pipeline def
 | **Build** | Every push to the default branch | Build the wheel and sdist for each of the three packages |
 | **Publish** | Git tag matching `v*.*.*` | Publish all three to PyPI, library first |
 
-**Verify** must pass before any merge, and it runs with no credential and no network. Each package's suite runs from its own directory against its own configuration. **Compatibility** used to be separated because it needed an extra the library did not otherwise require; `blue-data` is now a core dependency, so the separation is kept for the remaining reason, which is that its failure means an upstream contract moved rather than that this package broke. **Publish** is gated on a semver tag pushed by a maintainer, and the library publishes first because the other two depend on it.
+**Verify** is intended to pass before any merge, and it runs with no credential and no network. Each package's suite runs from its own directory against its own configuration. **Compatibility** used to be separated because it needed an extra the library did not otherwise require; `blue-data` is now a core dependency, so the separation is kept for the remaining reason, which is that its failure means an upstream contract moved rather than that this package broke. **Publish** would be gated on a semver tag pushed by a maintainer, and the library publishes first because the other two depend on it.
+
+Until that pipeline exists, the checks in **Verify** are run by hand from each package directory, which is what the gate figures quoted in the changelog come from.
 
 ---
 
@@ -199,8 +203,10 @@ The CI/CD platform is not yet selected. Regardless of platform, the pipeline def
 2. Update `CHANGELOG.md`, calling out any prompt change explicitly.
 3. Merge to the default branch.
 4. Push a semver tag.
-5. CI publishes all three packages.
+5. Build and upload all three packages, library first.
 
-No manual upload step. Publishing is performed by CI using credentials injected as secrets, which are never present in the repository or in a build log.
+Step 5 is manual today, because no publication pipeline is configured. Nothing here has been
+published yet, so the step has not been exercised. Whenever it is automated, the credential belongs
+in the platform's secret store and must never appear in the repository or in a build log.
 
 The three packages are versioned together in this release. Independent versioning is the reason they are separate packages and remains available; it becomes worth using at the point one interface changes on a different cadence from the library.

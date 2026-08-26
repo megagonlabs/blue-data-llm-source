@@ -2,7 +2,27 @@
 
 Notable changes per release. Prompt changes are called out explicitly, because a prompt change can move results without moving any version a caller can see.
 
-## 1.1.0 — unreleased
+## 1.1.1 — unreleased
+
+**Fixed**
+
+Thirteen defects in the shipped documentation are corrected: two documents that contradicted themselves, several that explained the same thing at length in five places apiece, and a number of passages that described how this package was developed rather than how it behaves.
+
+Runtime messages and documentation no longer date current behaviour to a release. A refusal from `execute_query_nl_tools`, the CLI's `--rate-limit` help, and four property tables described what the package does today as something it does in a named version, which is correct on that release and wrong on the next. No refusal itself changed. A scan over shipped source now fails the suite on any such qualifier; a forward-looking deferral, which names a version the reader is not on, stays legal.
+
+The optional tokenizer cross-check no longer reaches the network. It skipped unless its encoding table was already cached, but tested for *any* cached table rather than the one it needs, so a machine holding a different encoding reported the cache as warm and the check downloaded — inside a suite that forbids network access. It now tests for the specific table, by the same name tiktoken files it under.
+
+Headings in `06-library.md` were made unique. Three constructors, two method sections and two capability sections shared four slugs between them, so a link to `#constructor` would have landed on whichever came first.
+
+- `docs/design/12-deployment-ops.md` declared that no CI/CD platform is selected and then described automated publication as current fact, so a maintainer could not tell whether the release procedure was operational or aspirational. The pipeline is now labelled as proposed, and the publish step says plainly that it is manual and has never been exercised.
+- `docs/design/09-api-interface-spec.md` carried a numbered REST section whose only content was that nothing under it exists, which the opening paragraph already says. The section is gone and the later sections are renumbered.
+- `docs/design/10-data-model.md` called the cache "the fourth contract" three lines after enumerating five, and dated current deduplication behaviour to a superseded release.
+- `lib/COMPATIBILITY.md` referred throughout to a design document it never named or linked, while instructing porters to rely on it. The document is now identified, and it is stated that it is internal and not shipped, so every difference is given in full rather than by reference.
+- The base-order explanation was reproduced at length in five documents, one of which announced that it was saying the thing twice. The full account stays in `04-detailed-architecture.md`; the others state the consequence and link to it. The same was done for the test that runs the CLI README's own commands, which was claimed in four documents and now lives in `11-testing-strategy.md`, and for the cost derivation restated in `platform/cli/README.md`.
+- `docs/design/13-decision-log.md` recorded an internal defect count, narrated a measurement run in place of the boundary it established, and left three superseded ADRs sending a reader down the supersession chain to find current behaviour. Each now carries a line naming where the current account lives. Accepted decision text is unchanged: this is a decision log, and the record of what was accepted is the artifact.
+- `docs/design/08-coding-style.md` appealed to a house style not available to a reader of this package, and narrated how the rule was reconciled with existing code.
+
+## 1.1.0 — released
 
 **Added**
 

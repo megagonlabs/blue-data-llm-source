@@ -113,3 +113,45 @@ def test_every_documented_version_output_quotes_the_current_release() -> None:
     assert not stale, (
         f"the library exports {current} and these outputs say otherwise:\n  " + "\n  ".join(stale)
     )
+
+
+# A release qualifier attached to current behaviour: "in v1.0", "in v1.1". A forward-looking
+# deferral — "deferred to v2.0" — names a version the reader is not on, which does not go
+# stale on the next release, so it stays legal.
+RELEASE_QUALIFIER = re.compile(r"\bin v\d+\.\d+")
+
+SRC_ROOTS = (
+    "lib/src",
+    "platform/cli/src",
+    "platform/mcp/src",
+)
+
+
+def test_no_shipped_runtime_string_dates_current_behaviour_to_a_release() -> None:
+    """A message a caller reads at runtime must not date itself to a release.
+
+    Such a message is correct on the release that ships it and wrong on the next one, and
+    nothing re-reads it: a refusal naming the version that will carry a feature sends a
+    caller who upgrades to the version they are already running.
+
+    Scoped to shipped source rather than to documentation, because a changelog and a
+    decision log are the two places a version qualifier is the point.
+    """
+    stale: list[str] = []
+    scanned = 0
+    for root in SRC_ROOTS:
+        base = ROOT / root
+        assert base.is_dir(), f"{root} is not where this scan thinks it is"
+        for path in base.rglob("*.py"):
+            if SKIP & set(path.relative_to(ROOT).parts):
+                continue
+            scanned += 1
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if RELEASE_QUALIFIER.search(line):
+                    stale.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()}")
+
+    assert scanned >= 20, f"the scan reached only {scanned} modules; it is not finding them"
+    assert not stale, (
+        "these shipped lines date current behaviour to a release, which is wrong on the "
+        "next one:\n  " + "\n  ".join(stale)
+    )

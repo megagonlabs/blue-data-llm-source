@@ -8,7 +8,7 @@ Three external interfaces exist over the core library: the Python library itself
 
 The canonical interface. Every other interface delegates to it. `LlmSource` inherits `blue_data.source.source.DataSource` and remains directly instantiable, since that base class has no abstract members. One method, `afetch`, is a coroutine and must be awaited; everything else, `estimate` included, is synchronous.
 
-The base order matters and is not cosmetic. `DataSource` defines every method this class also defines. Most of its methods return an empty result rather than raising, so one left unoverridden here answers nothing instead of failing. That is not true of all of them any more: the transaction methods raise `NotImplementedError` naming this source, and the orchestrator-tool methods carry real behaviour, which is why this source overrides those three rather than inheriting them: two are narrowed to the tools it can answer, and `execute_query_nl_tools` is refused. This class's own implementations therefore come first in the method resolution order, and a test asserts it for every method on the shared surface. Inheriting the base class does not make the source constructible by protocol name: `DataRegistry.connect_source` returns the registered instance and rebuilds one from the recorded class path when the live entry is gone, so the integration route is `register_source` with a built instance and the registration is durable.
+The base order matters and is not cosmetic; `LlmSource`'s own implementations come first in the method resolution order, and a test asserts it for every method on the shared surface. See [The Source Base Class](04-detailed-architecture.md#the-source-base-class) for why. Inheriting the base class does not make the source constructible by protocol name: `DataRegistry.connect_source` returns the registered instance and rebuilds one from the recorded class path when the live entry is gone, so the integration route is `register_source` with a built instance and the registration is durable.
 
 ### Constructor
 
@@ -125,7 +125,7 @@ Properties may be set on the instance or per call, with per-call values winning.
 | `llm.cache` | `bool` | off | Enables the `diskcache` response cache; requires the `llm` extra |
 | `llm.cache_dir` | `str` | `.llm_cache` | Directory for that cache |
 | `llm.max_parallel` | `int` | `8` | Concurrency bound per event loop |
-| `llm.rate_limit` | — | — | **Not supported in v1.1.** Refused with `ConfigError`; deferred to v2.0. Use `llm.max_parallel`, or throttle above the library |
+| `llm.rate_limit` | — | — | **Not supported.** Refused with `ConfigError`; deferred to v2.0. Use `llm.max_parallel`, or throttle above the library |
 | `cache_store` | `CacheStore` | none | A cache with `get` and `set`, taking precedence over `llm.cache`. `MemoryCache` and `FileCache` ship for this slot, and any object with the two methods is accepted |
 | `limits.max_retries` | `int` | `2` | Retries on a transport failure; the client makes this many plus one attempt, narrowed to the smallest depth along the budget chain, and reserves budget for each |
 | `limits.max_rows` | `int` | unlimited | Row ceiling; overridden by a `max_records` argument. Enforced by the source itself, so it binds any client |
@@ -284,13 +284,7 @@ Ceilings reach the `execute_query` tool the way they reach the query surface. A 
 
 `execute_query_nl_tools` is not served and raises `ConfigError`. It drives a loop of up to ten provider calls that this source's ceilings do not govern, so serving it would place an unbounded spend path behind a method this package never chose to offer. `execute_query_nl` is the natural-language surface here, and its spend and time ceilings are enforced.
 
-## 2. REST API — not implemented
-
-**Nothing under this heading exists.** There is no HTTP application, no route handlers, and no web framework or ASGI server in either package's dependencies. A REST adapter is not scheduled for this release or the next, and no endpoint design is recorded here, because writing one now would read as a commitment the project has not made.
-
----
-
-## 3. MCP Server
+## 2. MCP Server
 
 Package `blue-data-llm-mcp`, entry point `blue-data-llm-mcp`, speaking MCP over stdio. It exposes the source to LLM agents as three tools. Beyond moving values across the boundary it holds one piece of logic of its own: it enforces the schema it advertises.
 
@@ -473,13 +467,13 @@ Neither cost is rounded, unlike the spend in a fetch's `meta`. That one is a mea
 }
 ```
 
-**Returns:** JSON text content, `{"protocol": "llm", "variant": "openai", "version": "1.1.0"}`.
+**Returns:** JSON text content, `{"protocol": "llm", "variant": "openai", "version": "1.1.1"}`.
 
 Requesting a tool that does not exist returns `UnknownTool` and names the ones that do. Nothing in either tool exposes a credential, a provider endpoint, or the contents of a configured property beyond protocol, variant, and version.
 
 ---
 
-## 4. CLI
+## 3. CLI
 
 Package `blue-data-llm-cli`, entry point `llm`. Built with Click for argument parsing and Rich for output, wrapping the library's synchronous `fetch`. Rich markup is disabled on output, because a record value containing square brackets is data rather than a style tag.
 
@@ -562,4 +556,3 @@ An absent provider credential is not code 4. The library never reads a credentia
 
 Under `--format json` the output is not clean JSON when the default client is in use. The provider library writes its own banners to standard output on some paths, and they land in the same stream as the JSON object, so a pipe into a JSON reader can fail on text this package did not write. Redirecting standard error does not help, because the banners are on standard output.
 
-Every command shown in the CLI README is executed by a test that reads the README, extracts its shell blocks, and runs each one against a scripted client. A stale command in a README is a false claim about the product, so it fails the suite instead.

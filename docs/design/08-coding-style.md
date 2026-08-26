@@ -131,7 +131,7 @@ A class or public method docstring opens with one line. It gains a paragraph bel
 
 A private function follows the same test as a public one rather than a blanket prohibition: no docstring where the name says it, and a docstring where the *why* would otherwise be lost. Most of the private functions here have one, because most of them exist to hold an invariant that a reasonable reading would miss — which ordering a claim and an import must take, why a comma is stripped only in one shape, why a finite check is asked of floats and not of ints. That rationale has nowhere better to live: a design document is too far from the code to be re-read when the line is edited, and a comment inside the body is not returned by `help()` or shown by an editor at the call site.
 
-This is a deliberate departure from the surrounding house style, which prohibits private docstrings outright. It is written down because the alternative is a rule the code has never followed, and a style rule that the code silently ignores is worse than a stated exception.
+Where a project convention prohibits private docstrings outright, this package's rule is the stated exception to it: a private function may carry a docstring when it preserves a non-obvious invariant.
 
 ```python
 """Budget on five axes, reserved before spend and reconciled after it.

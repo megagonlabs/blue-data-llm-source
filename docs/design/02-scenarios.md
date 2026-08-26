@@ -259,7 +259,6 @@ llm fetch "the member states of the European Union" --attr country --attr access
 
 `--verbose` adds what the plain output leaves out: keys the model returned that matched no requested attribute, keys it renamed on the way in, the run's outcome, the limit that stopped it, and one line per value that did not fit its declared type. The outcome line is always present, since every run has one, and the rest appear only when there is something to report. The same fields appear in the `meta` object under `--format json`.
 
-Every command shown in the CLI README is executed by a test that reads the README, extracts its shell blocks, and runs each one against a scripted client. A command that stops working there fails the suite, because a stale command in a README is a false claim about the product.
 
 ---
 

@@ -200,4 +200,4 @@ Each test subdirectory carries an `__init__.py`, so identically named modules in
 
 Platform adapter tests define their own fixtures rather than importing the library's, since each adapter exercises a different entry point, and each replaces the single source-construction function in its own package to inject a scripted client. No adapter test reaches a provider, and the MCP tool tests run without the protocol SDK installed.
 
-The CLI carries one test of an unusual kind: it reads its own README, extracts every `llm` command from its shell blocks, and runs each one. A command that stops working in the README fails the suite rather than surviving as a false claim.
+The CLI carries one test of an unusual kind, which reads its own README and runs the commands it documents; see [11-testing-strategy.md](11-testing-strategy.md).

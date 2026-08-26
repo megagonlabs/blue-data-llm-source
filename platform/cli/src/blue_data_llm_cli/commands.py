@@ -61,7 +61,7 @@ def cli(ctx: click.Context, verbose: bool) -> None:
     # Accepted so it can be refused with an answer. Left undeclared, it produced click's
     # generic "no such option", which tells a caller the flag is wrong but not that the
     # ceiling they wanted is unavailable in this build or what to reach for instead.
-    help="Not supported in v1.1; deferred to v2.0. Kept so the refusal can say what to use.",
+    help="Not supported; deferred to v2.0. Kept so the refusal can say what to use.",
 )
 @click.option(
     "--format",

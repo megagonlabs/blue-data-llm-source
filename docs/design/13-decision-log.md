@@ -104,6 +104,8 @@ Architectural decisions are recorded here as they are made, throughout the desig
 **Date:** 2026-07-29
 **Status:** Accepted, superseded in part by ADR-019 and ADR-021
 
+**Current account:** the ceiling and capability rules that ship are ADR-022 as corrected there. This entry records the decision as it was accepted and is kept for the reasoning behind it, not as a description of current behaviour.
+
 One of the claims below is no longer true of the code: a contacted attempt is not
 released. Cost was checked rather than claimed between ADR-019 and ADR-021, and is
 claimed before spend again. The text stands as it was accepted; ADR-019 and ADR-021
@@ -255,6 +257,8 @@ record what changed and why.
 **Date:** 2026-08-01
 **Status:** Accepted. Supersedes ADR-008 in part. Superseded in part by ADR-021.
 
+**Current account:** the ceiling and capability rules that ship are ADR-022 as corrected there. This entry records the decision as it was accepted and is kept for the reasoning behind it, not as a description of current behaviour.
+
 Three of the claims below are no longer true of the code: cost is claimed before the
 attempt rather than checked, a reservation can be handed back through
 `Reservation.release`, and an injected client that declares no budget is refused a
@@ -294,6 +298,8 @@ Recording presence at the point where it is known, rather than inferring it late
 
 **Date:** 2026-08-03
 **Status:** Accepted. Supersedes ADR-019 in part, and restores the cost half of ADR-008. Superseded in part by ADR-022.
+
+**Current account:** the ceiling and capability rules that ship are ADR-022 as corrected there. This entry records the decision as it was accepted and is kept for the reasoning behind it, not as a description of current behaviour.
 
 Four of the claims below are no longer true of the code. The estimate is an upper bound
 rather than an average, so it counts characters instead of dividing them by three, and
@@ -410,16 +416,12 @@ An unpriceable model makes `estimate` return `bounded=False` with a reason rathe
 
 **Context:** `limits.max_seconds` was documented as a wall-clock bound on a run, and measurement
 found it was not one. Checking the ceiling only between attempts let a single provider call run
-indefinitely past it. Putting the whole awaited path under one deadline fixed the ordinary waits —
-the provider call, the rate-limit pause, the parallelism semaphore each ended within about
-0.0064 seconds of a 0.005-second ceiling and reported `max_seconds` — and made clear that what
-remained was a class of paths rather than an overlooked one. Against the same ceiling: a synchronous
-`model_dump` at 0.0702 seconds, provider cost accounting at 0.0660, post-processing of a
-30,000-record response at 0.0352, an async call waiting on the rate lock behind a synchronous
-`complete` at 0.1035, and the synchronous `complete` path at 0.0895 when the provider ignored its
-timeout. Each reported `max_seconds` truthfully, and each reported it seven to twenty times past the
-ceiling. A provider that catches cancellation and returns anyway is the same class seen from the
-other side: it produced a normal answer 0.0584 seconds after a 0.005-second ceiling.
+indefinitely past it. Putting the whole awaited path under one deadline bounds every ordinary wait —
+the provider call, the parallelism semaphore — to close to the ceiling. What remains past it is a
+class of paths rather than an overlooked one: synchronous work that no deadline can interrupt, such
+as serialisation, cost accounting, and post-processing of a large response, and providers that catch
+cancellation and answer anyway. Each of these reports `max_seconds` truthfully and can report it many
+times past the ceiling. `limits.max_seconds` is therefore not an end-to-end deadline.
 
 **Decision:** State the guarantee the code can keep. `limits.max_seconds` bounds admission and every
 cooperative wait in `DefaultLlmClient.acomplete`: it refuses the next attempt at the ceiling, caps
@@ -445,13 +447,11 @@ thread's result does not stop the work or release the process. That is a differe
 from a library a caller imports, and it buys a guarantee this library's callers have not asked for.
 
 A ceiling documented as holding what it does not is worse than a narrower one documented honestly,
-because the caller stops watching. This is the fourth defect in the same claim, and it is the first
-repair that does not create a fifth.
+because the caller stops watching.
 
-**Correction:** the rate-limit pause named above no longer exists. `llm.rate_limit` was
-withdrawn from v1.0 and is refused with a `ConfigError`; the measurement stands as the record of
-what the deadline did when that wait existed. The provider call and the parallelism semaphore are
-unaffected, and so is everything else this decision says.
+**Correction:** `llm.rate_limit` was withdrawn from v1.0 and is refused with a `ConfigError`, so the
+rate-limit pause this decision originally covered no longer exists. The provider call and the
+parallelism semaphore are unaffected, and so is everything else this decision says.
 
 **Consequences:** A caller who needs a hard wall-clock stop imposes it above this library, in a task
 or process it can cancel. `stopped_by: max_seconds` remains truthful about which ceiling was crossed

@@ -12,7 +12,7 @@ The data model is therefore a set of contracts rather than a storage layout, in 
 - **The result** — the records plus the accounting that describes the run
 - **The estimate** — what a request could cost, answered before it is run
 
-An optional cache exists, and its key is the fourth contract worth writing down, because a cache whose invalidation rule is implicit is a correctness problem waiting for a model upgrade.
+An optional cache adds a sixth: its key and its invalidation behaviour, because a cache whose invalidation rule is implicit is a correctness problem waiting for a model upgrade.
 
 ---
 
@@ -261,7 +261,7 @@ The same key is used whichever store answers. Two stores ship, `MemoryCache` and
 Recorded so that a caller planning around this source knows which checks remain its own.
 
 - No schema is identified. When the caller supplies no attributes, none is derived, records may be ragged, and the source says so rather than implying a table.
-- No key field is nominated. Deduplication compares whole records. The verifier's `dedupe` takes an optional single-attribute key, but nothing reaches that parameter: no property, argument or op exposes it, so in v1.0 whole-record comparison is the only behaviour a caller can get.
+- No key field is nominated. Deduplication compares whole records. The verifier's `dedupe` takes an optional single-attribute key, but nothing reaches that parameter: no property, argument or op exposes it, so whole-record comparison is the only behaviour available to a caller.
 - No cardinality is estimated. Nothing in the result states how many records there should have been, so a short answer cannot be distinguished from a complete one by the source alone. `Estimate` answers what a request could cost, which is a different question from how large its answer ought to be.
 - No per-field confidence is reported. The source reports what it did, not how sure the model was.
 - No provenance or lineage is carried. One request is one call, so there is no partition, task, or sub-query for a record to be attributed to.

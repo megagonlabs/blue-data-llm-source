@@ -982,7 +982,7 @@ class LlmSource(DataSource):
     ) -> list[dict[str, Any]]:
         """Refuse, and name the path that is bounded."""
         raise ConfigError(
-            "this source does not serve the tool-driven query path in v1.0. Use "
+            "this source does not serve the tool-driven query path. Use "
             "execute_query_nl, whose spend and time ceilings this source enforces"
         )
 

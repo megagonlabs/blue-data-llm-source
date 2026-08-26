@@ -220,7 +220,7 @@ The consequence for a caller is that the floor of the bound is the whole `max_to
 | `llm.cache` | no | Enables the `diskcache` response cache |
 | `llm.cache_dir` | no | Directory for that cache; defaults to `.llm_cache` |
 | `llm.max_parallel` | no | Concurrency bound per event loop; defaults to 8 |
-| `llm.rate_limit` | — | Not supported in v1.1; refused with `ConfigError` and deferred to v2.0 |
+| `llm.rate_limit` | — | Not supported; refused with `ConfigError` and deferred to v2.0 |
 | `llm.price_per_input_token` | no | Input rate for a model `pricing.PRICES` does not carry |
 | `llm.price_per_output_token` | no | Output rate for the same model |
 

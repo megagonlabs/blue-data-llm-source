@@ -266,7 +266,7 @@ The reassembled response is not priced from a token count computed here. The pro
 
 ### Rate limiting
 
-`llm.rate_limit` is **not supported in v1.1**. Client-side call spacing has to reconcile with per-attempt budget admission and every arrangement tried let one corrupt the other, so it is refused by name with a `ConfigError` and deferred to v2.0. Cap concurrency with `llm.max_parallel`, or throttle above this library where the whole request sequence is visible.
+`llm.rate_limit` is **not supported**. Client-side call spacing has to reconcile with per-attempt budget admission and every arrangement tried let one corrupt the other, so it is refused by name with a `ConfigError` and deferred to v2.0. Cap concurrency with `llm.max_parallel`, or throttle above this library where the whole request sequence is visible.
 
 ## Limits
 

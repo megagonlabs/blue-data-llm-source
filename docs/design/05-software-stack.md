@@ -157,7 +157,7 @@ Not implemented and not scheduled. No HTTP framework, ASGI server, or route hand
 
 The suite runs offline, enforced by an autouse guard that refuses and counts network, subprocess, and database access, and asserts at the end of each test that all three counts are zero. The model boundary is a protocol, so a scripted double substitutes for a provider without patching an SDK, and the provider transport is covered by a stub module installed over the lazy import. Neither `litellm` nor `mcp` need be installed for the respective suites to pass. Coverage is configured over `src` and is produced on request rather than on every run; no threshold gates a merge.
 
-Four recorded provider responses are committed under `lib/tests/cassettes/` and replayed through the real pipeline, which covers the specified worked examples end to end without a network connection. They are produced by a separate script that is not part of the test run, cap what a recording round may spend, and store responses only. No recording library is involved: the cassettes are plain JSON read by a client double.
+Four recorded provider responses are committed under `lib/tests/cassettes/` and replayed through the real pipeline, which covers the specified worked examples end to end without a network connection. They are produced by a separate cassette recorder that is not part of the test run, which caps what a capture may spend and stores provider responses only. No recording library is involved: the cassettes are plain JSON read by a client double.
 
 ---
 
