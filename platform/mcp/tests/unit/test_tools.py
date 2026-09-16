@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+from pathlib import Path
 from typing import Any
 
 import pytest
 from blue_data_llm_source import (
     BudgetExceeded,
     ConfigError,
+    ExecMeta,
+    FetchResult,
     TransportError,
 )
 from blue_data_llm_source import __version__ as library_version
@@ -17,6 +21,7 @@ from blue_data_llm_source import __version__ as library_version
 from blue_data_llm_mcp import tools
 
 QUERY = "the member states of the European Union"
+README = Path(__file__).resolve().parents[2] / "README.md"
 
 MESSY_RECORDS = json.dumps(
     [
@@ -36,6 +41,18 @@ def test_llm_fetch_returns_records_and_meta(source: Any) -> None:
     assert payload["meta"]["completion_tokens"] == 34
     assert payload["meta"]["cost"] == 0.0012
     assert "elapsed_seconds" in payload["meta"]
+
+
+def test_the_readme_result_sample_matches_the_default_serializer_shape() -> None:
+    body = README.read_text(encoding="utf-8")
+    blocks = re.findall(r"```json\n(.*?)\n```", body, re.DOTALL)
+    sample = next(json.loads(block) for block in blocks if '"records"' in block)
+    documented = sample["meta"]
+    actual = tools.meta_summary(ExecMeta())
+
+    assert set(documented) == set(actual)
+    for field, value in actual.items():
+        assert type(documented[field]) is type(value), field
 
 
 def test_llm_fetch_accepts_attribute_names(source: Any) -> None:
@@ -298,3 +315,54 @@ def test_an_uncheckable_declared_type_reaches_the_mcp_caller() -> None:
     meta = ExecMeta(outcome="ok", unchecked_types=["money"])
     assert tools.meta_summary(meta)["unchecked_types"] == ["money"]
     assert "unchecked_types" not in tools.meta_summary(ExecMeta(outcome="ok"))
+
+
+class TestThePlanNamespaceCrossesTheBoundary:
+    """A ceiling or a plan setting renamed at this boundary is read by nothing: the library
+    validates the keys it is given, and an argument the handler drops never reaches it, so
+    the run proceeds under a default the caller chose against and cannot see."""
+
+    def test_plan_keys_are_advertised(self) -> None:
+        advertised = set(tools.FETCH_INPUT_SCHEMA["properties"])
+        assert {"plan.mode", "plan.max_continuations", "plan.max_leaves", "plan.key"} <= advertised
+
+    def test_plan_keys_reach_the_source_under_their_own_names(self) -> None:
+        seen: dict[str, Any] = {}
+
+        class Recorder:
+            async def afetch(self, query: Any, **kwargs: Any) -> Any:
+                seen.update(kwargs.get("properties") or {})
+                return FetchResult(records=[], meta=ExecMeta())
+
+        asyncio.run(
+            tools.allm_fetch(
+                {"query": "x", "plan.mode": "flat", "plan.max_continuations": 2},
+                source=Recorder(),
+            )
+        )
+        assert seen == {"plan.mode": "flat", "plan.max_continuations": 2}
+
+    def test_the_schema_does_not_promise_a_check_the_validator_skips(self) -> None:
+        """`enum` is not among the keywords `_check_value` enforces, so declaring one would
+        advertise a closed set this server never checks."""
+        assert "enum" not in tools.FETCH_INPUT_SCHEMA["properties"]["plan.mode"]
+
+    def test_estimate_exposure_requires_a_boolean(self) -> None:
+        with pytest.raises(tools.ToolError, match="must be a boolean"):
+            tools.dispatch(
+                "llm_fetch",
+                {"query": "x", "plan.expose_estimate": "false"},
+                source=object(),
+            )
+
+
+class TestGapsAreReportedWhenThereAreSome:
+    def test_a_gap_reaches_the_tool_result(self) -> None:
+        summary = tools.meta_summary(ExecMeta(gaps=["leaf_empty: leaf 0.0 returned nothing"]))
+        assert summary["gaps"] == ["leaf_empty: leaf 0.0 returned nothing"]
+
+    def test_a_clean_run_carries_an_empty_gaps_key(self) -> None:
+        """Present even when empty. A model reading this branches on the contents, not on
+        whether the key arrived, and an empty list says nothing was observed to be missing
+        -- which is a weaker claim than complete and the only one this package may make."""
+        assert tools.meta_summary(ExecMeta())["gaps"] == []

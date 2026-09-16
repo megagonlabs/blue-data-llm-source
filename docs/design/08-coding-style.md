@@ -38,10 +38,15 @@ Use Python 3.10+ syntax throughout, with no imports from `typing` where newer sy
 ```python
 # correct
 def strip_fence(text: str) -> str: ...
-async def acomplete(self, prompt: str, properties: dict[str, Any] | None = None) -> str: ...
+async def acomplete(
+    self, prompt: str, properties: dict[str, Any] | None = None
+) -> str: ...
+
 
 # incorrect
 from typing import Optional
+
+
 def strip_fence(text: Optional[str]) -> str: ...
 ```
 
@@ -74,7 +79,7 @@ class LlmSource:
         # ... a second implementation of the same algorithm
 ```
 
-The bridge raises rather than guessing. Calling `fetch` from inside a running event loop raises `RuntimeError` naming `afetch` as the method to use, because nesting an event loop is the kind of failure that surfaces far from its cause.
+The bridge raises rather than guessing. Calling `fetch` from inside a running event loop raises `ConfigError` naming `afetch` as the method to use, because nesting an event loop is the kind of failure that surfaces far from its cause.
 
 Reduction and validation modules are synchronous functions. They perform no I/O and are pure, which is what lets each one be tested without a fixture.
 
@@ -111,7 +116,12 @@ import asyncio
 import time
 from typing import Any
 
-from tenacity import AsyncRetrying, Retrying, retry_if_exception_type, stop_after_attempt
+from tenacity import (
+    AsyncRetrying,
+    Retrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+)
 
 from blue_data_llm_source.llm.budget import Budget
 from blue_data_llm_source.types import ConfigError, TransportError, Usage
@@ -204,10 +214,20 @@ A `LlmSourceError` base exception is defined in `types.py`. Every custom excepti
 
 ```python
 class LlmSourceError(Exception): ...
+
+
 class ConfigError(LlmSourceError): ...
+
+
 class QueryError(LlmSourceError): ...
+
+
 class TransportError(LlmSourceError): ...
+
+
 class ParseError(LlmSourceError): ...
+
+
 class BudgetExceeded(LlmSourceError): ...
 ```
 

@@ -7,13 +7,15 @@ import contextlib
 import inspect
 import time
 from collections.abc import Generator
-from dataclasses import asdict, fields
-from typing import Any, cast
+from dataclasses import asdict, dataclass, fields, replace
+from typing import Any, Final, cast
 
 from blue_data.source.source import DataSource  # pyright: ignore[reportMissingTypeStubs]
 
 from blue_data_llm_source import _constants as C
 from blue_data_llm_source import checks, prompts
+from blue_data_llm_source.execution.local import execution_settings, run_local_leaf
+from blue_data_llm_source.execution.mapper import Answer, LeafRun, arun_leaf
 from blue_data_llm_source.llm import pricing
 from blue_data_llm_source.llm.budget import Budget, Limits
 from blue_data_llm_source.llm.client import (
@@ -22,8 +24,43 @@ from blue_data_llm_source.llm.client import (
     FunctionClient,
     check_adapter_keys,
 )
-from blue_data_llm_source.reduction import aligner, parsing, verifier
+from blue_data_llm_source.planning.bounds import (
+    MODE_FLAT,
+    MODE_PARTITIONED,
+    MODES,
+    PlanLimits,
+)
+from blue_data_llm_source.planning.cardinality import Cardinality
+from blue_data_llm_source.planning.context import (
+    PLANNING_SCHEMA_FIRST,
+    validate_planning_order,
+)
+from blue_data_llm_source.planning.coordinator import coordinate_plan
+from blue_data_llm_source.planning.partition_safety import (
+    CALLER_DECLARED,
+    FINITE_DOMAIN,
+    RULE_VERSION,
+    SOURCE_CONFIGURATION,
+    IdentityPartitionRule,
+)
+from blue_data_llm_source.planning.plan import Gap, build_plan
+from blue_data_llm_source.planning.receipt import PlanningReceipt
+from blue_data_llm_source.planning.schema import (
+    KEY_FROM_CALLER,
+    KEY_FROM_NONE,
+    SCHEMA_ENRICH,
+    SCHEMA_MODES,
+    SCHEMA_PRESERVE,
+    Schema,
+)
+from blue_data_llm_source.planning.transport import LeafTask
+from blue_data_llm_source.reduction import aligner, verifier
+from blue_data_llm_source.reduction.coverage import FAILED, LeafInput, LeafOutcome, reduce_leaves
+from blue_data_llm_source.reduction.identity import key_identity, normalized_value
 from blue_data_llm_source.types import (
+    STOPPED_BY_CONTINUATIONS,
+    STOPPED_BY_INCOMPLETE_RESPONSE,
+    STOPPED_BY_OUTPUT,
     Attr,
     BudgetAwareClient,
     BudgetExceeded,
@@ -33,8 +70,11 @@ from blue_data_llm_source.types import (
     ExecMeta,
     FetchResult,
     LlmSourceError,
+    OneOf,
     Outcome,
+    ParseError,
     QueryError,
+    TransportError,
     Usage,
 )
 
@@ -50,35 +90,159 @@ def _declared(client: Any) -> frozenset[str]:
 # The closed set of limit knobs, so a misspelling is refused rather than ignored.
 _LIMIT_KEYS = frozenset(f.name for f in fields(Limits))
 
+_PLAN_LIMIT_KEYS = frozenset(
+    {
+        "max_leaves",
+        "max_depth",
+        "max_partitions",
+        "target_rows_per_leaf",
+        "max_continuations",
+        "max_excluded_keys",
+        "max_exclusion_bytes",
+        "max_strategy_candidates",
+    }
+)
+"""The `PlanLimits` fields a `plan.*` setting can reach."""
+
+# `mode`, `key` and `partition_key` are not PlanLimits fields and have to be named, or the
+# validator refuses a key the facade reads — two halves of one setting disagreeing, which is
+# the shape this closed key set exists to catch.
+_PLAN_KEYS = _PLAN_LIMIT_KEYS | {
+    "mode",
+    "key",
+    "keys",
+    "exact_rows",
+    "partition_key",
+    "schema_mode",
+    "planning_order",
+    "expose_estimate",
+    "distribution_search",
+    "identity_partitions",
+}
+"""The `plan.*` namespace, held apart from `limits.*` rather than merged into it.
+
+Written out rather than read off :class:`PlanLimits`, which is the wider object. Deriving
+the set from its fields accepted every field it has, including four this release's pipeline
+never reaches: two that only feed the full-design worst case, a threshold compared against
+an ambiguity score no shipped path produces, and a retry count that duplicates the one the
+client actually retries on. A setting accepted, echoed back in the error message as
+available, and then unable to change any outcome is worse than one refused — the caller
+sets it, reads the default's behaviour, and has nothing to tell them why.
+
+Retries are the clearest case. Both objects carry a `max_retries` and they are not the same
+setting: `limits.max_retries` bounds the attempts inside a single call and is what the
+budget is sized against, while the `PlanLimits` field sizes a recommendation nothing on this
+path asks for. Offering both here is how a caller sets one and moves the other. A library
+caller holding :class:`PlanLimits` directly still has every field; what closes is the
+settings door, which cannot deliver them."""
+
+_STOP_REASON_PRECEDENCE: Final = (
+    "max_seconds",
+    "max_cost",
+    "max_calls",
+    STOPPED_BY_OUTPUT,
+    STOPPED_BY_INCOMPLETE_RESPONSE,
+    "max_rows",
+    STOPPED_BY_CONTINUATIONS,
+)
+
+
+def _ordered_distinct(*groups: list[str]) -> list[str]:
+    """Distinct stop reasons in the public precedence order."""
+    seen: set[str] = set()
+    observed: list[str] = []
+    for group in groups:
+        for reason in group:
+            if reason and reason not in seen:
+                seen.add(reason)
+                observed.append(reason)
+    return [reason for reason in _STOP_REASON_PRECEDENCE if reason in seen] + [
+        reason for reason in observed if reason not in _STOP_REASON_PRECEDENCE
+    ]
+
+
+def _run_stop_reasons(runs: list[Any]) -> list[str]:
+    """Every extraction limit observed across the leaves."""
+    reasons: list[str] = []
+    for run in runs:
+        if run.stopped_by:
+            reasons.append(cast("str", run.stopped_by))
+        if run.provider_output_limit:
+            reasons.append(STOPPED_BY_OUTPUT)
+        if run.recovered_prefix:
+            reasons.append(STOPPED_BY_INCOMPLETE_RESPONSE)
+        if run.at_cap:
+            reasons.append(STOPPED_BY_CONTINUATIONS)
+    return _ordered_distinct(reasons)
+
+
+def _execution_failure(runs: list[Any], stop_reasons: list[str]) -> LlmSourceError:
+    """A fresh package exception for a run with no answered extraction response."""
+    failures = [run.exception for run in runs if run.ordinary_failure and run.exception is not None]
+    cause = failures[0]
+    limit_text = f"; limits also stopped work: {', '.join(stop_reasons)}" if stop_reasons else ""
+    generic_message = (
+        f"extraction failed without an answered response: {type(cause).__name__}: {cause}"
+        f"{limit_text}"
+    )
+    compatible_message = f"{cause}{limit_text}"
+    error: LlmSourceError
+    if isinstance(cause, ParseError):
+        error = ParseError(compatible_message, raw=cause.raw)
+    elif isinstance(cause, TransportError):
+        error = TransportError(
+            compatible_message,
+            code=cause.code,
+            provider_error=cause.provider_error,
+        )
+    elif isinstance(cause, ConfigError):
+        error = ConfigError(compatible_message)
+    else:
+        error = LlmSourceError(generic_message)
+    error.__cause__ = cause
+    return error
+
+
+def _gap_strings(notes: list[Any], leaf_count: int, extra: list[str]) -> list[str]:
+    """Small, deterministic diagnostics from planning, execution, and final shaping."""
+    gaps = list(extra)
+    gaps.extend(
+        f"{note.code}: {note.detail}"
+        for note in notes
+        if note.code != Gap.ESTIMATE_UNKNOWN
+        and not (leaf_count == 1 and note.code == Gap.DEDUP_KEY_ABSENT)
+    )
+    return list(dict.fromkeys(gaps))
+
 
 def decide_outcome(
     records: list[dict[str, Any]],
     model_returned: list[dict[str, Any]],
     row_cap_fired: bool,
     stopped_by: str | None,
+    *,
+    answered: bool | None = None,
+    interrupted: bool = False,
+    stop_reasons: list[str] | None = None,
 ) -> str:
-    """The one place a fetch's outcome is decided.
+    """Classify a fetch from its final records and observed execution facts.
 
-    Written as a single ordered rule rather than assignments spread through the fetch,
-    because that arrangement kept producing combinations nobody chose: a ceiling crossed
-    during settlement left an empty result reading ``model_returned_none`` while
-    ``stopped_by`` named the limit, and a late rewrite that fired only when the outcome was
-    still ``ok`` could not correct it.
-
-    The order is the precedence. A limit that ended the run outranks what the run produced,
-    because a caller deciding what to do next needs to know the answer was cut short before
-    it can trust anything about its shape.
+    The four positional arguments retain the original flat-fetch contract. Planning-aware
+    callers also supply whether an extraction answered, whether work was interrupted, and
+    every stop reason so a retained partial answer outranks a simultaneous limit.
     """
-    if stopped_by is not None:
-        # The row cap is the one limit that can leave a usable result behind — but only when
-        # it is the limit that actually ended the run. 10-data-model.md states the rule this
-        # implements: "any other axis reports stopped_by_limit whether or not records
-        # survived, because a caller cannot trust the shape of an answer that was cut
-        # short." Testing `row_cap_fired` alone broke it, because a run can trip the row cap
-        # *and* blow a deadline, and then the trim was reported as the whole story.
-        if row_cap_fired and records and stopped_by == "max_rows":
-            return Outcome.TRUNCATED
+    answered = bool(model_returned) if answered is None else answered
+    reasons = _ordered_distinct(
+        stop_reasons or [],
+        [stopped_by] if stopped_by else [],
+        ["max_rows"] if row_cap_fired else [],
+    )
+    if interrupted and (answered or records):
+        return Outcome.PARTIAL
+    if any(reason != "max_rows" for reason in reasons):
         return Outcome.STOPPED_BY_LIMIT
+    if row_cap_fired:
+        return Outcome.TRUNCATED if records else Outcome.STOPPED_BY_LIMIT
     if records:
         return Outcome.OK
     if not model_returned:
@@ -116,6 +280,34 @@ def _in_hierarchy() -> Generator[None]:
         # Chained, never replaced: the original type and traceback are what a maintainer
         # needs, and the wrapper is what a caller's `except LlmSourceError` needs.
         raise LlmSourceError(f"{type(e).__name__}: {e}") from e
+
+
+def _origins_for(
+    origins: list[list[str]], before: list[dict[str, Any]], after: list[dict[str, Any]]
+) -> list[list[str]]:
+    """Carry *origins* from the *before* list onto the records that survived into *after*.
+
+    Matched by identity for the same reason :func:`_renumber_by_record` is: two records can
+    be equal and only one of them survives, and equality would attribute the survivor to the
+    wrong part. Alignment and verification are one-for-one and order-preserving, so a list
+    parallel to the merged records is still parallel to what they produce; the passes that
+    change the list's length are the ones this follows.
+    """
+    # First index wins, and unseen identities are consumed as they are matched. A dict built
+    # the other way keeps only the *last* index for a repeated object, so the same dictionary
+    # appearing twice in `before` would attribute both copies to the second one's origin and
+    # lose the first. JSON parsing builds distinct objects, so no public path reaches that
+    # today; a helper whose docstring is unrestricted and whose behaviour is not is how the
+    # next caller gets surprised.
+    at: dict[int, list[int]] = {}
+    for index, record in enumerate(before):
+        at.setdefault(id(record), []).append(index)
+    out: list[list[str]] = []
+    for record in after:
+        queue = at.get(id(record))
+        index = queue.pop(0) if queue else None
+        out.append(list(origins[index]) if index is not None and index < len(origins) else [])
+    return out
 
 
 def _renumber_by_record(
@@ -177,6 +369,13 @@ def _accumulated(per_attempt: float, attempts: int) -> float:
 # that answers with silence is the defect this package exists to prevent, so what is
 # advertised is these four.
 _SERVED_NL_TOOLS = frozenset({"list_databases", "list_collections", "get_schema", "execute_query"})
+
+
+@dataclass(frozen=True)
+class _DistributionControls:
+    enabled: bool
+    rules: tuple[IdentityPartitionRule, ...]
+
 
 # Keys a tool schema can require that `execute_nl_tool` also takes as arguments. The base
 # dispatcher reads each from the tool input and falls back to the argument, so a call
@@ -328,6 +527,234 @@ class LlmSource(DataSource):
         )
 
     @staticmethod
+    def _plan_limits(merged: dict[str, Any]) -> PlanLimits:
+        """The plan shape for this request, read from the same three-layer property map.
+
+        Read here rather than defaulted at each seam, so a caller's `plan.max_leaves` is the
+        one the budget is sized against and the one the planner honours."""
+        # `_PLAN_KEYS` rather than every PlanLimits field, so this reads exactly what the
+        # validator accepts. Two different answers to "is this a plan setting" is how a key
+        # gets refused at the door and honoured inside, or the reverse.
+        given = {
+            key[len("plan.") :]: value
+            for key, value in merged.items()
+            if key.startswith("plan.") and key[len("plan.") :] in _PLAN_LIMIT_KEYS
+        }
+        return PlanLimits(**given)
+
+    @staticmethod
+    def _declared_keys(merged: dict[str, Any], wanted: list[Attr]) -> tuple[str, ...]:
+        """Read ordered ``plan.keys`` and the one-cycle singular alias."""
+        raw_keys = merged.get("plan.keys")
+        alias = merged.get("plan.key")
+        if raw_keys is None:
+            keys = (alias,) if alias is not None else ()
+        else:
+            if not isinstance(raw_keys, (list, tuple)):
+                raise ConfigError(f"plan.keys must be a list of strings, got {raw_keys!r}")
+            keys = tuple(cast("list[Any] | tuple[Any, ...]", raw_keys))
+            if alias is not None and keys != (alias,):
+                raise ConfigError("plan.keys and plan.key disagree")
+        if any(not isinstance(key, str) or not key.strip() for key in keys):
+            raise ConfigError(f"plan.keys must contain non-empty strings, got {keys!r}")
+        cleaned = tuple(cast("str", key).strip() for key in keys)
+        if len(set(cleaned)) != len(cleaned):
+            raise ConfigError("plan.keys must not contain duplicates")
+        names = {attr.name for attr in wanted}
+        missing = [key for key in cleaned if key not in names]
+        if wanted and missing:
+            raise ConfigError(f"plan.keys {missing!r} are not among the requested attributes")
+        return cleaned
+
+    @staticmethod
+    def _exact_rows(merged: dict[str, Any]) -> int | None:
+        value = merged.get("plan.exact_rows")
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ConfigError(f"plan.exact_rows must be a non-negative integer, got {value!r}")
+        return value
+
+    def _distribution_controls(
+        self,
+        merged: dict[str, Any],
+        per_call: dict[str, Any] | None,
+        wanted: list[Attr],
+    ) -> _DistributionControls:
+        enabled = merged.get("plan.distribution_search", False)
+        if not isinstance(enabled, bool):
+            raise ConfigError("plan.distribution_search must be a boolean")
+        if enabled and merged.get("plan.mode", MODE_FLAT) != MODE_PARTITIONED:
+            raise ConfigError("plan.distribution_search requires plan.mode='partitioned'")
+
+        max_candidates = merged.get(
+            "plan.max_strategy_candidates",
+            PlanLimits().max_strategy_candidates,
+        )
+        if (
+            isinstance(max_candidates, bool)
+            or not isinstance(max_candidates, int)
+            or max_candidates < 0
+        ):
+            raise ConfigError("plan.max_strategy_candidates must be a non-negative integer")
+        if enabled and max_candidates < 1:
+            raise ConfigError(
+                "plan.max_strategy_candidates must be at least 1 when distribution search "
+                "is enabled"
+            )
+
+        client_properties = getattr(self._client, "properties", None)
+        if isinstance(client_properties, dict) and "plan.identity_partitions" in client_properties:
+            raise ConfigError(
+                "plan.identity_partitions cannot come from an injected provider client"
+            )
+
+        per_call_rules = per_call is not None and "plan.identity_partitions" in per_call
+        if per_call_rules:
+            raw_rules = cast("dict[str, Any]", per_call)["plan.identity_partitions"]
+            expected_provenance = CALLER_DECLARED
+        else:
+            raw_rules = self.properties.get("plan.identity_partitions", [])
+            expected_provenance = SOURCE_CONFIGURATION
+        if not isinstance(raw_rules, list):
+            raise ConfigError("plan.identity_partitions must be a list")
+
+        rules: list[IdentityPartitionRule] = []
+        declared_types = {attr.name: attr.type for attr in wanted}
+        for raw_rule in cast("list[object]", raw_rules):
+            rule = IdentityPartitionRule.from_dict(raw_rule)
+            if rule.contract_version != RULE_VERSION:
+                raise ConfigError("identity partition rule contract version is unsupported")
+            if rule.kind != FINITE_DOMAIN:
+                raise ConfigError("identity partition rule kind is unsupported")
+            if rule.provenance != expected_provenance:
+                raise ConfigError(
+                    f"identity partition rule provenance must be {expected_provenance!r} "
+                    "for its configuration origin"
+                )
+            identities = [
+                normalized_value(value, declared_types.get(rule.dimension))
+                for value in rule.allowed_domain
+            ]
+            if len(set(identities)) != len(identities):
+                raise ConfigError("identity partition rule domain contains duplicate values")
+            rules.append(rule)
+
+        if len({rule.digest for rule in rules}) != len(rules):
+            raise ConfigError("plan.identity_partitions must not contain duplicate rules")
+
+        raw_keys = merged.get("plan.keys")
+        if not enabled and raw_keys is None:
+            return _DistributionControls(enabled=False, rules=tuple(rules))
+        if raw_keys is None:
+            raise ConfigError("plan.keys is required when distribution search is enabled")
+        keys = self._declared_keys(merged, wanted)
+        for rule in rules:
+            if tuple(rule.ordered_primary_keys) != keys:
+                raise ConfigError(
+                    "every identity partition rule must match the ordered plan.keys exactly"
+                )
+            if rule.dimension not in keys:
+                raise ConfigError("identity partition rule dimension must be one of plan.keys")
+        if enabled and not any(rule.applies_to({}) for rule in rules):
+            raise ConfigError(
+                "distribution search requires at least one identity partition rule for the root"
+            )
+        return _DistributionControls(enabled=enabled, rules=tuple(rules))
+
+    async def _run_leaves(
+        self,
+        plan: Any,
+        make_ask: Any,
+        wanted: list[Attr],
+        plan_limits: PlanLimits,
+        schema: Schema,
+        ctx: str,
+        mode: str,
+        client: object,
+        properties: dict[str, Any],
+        budget: Budget,
+        exact_rows: int | None,
+        sinks: list[list[Usage]] | None = None,
+    ) -> list[Any]:
+        """Every leaf of the plan, concurrently, bounded by the client's own parallelism.
+
+        A leaf that raises comes back as a failed result rather than an exception: its
+        siblings have already been paid for, and letting one propagate discards their rows
+        to report a failure that belongs to one of them.
+
+        Every leaf, including the ones that raise. ``gather`` without ``return_exceptions``
+        hands the first exception back the moment it is raised and leaves the siblings
+        running: on the async surface the caller is returned to with money committed and not
+        yet settled, reads its own budget, and sees a figure that keeps moving after the
+        call it asked about has finished. Collecting every result first costs the latency of
+        the slowest sibling and makes the spend the caller reads final.
+
+        ``arun_leaf`` classifies the failures it knows. One it does not — a recursion or
+        memory failure out of the parser rather than out of the model — would otherwise be
+        the one class of leaf exception this method's own contract does not cover, so it is
+        wrapped here into the same failed result. A request whose leaves all failed still
+        raises: that decision belongs downstream, where the whole plan is known."""
+        # A receipt list per leaf, not one for the run. Leaves execute concurrently below,
+        # so a shared sink records which calls happened and not which leaf made them — and
+        # anything a leaf has to conclude from its own last call then reads whichever entry
+        # arrived most recently, from any leaf. The run total is unchanged: the caller sees
+        # these folded together afterwards.
+        per_leaf: list[list[Usage]] = [[] for _ in plan.leaves]
+        if sinks is not None:
+            sinks.extend(per_leaf)
+        if mode == MODE_FLAT:
+            tasks = [
+                arun_leaf(
+                    leaf,
+                    make_ask(sink),
+                    attrs=wanted,
+                    limits=plan_limits,
+                    primary_keys=schema.primary_keys,
+                    exact_rows=exact_rows,
+                    context=ctx,
+                )
+                for leaf, sink in zip(plan.leaves, per_leaf, strict=True)
+            ]
+        else:
+            settings = execution_settings(properties, plan_limits, budget, exact_rows=exact_rows)
+            tasks = [
+                run_local_leaf(
+                    LeafTask.from_leaf(
+                        leaf,
+                        caller_context=ctx,
+                        schema=schema,
+                        settings=settings,
+                    ),
+                    client=client,
+                    properties=properties,
+                    usage_sink=sink,
+                )
+                for leaf, sink in zip(plan.leaves, per_leaf, strict=True)
+            ]
+        settled = await asyncio.gather(*tasks, return_exceptions=True)
+
+        runs: list[Any] = []
+        for leaf, result in zip(plan.leaves, settled, strict=True):
+            if not isinstance(result, BaseException):
+                runs.append(result)
+            elif isinstance(result, asyncio.CancelledError):
+                # Cancellation is the caller's own decision arriving, not this leaf's
+                # outcome. Reporting it as a failed leaf would swallow a shutdown.
+                raise result
+            else:
+                runs.append(
+                    LeafRun(
+                        leaf_id=leaf.id,
+                        outcome=Outcome.STOPPED_BY_LIMIT,
+                        stopped_by=result.limit if isinstance(result, BudgetExceeded) else None,
+                        error=f"{type(result).__name__}: {result}",
+                        exception=result,
+                    )
+                )
+        return runs
+
+    @staticmethod
     def _attests(client: Any) -> bool:
         """Whether this client can vouch for the calls, cost and tokens it reports.
 
@@ -350,12 +777,20 @@ class LlmSource(DataSource):
             return False
         return Capability.CALLS in capabilities and Capability.COST in capabilities
 
-    def _resolve_client(self, llm_fn: Any = None, budget: Budget | None = None) -> Any:
+    def _resolve_client(
+        self,
+        llm_fn: Any = None,
+        budget: Budget | None = None,
+        default_properties: dict[str, Any] | None = None,
+    ) -> Any:
         if llm_fn is not None:
             return FunctionClient(llm_fn, budget=budget)
         if self._client is not None:
             return self._client
-        return DefaultLlmClient(self.properties, budget=budget)
+        return DefaultLlmClient(
+            self.properties if default_properties is None else default_properties,
+            budget=budget,
+        )
 
     @staticmethod
     def _require_client_shape(client: Any) -> None:
@@ -449,14 +884,23 @@ class LlmSource(DataSource):
             for key in properties
             if key.startswith("limits.") and key[len("limits.") :] not in _LIMIT_KEYS
         )
+        # The plan namespace is checked the same way and for the same reason: a misspelled
+        # `plan.max_leaves` is a plan shape the caller chose and never got, which reads to
+        # them as the planner disagreeing rather than as a typo.
+        unknown += sorted(
+            key
+            for key in properties
+            if key.startswith("plan.") and key[len("plan.") :] not in _PLAN_KEYS
+        )
         near_misses = sorted(
-            key for key in properties if key.startswith("limit.") or key == "limits"
+            key for key in properties if key.startswith("limit.") or key in ("limits", "plan")
         )
         if not unknown and not near_misses:
             return
         raise ConfigError(
             f"unknown limit {', '.join(repr(k) for k in unknown + near_misses)}. "
-            f"Accepted: {sorted('limits.' + name for name in _LIMIT_KEYS)}"
+            f"Accepted: {sorted('limits.' + name for name in _LIMIT_KEYS)} and "
+            f"{sorted('plan.' + name for name in _PLAN_KEYS)}"
         )
 
     # ------------------------------------------------------------------ fetch --
@@ -493,6 +937,8 @@ class LlmSource(DataSource):
         # requests that reach the model is not a closed key set, and an empty request is
         # the cheapest way to validate configuration without spending anything.
         limits = self._limits(properties)
+        merged = self._resolved_properties(properties)
+        distribution = self._distribution_controls(merged, properties, wanted)
 
         text = checks.normalize_query(query)
         if not text:
@@ -505,7 +951,6 @@ class LlmSource(DataSource):
                 ),
             )
 
-        merged = self._resolved_properties(properties)
         if cap is not None:
             limits = Limits(
                 max_rows=cap,
@@ -518,15 +963,27 @@ class LlmSource(DataSource):
         # draws a child from it rather than spending it directly: the configured limits
         # apply to this call, and never beyond what the caller has left.
         run_budget = Budget(limits) if budget is None else budget.derive(limits)
-        client = self._resolve_client(llm_fn, run_budget)
+        provider_properties = dict(merged)
+        provider_properties.pop("plan.distribution_search", None)
+        provider_properties.pop("plan.identity_partitions", None)
+        provider_properties.pop("plan.max_strategy_candidates", None)
+        client = self._resolve_client(
+            llm_fn,
+            run_budget,
+            default_properties=provider_properties,
+        )
         self._require_client_shape(client)
         self._require_bindable(client, run_budget)
 
         # Handed down per call rather than set on the client: one client can serve several
         # concurrent fetches, and an attribute would let them overwrite each other's ceiling.
-        merged[C.BUDGET_PROPERTY] = run_budget
+        provider_properties[C.BUDGET_PROPERTY] = run_budget
 
-        prompt = prompts.build_fetch_prompt(text, wanted, ctx)
+        plan_limits = self._plan_limits(merged)
+        mode = str(merged.get("plan.mode", MODE_FLAT))
+        if mode not in MODES:
+            raise ConfigError(f"unknown plan.mode {mode!r}; expected one of {', '.join(MODES)}")
+
         meta = ExecMeta(requested_attrs=[a.name for a in wanted])
 
         # Token attribution comes from the entries this call is handed back, not from
@@ -534,28 +991,264 @@ class LlmSource(DataSource):
         # client read the same cursor and each take both entries, so each reports the
         # other's tokens. The client writes this call's usage into a list of its own.
         call_usages: list[Usage] = []
-        merged[C.USAGE_SINK_PROPERTY] = call_usages
-        try:
-            raw = await client.acomplete(prompt, merged)
-        except BudgetExceeded as e:
-            meta.stopped_by = e.limit
-            meta.outcome = Outcome.STOPPED_BY_LIMIT
+        provider_properties[C.USAGE_SINK_PROPERTY] = call_usages
+
+        declared_keys = self._declared_keys(merged, wanted)
+        exact_rows = self._exact_rows(merged)
+        declared_schema = Schema(
+            attrs=wanted,
+            primary_keys=declared_keys,
+            key_from=KEY_FROM_CALLER if declared_keys else KEY_FROM_NONE,
+        )
+        planning_gaps: list[str] = []
+        schema_mode = merged.get("plan.schema_mode", SCHEMA_PRESERVE)
+        if schema_mode not in SCHEMA_MODES:
+            raise ConfigError(
+                f"unknown plan.schema_mode {schema_mode!r}; expected one of "
+                f"{', '.join(SCHEMA_MODES)}"
+            )
+        if mode == MODE_FLAT and schema_mode == SCHEMA_ENRICH:
+            raise ConfigError("flat mode cannot enrich schema without a planning call")
+        planning_order = validate_planning_order(
+            merged.get("plan.planning_order", PLANNING_SCHEMA_FIRST)
+        )
+        expose_estimate = merged.get("plan.expose_estimate", True)
+        if not isinstance(expose_estimate, bool):
+            raise ConfigError("plan.expose_estimate must be a boolean")
+
+        planning_receipt: PlanningReceipt | None = None
+        if mode == MODE_FLAT:
+            schema = declared_schema
+            plan = build_plan(
+                mode=MODE_FLAT,
+                ask=text,
+                constraints={},
+                schema=schema,
+                estimate=Cardinality.UNKNOWN,
+                limits=plan_limits,
+            )
+        else:
+            partition_key = merged.get("plan.partition_key")
+            if partition_key is not None and (
+                not isinstance(partition_key, str) or not partition_key.strip()
+            ):
+                raise ConfigError(
+                    f"plan.partition_key must be a non-empty string, got {partition_key!r}"
+                )
+            try:
+                bundle = await coordinate_plan(
+                    mode=mode,
+                    original_query=text,
+                    caller_context=ctx,
+                    caller_constraints={},
+                    declared_schema=declared_schema,
+                    schema_mode=cast("str", schema_mode),
+                    limits=plan_limits,
+                    client=client,
+                    budget=run_budget,
+                    properties=provider_properties,
+                    partition_key=partition_key,
+                    planning_order=planning_order,
+                    distribution_search=distribution.enabled,
+                    identity_partition_rules=distribution.rules,
+                )
+            except BudgetExceeded as e:
+                meta.outcome = Outcome.STOPPED_BY_LIMIT
+                meta.stop_reasons = _ordered_distinct([e.limit])
+                meta.stopped_by = meta.stop_reasons[0]
+                self._fold_usage(call_usages, meta, run_budget, self._attests(client))
+                meta.gaps = [f"planning_unserved: {e}"]
+                meta.latency_seconds = time.monotonic() - started
+                return FetchResult(records=[], meta=meta)
+            plan = bundle.plan
+            schema = bundle.schema
+            if distribution.enabled:
+                planning_receipt = PlanningReceipt(
+                    configured_rule_digests=tuple(rule.digest for rule in distribution.rules),
+                    facts=bundle.facts,
+                    plan=bundle.plan,
+                )
+            meta.row_estimate = bundle.analysis.row_estimate
+            meta.cardinality_estimate = bundle.analysis.cardinality.to_dict()
+            planning_gaps = list(bundle.diagnostics)
+            if any(usage.finish_reason == "length" for usage in bundle.usages):
+                planning_gaps.append(
+                    "planning_output_limit: the provider ended a discarded planning "
+                    "response at its output limit"
+                )
+            if bundle.analysis.ask.strip() != text.strip():
+                meta.asked = bundle.analysis.ask
+
+        if any(
+            isinstance(value, OneOf) and not value.values
+            for leaf in plan.leaves
+            for value in leaf.constraints.values()
+        ):
+            meta.outcome = Outcome.MODEL_RETURNED_NONE
+            meta.gaps = list(planning_gaps)
             self._fold_usage(call_usages, meta, run_budget, self._attests(client))
             meta.latency_seconds = time.monotonic() - started
-            return FetchResult(records=[], meta=meta)
+            result = FetchResult(records=[], meta=meta)
+            return (
+                result.with_planning_receipt(planning_receipt)
+                if planning_receipt is not None
+                else result
+            )
 
-        records = parsing.parse_records(raw, [a.name for a in wanted])
-        alignment = aligner.align(records, wanted)
-        checked, mismatches = verifier.verify(alignment.records, wanted)
-        answered = verifier.drop_empty(checked, alignment.matched, wanted)
-        deduped = verifier.dedupe(answered)
+        execution_limits = plan_limits
+        meta.primary_keys = list(schema.primary_keys)
+        if not schema.primary_keys:
+            execution_limits = replace(
+                plan_limits,
+                max_continuations=0,
+                empty_leaf_retry=False,
+            )
+            if plan_limits.max_continuations:
+                planning_gaps.append(
+                    "key_unavailable: continuation was disabled because no identifying "
+                    "column was established"
+                )
 
-        kept = run_budget.add_rows(len(deduped))
-        row_cap_fired = kept < len(deduped)
+        def make_ask(sink: list[Usage]) -> Any:
+            """A model boundary that writes its receipts where this leaf can read them."""
+            props = {**provider_properties, C.USAGE_SINK_PROPERTY: sink}
+
+            async def ask(prompt: str) -> Answer:
+                # Where this call's receipts begin. Reading `sink[-1]` afterwards assumed
+                # every call leaves exactly one entry, which the client protocol does not
+                # require: a client that writes none for this call hands back the *previous*
+                # call's reason, and the attestation then describes a response it was never
+                # made about. Only entries appended between these two marks are this call's.
+                before = len(sink)
+                text = await client.acomplete(prompt, props)
+                written = sink[before:]
+                # The last of them on a retried call, which is the attempt that produced the
+                # text being returned. None when the call wrote nothing, which is the honest
+                # answer for a client that reports no accounting.
+                reason = written[-1].finish_reason if written else None
+                return Answer(text, finish_reason=reason)
+
+            return ask
+
+        leaf_usages: list[list[Usage]] = []
+        leaf_exact_rows = exact_rows if len(plan.leaves) == 1 else None
+        if exact_rows is not None and leaf_exact_rows is None:
+            planning_gaps.append(
+                "exact_rows_not_leaf_bound: trusted root count cannot be applied to separate leaves"
+            )
+        try:
+            runs = await self._run_leaves(
+                plan,
+                make_ask,
+                list(schema.attrs),
+                execution_limits,
+                schema,
+                ctx,
+                mode,
+                client,
+                provider_properties,
+                run_budget,
+                leaf_exact_rows,
+                leaf_usages,
+            )
+        except BudgetExceeded as e:
+            meta.stop_reasons = _ordered_distinct([e.limit])
+            meta.stopped_by = meta.stop_reasons[0]
+            meta.outcome = Outcome.STOPPED_BY_LIMIT
+            self._fold_usage(call_usages, meta, run_budget, self._attests(client))
+            meta.gaps = list(planning_gaps)
+            meta.gaps.append(f"execution_unserved: {e}")
+            meta.latency_seconds = time.monotonic() - started
+            result = FetchResult(records=[], meta=meta)
+            return (
+                result.with_planning_receipt(planning_receipt)
+                if planning_receipt is not None
+                else result
+            )
+
+        # Folded back after the fan-out. Splitting the sink per leaf is an attribution
+        # change, not an accounting one, and the totals a caller reads must not move.
+        for sink in leaf_usages:
+            call_usages.extend(sink)
+
+        results: list[LeafInput] = [
+            (
+                run.leaf_id,
+                run.records,
+                LeafOutcome(
+                    leaf_id=run.leaf_id,
+                    outcome=(
+                        FAILED
+                        if run.ordinary_failure
+                        else Outcome.STOPPED_BY_LIMIT
+                        if run.provider_output_limit
+                        else run.outcome
+                    ),
+                    rows=len(run.records),
+                    calls=run.attempts,
+                    answered=run.answered,
+                    failed=run.ordinary_failure,
+                    unserved=run.budget_denied,
+                    at_cap=run.at_cap,
+                    recovered_prefix=run.recovered_prefix,
+                    provider_output_limit=run.provider_output_limit,
+                    recovery_attested=run.recovery_attested,
+                ),
+            )
+            for run in runs
+        ]
+
+        run_stop_reasons = _run_stop_reasons(runs)
+        meta.observed_key_count = sum(run.observed_key_count for run in runs)
+        meta.marginal_key_yields = [value for run in runs for value in run.marginal_key_yields]
+        meta.incomplete_key_records = sum(run.incomplete_key_records for run in runs)
+        meta.normalization_collisions = [
+            collision for run in runs for collision in run.normalization_collisions
+        ]
+        answered_any = any(run.answered for run in runs)
+        retained_any = any(run.records for run in runs)
+        if any(run.ordinary_failure for run in runs) and not answered_any and not retained_any:
+            self._fold_usage(call_usages, meta, run_budget, self._attests(client))
+            stop_reasons = _ordered_distinct(
+                run_stop_reasons,
+                meta.stop_reasons,
+                [meta.stopped_by] if meta.stopped_by else [],
+            )
+            error = _execution_failure(runs, stop_reasons)
+            raise error from error.__cause__
+
+        records, coverage = reduce_leaves(plan, schema, results)
+
+        attrs = list(schema.attrs)
+        alignment = aligner.align(records, attrs)
+        checked, mismatches = verifier.verify(alignment.records, attrs)
+        answered = verifier.drop_empty(checked, alignment.matched, attrs)
+        # Attribution follows the records through every pass that changes the list. It was
+        # computed against what the merge produced, and three passes below that one drop or
+        # trim rows — publishing it unfollowed would index it against records that no longer
+        # exist, which is worse than publishing nothing because it looks right.
+        deduped, origins = verifier.dedupe(
+            answered, origins=_origins_for(coverage.record_origins, checked, answered)
+        )
+        rows_before_cap = len(deduped)
+        kept = run_budget.add_rows(rows_before_cap)
+        row_cap_fired = kept < rows_before_cap
+        result_gaps: list[str] = []
         if row_cap_fired:
             deduped = deduped[:kept]
+            origins = origins[:kept]
             meta.truncated_to = kept
-            meta.stopped_by = "max_rows"
+            result_gaps.append(
+                f"result_rows_discarded: global row cap kept {kept} of {rows_before_cap} record(s)"
+            )
+        meta.observed_key_count = len(
+            {
+                identity
+                for record in deduped
+                if (identity := key_identity(record, schema.primary_keys, schema.attrs)) is not None
+            }
+        )
+        meta.record_origins = origins
 
         # `record_index` was assigned against the list `verify` saw, and dropping, deduping
         # and capping all renumber that list — so an index published to the caller pointed at
@@ -567,16 +1260,39 @@ class LlmSource(DataSource):
         meta.remapped_keys = alignment.remapped
         meta.unmapped_keys = alignment.unmapped
         meta.key_collisions = _renumber_by_record(alignment.collisions, checked, deduped)
-        meta.unchecked_types = verifier.unchecked_types(wanted)
+        meta.unchecked_types = verifier.unchecked_types(attrs)
+        meta.stop_reasons = _ordered_distinct(
+            run_stop_reasons,
+            ["max_rows"] if row_cap_fired else [],
+        )
         self._fold_usage(call_usages, meta, run_budget, self._attests(client))
+        meta.stop_reasons = _ordered_distinct(
+            meta.stop_reasons,
+            [meta.stopped_by] if meta.stopped_by else [],
+        )
+        meta.stopped_by = meta.stop_reasons[0] if meta.stop_reasons else None
+        interrupted = coverage.run_outcome == Outcome.PARTIAL
         meta.outcome = decide_outcome(
-            records=deduped,
-            model_returned=records,
-            row_cap_fired=row_cap_fired,
-            stopped_by=meta.stopped_by,
+            deduped,
+            records,
+            row_cap_fired,
+            meta.stopped_by,
+            answered=answered_any,
+            interrupted=interrupted,
+            stop_reasons=meta.stop_reasons,
+        )
+        meta.gaps = _gap_strings(
+            coverage.gaps,
+            len(plan.leaves),
+            [*planning_gaps, *result_gaps],
         )
         meta.latency_seconds = time.monotonic() - started
-        return FetchResult(records=deduped, meta=meta)
+        result = FetchResult(records=deduped, meta=meta)
+        return (
+            result.with_planning_receipt(planning_receipt)
+            if planning_receipt is not None
+            else result
+        )
 
     def estimate(
         self,
@@ -586,7 +1302,7 @@ class LlmSource(DataSource):
         properties: dict[str, Any] | None = None,
         llm_fn: Any = None,
     ) -> Estimate:
-        """The most one fetch of *query* could cost. See :meth:`_estimate_inner`."""
+        """The most one flat fetch of *query* could cost. See :meth:`_estimate_inner`."""
         with _in_hierarchy():
             return self._estimate_inner(
                 query, attrs=attrs, context=context, properties=properties, llm_fn=llm_fn
@@ -600,12 +1316,17 @@ class LlmSource(DataSource):
         properties: dict[str, Any] | None = None,
         llm_fn: Any = None,
     ) -> Estimate:
-        """The most one fetch of *query* could cost, without contacting the provider.
+        """The most one flat fetch of *query* could cost, without contacting the provider.
 
         Asked of the client that would actually answer, using the same call arguments the
         attempt itself would build, so the figure cannot disagree with what the run reserves.
         Computing it separately is how an estimate came to differ from the reservation by
         three orders of magnitude for an injected client.
+
+        **This does not price a decomposed request.** It reads no ``plan.*`` setting, so a
+        plan with parts or continuations costs this figure times the calls it makes. Size a
+        ceiling for a split request from its part count, or ask in ``flat`` mode, which is
+        what this describes.
 
         A *fetch* is bounded, not an attempt. A fetch may retry, so the figure is the
         per-attempt bound accumulated once per attempt permitted, added the way the ledger
@@ -628,7 +1349,11 @@ class LlmSource(DataSource):
         # Before the empty-request short circuit, so the closed key set is closed on this
         # route too and a caller can check its configuration without spending anything.
         limits = self._limits(properties)
-        attempts = self._max_attempts(limits)
+        # What can actually happen: the chain's retry allowance, under the call cap. The
+        # allowance itself comes from the same accessor the client's retry policy and
+        # admission both read, so the three agree about the quantity and differ only where
+        # they are meant to.
+        attempts = self._attempts_reachable(Budget(limits), limits)
 
         text = checks.normalize_query(query)
         if not text:
@@ -643,7 +1368,7 @@ class LlmSource(DataSource):
 
         wanted: list[Attr] = checks.normalize_attrs(attrs)
         ctx = checks.normalize_context(context)
-        prompt = prompts.build_fetch_prompt(text, wanted, ctx)
+        prompt = prompts.build_fetch_prompt(text, wanted, caller_context=ctx)
         prompt_bytes = len(prompt.encode("utf-8"))
 
         client = self._resolve_client(llm_fn, Budget(limits))
@@ -691,13 +1416,37 @@ class LlmSource(DataSource):
         )
 
     @staticmethod
-    def _max_attempts(limits: Limits) -> int:
-        """How many provider attempts one fetch is permitted.
+    def _attempts_allowed(budget: Budget) -> int:
+        """How many attempts the retry allowance permits, before any other ceiling.
 
-        The retry allowance, narrowed by a call ceiling when one is configured: a run
-        allowed one call cannot make three attempts however many retries it is given.
+        ``effective_retries`` and not ``limits.max_retries``: a caller's budget accumulates
+        across every call it is handed to, and a fetch derives a child from it, so the
+        allowance that binds is the narrowest anywhere in the chain. Read from the request's
+        own limits, this saw a retry depth a parent had already forbidden — then refused a
+        request the parent could comfortably afford, reporting a call ceiling never
+        approached. Adding a redundant retry setting to the request made the same request
+        run, which is the clearest statement of that defect: two spellings of one budget
+        disagreeing. The client builds its own retry policy from exactly this figure.
         """
-        attempts = int(limits.max_retries) + 1
+        return max(1, budget.effective_retries() + 1)
+
+    @classmethod
+    def _attempts_reachable(cls, budget: Budget, limits: Limits) -> int:
+        """How many attempts can actually happen, which is the allowance under the call cap.
+
+        Held apart from :meth:`_attempts_allowed` because the two answer different
+        questions, and collapsing them is wrong in one direction or the other.
+
+        This one bounds what a run can spend, so every ceiling that clamps it belongs in it:
+        a run allowed one call cannot make three attempts however many retries it is given,
+        and an estimate that said otherwise would overstate what the request can cost.
+
+        Admission asks the opposite question — whether a fan-out fits inside ``max_calls`` —
+        and there the call cap is the capacity being tested, not a bound on the demand.
+        Sizing the demand from it tests a number against itself and admits whatever it is
+        given.
+        """
+        attempts = cls._attempts_allowed(budget)
         if limits.max_calls is not None:
             attempts = min(attempts, int(limits.max_calls))
         return max(0, attempts)
@@ -784,25 +1533,14 @@ class LlmSource(DataSource):
         priced = all(usage.cost_known for usage in usages if not usage.cache_hit)
         meta.accounting_known = accounting_known and priced
         crossed = budget.note_exhausted()
-        if not meta.stopped_by:
-            # What this call crossed, which may have been crossed on a parent the caller
-            # owns. Reading only the child's own field lost a deadline the run went past
-            # and returned a complete-looking answer.
-            meta.stopped_by = budget.stopped_by or crossed
-        elif meta.stopped_by == "max_rows" and crossed is not None and crossed != "max_rows":
-            # A harder ceiling outranks the row cap. The row cap is the only axis that
-            # leaves a usable result, and `truncated` is the only outcome the data model
-            # defines that way — so reporting it while a deadline or a cost ceiling had
-            # actually been crossed told a caller the answer was merely short when it was
-            # cut off. The same blown deadline reported `stopped_by_limit`/`max_seconds`
-            # without a row cap and `truncated`/`max_rows` with one, and a planner branching
-            # on `outcome`, which the documentation instructs it to do, reused an answer
-            # whose ceiling had been passed many times over.
-            meta.stopped_by = crossed
-        # Decided last. A ceiling crossed during settlement or by the deadline check is
-        # still a ceiling, and leaving the default would return records as ok while
-        # stopped_by names the limit that ended the run.
-        if meta.stopped_by and meta.outcome == Outcome.OK:
+        meta.stop_reasons = _ordered_distinct(
+            meta.stop_reasons,
+            [meta.stopped_by] if meta.stopped_by else [],
+            [budget.stopped_by] if budget.stopped_by else [],
+            [crossed] if crossed else [],
+        )
+        meta.stopped_by = meta.stop_reasons[0] if meta.stop_reasons else None
+        if meta.stop_reasons and meta.outcome == Outcome.OK:
             meta.outcome = Outcome.STOPPED_BY_LIMIT
 
     # -------------------------------------------------------- source surface --
@@ -1119,4 +1857,4 @@ def _reject_running_loop() -> None:
         asyncio.get_running_loop()
     except RuntimeError:
         return
-    raise RuntimeError("fetch() was called from inside a running event loop. Use afetch() instead.")
+    raise ConfigError("fetch() was called from inside a running event loop. Use afetch() instead.")

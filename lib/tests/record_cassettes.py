@@ -141,7 +141,7 @@ def record(
             )
             break
 
-        prompt = build_fetch_prompt(case["query"], case["attrs"], case["context"])
+        prompt = build_fetch_prompt(case["query"], case["attrs"], caller_context=case["context"])
         started = time.monotonic()
         response: Any = provider.completion(
             model=MODEL,

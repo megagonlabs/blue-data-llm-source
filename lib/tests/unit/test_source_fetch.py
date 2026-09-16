@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
 import pytest
 
 from blue_data_llm_source import LlmSource
 from blue_data_llm_source.llm.budget import Budget, Limits
 from blue_data_llm_source.source import decide_outcome
-from blue_data_llm_source.types import Outcome, ParseError, QueryError
+from blue_data_llm_source.types import ConfigError, Outcome, ParseError, QueryError
 from tests.doubles import ScriptedClient
 
 ONE_RECORD = '[{"name": "Ada", "age": 36}]'
@@ -290,7 +293,10 @@ LEAKED_COROUTINE = "error:coroutine .* was never awaited:RuntimeWarning"
 @pytest.mark.filterwarnings(LEAKED_COROUTINE)
 async def test_fetch_inside_a_running_loop_says_to_use_afetch() -> None:
     source = LlmSource(client=ScriptedClient([ONE_RECORD]))
-    with pytest.raises(RuntimeError, match="afetch"):
+    # ConfigError, not a bare RuntimeError: the documented guarantee is that nothing but
+    # LlmSourceError escapes fetch, and this is the refusal a caller is most likely to meet
+    # while porting synchronous code into an async service.
+    with pytest.raises(ConfigError, match="afetch"):
         source.fetch("who?")
 
 
@@ -299,7 +305,7 @@ async def test_fetch_inside_a_running_loop_does_not_call_the_model() -> None:
     client = ScriptedClient([ONE_RECORD])
     source = LlmSource(client=client)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ConfigError):
         source.fetch("who?")
 
     assert client.prompts == []
@@ -333,9 +339,51 @@ def test_records_pass_through_when_no_attributes_were_requested() -> None:
     assert result.meta.outcome == Outcome.OK
 
 
+def _a_partly_answered_run() -> str:
+    """A split request where one part raises and the others answer.
+
+    Through `llm_fn` rather than a scripted client, because which part fails has to depend
+    on which part was asked. A double answering in call order cannot express that.
+    """
+    analysis = json.dumps(
+        {
+            "ask": "who?",
+            "constraints": {"region": ["North", "South"]},
+            "row_estimate": 200,
+            "schema": {"attrs": [{"name": "name"}], "key": "name"},
+        }
+    )
+    proposal = json.dumps(
+        {
+            "key": "region",
+            "values": ["North", "South"],
+            "ambiguity": 0,
+            "child_estimates": [10, 10],
+        }
+    )
+
+    def model(prompt: str, properties: Any = None) -> str:
+        if "Prepare a structured data request" in prompt:
+            return analysis
+        if "Propose one useful partition" in prompt:
+            return proposal
+        if "North" in prompt:
+            raise RuntimeError("provider refused this part")
+        return '[{"name": "Ada"}]'
+
+    result = LlmSource().fetch(
+        "who?",
+        attrs=["name"],
+        llm_fn=model,
+        properties={"plan.mode": "partitioned", "plan.key": "name"},
+    )
+    return str(result.meta.outcome)
+
+
 def test_every_outcome_value_is_reachable_from_the_fetch_path() -> None:
     """A closed vocabulary that advertises a branch the code cannot produce is a lie."""
     produced = {
+        _a_partly_answered_run(),
         LlmSource(client=ScriptedClient(['[{"name": "Ada"}]'])).fetch("who?").meta.outcome,
         LlmSource(client=ScriptedClient(['[{"name": "Ada"}]'])).fetch("").meta.outcome,
         LlmSource(client=ScriptedClient(["[]"])).fetch("who?").meta.outcome,
@@ -402,6 +450,37 @@ def test_the_outcome_matrix_is_total_and_unambiguous(
 ) -> None:
     """Every reachable combination has one decided answer, in one place."""
     assert decide_outcome(records, model_returned, row_cap_fired, stopped_by) == expected
+
+
+@pytest.mark.parametrize("records", [[{"a": 1}], []])
+def test_an_interrupted_answer_is_partial_even_when_a_limit_also_fired(
+    records: list[dict[str, object]],
+) -> None:
+    assert (
+        decide_outcome(
+            records,
+            records,
+            False,
+            "max_calls",
+            answered=True,
+            interrupted=True,
+            stop_reasons=["max_calls"],
+        )
+        == Outcome.PARTIAL
+    )
+
+
+def test_a_row_cap_and_harder_limit_remain_stopped_without_interruption() -> None:
+    assert (
+        decide_outcome(
+            [{"a": 1}],
+            [{"a": 1}, {"a": 2}],
+            True,
+            "max_seconds",
+            stop_reasons=["max_seconds", "max_rows"],
+        )
+        == Outcome.STOPPED_BY_LIMIT
+    )
 
 
 def test_a_child_does_not_inherit_a_parents_earlier_refusal() -> None:

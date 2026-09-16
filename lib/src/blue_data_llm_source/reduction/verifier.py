@@ -237,10 +237,9 @@ def _matches(value: Any, declared: str) -> bool:
         return True
     # An unknown declared type cannot be checked, so no value can fail against it. Saying
     # so is not the same as passing silently — `verify` reports the name once, as a fact
-    # about the request, rather than flagging every value the caller received. Reporting it
-    # per value measured 21 mismatches on a batch holding one genuinely bad number, which
-    # destroys the signal the decision log tells callers to monitor, and it condemned a
-    # declaration the documentation invites: the declared type is sent to the model verbatim
+    # about the request, rather than flagging every value the caller received. Per-value
+    # reporting would obscure genuine mismatches and condemn a declaration the documentation
+    # invites: the declared type is sent to the model verbatim
     # ("- price: money"), so an unlisted name is an instruction, not necessarily a typo.
     return True
 
@@ -282,17 +281,33 @@ def _canonical(value: Any) -> str:
     return repr(value)
 
 
-def dedupe(records: list[dict[str, Any]], key: str | None = None) -> list[dict[str, Any]]:
-    """Remove exact duplicates, or duplicates on *key* when one is given."""
-    seen: set[Any] = set()
+def dedupe(
+    records: list[dict[str, Any]],
+    key: str | None = None,
+    origins: list[list[str]] | None = None,
+) -> tuple[list[dict[str, Any]], list[list[str]]]:
+    """Remove exact duplicates, or duplicates on *key* when one is given.
+
+    *origins* travels with the records because this pass drops where the merge above it
+    appends. The merge records that two parts both produced a record by extending that
+    record's origin list; dropping the second copy here without folding its origin in leaves
+    the survivor naming one part, which is not a smaller claim than naming both but a
+    different and false one.
+    """
+    seen: dict[Any, int] = {}
     out: list[dict[str, Any]] = []
-    for record in records:
+    kept: list[list[str]] = []
+    for position, record in enumerate(records):
         if key is not None and key in record:
             marker: Any = record.get(key)
         else:
             marker = tuple(sorted((k, _canonical(v)) for k, v in record.items()))
-        if marker in seen:
+        source = list(origins[position]) if origins is not None and position < len(origins) else []
+        at = seen.get(marker)
+        if at is not None:
+            kept[at].extend(name for name in source if name not in kept[at])
             continue
-        seen.add(marker)
+        seen[marker] = len(out)
         out.append(record)
-    return out
+        kept.append(source)
+    return out, kept

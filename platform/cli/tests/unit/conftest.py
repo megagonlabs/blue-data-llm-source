@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from inspect import signature
 from typing import Any, cast
 
 import pytest
@@ -33,17 +34,19 @@ MESSY_RECORDS = json.dumps(
 
 
 class FakeClient:
-    """Returns *response*, or raises it when it is an exception."""
+    """Return one response per call, repeating the last, or raise an exception entry."""
 
     def __init__(
         self,
-        response: str | Exception,
+        response: str | Exception | list[str | Exception],
         model: str = "fake-model",
         prompt_tokens: int = 12,
         completion_tokens: int = 34,
         cost: float = 0.0012,
     ) -> None:
-        self.response = response
+        self.responses = response if isinstance(response, list) else [response]
+        if not self.responses:
+            raise ValueError("FakeClient needs at least one response")
         self.model = model
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
@@ -62,14 +65,15 @@ class FakeClient:
     def complete(self, prompt: str, properties: dict[str, Any] | None = None) -> str:
         merged = dict(properties or {})
         run = merged.get("budget")
+        response = self.responses[min(len(self.prompts), len(self.responses) - 1)]
         # `attempt`, like the real client: its cleanup is registered before the claim
         # is taken, so this double models the lifecycle it claims to model.
         with (run if isinstance(run, Budget) else self.budget).attempt(self.cost) as reservation:
             self.prompts.append(prompt)
             self.properties.append(merged)
-            if isinstance(self.response, Exception):
+            if isinstance(response, Exception):
                 reservation.keep_unpriced()
-                raise self.response
+                raise response
             reservation.settle(self.cost)
             record = Usage(
                 model=str(merged.get("llm.model") or self.model),
@@ -81,7 +85,7 @@ class FakeClient:
             sink = merged.get("usage_sink")
             if isinstance(sink, list):
                 cast("list[Usage]", sink).append(record)
-            return self.response
+            return response
 
     async def acomplete(self, prompt: str, properties: dict[str, Any] | None = None) -> str:
         return self.complete(prompt, properties)
@@ -99,7 +103,10 @@ class RaisingSource:
 
 @pytest.fixture
 def runner() -> CliRunner:
-    return CliRunner()
+    options: dict[str, Any] = {}
+    if "mix_stderr" in signature(CliRunner).parameters:
+        options["mix_stderr"] = False
+    return CliRunner(**options)
 
 
 @pytest.fixture
@@ -113,7 +120,10 @@ def install_source(monkeypatch: pytest.MonkeyPatch) -> Callable[[Any], Any]:
 
 @pytest.fixture
 def install_client(install_source: Callable[[Any], Any]) -> Callable[..., FakeClient]:
-    def install(response: str | Exception = EU_RECORDS, **kwargs: Any) -> FakeClient:
+    def install(
+        response: str | Exception | list[str | Exception] = EU_RECORDS,
+        **kwargs: Any,
+    ) -> FakeClient:
         client = FakeClient(response, **kwargs)
         # Pin the model so the footer assertion tests that the requested model is
         # reported, rather than pinning the package's default value.

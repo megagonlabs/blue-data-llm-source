@@ -1,0 +1,185 @@
+"""Deciding what to ask before anything is asked.
+
+Planning emits a plan and consumes no *result* from execution or reduction: the facade is
+the only coordinator, and nothing here calls into either of them.
+
+It does borrow one thing. ``analysis`` and ``schema`` read a model's JSON reply, and the
+helper that strips a code fence from one lives in ``reduction.parsing``. A second copy
+here would be a second place for that quirk to be handled differently.
+"""
+
+from __future__ import annotations
+
+from blue_data_llm_source.planning.admission import check_plan, plan_fits
+from blue_data_llm_source.planning.analysis import (
+    Analysis,
+    BootstrapAnalysis,
+    DataTask,
+    QueryAnalysisResult,
+    QueryAnalyzer,
+    analysis_from_response,
+    bootstrap_analysis_from_payload,
+    query_analysis_from_payload,
+    query_analysis_from_response,
+    strict_constraints,
+)
+from blue_data_llm_source.planning.bounds import (
+    MODE_FLAT,
+    MODE_PARTITIONED,
+    MODE_ROW_BY_ROW,
+    MODES,
+    PlanLimits,
+    attempts,
+    distribution_node_attempt_limit,
+    execution_calls,
+    initial_v2_logical_calls,
+    initial_v2_provider_attempts,
+    max_nodes,
+    planning_calls,
+    proposal_attempt_limit,
+    worst_case_attempts,
+)
+from blue_data_llm_source.planning.cardinality import (
+    Cardinality,
+    CardinalityEstimate,
+    CardinalityEstimator,
+    bucket_of,
+    cardinality_from_payload,
+    cardinality_from_response,
+    estimate_from_dict,
+    estimate_from_reported,
+    for_sizing,
+    from_reported,
+)
+from blue_data_llm_source.planning.context import (
+    PLANNING_COMBINED,
+    PLANNING_LOCKED_PARALLEL,
+    PLANNING_LOCKED_SEQUENTIAL,
+    PLANNING_ORDERS,
+    PLANNING_RESEARCH_ORDER,
+    PLANNING_SCHEMA_FIRST,
+    PlanningContext,
+    PlanningStage,
+)
+from blue_data_llm_source.planning.coordinator import (
+    PlanningBundle,
+    PlanningFacts,
+    coordinate_plan,
+)
+from blue_data_llm_source.planning.distribution import (
+    DistributionEstimator,
+    DistributionStats,
+    DistributionValue,
+    StrategyCandidate,
+    StrategyEvaluator,
+)
+from blue_data_llm_source.planning.partition_safety import (
+    AppliedPartitionDecision,
+    IdentityPartitionRule,
+    PartitionSafety,
+    evaluate_partition_safety,
+)
+from blue_data_llm_source.planning.plan import PlanSchemaContract
+from blue_data_llm_source.planning.receipt import PLANNING_RECEIPT_VERSION, PlanningReceipt
+from blue_data_llm_source.planning.schedules import build_planning_context
+from blue_data_llm_source.planning.schema import (
+    KEY_FROM_CALLER,
+    KEY_FROM_INFERRED,
+    KEY_FROM_NONE,
+    Schema,
+    SchemaDefinition,
+    SchemaGenerator,
+    deduplication_runs,
+    schema_definition_from_payload,
+    schema_definition_from_response,
+    schema_from_bootstrap,
+    schema_from_response,
+)
+from blue_data_llm_source.planning.transport import (
+    PROMPT_VERSION,
+    WIRE_VERSION,
+    ErrorData,
+    LeafTask,
+    LeafTaskResult,
+    LocalLeafExecutor,
+)
+
+__all__ = [
+    "KEY_FROM_CALLER",
+    "KEY_FROM_INFERRED",
+    "KEY_FROM_NONE",
+    "MODES",
+    "MODE_FLAT",
+    "MODE_PARTITIONED",
+    "MODE_ROW_BY_ROW",
+    "Analysis",
+    "AppliedPartitionDecision",
+    "BootstrapAnalysis",
+    "DataTask",
+    "QueryAnalysisResult",
+    "QueryAnalyzer",
+    "Cardinality",
+    "CardinalityEstimate",
+    "CardinalityEstimator",
+    "DistributionEstimator",
+    "DistributionStats",
+    "DistributionValue",
+    "IdentityPartitionRule",
+    "PlanLimits",
+    "PlanSchemaContract",
+    "PlanningBundle",
+    "PlanningContext",
+    "PlanningFacts",
+    "PlanningReceipt",
+    "PlanningStage",
+    "PartitionSafety",
+    "PLANNING_COMBINED",
+    "PLANNING_LOCKED_PARALLEL",
+    "PLANNING_LOCKED_SEQUENTIAL",
+    "PLANNING_ORDERS",
+    "PLANNING_RESEARCH_ORDER",
+    "PLANNING_SCHEMA_FIRST",
+    "PLANNING_RECEIPT_VERSION",
+    "Schema",
+    "SchemaDefinition",
+    "SchemaGenerator",
+    "StrategyCandidate",
+    "StrategyEvaluator",
+    "analysis_from_response",
+    "bootstrap_analysis_from_payload",
+    "build_planning_context",
+    "check_plan",
+    "attempts",
+    "bucket_of",
+    "deduplication_runs",
+    "distribution_node_attempt_limit",
+    "execution_calls",
+    "estimate_from_dict",
+    "estimate_from_reported",
+    "evaluate_partition_safety",
+    "cardinality_from_payload",
+    "cardinality_from_response",
+    "initial_v2_logical_calls",
+    "initial_v2_provider_attempts",
+    "for_sizing",
+    "from_reported",
+    "max_nodes",
+    "plan_fits",
+    "planning_calls",
+    "proposal_attempt_limit",
+    "coordinate_plan",
+    "schema_from_bootstrap",
+    "schema_definition_from_payload",
+    "schema_definition_from_response",
+    "schema_from_response",
+    "query_analysis_from_payload",
+    "query_analysis_from_response",
+    "strict_constraints",
+    "worst_case_attempts",
+    "WIRE_VERSION",
+    "PROMPT_VERSION",
+    "ErrorData",
+    "LeafTask",
+    "LeafTaskResult",
+    "LocalLeafExecutor",
+]

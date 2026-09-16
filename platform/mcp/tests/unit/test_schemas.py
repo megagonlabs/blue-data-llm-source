@@ -44,6 +44,15 @@ def test_every_property_has_a_type_and_a_description(spec: tools.ToolSpec) -> No
         assert prop.get("description", "").strip(), name
 
 
+def test_plan_descriptions_do_not_understate_nonflat_calls() -> None:
+    mode = tools.PLAN_PROPERTIES["plan.mode"]["description"]
+    continuations = tools.PLAN_PROPERTIES["plan.max_continuations"]["description"]
+
+    assert "bounded planning before leaf extraction" in mode
+    assert "not provider attempts or planning calls" in continuations
+    assert "the call that planned it" not in continuations
+
+
 @pytest.mark.parametrize("spec", SPECS, ids=lambda s: s.name)
 def test_input_schema_survives_json(spec: tools.ToolSpec) -> None:
     assert json.loads(json.dumps(spec.input_schema)) == spec.input_schema
@@ -59,6 +68,20 @@ def test_fetch_schema_declares_the_fields_the_server_accepts() -> None:
         "attrs",
         "context",
         "max_records",
+        "plan.mode",
+        "plan.max_continuations",
+        "plan.max_leaves",
+        "plan.key",
+        "plan.keys",
+        "plan.exact_rows",
+        "plan.max_exclusion_bytes",
+        "plan.partition_key",
+        "plan.max_depth",
+        "plan.max_partitions",
+        "plan.target_rows_per_leaf",
+        "plan.schema_mode",
+        "plan.planning_order",
+        "plan.expose_estimate",
         "limits.max_cost",
         "limits.max_seconds",
         "limits.max_calls",
@@ -281,7 +304,7 @@ def test_the_schemas_declare_only_types_the_validator_enforces() -> None:
     number-typed field would have passed straight through unchecked. A ceiling is exactly
     the field where that matters.
     """
-    enforced = {"string", "integer", "number", "array", "object"}
+    enforced = {"string", "integer", "number", "boolean", "array", "object"}
     declared: set[str] = set()
 
     def walk(node: object) -> None:

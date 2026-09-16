@@ -32,24 +32,84 @@ class LlmSource:
     properties: dict[str, Any]
 
     @property
-    def protocol(self) -> str: ...            # always "llm"
+    def protocol(self) -> str: ...  # always "llm"
     @property
-    def variant(self) -> str: ...             # "openai" unless configured otherwise
+    def variant(self) -> str: ...  # "openai" unless configured otherwise
 
     # Library surface
-    async def afetch(self, query: Any, attrs: Any = None, context: Any = None, max_records: int | None = None, properties: dict[str, Any] | None = None, llm_fn: Any = None, budget: Budget | None = None) -> FetchResult: ...
-    def fetch(self, query: Any, attrs: Any = None, context: Any = None, max_records: int | None = None, properties: dict[str, Any] | None = None, llm_fn: Any = None, budget: Budget | None = None) -> FetchResult: ...
-    def estimate(self, query: Any, attrs: Any = None, context: Any = None, properties: dict[str, Any] | None = None, llm_fn: Any = None) -> Estimate: ...
+    async def afetch(
+        self,
+        query: Any,
+        attrs: Any = None,
+        context: Any = None,
+        max_records: int | None = None,
+        properties: dict[str, Any] | None = None,
+        llm_fn: Any = None,
+        budget: Budget | None = None,
+    ) -> FetchResult: ...
+    def fetch(
+        self,
+        query: Any,
+        attrs: Any = None,
+        context: Any = None,
+        max_records: int | None = None,
+        properties: dict[str, Any] | None = None,
+        llm_fn: Any = None,
+        budget: Budget | None = None,
+    ) -> FetchResult: ...
+    def estimate(
+        self,
+        query: Any,
+        attrs: Any = None,
+        context: Any = None,
+        properties: dict[str, Any] | None = None,
+        llm_fn: Any = None,
+    ) -> Estimate: ...
 
     # Source surface
-    def execute_query(self, query: Any, database: str | None = None, collection: str | None = None, optional_properties: dict[str, Any] | None = None) -> list[dict[str, Any]]: ...
-    def execute_query_nl(self, query: str, database: str | None = None, collection: str | None = None, schema: dict[str, Any] | None = None, llm_fn: Any = None, optional_properties: dict[str, Any] | None = None) -> list[dict[str, Any]]: ...
-    def translate_nl_to_native_query(self, query: str, schema: dict[str, Any] | None, llm_fn: Any) -> str | None: ...
+    def execute_query(
+        self,
+        query: Any,
+        database: str | None = None,
+        collection: str | None = None,
+        optional_properties: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]: ...
+    def execute_query_nl(
+        self,
+        query: str,
+        database: str | None = None,
+        collection: str | None = None,
+        schema: dict[str, Any] | None = None,
+        llm_fn: Any = None,
+        optional_properties: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]: ...
+    def translate_nl_to_native_query(
+        self, query: str, schema: dict[str, Any] | None, llm_fn: Any
+    ) -> str | None: ...
 
     # Orchestrator tool surface, covered in section 1a
-    def get_nl_tools(self, database: str | None = None, collection: str | None = None) -> list[dict[str, Any]]: ...
-    def execute_nl_tool(self, name: str, tool_input: dict[str, Any], database: str | None = None, collection: str | None = None, optional_properties: dict[str, Any] | None = None) -> Any: ...
-    def execute_query_nl_tools(self, query: str, database: str | None = None, collection: str | None = None, llm_fn: Any = None, optional_properties: dict[str, Any] | None = None, max_iterations: int = 10, extra_tools: list[dict[str, Any]] | None = None, extra_tool_fn: Any = None) -> list[dict[str, Any]]: ...
+    def get_nl_tools(
+        self, database: str | None = None, collection: str | None = None
+    ) -> list[dict[str, Any]]: ...
+    def execute_nl_tool(
+        self,
+        name: str,
+        tool_input: dict[str, Any],
+        database: str | None = None,
+        collection: str | None = None,
+        optional_properties: dict[str, Any] | None = None,
+    ) -> Any: ...
+    def execute_query_nl_tools(
+        self,
+        query: str,
+        database: str | None = None,
+        collection: str | None = None,
+        llm_fn: Any = None,
+        optional_properties: dict[str, Any] | None = None,
+        max_iterations: int = 10,
+        extra_tools: list[dict[str, Any]] | None = None,
+        extra_tool_fn: Any = None,
+    ) -> list[dict[str, Any]]: ...
 
     # Metadata surface
     def fetch_metadata(self) -> dict[str, Any]: ...
@@ -58,21 +118,67 @@ class LlmSource:
     def fetch_database_metadata(self, database: str) -> dict[str, Any]: ...
     def fetch_database_schema(self, database: str) -> dict[str, Any]: ...
     def fetch_database_collections(self, database: str) -> list[str]: ...
-    def fetch_database_collection_metadata(self, database: str, collection: str) -> dict[str, Any]: ...
-    def fetch_database_collection_entities(self, database: str, collection: str) -> dict[str, Any]: ...
-    def fetch_database_collection_relations(self, database: str, collection: str) -> dict[str, Any]: ...
+    def fetch_database_collection_metadata(
+        self, database: str, collection: str
+    ) -> dict[str, Any]: ...
+    def fetch_database_collection_entities(
+        self, database: str, collection: str
+    ) -> dict[str, Any]: ...
+    def fetch_database_collection_relations(
+        self, database: str, collection: str
+    ) -> dict[str, Any]: ...
     def fetch_source_stats(self) -> dict[str, Any] | None: ...
     def fetch_database_stats(self, database: str) -> dict[str, Any] | None: ...
-    def fetch_collection_stats(self, database: str, collection: str, entities: Any = None, relations: Any = None, sample_limit: int | None = None) -> dict[str, Any] | None: ...
-    def fetch_entity_stats(self, database: str, collection: str, entity: str) -> dict[str, Any] | None: ...
-    def fetch_property_stats(self, database: str, collection: str, entity: str, property_name: str, sample_limit: int | None = None) -> dict[str, Any] | None: ...
+    def fetch_collection_stats(
+        self,
+        database: str,
+        collection: str,
+        entities: Any = None,
+        relations: Any = None,
+        sample_limit: int | None = None,
+    ) -> dict[str, Any] | None: ...
+    def fetch_entity_stats(
+        self, database: str, collection: str, entity: str
+    ) -> dict[str, Any] | None: ...
+    def fetch_property_stats(
+        self,
+        database: str,
+        collection: str,
+        entity: str,
+        property_name: str,
+        sample_limit: int | None = None,
+    ) -> dict[str, Any] | None: ...
 
     # Write surface
-    def create_database(self, database: str, properties: dict[str, Any] | None = None) -> dict[str, Any]: ...
-    def create_database_collection(self, database: str, collection: str, properties: dict[str, Any] | None = None) -> dict[str, Any]: ...
-    def create_database_collection_entity(self, database: str, collection: str, entity: str, properties: dict[str, Any] | None = None) -> dict[str, Any]: ...
-    def create_database_collection_relation(self, database: str, collection: str, relation: str, properties: dict[str, Any] | None = None) -> dict[str, Any]: ...
-    def import_data(self, source: Any, database: str = "default", collection: str = "default", entity: str | None = None, mode: str = "append", options: dict[str, Any] | None = None) -> dict[str, Any]: ...
+    def create_database(
+        self, database: str, properties: dict[str, Any] | None = None
+    ) -> dict[str, Any]: ...
+    def create_database_collection(
+        self, database: str, collection: str, properties: dict[str, Any] | None = None
+    ) -> dict[str, Any]: ...
+    def create_database_collection_entity(
+        self,
+        database: str,
+        collection: str,
+        entity: str,
+        properties: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
+    def create_database_collection_relation(
+        self,
+        database: str,
+        collection: str,
+        relation: str,
+        properties: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
+    def import_data(
+        self,
+        source: Any,
+        database: str = "default",
+        collection: str = "default",
+        entity: str | None = None,
+        mode: str = "append",
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
 
     # Connection
     def connect(self) -> dict[str, Any]: ...
@@ -81,7 +187,7 @@ class LlmSource:
 
 Every statistics method returns `None`, because a model has no row counts. Every write method returns `{}`, because a model has nothing to write to; they exist so that a registry walking the full source surface reaches a defined method rather than an `AttributeError`.
 
-`fetch` raises `RuntimeError` when called from inside a running event loop, directing the caller to `afetch`. Both annotate `query` as `Any` rather than `str`, because handling an absent or wrong-typed request is part of the contract: an absent one is answered with an empty result, a wrong-typed one with a readable `QueryError`. Annotating `str` would describe a narrower contract than the one that ships.
+`fetch` raises `ConfigError` when called from inside a running event loop, directing the caller to `afetch`. Both annotate `query` as `Any` rather than `str`, because handling an absent or wrong-typed request is part of the contract: an absent one is answered with an empty result, a wrong-typed one with a readable `QueryError`. Annotating `str` would describe a narrower contract than the one that ships.
 
 ### Request arguments
 
@@ -134,10 +240,37 @@ Properties may be set on the instance or per call, with per-call values winning.
 | `limits.max_calls` | `int` | unlimited | Provider call ceiling, counted per attempt including retries; requires a client declaring `Capability.CALLS` |
 | `budget` | `Budget` | set per call | Reserved. The source writes the run's budget here on every call, so a caller setting it is overwritten |
 | `usage_sink` | `list[Usage]` | set per call | Reserved. The source writes a fresh list here on every call and reads this call's token counts and model name from it alone |
+| `plan.mode` | `str` | `flat` | `flat`, `partitioned`, or `row_by_row` |
+| `plan.max_continuations` | `int` | `0` | Additional extraction asks permitted per leaf |
+| `plan.max_leaves` | `int` | `24` | Maximum number of terminal plan slices |
+| `plan.partition_key` | `str` | none | Preferred root partition dimension |
+| `plan.max_depth` | `int` | `2` | Maximum partition depth; zero disables subdivision |
+| `plan.max_partitions` | `int` | `4` | Maximum children in one accepted partition proposal |
+| `plan.target_rows_per_leaf` | `int` | `50` | Soft estimate threshold used to decide whether a descendant is eligible to split |
+| `plan.schema_mode` | `str` | `preserve` | `preserve` or `enrich` |
+| `plan.planning_order` | `str` | `planning.schema_first` | One of the five planning schedules described below |
+| `plan.expose_estimate` | `bool` | `True` | Whether extraction prompts include the soft estimate; planning facts and task transport retain it either way |
+| `plan.key` | `str` | none | Compatibility alias for a single primary key |
+| `plan.keys` | sequence of `str` | empty | Ordered fields that jointly identify one record |
+| `plan.exact_rows` | `int` | none | Hard target when the plan has one leaf; a multi-leaf plan does not apply it and reports `exact_rows_not_leaf_bound` |
+| `plan.max_exclusion_bytes` | `int` | `16384` | Encoded byte cap for whole-key exclusions in a continuation prompt |
+| `plan.max_excluded_keys` | `int` | `50` | Direct-Python-only count cap for whole-key exclusions; CLI and MCP use this default |
+| `plan.distribution_search` | `bool` | `False` | Direct-Python-only opt-in for rule-backed distribution selection; requires `plan.mode='partitioned'` |
+| `plan.identity_partitions` | list | empty | Direct-Python-only closed rule mappings from source configuration or a per-call declaration |
+| `plan.max_strategy_candidates` | `int` | `5` | Direct-Python-only distribution candidate bound; at least `1` when distribution search is enabled |
 
 An `llm.*` key outside the accepted set raises `ConfigError` listing the accepted ones, and so does a `limits.*` key outside the set above, along with the near misses `limit.*` and a bare `limits`. Every `limits.*` value is validated as the ceiling is built: a wrong type, a `bool`, a negative number, or a non-finite number raises `ConfigError` naming the field, because a `NaN` ceiling would read as configured and enforce nothing.
 
 The three ceilings marked as requiring a capability are refused with a `ConfigError` when the resolved client does not declare that axis, because reporting a ceiling that is not holding anything is worse than declining to hold it. `DefaultLlmClient` declares all four axes. `FunctionClient`, which wraps an `llm_fn`, declares rows alone, so a call, cost, or time ceiling on a run that supplies `llm_fn` is refused rather than settled at zero or counted against an invocation that may be any number of provider calls.
+
+`plan.planning_order` accepts exactly `planning.research_order`, `planning.schema_first`, `planning.locked_sequential`, `planning.locked_parallel`, and `planning.combined`. Research order runs analysis, cardinality, and schema. Schema first runs analysis, schema, and cardinality and is the `LlmSource` default. Both locked schedules require a non-empty caller schema and ordered `plan.keys`; they run analysis and cardinality from the same independent inputs and skip schema generation. The parallel form checks aggregate budget headroom before starting either sibling, but the check is not a reservation. Combined retains the compatible one-call bootstrap. A direct `coordinate_plan` call that omits this argument keeps combined behavior.
+
+Distribution search requires explicit ordered `plan.keys` and at least one root-applicable finite
+identity rule. Every rule's `ordered_primary_keys` must exactly match the keys, and its `dimension`
+must be one of them. Source rules use provenance `source_configuration`; per-call rules use
+`caller_declared` and replace the source list. Unknown fields, unsupported versions or kinds,
+malformed scopes, empty or duplicate domains, key mismatches, and unsupported provenance fail before
+provider contact. All three distribution-search properties are removed from the provider property map.
 
 `limits.max_cost` has one further requirement, since a ceiling needs a number to claim. The bound is the prompt's length in UTF-8 bytes plus a framing allowance at the model's published input rate, plus the whole `llm.max_tokens` allowance at its output rate, and it is refused with a `ConfigError` when the model has no published price and none was supplied, or when `llm.max_tokens` is not a finite positive number. The floor of that bound is the output allowance alone, which for the default `gpt-4o` and 4096 tokens is about $0.041, so a smaller ceiling refuses every call before one is made. `estimate` reports the same bound for a request in hand, which is how a caller sizes a ceiling against the request it is going to bound rather than against an example.
 
@@ -149,6 +282,22 @@ class Attr:
     name: str
     type: str | None = None
 
+
+JsonScalar = str | int | float | bool
+
+
+@dataclass(frozen=True)
+class Exact:
+    value: JsonScalar
+
+
+@dataclass(frozen=True)
+class OneOf:
+    values: tuple[JsonScalar, ...]
+
+Constraint = Exact | OneOf
+
+
 @dataclass
 class Usage:
     model: str = ""
@@ -157,7 +306,9 @@ class Usage:
     cost: float = 0.0
     latency_seconds: float = 0.0
     cache_hit: bool = False
+    finish_reason: str | None = None
     cost_known: bool = True
+
 
 @dataclass
 class ExecMeta:
@@ -169,7 +320,17 @@ class ExecMeta:
     cost: float = 0.0
     latency_seconds: float = 0.0
     cache_hits: int = 0
+    gaps: list[str] = ...
+    asked: str | None = None
+    record_origins: list[list[str]] = ...
     requested_attrs: list[str] = ...
+    row_estimate: int | None = None
+    cardinality_estimate: dict[str, object] | None = None
+    primary_keys: list[str] = ...
+    observed_key_count: int = 0
+    marginal_key_yields: list[int] = ...
+    incomplete_key_records: int = 0
+    normalization_collisions: list[dict[str, Any]] = ...
     observed_keys: list[str] = ...
     unmapped_keys: list[str] = ...
     remapped_keys: dict[str, str] = ...
@@ -177,13 +338,16 @@ class ExecMeta:
     key_collisions: list[dict[str, Any]] = ...
     unchecked_types: list[str] = ...
     truncated_to: int | None = None
+    stop_reasons: list[str] = ...
     stopped_by: str | None = None
     accounting_known: bool = True
+
 
 @dataclass
 class FetchResult:
     records: list[dict[str, Any]] = ...
     meta: ExecMeta = ...
+
 
 @dataclass
 class Estimate:
@@ -196,6 +360,26 @@ class Estimate:
     max_attempts: int = 1
     max_cost_per_attempt: float | None = None
 ```
+
+`FetchResult` keeps exactly those two dataclass fields. Direct Python callers can read its optional
+`planning_receipt` property or attach one with `with_planning_receipt`. `to_dict()` adds the receipt
+only when present; results without distribution search retain the two-key serialization.
+
+An `IdentityPartitionRule` serializes exactly `dimension`, `ordered_primary_keys`, `kind`,
+`allowed_domain`, `parent_scope`, `provenance`, and `contract_version`. Its kind is
+`finite_domain`, its version is `identity-partition-rule-1`, and its domain contains nonempty finite
+JSON scalar values. A `PlanningReceipt` serializes exactly `contract_version`,
+`configured_rule_digests`, `planning_facts`, and `fetch_plan`; its version is
+`planning-receipt-1`. The receipt checks agreement among those structures, not authenticity,
+factual truth, completeness, or quality.
+
+`cardinality_estimate` carries the accepted non-flat bootstrap estimate as `expected`, `lower`, `upper`, `row_unit`, `source`, `parse_status`, and `diagnostics`; `row_estimate` is its `expected` compatibility value. `primary_keys` lists the ordered identifying attributes used by execution and reduction. `observed_key_count` counts distinct complete keys in the final returned records, after reduction, deduplication, and row capping. `marginal_key_yields` gives the new normalized key identities from each extraction attempt in leaf order, or new exact records when no primary key exists. `incomplete_key_records` counts distinct per-leaf records missing at least one primary-key value. Each entry in `normalization_collisions` contains `primary_keys`, `kept`, and `collided` for two per-leaf key spellings that normalize to the same identity. The estimate and observed counts do not state that the result is complete.
+
+`Exact` and `OneOf` are how a plan says what one part filters on. A part narrowed to a single value carries `Exact`; a part covering several alternatives carries `OneOf`. Values use the finite JSON scalar types: string, integer, finite number, and boolean. Null, non-finite numbers, and empty or whitespace-only strings are rejected. They are tagged rather than held as an untagged scalar or list because an absent-minded `join` can ask a different question: joined on `", "`, the alternatives `['A, B', 'C']` and `['A', 'B', 'C']` render identically, so a request about one region whose name contains a comma and a request about two regions become the same prompt, and the result says nothing about which was answered. With the tag, that mistake stops type-checking.
+
+A caller's own one-element list stays a `OneOf`. Writing a list of one says alternatives were expected, which is a different statement from naming a value outright, and collapsing it would discard the only signal that says so. A part the planner derived from a single value carries `Exact`, because there the count is the plan's own arithmetic and no alternative was dropped.
+
+The claim a split makes about its filters is exactly this: **each distinct enumerated alternative is encoded in exactly one part's disjunction.** Not that the enumeration is exhaustive, not that the alternatives are disjoint — values can denote overlapping categories and the enumeration itself comes from a model — and not that the model will honour the filter it was given.
 
 `afetch` and `fetch` return a `FetchResult`, which supports `len()` and iteration over its records. `execute_query` and `execute_query_nl` return the record list alone, because the surface they match returns records.
 
@@ -212,11 +396,16 @@ An empty result is a valid answer from this source rather than a failure. `ExecM
 | `model_returned_none` | The model returned no records at all |
 | `filtered_to_empty` | The model returned records and reduction left none, which happens when no record answered any requested attribute |
 | `stopped_by_limit` | A ceiling ended the run and left no usable result, whether it refused the attempt before the provider was reached, emptied the result through the row cap, or was found crossed once the work was done |
+| `partial` | Extraction was answered but some work was interrupted, including a failed split leaf or a late continuation failure after records were parsed |
 | `truncated` | The row ceiling cut the result short and records remain |
 
 The field rides on `FetchResult`, so it is available through `fetch` and `afetch` and not through `execute_query` or `execute_query_nl`, which return `list[dict]` by the contract of the surface they match. A caller on the source surface that needs the reason for an empty list uses the library surface instead.
 
-`Outcome` is defined in `blue_data_llm_source.types` and re-exported from the package root. The precedence is one ordered rule in `source.decide_outcome`, and a `stopped_by` on any axis outranks what the run produced: the row cap yields `truncated` when records remain and `stopped_by_limit` when none do, and every other axis yields `stopped_by_limit`. `filtered_to_empty` and `model_returned_none` therefore describe runs where no ceiling fired at all.
+`Outcome` is defined in `blue_data_llm_source.types` and re-exported from the package root. Partial interruption with an answered response reports `partial`, with simultaneous limits retained in `stop_reasons`. Otherwise a non-row stop reports `stopped_by_limit`; a row-only trim reports `truncated` when records remain. `filtered_to_empty` and `model_returned_none` describe runs where no stop fired.
+
+`partial` outranks all of them, and the reason is which facts have somewhere else to live. A continuation cap has `stopped_by`; a row trim has `truncated_to`; a part that never came back has nowhere but `outcome`. So `outcome` goes to the fact that would otherwise be erased, and the other two are read where they already are — a run that lost a part *and* hit a cap reports `outcome=partial` with `stopped_by` still naming the cap, and both facts survive. That does not invert the rule above: "a ceiling outranks what the run produced" is about the shape of an answer, and `partial` is not a claim about shape.
+
+`stopped_by` may be `None` on a `partial` run. It names the axis a caller can raise, and a provider call that raised is not one; the failure is in `meta.gaps`.
 
 ### Type mismatches
 
@@ -255,7 +444,7 @@ All inherit from `LlmSourceError`, defined in `types.py`.
 | `ParseError` | A model response cannot be read as a list of records |
 | `BudgetExceeded` | A configured limit would be crossed by the next call |
 
-`BudgetExceeded` raised during the fetch path is caught and converted into an empty result whose `meta.stopped_by` names the axis and whose `meta.outcome` is `stopped_by_limit`. An error already in the hierarchy reaches the caller unchanged. Anything else escaping `fetch`, `afetch` or `estimate` is wrapped in `LlmSourceError` with the original as `__cause__`, which is what makes `except LlmSourceError` sufficient. A `BaseException` is deliberately not caught.
+`BudgetExceeded` is converted into a result whose stop metadata names the axis; records parsed before a later refusal remain available. A known package error from a run with no answered response reaches the caller with its original message. Other ordinary exceptions escaping the public boundary are wrapped in `LlmSourceError` with the original as `__cause__`. A `BaseException` is not caught.
 
 ---
 
@@ -337,6 +526,70 @@ The low-level server is used rather than the schema-deriving one, because the to
         "minimum": 1,
         "description": "Stop after this many records."
       },
+      "plan.mode": {
+        "type": "string",
+        "description": "How the ask is decomposed: flat, partitioned, or row_by_row. flat is the one-completion default; non-flat modes add bounded planning before leaf extraction."
+      },
+      "plan.max_continuations": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "How many times a part may ask again for records it did not get. Zero by default, so each part asks once. It bounds asks per part, not provider attempts or planning calls; an ask may be retried up to limits.max_retries times."
+      },
+      "plan.max_leaves": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "The most parts a plan may hold; the term that bounds its worst cost. Values past it are grouped several to a part rather than dropped."
+      },
+      "plan.key": {
+        "type": "string",
+        "description": "The attribute identifying a record, used to merge duplicates returned by different parts. Must be one of the requested attributes. Without it records from different parts are not merged, though exact whole-record duplicates are still removed."
+      },
+      "plan.partition_key": {
+        "type": "string",
+        "description": "Preferred root split dimension. Descendants may choose another dimension and cannot repeat an ancestor split."
+      },
+      "plan.max_depth": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Deepest partition level. Zero disables subdivision. Default: 2."
+      },
+      "plan.max_partitions": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Most children proposed for one node. A value below two leaves it unsplit. Default: 4."
+      },
+      "plan.target_rows_per_leaf": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Uncertain row-count hint above which a descendant may split again. Default: 50."
+      },
+      "plan.schema_mode": {
+        "type": "string",
+        "description": "preserve keeps caller attributes; enrich lets non-flat planning append inferred attributes."
+      },
+      "plan.planning_order": {
+        "type": "string",
+        "description": "Planning fact schedule: planning.research_order, planning.schema_first, planning.locked_sequential, planning.locked_parallel, or planning.combined."
+      },
+      "plan.expose_estimate": {
+        "type": "boolean",
+        "description": "Whether extraction prompts include the planner's soft row estimate."
+      },
+      "plan.keys": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Ordered fields that jointly identify one record."
+      },
+      "plan.exact_rows": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Single-leaf hard target; a multi-leaf plan reports exact_rows_not_leaf_bound instead."
+      },
+      "plan.max_exclusion_bytes": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Most encoded bytes of whole-key exclusions in one continuation."
+      },
       "limits.max_cost": {
         "type": "number",
         "minimum": 0,
@@ -357,11 +610,16 @@ The low-level server is used rather than the schema-deriving one, because the to
 }
 ```
 
-The three ceilings are the library's own property names, unrenamed. They are passed through as the call's properties, which is the same route `optional_properties` takes on the query surface and `--limit-*` takes on the command line: merged over the source's properties for this call and not written back, so one agent's ceiling cannot bind the next call over the same server. A key this layer did not recognise would never reach the library's own limit validation, so a translated name would have been dropped in silence rather than refused — which is why there is no translation.
+The fourteen plan settings and the three ceilings are the library's own property names, unrenamed. They are passed through as the call's properties, which is the same route `optional_properties` takes on the query surface and `--limit-*` takes on the command line: merged over the source's properties for this call and not written back, so one agent's ceiling cannot bind the next call over the same server. A key this layer did not recognise would never reach the library's own limit validation, so a translated name would have been dropped in silence rather than refused.
 
-**Returns:** JSON text content, `{"records": [...], "meta": {...}}`. The meta object always carries `outcome`, `model`, `calls`, `prompt_tokens`, `completion_tokens`, `cost`, and `elapsed_seconds`. Two keys are sparse: `accounting_known` appears only when it is false, so its absence means the accounting is known, and `unchecked_types` appears only when the request declared a type this library cannot check. Both are present whether or not verbose output was asked for, because each is a warning rather than detail. It additionally carries `type_mismatches`, `unmapped_keys`, `remapped_keys`, `key_collisions`, `truncated_to`, and `stopped_by` when there is something to report.
+**Returns:** JSON text content, `{"records": [...], "meta": {...}}`. The meta object always carries `outcome`, accounting fields, `gaps`, `stop_reasons`, `requested_attrs`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, and `incomplete_key_records`. `normalization_collisions` appears when non-empty. The cardinality estimate is accepted non-flat bootstrap evidence or JSON `null`; neither it nor the observed-key fields is a completeness measure. `gaps` contains operational diagnostics and an empty list means only that none fired. `stop_reasons` is the ordered list of simultaneous extraction limits; `stopped_by`, when present, is its first member. `accounting_known` appears only when false, and format diagnostics, `truncated_to`, `record_origins`, and `asked` appear when applicable.
 
-An empty result is not an error. A budget stop returns an empty record list with `outcome` of `stopped_by_limit` and `stopped_by` naming the limit. An empty or whitespace `query` returns an empty record list with `outcome` of `empty_query`, and no model is called. An agent can therefore tell a ceiling, an empty ask, and a model that knows nothing apart from each other and from a failure, without parsing a message.
+An empty result is not an error. A budget refusal before any extraction answer returns no records
+with `outcome` of `stopped_by_limit`; a later refusal after an extraction answered retains those
+records with `outcome` of `partial`. The stop fields name the limit in both cases. An empty or
+whitespace `query` returns no records with `outcome` of `empty_query`, and no model is called. An
+agent can distinguish those states from a model that knows nothing and from a failure without
+parsing a message.
 
 A ceiling reaches the ledger the same way one configured on a source does: claimed before the provider is contacted, so a call that would cross one is refused rather than accounted for afterwards. `max_records` is not one of them and is not counted as one — it caps the rows in the result, not the spend, which is why it reports `truncated` rather than `stopped_by_limit`.
 
@@ -376,7 +634,7 @@ The input schema is the whole of what this tool exposes, and the ceilings in it 
 ```json
 {
   "name": "llm_estimate",
-  "description": "Bound what one llm_fetch of the same request could cost, without calling the model. Returns an upper bound on the whole fetch, retries included.",
+  "description": "Bound what one flat llm_fetch of the same request could cost, without calling the model. Returns an upper bound on the whole fetch, retries included. Reads no plan.* setting, so a split request can cost several times this figure.",
   "inputSchema": {
     "type": "object",
     "required": [],
@@ -467,7 +725,11 @@ Neither cost is rounded, unlike the spend in a fetch's `meta`. That one is a mea
 }
 ```
 
-**Returns:** JSON text content, `{"protocol": "llm", "variant": "openai", "version": "1.1.1"}`.
+**Returns:** JSON text content, `{"protocol": "llm", "variant": "openai", "version": "1.2.0"}`.
+
+The MCP schema exposes the same 14 standard planning controls as the CLI. It intentionally omits the
+three distribution-search properties, and `llm_fetch` does not return the direct-Python planning receipt in this
+release.
 
 Requesting a tool that does not exist returns `UnknownTool` and names the ones that do. Nothing in either tool exposes a credential, a provider endpoint, or the contents of a configured property beyond protocol, variant, and version.
 
@@ -485,7 +747,7 @@ llm [--verbose] COMMAND
 
 | Option | Description |
 |--------|-------------|
-| `--verbose` | Adds the keys the model returned that no requested attribute matched, the keys it renamed on the way in, the run's outcome, the limit that stopped it, and one line per value that would not coerce to its declared type |
+| `--verbose` | Adds key alignment, type mismatch, and collision details. Gaps and stop reasons are visible without it |
 
 `--verbose` is on the group rather than the command, so it precedes the subcommand. The outcome line always appears under `--verbose`, since every run has one. The others appear only when there is something to report.
 
@@ -493,7 +755,15 @@ llm [--verbose] COMMAND
 
 ```
 llm fetch QUERY [--attr NAME[:TYPE]]... [--context TEXT] [--max-records N]
-                [--model MODEL] [--limit-cost AMOUNT] [--limit-seconds N] [--limit-calls N]
+                [--model MODEL] [--effort low|medium|high]
+                [--limit-cost AMOUNT] [--limit-seconds N] [--limit-calls N]
+                [--plan-mode MODE] [--plan-continuations N] [--plan-key NAME]
+                [--plan-keys NAME]... [--plan-exact-rows N] [--plan-exclusion-bytes N]
+                [--plan-leaves N] [--plan-partition-key NAME]
+                [--plan-depth N] [--plan-partitions N] [--plan-target-rows N]
+                [--plan-schema-mode preserve|enrich]
+                [--plan-planning-order ORDER]
+                [--plan-expose-estimate|--no-plan-expose-estimate]
                 [--format table|json]
 ```
 
@@ -505,7 +775,22 @@ llm fetch QUERY [--attr NAME[:TYPE]]... [--context TEXT] [--max-records N]
 | `--max-records N` | Stop after this many records |
 | `--model MODEL` | Model to call |
 | `--max-tokens N` | Output allowance for the call. The lever on the cost floor, since a cost ceiling's floor is this allowance priced at the model's output rate |
+| `--effort LEVEL` | Shorthand for `plan.max_continuations`: `low`, `medium`, and `high` allow up to one, two, or three logical extraction asks per part. Explicit `--plan-continuations` wins. Flat `medium`/`high` requires a requested `--plan-key` or `--plan-keys` and fails before source construction when none is supplied; non-flat planning can infer one. The allowance bounds asks, while retries can add provider attempts |
 | `--rate-limit N` | Refused at the front door by Click as a bad parameter, exit 2, with a message naming the deferral. Deliberately a usage error rather than a `ConfigError`: the flag is rejected before a source is built, so nothing is configured to be wrong |
+| `--plan-mode MODE` | How the ask is decomposed: `flat` (default), `partitioned`, or `row_by_row`. Non-flat modes run the selected fact schedule and may add bounded proposal, distribution, or entity-enumeration calls before leaf extraction; no mode is chosen automatically |
+| `--plan-continuations N` | How many times a part may ask again for records it did not get. `0` by default, so each part asks once. It bounds asks per part rather than provider attempts or planning calls; an ask may be retried up to `limits.max_retries` times |
+| `--plan-key NAME` | Attribute identifying a record, so parts returning the same record merge rather than duplicating it. Must be one of the requested attributes |
+| `--plan-keys NAME` | Ordered primary-key field; repeat in identity order for a composite key |
+| `--plan-exact-rows N` | Hard target for a single-leaf plan; a multi-leaf plan reports `exact_rows_not_leaf_bound` instead |
+| `--plan-exclusion-bytes N` | Encoded byte cap for whole-key exclusions in a continuation prompt |
+| `--plan-leaves N` | Most terminal slices. An expansion that cannot fit is rejected as a whole; row-by-row keeps the intact batch slice rather than executing a prefix |
+| `--plan-partition-key NAME` | Preferred root split dimension; descendants may choose another dimension |
+| `--plan-depth N` | Deepest partition level. Default `2`; `0` disables subdivision |
+| `--plan-partitions N` | Most children proposed for one node. Default `4` |
+| `--plan-target-rows N` | Uncertain row-count hint for descendant splitting. Default `50` |
+| `--plan-schema-mode MODE` | `preserve` keeps caller attributes; `enrich` lets non-flat planning append inferred ones |
+| `--plan-planning-order ORDER` | One of the five closed planning schedules. `LlmSource` defaults to `planning.schema_first` |
+| `--plan-expose-estimate`, `--no-plan-expose-estimate` | Include or omit the soft estimate in extraction prompts. The default is to include it |
 | `--limit-cost`, `--limit-seconds`, `--limit-calls` | Per-run ceilings on the cost, time, and call axes, claimed before the call rather than reported after it. `--limit-cost` must exceed the output allowance at the model's output rate, which for the default model and 4096 output tokens is about $0.041, or every call is refused |
 | `--format` | `table` (default, via Rich) or `json` |
 
@@ -523,7 +808,7 @@ $ llm fetch "the member states of the European Union" --attr country --attr acce
 2 records | model gpt-4o | 1 call | 46 tokens | $0.0012 | 0.31s
 ```
 
-Under `--format json` the same run prints one object with `records` and `meta`, for piping. That `meta` always carries `outcome`, `model`, `calls`, `prompt_tokens`, `completion_tokens`, `cost`, and `elapsed_seconds`. Two keys are sparse and appear without `--verbose`, because each is a warning rather than detail: `accounting_known` only when it is false, so its absence means the accounting is known, and `unchecked_types` only when the request declared a type this library cannot check. `--verbose` adds `unmapped_keys`, `remapped_keys`, `stopped_by`, `type_mismatches`, and `key_collisions` when there is something to report.
+Under `--format json` the same run prints one object with `records` and `meta`, for piping. That `meta` always carries `outcome`, accounting fields, `gaps`, `stop_reasons`, `requested_attrs`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, and `incomplete_key_records`. `normalization_collisions` appears when non-empty. The table footer prints the point row estimate or `unknown`. `stopped_by` appears whenever there is a stop and is not gated on `--verbose`. Attribution, rewrite, and accounting warnings also appear without the flag; verbose adds alignment, mismatch, and collision detail.
 
 ### `llm info`
 
@@ -549,10 +834,14 @@ Every library error is caught and printed to stderr as one line. No traceback re
 | 5 | `TransportError` |
 | 6 | `ParseError` |
 | 7 | A ceiling ended the run: `meta.outcome` is `stopped_by_limit` and `meta.stopped_by` names the axis. A row cap is not a failure and stays 0, since it leaves a usable result |
+| 8 | Extraction returned an answered result after some work was interrupted; gaps and stop reasons carry the details |
 
 An empty query is not one of these. It exits 0 and prints `(no records)`, with `outcome: empty_query` under `--verbose`, because the library treats an empty ask as an empty answer rather than an error.
 
 An absent provider credential is not code 4. The library never reads a credential, so a missing one is not a setting it can find missing; the provider SDK reports it as a call that failed, which becomes a `TransportError` and exits 5. Code 4 covers the configuration this package does check, such as an unknown override, an invalid ceiling, or a ceiling the resolved client cannot hold.
 
-Under `--format json` the output is not clean JSON when the default client is in use. The provider library writes its own banners to standard output on some paths, and they land in the same stream as the JSON object, so a pipe into a JSON reader can fail on text this package did not write. Redirecting standard error does not help, because the banners are on standard output.
-
+During a fetch, the CLI redirects interpreter-level writes through `sys.stdout` to standard error.
+This covers the known provider banners, so normal successful `--format json` output is one JSON
+object and handled failures leave standard output empty. Provider diagnostics and normalized errors
+remain on standard error. Direct writes to file descriptor 1 and writes made after fetch returns are
+outside the redirect.

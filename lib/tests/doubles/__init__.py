@@ -17,6 +17,7 @@ from tests.doubles.provider import (
     install_litellm,
     stream_chunks,
 )
+from tests.doubles.truncation import TruncatingModel, cut_inside_record
 
 __all__ = [
     "FailingClient",
@@ -26,7 +27,9 @@ __all__ = [
     "OfflineRecord",
     "OfflineViolation",
     "ScriptedClient",
+    "TruncatingModel",
     "chat_payload",
+    "cut_inside_record",
     "install_litellm",
     "install_network_guard",
     "install_offline_guard",

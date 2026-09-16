@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from typing import Any, cast
@@ -1078,3 +1079,34 @@ def test_a_misspelled_ceiling_is_refused_on_every_tool_not_only_the_one_that_spe
     for name, tool_input in TOOL_INPUTS.items():
         with pytest.raises(ConfigError, match="unknown limit"):
             source.execute_nl_tool(name, tool_input, optional_properties={"limits.max_cst": 1})
+
+
+def _empty(_prompt: str) -> str:
+    return "[]"
+
+
+class TestSynchronousEntryInsideAnEventLoop:
+    """`fetch` refuses inside a running loop, and the refusal is catchable as ours.
+
+    The documented guarantee is that nothing but ``LlmSourceError`` escapes ``fetch``,
+    ``afetch`` or ``estimate``. A bare ``RuntimeError`` here broke that for the one case a
+    caller is most likely to hit while porting sync code into an async service, and no test
+    covered it, which is why it survived.
+    """
+
+    def test_the_refusal_is_part_of_the_error_hierarchy(self) -> None:
+        async def call_it() -> Exception | None:
+            try:
+                LlmSource().fetch("anything", llm_fn=_empty)
+            except Exception as exc:  # noqa: BLE001 — the type is what is under test
+                return exc
+            return None
+
+        raised = asyncio.run(call_it())
+        assert raised is not None, "fetch must refuse inside a running loop"
+        assert isinstance(raised, LlmSourceError)
+        assert "afetch" in str(raised), "the message must name the async form to use"
+
+    def test_it_does_not_refuse_outside_a_loop(self) -> None:
+        result = LlmSource().fetch("anything", llm_fn=_empty)
+        assert result.records == []

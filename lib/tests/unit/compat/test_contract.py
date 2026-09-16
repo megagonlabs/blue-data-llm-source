@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import inspect
 import re
+import types
 from collections.abc import Callable
+from typing import Union, get_args, get_origin
 
 import pytest
 from blue_data.source.source import DataSource  # pyright: ignore[reportMissingTypeStubs]
@@ -78,6 +80,17 @@ def _erase(annotation: object) -> str | None:
     """
     if annotation is inspect.Signature.empty:
         return None
+    origin = get_origin(annotation)
+    if origin is types.UnionType or origin is Union:
+        members: list[str] = []
+        for member in get_args(annotation):
+            erased = "None" if member is type(None) else _erase(member)
+            if erased is None:
+                raise AssertionError(f"union member has no annotation: {member!r}")
+            members.append(erased)
+        return "|".join(members)
+    if origin is not None:
+        annotation = origin
     text = (
         annotation
         if isinstance(annotation, str)
@@ -91,6 +104,18 @@ def _erase(annotation: object) -> str | None:
             break
         text = new
     return text
+
+
+@pytest.mark.parametrize(
+    ("annotation", "expected"),
+    [
+        (str | None, "str|None"),
+        (dict[str, object], "dict"),
+        (list[dict[str, object]], "list"),
+    ],
+)
+def test_annotation_erasure_is_interpreter_stable(annotation: object, expected: str) -> None:
+    assert _erase(annotation) == expected
 
 
 # Places where this source is deliberately more or less specific than upstream, each with

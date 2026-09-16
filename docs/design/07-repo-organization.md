@@ -2,6 +2,9 @@
 
 ## Directory Tree
 
+This tree names the shipped packages and the files that define their main boundaries. It is a
+navigation map, not an exhaustive inventory of every test module.
+
 ```
 blue-data-llm-source/
 │
@@ -33,6 +36,27 @@ blue-data-llm-source/
 │   │       ├── prompts/
 │   │       │   └── __init__.py             # every prompt, plus rendering and building
 │   │       │
+│   │       ├── planning/                   # immutable facts, schedules, task trees, rule safety
+│   │       │   ├── __init__.py             # public planning exports
+│   │       │   ├── admission.py            # look-ahead checks before optional planning calls
+│   │       │   ├── analysis.py             # query analysis and typed constraints
+│   │       │   ├── bounds.py               # planning limits and worst-case counts
+│   │       │   ├── cardinality.py          # cardinality evidence and parsing
+│   │       │   ├── context.py              # immutable planning context and schedule names
+│   │       │   ├── coordinator.py          # bounded plan coordination and planning facts
+│   │       │   ├── distribution.py         # candidate partition strategies
+│   │       │   ├── partition_safety.py     # finite identity rules and accepted decisions
+│   │       │   ├── plan.py                 # FetchPlan and its versioned wire form
+│   │       │   ├── receipt.py              # closed optional distribution-planning receipt
+│   │       │   ├── schedules.py            # the five closed planning schedules
+│   │       │   ├── schema.py               # schema and ordered primary-key contracts
+│   │       │   └── transport.py            # versioned LeafTask execution DTO
+│   │       │
+│   │       ├── execution/                  # accepted plan to bounded extraction
+│   │       │   ├── __init__.py             # public execution exports
+│   │       │   ├── local.py                # LeafTask execution adapter
+│   │       │   └── mapper.py               # concurrent leaves and continuation loop
+│   │       │
 │   │       ├── llm/                        # the model boundary
 │   │       │   ├── __init__.py
 │   │       │   ├── budget.py               # Limits, Budget, Reservation — four-axis enforcement
@@ -48,7 +72,9 @@ blue-data-llm-source/
 │   │       │   ├── __init__.py
 │   │       │   ├── parsing.py              # fence stripping, JSON to records
 │   │       │   ├── aligner.py              # key-to-attribute mapping, Alignment
-│   │       │   └── verifier.py             # type coercion, mismatch reporting, deduplication
+│   │       │   ├── verifier.py             # type coercion and mismatch reporting
+│   │       │   ├── identity.py             # normalized scalar and composite key identity
+│   │       │   └── coverage.py             # deduplication and observed key coverage
 │   │       │
 │   │       └── compat/                     # the older adapter name, now an alias
 │   │           ├── __init__.py
@@ -59,9 +85,11 @@ blue-data-llm-source/
 │       ├── record_cassettes.py             # records the cassettes; not part of the test run
 │       ├── cassettes/                      # recorded provider responses, plus a spend receipt
 │       ├── doubles/
+│       │   ├── __init__.py
 │       │   ├── clients.py                  # ScriptedClient, FailingClient
 │       │   ├── cache.py                    # cache double
 │       │   ├── provider.py                 # LitellmStub, chat_payload, install_litellm
+│       │   ├── truncation.py               # complete, truncated, and unanswered responses
 │       │   └── network.py                  # offline guard: network, subprocess, database
 │       └── unit/
 │           ├── test_source_fetch.py        # the fetch path end to end
@@ -79,6 +107,8 @@ blue-data-llm-source/
 │           ├── llm/                        # budget, pricing, and the client split by concern
 │           ├── cache/                      # both shipped stores against the protocol
 │           ├── prompts/                    # rendering and substitution safety
+│           ├── planning/                   # facts, schedules, plans, bounds, rule safety, receipts
+│           ├── execution/                  # leaf mapping, continuation, interruption
 │           ├── reduction/                  # parsing, alignment, verification
 │           └── compat/                     # inheritance, base order, signature contract
 │
@@ -131,6 +161,8 @@ Two documents sit beside the code. `README.md` doubles as the API reference. `CO
 | `source.py` | `LlmSource` — the facade over `blue_data`'s `DataSource`, both query surfaces, `estimate`, and the metadata surface. The only module that imports `blue_data` |
 | `checks.py` | Request Intake — argument validation |
 | `prompts/` | Request Intake — the single prompt module |
+| `planning/` | Planning — immutable facts, five schedules, bounded task trees, identity-rule safety, distribution-strategy selection, and optional receipts |
+| `execution/` | Execution — versioned leaf tasks, concurrent mapping, and bounded continuation |
 | `llm/client.py` | Model Boundary — `DefaultLlmClient` and `FunctionClient` |
 | `llm/budget.py` | Model Boundary — `Limits`, `Budget`, and `Reservation`, the four-axis enforcement |
 | `llm/pricing.py` | Model Boundary — the upper bound a cost reservation claims and `estimate` reports, or the refusal that replaces it |
@@ -138,6 +170,7 @@ Two documents sit beside the code. `README.md` doubles as the API reference. `CO
 | `reduction/parsing.py` | Reduction — response text to record mappings |
 | `reduction/aligner.py` | Reduction — key-to-attribute mapping and reporting |
 | `reduction/verifier.py` | Reduction — type coercion, mismatch reporting, and deduplication |
+| `reduction/identity.py`, `reduction/coverage.py` | Reduction — normalized composite identity, deduplication, marginal yield, incomplete keys, and collision evidence |
 | `types.py` | Shared contracts — `Attr`, `Usage`, `Outcome`, `Capability`, `ExecMeta`, `Estimate`, `FetchResult`, the protocols including `BudgetAwareClient`, and the exception hierarchy |
 | `_constants.py` | Shared vocabulary — protocol, variant, the three op codes, the synthesised hierarchy, and the budget and usage-sink property keys |
 | `compat/blue_data.py` | Backwards-compatible alias for `LlmSource`, kept for an older import |
@@ -150,9 +183,12 @@ Every prompt the package sends lives in `prompts/`, not as a constant on the cla
 
 The core imports nothing from `compat/`, and `compat/` imports the core. The direction mattered when the dependency was optional; it is kept because a module that exists only to preserve an older name should not be something the core depends on.
 
-### `types.py` owns the contracts
+### Contract ownership
 
-Every shared type, protocol, and exception is defined in `lib/src/blue_data_llm_source/types.py`. This prevents circular imports between the facade, the model boundary, and reduction, and it gives any platform adapter one module to import rather than three.
+Base request, result, accounting, protocol, and exception contracts live in
+`lib/src/blue_data_llm_source/types.py`. Planning-specific contracts live under `planning/` and are
+re-exported where they are public. This keeps the facade, provider boundary, execution, and reduction
+layers from owning each other's types while giving platform adapters one stable package surface.
 
 ### `platform/` — external interface services
 
@@ -181,7 +217,14 @@ Each service's `pyproject.toml` adds the library's source directory to the test 
 
 Library tests live under `lib/tests/` and mirror the source layout. Each platform service carries its own `tests/` directory for adapter-layer tests.
 
-Facade tests sit directly under `unit/`, split by concern rather than by module: the fetch path, the source surface, budget behaviour reaching the result, the estimate, and the worked examples from the source specification each get their own file. Argument validation, the shared contracts, the declared version, the dependency line, and the offline guard get one file each for the same reason. Modules with several distinct concerns get a directory: `llm/` splits the client into configuration, calls, caching, transport, and accounting, and holds the budget tests separately, and `cache/` exercises both shipped stores against the published protocol.
+Facade tests sit directly under `unit/`, split by concern rather than by module: the fetch path,
+planning and execution through the facade, result facts, budgets and admission, outcomes, record
+identity and provenance, estimates, documented surfaces, and worked examples each get their own
+file. Modules with several distinct concerns get a directory. `planning/` covers facts, schedules,
+plans, bounds, distribution search, and task transport; `execution/` covers leaf mapping and
+continuation; `llm/` splits client configuration, calls, caching, transport, accounting, and budget;
+`reduction/` covers parsing, salvage, alignment, verification, and coverage; and `cache/` exercises
+both shipped stores against the published protocol.
 
 `test_packaging.py` is the odd one and earns its place. It scans the package for an import of `blue` or `blue_data_ops` and fails on either, because the dependency this package now takes is on the data layer and the line it must not cross is the orchestration layer above it. A rule that lives only in a document is a rule until someone adds an import.
 
@@ -192,6 +235,7 @@ Facade tests sit directly under `unit/`, split by concern rather than by module:
 | Double | Boundary |
 |--------|----------|
 | `ScriptedClient`, `FailingClient` | The model, injected structurally as a client |
+| `TruncatingModel` | Complete, truncated, refused, and unanswered model responses |
 | `LitellmStub` | The provider transport, installed over the lazy import |
 | Cache double | A caller-supplied store |
 | Offline guard | Network, subprocess, and database access, refused and counted |

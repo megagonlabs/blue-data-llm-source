@@ -32,7 +32,7 @@ One classification is worth stating because it is easy to guess wrong. A missing
 
 **Template substitution is single-pass and does not interpret user text.** The monolith applies `Template.safe_substitute` and then Jinja2, repeatedly, until the string stops changing. A query containing `${...}` or `{{...}}` is therefore expanded as a template. Here the prompt has a fixed set of named fields and user text is inserted as a value, never re-read.
 
-**Calls are bounded.** The monolith has no timeout, no retry, and no ceiling. This library retries transport failures with exponential backoff and enforces four limits: rows, time, cost, and call count. The time limit bounds admission and waiting rather than the whole run; [what it bounds](README.md#what-the-time-ceiling-actually-bounds) is stated exactly. Time, calls, and cost are all claimed before each provider attempt, and rows are capped once the records are parsed. When a limit stops a run, `meta.stopped_by` names it and the records already collected are returned rather than discarded. Every `limits.*` name is checked against a closed set and every value against its type, so a misspelled or malformed ceiling raises `ConfigError` rather than being accepted and ignored.
+**Calls are bounded.** The monolith has no timeout, no retry, and no ceiling. This library retries transport failures with exponential backoff and enforces four limits: rows, time, cost, and call count. The time limit bounds admission and waiting rather than the whole run; [what it bounds](README.md#what-the-time-ceiling-actually-bounds) is stated exactly. Time, calls, and cost are claimed before each provider attempt, and rows are capped once records are parsed. When limits stop a run, `meta.stop_reasons` retains every observed axis and `meta.stopped_by` keeps the highest-precedence one. Records parsed before a late failure are retained when at least one extraction response was answered. Every `limits.*` name is checked against a closed set and every value against its type, so a misspelled or malformed ceiling raises `ConfigError` rather than being accepted and ignored.
 
 **The cost claim is an upper bound, or the ceiling is refused.** A call's price is not known until it returns, so `limits.max_cost` is claimed against the prompt's length in UTF-8 bytes plus a framing allowance at the model's published input rate, plus the whole `llm.max_tokens` allowance at its output rate, reconciled against the real figure once the call returns. Counting bytes rather than dividing by an average is what makes it a bound: a byte-pair tokenizer merges byte sequences, so every token it emits consumes at least one byte of the encoded prompt, while an average is exceeded by dense text. Counting characters would not have been a bound even though it reads like one, since a tokenizer splits a character whose encoding it has no merge for. Where no bound can be established the ceiling raises `ConfigError` instead of resting on a guess: when the model carries no published price and none was supplied, and when `llm.max_tokens` is not a finite positive number.
 
@@ -56,7 +56,28 @@ Anyone porting a caller that injects its own client should implement `budget_cap
 
 **Keys that collide are reported, not resolved.** The monolith selects requested columns and lets a later key overwrite an earlier one. Here the first key to answer a requested attribute keeps it, and the second is reported in `meta.key_collisions` with the value it carried, because which spelling the model meant is not knowable and letting the later one win makes the answer depend on JSON key order. Two *requested* attributes whose fuzzy forms coincide are a third case and are not refused: the fuzzy index drops the entry it cannot separate, exact keys still match, and a key that only matches fuzzily is reported unmapped. Two occurrences of the *identical* key inside one object are a fourth case and raise `ParseError`, at any nesting depth: two distinguishable spellings leave something to report, while one key repeated leaves nothing to tell the values apart by, and Python's decoder would otherwise keep the last and leave no trace of the first. Two *requested* attributes that normalise to the same key raise `QueryError` instead, including two identical spellings, since no returned value could be assigned to either without guessing.
 
-**An empty result carries one outcome, decided by one rule.** `source.decide_outcome` is public and ordered: any `stopped_by` wins, giving `truncated` when the row cap fired and records remain and `stopped_by_limit` otherwise; then records present is `ok`, nothing from the model is `model_returned_none`, and records that reduction removed is `filtered_to_empty`. A caller porting from a version that read `stopped_by_limit` as only a pre-provider refusal should note that a run which produced records and was found over its cost ceiling during settlement reports it too.
+**An empty result carries one outcome.** Partial interruption with an answered response reports `partial`, while simultaneous caps remain in `stop_reasons`. Otherwise a non-row stop reports `stopped_by_limit`; a row-only cap reports `truncated` when records remain and `stopped_by_limit` when none do. With no stop, records report `ok`, an answered empty response reports `model_returned_none`, and records removed by reduction report `filtered_to_empty`.
+
+**Non-flat results report `row_estimate` as an uncertain root planning hint.** Zero is retained;
+unknown, flat, and rejected bootstrap results use `None`. The field is not a returned-row count or a
+completeness estimate, and a valid empty answer alone does not create a gap.
+
+**Planning is bounded, and rule-backed distribution search is a direct-Python opt-in.** Python,
+CLI, and MCP share 14 standard planning controls. Python source and per-call properties additionally
+accept `plan.max_excluded_keys` as a count bound on continuation exclusions. They also accept
+`plan.distribution_search`, `plan.identity_partitions`, and `plan.max_strategy_candidates`.
+Distribution search requires partitioned mode, explicit ordered keys, and declared finite-domain
+rules that are validated before provider contact and removed from provider properties. Per-call
+rules replace source rules. `fetch` and `afetch` return a distribution-search result that may expose
+a versioned planning receipt without changing the two-field `FetchResult` dataclass shape. The
+shared `execute_query` methods can receive the same properties but return rows only, as their base
+contract requires. CLI and MCP intentionally omit distribution search and the receipt in this
+release.
+
+This is an adaptation of useful research planning behavior to the Blue source contract, not a
+research API adapter or a promise of exact research-result reproduction. The receipt checks internal
+agreement among rules, planning facts, and plan serialization; it does not verify answer truth,
+completeness, or quality superiority.
 
 **The virtual entity is not vendor-named.** The monolith synthesises `openai_entity` and `openai_entity_attribute`. This library uses `llm_entity` and `llm_entity_attribute`, consistent with the protocol being the family.
 

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
+import sys
 from typing import Any, NoReturn
 
 import click
@@ -16,7 +18,7 @@ from blue_data_llm_cli import config
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
-@click.option("--verbose", is_flag=True, help="Print key alignment and stop reasons.")
+@click.option("--verbose", "-v", is_flag=True, help="Print key alignment and stop reasons.")
 @click.pass_context
 def cli(ctx: click.Context, verbose: bool) -> None:
     """Query a language model as if it were a data source."""
@@ -47,6 +49,106 @@ def cli(ctx: click.Context, verbose: bool) -> None:
     # refuses every call before making one. Both READMEs said to lower this and only the
     # library could: the remedy the CLI documented was one the CLI did not offer.
     help="Output allowance per call. Lower it to lower the floor a cost ceiling must clear.",
+)
+@click.option(
+    "--effort",
+    type=click.Choice(["low", "medium", "high"]),
+    default="low",
+    show_default=True,
+    help=(
+        "Allows up to 1/2/3 logical extraction asks per part when a primary key is "
+        "available. It bounds asks, not billed attempts; exhausting a medium/high allowance "
+        "reports a limit stop."
+    ),
+)
+@click.option(
+    "--plan-mode",
+    default=None,
+    help="How to decompose the ask: flat (default), partitioned, row_by_row.",
+)
+@click.option(
+    "--plan-continuations",
+    type=int,
+    default=None,
+    help=(
+        "How many times a part may ask again. 0 by default, so each part asks once. "
+        "It bounds asks, not billed attempts: an ask may still be retried."
+    ),
+)
+@click.option(
+    "--plan-key",
+    default=None,
+    help="Attribute identifying a record, used to merge duplicates. Must be a requested attr.",
+)
+@click.option(
+    "--plan-keys",
+    multiple=True,
+    metavar="NAME",
+    help="Ordered primary-key fields. Repeat in identity order.",
+)
+@click.option(
+    "--plan-exact-rows",
+    type=click.IntRange(min=0),
+    default=None,
+    help=(
+        "Hard row target for a single-leaf plan. A multi-leaf plan does not apply it and "
+        "reports exact_rows_not_leaf_bound."
+    ),
+)
+@click.option(
+    "--plan-exclusion-bytes",
+    type=click.IntRange(min=0),
+    default=None,
+    help="Most encoded bytes of whole key exclusions in a continuation prompt.",
+)
+@click.option(
+    "--plan-leaves",
+    type=int,
+    default=None,
+    help="Most parts a split may run. Values past it are grouped, several to a part.",
+)
+@click.option(
+    "--plan-partition-key",
+    default=None,
+    help="Preferred root split dimension. Descendants may choose other dimensions.",
+)
+@click.option("--plan-depth", type=int, default=None, help="Deepest partition level. Default: 2.")
+@click.option(
+    "--plan-partitions",
+    type=int,
+    default=None,
+    help="Most children proposed for one partition node. Default: 4.",
+)
+@click.option(
+    "--plan-target-rows",
+    type=int,
+    default=None,
+    help="Row-count hint above which a descendant may split again. Default: 50.",
+)
+@click.option(
+    "--plan-schema-mode",
+    type=click.Choice(["preserve", "enrich"]),
+    default=None,
+    help="Preserve declared attributes (default), or allow planning to append inferred ones.",
+)
+@click.option(
+    "--plan-planning-order",
+    type=click.Choice(
+        [
+            "planning.research_order",
+            "planning.schema_first",
+            "planning.locked_sequential",
+            "planning.locked_parallel",
+            "planning.combined",
+        ]
+    ),
+    default=None,
+    help="Order used to obtain analysis, schema, and cardinality facts.",
+)
+@click.option(
+    "--plan-expose-estimate/--no-plan-expose-estimate",
+    default=None,
+    help="Include or omit the soft row estimate in extraction prompts.",
 )
 @click.option("--limit-cost", type=float, default=None, help="Refuse a call past this spend.")
 @click.option("--limit-seconds", type=float, default=None, help="Refuse a call past this age.")
@@ -80,9 +182,24 @@ def fetch(
     max_records: int | None,
     model: str | None,
     max_tokens: int | None,
+    effort: str,
     limit_cost: float | None,
     limit_seconds: float | None,
     limit_calls: int | None,
+    plan_mode: str | None,
+    plan_continuations: int | None,
+    plan_key: str | None,
+    plan_keys: tuple[str, ...],
+    plan_exact_rows: int | None,
+    plan_exclusion_bytes: int | None,
+    plan_leaves: int | None,
+    plan_partition_key: str | None,
+    plan_depth: int | None,
+    plan_partitions: int | None,
+    plan_target_rows: int | None,
+    plan_schema_mode: str | None,
+    plan_planning_order: str | None,
+    plan_expose_estimate: bool | None,
     rate_limit: str | None,
     output_format: str,
 ) -> None:
@@ -99,22 +216,61 @@ def fetch(
     except ValueError as error:
         raise click.BadParameter(str(error), param_hint="--attr") from error
 
+    has_plan_key = bool(plan_key and plan_key.strip()) or any(key.strip() for key in plan_keys)
+    if (
+        effort in {"medium", "high"}
+        and plan_continuations is None
+        and plan_mode in {None, "flat"}
+        and not has_plan_key
+    ):
+        raise click.BadParameter(
+            "medium/high effort needs --plan-key or --plan-keys in flat mode; add a requested "
+            "key, select a non-flat mode that can infer one, or use --plan-continuations for "
+            "explicit best-effort behavior.",
+            param_hint="--effort",
+        )
+
     # Inside the handler, like the fetch itself. Building the limits validates them, and a
     # negative or non-finite value raised a ConfigError out of the command as a traceback
     # with exit code 1 — so a script branching on the published exit table took the wrong
     # branch for an ordinary command-line correction.
     try:
         limits = config.build_limits(limit_cost, limit_seconds, limit_calls)
-        properties = config.build_properties(model, limits, max_tokens)
+        properties = config.build_properties(
+            model,
+            limits,
+            max_tokens,
+            plan_mode,
+            (
+                plan_continuations
+                if plan_continuations is not None
+                else config.continuations_for_effort(effort)
+            ),
+            plan_key,
+            plan_leaves,
+            plan_partition_key,
+            plan_depth,
+            plan_partitions,
+            plan_target_rows,
+            plan_schema_mode,
+            plan_keys,
+            plan_exact_rows,
+            plan_exclusion_bytes,
+            plan_planning_order,
+            plan_expose_estimate,
+        )
         source = config.build_source()
 
-        result = source.fetch(
-            query,
-            attrs=attrs or None,
-            context=context,
-            max_records=max_records,
-            properties=properties or None,
-        )
+        # Some provider SDK paths write diagnostics to stdout. Keep stdout owned by this
+        # command so JSON output remains machine-readable while the diagnostics stay visible.
+        with contextlib.redirect_stdout(sys.stderr):
+            result = source.fetch(
+                query,
+                attrs=attrs or None,
+                context=context,
+                max_records=max_records,
+                properties=properties or None,
+            )
     except LlmSourceError as error:
         _fail(error)
 
@@ -124,15 +280,13 @@ def fetch(
     else:
         _print_table(result, [a.name for a in attrs], verbose)
 
-    # The result is printed first, then the exit code reports that a ceiling ended the run.
-    # The library turns a crossed ceiling into an empty result rather than raising, so no
-    # BudgetExceeded ever reaches the handler above and exit 7 was unreachable: a run that
-    # blew its deadline printed a full table and exited 0, with nothing to see without
-    # --verbose. A caller scripting this has to be able to tell without parsing the output.
-    #
-    # A row cap is deliberately excluded. It is the one ceiling that leaves a usable result,
-    # which is why it reports `truncated` rather than `stopped_by_limit`, and exiting
-    # non-zero for it would make `--max-records` look like a failure every time it worked.
+    # The result is printed first; the outcome then distinguishes an initial budget refusal
+    # from a retained partial answer. A row-only cap is excluded because it leaves a usable
+    # result and reports `truncated`.
+    if result.meta.outcome == Outcome.PARTIAL:
+        # Before the budget check, matching outcome precedence. Any simultaneous ceiling
+        # remains available in the stop fields.
+        raise SystemExit(config.EXIT_PARTIAL)
     if result.meta.outcome == Outcome.STOPPED_BY_LIMIT:
         raise SystemExit(config.EXIT_BUDGET)
 
@@ -177,6 +331,15 @@ def _print_table(result: FetchResult, requested: list[str], verbose: bool) -> No
         console.print(table)
 
     console.print(_footer(len(result.records), result.meta), soft_wrap=True)
+    # Before the verbose block and outside it: a gap is why the row count is what it is, not
+    # a diagnostic about how it was produced.
+    for gap in result.meta.gaps:
+        console.print(f"gap: {gap}", soft_wrap=True)
+    stop_reasons = result.meta.stop_reasons or (
+        [result.meta.stopped_by] if result.meta.stopped_by else []
+    )
+    for reason in stop_reasons:
+        console.print(f"stopped by: {reason}", soft_wrap=True)
     if verbose:
         for line in _verbose_lines(result.meta):
             console.print(line, soft_wrap=True)
@@ -223,6 +386,7 @@ def _footer(count: int, meta: ExecMeta) -> str:
         f"model {meta.model or '(none)'} | "
         f"{meta.calls} {_plural(meta.calls, 'call')} | "
         f"{tokens} tokens | "
+        f"row estimate {meta.row_estimate if meta.row_estimate is not None else 'unknown'} | "
         f"${meta.cost:.4f}{'' if meta.accounting_known else ' (unknown)'} | "
         f"{meta.latency_seconds:.2f}s"
     )
@@ -230,6 +394,13 @@ def _footer(count: int, meta: ExecMeta) -> str:
 
 def _verbose_lines(meta: ExecMeta) -> list[str]:
     lines: list[str] = []
+    if meta.primary_keys:
+        lines.append("primary keys: " + ", ".join(meta.primary_keys))
+    lines.append(f"observed complete keys: {meta.observed_key_count}")
+    if meta.incomplete_key_records:
+        lines.append(f"incomplete-key records: {meta.incomplete_key_records}")
+    if meta.normalization_collisions:
+        lines.append(f"normalization collisions: {len(meta.normalization_collisions)}")
     if meta.unchecked_types:
         lines.append("types this library cannot check: " + ", ".join(meta.unchecked_types))
     if meta.unmapped_keys:
@@ -238,8 +409,6 @@ def _verbose_lines(meta: ExecMeta) -> list[str]:
         pairs = ", ".join(f"{k} -> {v}" for k, v in meta.remapped_keys.items())
         lines.append("remapped keys: " + pairs)
     lines.append(f"outcome: {meta.outcome}")
-    if meta.stopped_by:
-        lines.append(f"stopped by: {meta.stopped_by}")
     if meta.type_mismatches:
         lines.append(f"type mismatches: {len(meta.type_mismatches)}")
         for mismatch in meta.type_mismatches:

@@ -37,22 +37,39 @@ source = LlmSource(properties={"llm.model": "gpt-4o", "limits.max_cost": 0.25})
 # Library surface, synchronous
 result = source.fetch(
     "the member states of the European Union",
-    attrs=[{"name": "country", "type": "string"}, {"name": "accession_year", "type": "int"}],
+    attrs=[
+        {"name": "country", "type": "string"},
+        {"name": "accession_year", "type": "int"},
+    ],
 )
 print(len(result), result.meta.model, result.meta.calls, result.meta.cost)
 
+
 # Library surface, asynchronous
 async def main() -> None:
-    result = await source.afetch("Show me 3 presidents of the United States", attrs=["name", "year", "party"], max_records=3)
+    result = await source.afetch(
+        "Show me 3 presidents of the United States",
+        attrs=["name", "year", "party"],
+        max_records=3,
+    )
     for record in result.records:
         print(record)
+
 
 asyncio.run(main())
 
 # Source surface
-source.execute_query({"op": "LLM.FETCH", "query": "the member states of the European Union", "attr_names": ["country"]})
+source.execute_query(
+    {
+        "op": "LLM.FETCH",
+        "query": "the member states of the European Union",
+        "attr_names": ["country"],
+    }
+)
 source.execute_query({"op": "LLM.MODELS"})
-source.execute_query({"op": "LLM.ESTIMATE", "query": "the member states of the European Union"})
+source.execute_query(
+    {"op": "LLM.ESTIMATE", "query": "the member states of the European Union"}
+)
 source.execute_query_nl("the member states of the European Union", llm_fn=my_model_call)
 
 # A ceiling on one request, which does not outlive it
@@ -92,30 +109,62 @@ Fetches records for `query`. Returns a `FetchResult`.
 
 **Algorithm**
 
-1. Validate and normalise every argument through `checks`.
-2. Return early when the request is empty after stripping, with no records and `meta.outcome` set to `empty_query`. No model is called.
-3. Merge instance properties with `properties` and assemble `Limits`, substituting `max_records` for the row limit when given.
-4. Produce the run's budget, deriving it from `budget` when the caller supplied one, and resolve a client: `llm_fn` first, then the injected client, then a `DefaultLlmClient` holding the budget.
+1. Validate and normalise attributes, context, and `max_records` through `checks`.
+2. Merge instance properties with `properties`, check the closed property namespaces, assemble
+   `Limits`, and validate rule-backed distribution controls. Per-call rules replace source rules.
+   Distribution search requires partitioned mode, explicit ordered keys, declared finite domains,
+   and a root-applicable rule. Property namespaces, `Limits`, and the distribution controls are
+   checked before the request text, so an empty request does not hide a misspelled limit or an
+   invalid distribution rule. Mode, schedule, schema-mode, row-target, and estimate-exposure values
+   are validated after it.
+3. Normalise the request text. Return early when it is empty after stripping, with no records and
+   `meta.outcome` set to `empty_query`. No budget or client is constructed, and no model is called.
+4. Produce the run's budget, deriving it from `budget` when the caller supplied one. Remove the three
+   distribution-search controls from provider properties, then resolve a client: `llm_fn` first,
+   then the injected client, then a `DefaultLlmClient` holding the budget.
 5. Refuse every configured ceiling whose axis the resolved client does not declare, then place the run's budget in the per-call properties under the key `budget` and a fresh list under the key `usage_sink`.
-6. Render the prompt through `prompts.build_fetch_prompt`.
-7. Await the client. A `BudgetExceeded` returns an empty result whose `meta.stopped_by` names the limit and whose `meta.outcome` is `stopped_by_limit`; any other error propagates.
-8. Parse, align, verify, and deduplicate the response. Verification returns the records alongside a list of the values that would not coerce, which becomes `meta.type_mismatches`; alignment supplies the observed, remapped, unmapped, and colliding keys.
-9. Offer the records to the budget's row axis, truncating and recording when the ceiling is reached.
-10. Fold in the run's accounting, set `meta.outcome` through `decide_outcome`, stamp elapsed time, and return. `meta.calls` and `meta.cost` come from the budget, which claimed them under a lock; the token counts and the model name come only from the usage entries the client appended to this call's `usage_sink`.
+6. Outside `flat`, build immutable query-analysis, schema, and cardinality facts in the selected `plan.planning_order`. `LlmSource` defaults to `planning.schema_first`; `planning.combined` retains the one-call bootstrap contract for compatibility. Each independent stage has its own prompt and parser, so a malformed result can fall back without another model call. Cancellation and process interrupts propagate.
+7. Coordinate the task tree breadth first. Ordinary `partitioned` planning attempts one proposal per
+   eligible slice and accepts a split only when every child is valid, the known parent value set is
+   preserved, and the whole expansion fits. With distribution search enabled, a bounded set of
+   applicable declared strategies is evaluated and `PartitionSafety` must accept containment,
+   pairwise disjointness, and coverage before the split is used. `row_by_row` uses an explicit key
+   list or a bounded enumeration; if the complete entity plan cannot fit, it keeps one batch leaf.
+8. Before an optional planning call, check that the call and one extraction attempt fit current call, cost, and deadline headroom. Locked parallel planning first checks aggregate room for every permitted attempt of both siblings and one extraction attempt. These checks do not reserve budget; each provider attempt still uses the budget's ordinary reservation, so an unrelated concurrent consumer may spend the shared headroom after the check.
+9. Run the plan's parts concurrently. A flat leaf calls `execution.arun_leaf` and renders
+   `prompts.build_fetch_prompt`. A non-flat leaf crosses the versioned `LeafTask` boundary through
+   `execution.local.run_local_leaf`, which renders `prompts.build_initial_v2_fetch_prompt`. Both
+   paths loop up to `plan.max_continuations` times. Every part is awaited, including one that raises,
+   so the spend a caller reads is settled before control returns. Records parsed before a late
+   failure are retained. A run with no answered response propagates a package error; answered work
+   beside failures returns with operational gaps and the appropriate outcome.
+10. Reduce the parts through `reduction`: parse, align, verify, and deduplicate the responses, merging on `plan.key` where one was declared. Verification returns the records alongside a list of the values that would not coerce, which becomes `meta.type_mismatches`; alignment supplies the observed, remapped, unmapped, and colliding keys.
+11. Offer the records to the budget's row axis, truncating and recording when the ceiling is reached.
+12. Fold in accounting and all stop facts, set `meta.stop_reasons` in stable precedence order and `meta.stopped_by` to its first member, classify the final result, stamp elapsed time, and return. Answered extraction followed by interrupted work is `partial`; simultaneous caps remain visible in `stop_reasons`. A distribution-search result from direct Python also carries an optional versioned planning receipt.
 
-#### `decide_outcome(records, model_returned, row_cap_fired, stopped_by)`
+The five planning schedules are closed values. `planning.research_order` runs analysis, cardinality, then schema. `planning.schema_first` runs analysis, schema, then cardinality. `planning.locked_sequential` and `planning.locked_parallel` use the caller's non-empty schema and ordered keys, do not ask the model for a schema, and give analysis and cardinality byte-identical independent inputs. The parallel form changes only when those two calls may overlap. `planning.combined` makes the compatible bootstrap call and projects its analysis, schema, and cardinality fields.
 
-The one place a fetch's outcome is decided, published as a module-level function so the rule can be read and tested without running a fetch. It is a single ordered rule rather than assignments spread through the fetch, because that arrangement kept producing combinations nobody chose: a ceiling crossed during settlement left an empty result reading `model_returned_none` while `stopped_by` named the limit, and a late rewrite that fired only when the outcome was still `ok` could not correct it.
+`DataTask` holds immutable semantic state for planning. `QueryAnalysisResult`, `SchemaDefinition`, and
+`CardinalityEstimate` are the accepted facts, collected in a digestible `PlanningContext`. `LeafTask`
+remains the versioned execution message created from the accepted plan. `plan.expose_estimate`
+defaults to true and controls whether extraction prompts receive the soft estimate. Setting it false
+keeps the estimate in the planning context and `LeafTask`, and does not change the plan or context
+digest. The facade applies this setting when it builds execution settings; `coordinate_plan` does not
+accept it. Planning affordability checks always price the estimate-bearing prompt, so this display
+choice cannot change the accepted topology. `plan.exact_rows` is a hard target only when the plan has
+one leaf. A multi-leaf plan does not apply it and adds `exact_rows_not_leaf_bound` to `meta.gaps`.
 
-The order is the precedence. Any `stopped_by` wins, yielding `truncated` when the row cap fired and records remain and `stopped_by_limit` otherwise, because a caller deciding what to do next needs to know the answer was cut short before it can trust anything about its shape. Then records present is `ok`, nothing from the model is `model_returned_none`, and records that reduction removed is `filtered_to_empty`.
+#### Final outcome classification
+
+Classification uses the final records, raw reduced records, whether any extraction answered, whether work was interrupted, row trimming, and every stop reason. Interrupted work with an answered response is `partial`. Otherwise a non-row stop is `stopped_by_limit`; a row-only trim is `truncated` when records remain. With no stop, records are `ok`, an answered empty response is `model_returned_none`, and records removed by reduction are `filtered_to_empty`.
 
 #### `fetch(query, attrs=None, context=None, max_records=None, properties=None, llm_fn=None, budget=None)`
 
-Synchronous wrapper over `afetch`, with the same parameters and return type. It runs the coroutine with `asyncio.run`, and raises `RuntimeError` when called from inside a running event loop, directing the caller to `afetch` instead.
+Synchronous wrapper over `afetch`, with the same parameters and return type. It runs the coroutine with `asyncio.run`, and raises `ConfigError` when called from inside a running event loop, directing the caller to `afetch` instead.
 
 #### `estimate(query, attrs=None, context=None, properties=None, llm_fn=None)`
 
-The most one fetch of `query` could cost, without contacting the provider. Returns an `Estimate`. Synchronous, because there is no I/O to wait on.
+The most one **flat** fetch of `query` could cost, without contacting the provider. It reads no `plan.*` setting, so a request with parts or continuations can cost several times this figure. Returns an `Estimate`. Synchronous, because there is no I/O to wait on.
 
 **Parameters** are `afetch`'s first three, plus `properties` and `llm_fn`, and mean the same things. There is no `max_records`, because the row cap does not change what a call costs, and no `budget`, because a fresh one is built from the resolved limits rather than taken. `llm_fn` is accepted so the estimate is asked of whatever will actually answer: a client is resolved exactly as a fetch resolves it, and a callable cannot price itself, so a request against one is reported unestimable rather than guessed at.
 
@@ -246,6 +295,7 @@ class Usage:
     cost: float = 0.0
     latency_seconds: float = 0.0
     cache_hit: bool = False
+    finish_reason: str | None = None
     cost_known: bool = True
 ```
 
@@ -256,6 +306,7 @@ Per-call provider accounting, recorded by the client. A cache hit records latenc
 ```python
 @dataclass
 class ExecMeta:
+    gaps: list[str] = ...
     outcome: str = Outcome.OK
     model: str = ""
     calls: int = 0
@@ -265,18 +316,32 @@ class ExecMeta:
     latency_seconds: float = 0.0
     cache_hits: int = 0
     requested_attrs: list[str] = ...
+    row_estimate: int | None = None
+    cardinality_estimate: dict[str, object] | None = None
+    primary_keys: list[str] = ...
+    observed_key_count: int = 0
+    marginal_key_yields: list[int] = ...
+    incomplete_key_records: int = 0
+    normalization_collisions: list[dict[str, Any]] = ...
     observed_keys: list[str] = ...
     unmapped_keys: list[str] = ...
     remapped_keys: dict[str, str] = ...
     type_mismatches: list[dict[str, Any]] = ...
     key_collisions: list[dict[str, Any]] = ...
     truncated_to: int | None = None
+    stop_reasons: list[str] = ...
     stopped_by: str | None = None
     unchecked_types: list[str] = field(default_factory=...)
     accounting_known: bool = True
+    asked: str | None = None
+    record_origins: list[list[str]] = ...
 ```
 
-What happened during a fetch, alongside the records. `observed_keys` lists every key the model produced, `remapped_keys` maps a returned key to the requested attribute it was matched to, and `unmapped_keys` lists keys with no match. `type_mismatches` lists the values that would not coerce to their declared types. `key_collisions` lists the returned keys whose values were not used because another key had already answered the same attribute, each entry carrying `record_index`, `attribute`, `kept_key`, `ignored_key`, and `ignored_value`. `truncated_to` and `stopped_by` are set when a limit ended the run.
+What happened during a fetch, alongside the records. `observed_keys` lists every key the model produced, `remapped_keys` maps a returned key to the requested attribute it was matched to, and `unmapped_keys` lists keys with no match. `type_mismatches` lists the values that would not coerce to their declared types. `key_collisions` lists returned keys whose values were not used because another key had already answered the same attribute. `stop_reasons` is always present and retains every observed stop fact; `stopped_by` is its first member. `gaps` is always present and carries supported operational diagnostics, not a completeness result. `requested_attrs` remains the caller declaration.
+
+`cardinality_estimate` is the accepted non-flat bootstrap estimate with `expected`, `lower`, `upper`, `row_unit`, `source`, `parse_status`, and `diagnostics`; `None` means flat mode or that planning did not produce the structure. `row_estimate` is its `expected` value for compatibility. Both are planning evidence, not measured row counts or completeness measures. `primary_keys` is the ordered set of identifying attributes used for execution and reduction. `observed_key_count` counts distinct complete keys in the final returned records, after reduction, deduplication, and the row cap. `marginal_key_yields` records the new normalized key identities from each extraction attempt in leaf order; without primary keys it counts new exact records. `incomplete_key_records` counts distinct per-leaf records missing at least one primary-key value. `normalization_collisions` reports per-leaf key spellings that compare equal after declared-type-aware normalization, with `primary_keys`, `kept`, and `collided` in each entry. These observations do not establish that all keys or rows were found.
+
+`record_origins` runs parallel to records, and `asked` carries a restated query when one ran.
 
 `calls` and `cost` come from the run's budget rather than from summing the usage entries, because the budget claimed them under a lock and a count taken from a shared usage list can carry another concurrent request's spend. A contacted attempt that failed produced no usage entry and still cost a call, which is the other reason the two are not the same number. The consequence to know is that a client which does not claim against the run's budget reports zero calls and zero cost whatever usage it recorded, which is why a client is refused the ceilings on the axes it did not declare rather than measured through them.
 
@@ -290,10 +355,19 @@ class Outcome:
     EMPTY_QUERY = "empty_query"
     MODEL_RETURNED_NONE = "model_returned_none"
     FILTERED_TO_EMPTY = "filtered_to_empty"
+    PARTIAL = "partial"
     STOPPED_BY_LIMIT = "stopped_by_limit"
     TRUNCATED = "truncated"
 
-    ALL = (OK, EMPTY_QUERY, MODEL_RETURNED_NONE, FILTERED_TO_EMPTY, STOPPED_BY_LIMIT, TRUNCATED)
+    ALL = (
+        OK,
+        EMPTY_QUERY,
+        MODEL_RETURNED_NONE,
+        FILTERED_TO_EMPTY,
+        PARTIAL,
+        STOPPED_BY_LIMIT,
+        TRUNCATED,
+    )
 ```
 
 The closed vocabulary `ExecMeta.outcome` is drawn from, defined in `types.py`. An empty result is a valid answer here rather than a failure, which is how the other sources in this layer treat an absent result, and `outcome` is what keeps the reason from being lost with it.
@@ -305,13 +379,14 @@ The closed vocabulary `ExecMeta.outcome` is drawn from, defined in `types.py`. A
 | `model_returned_none` | The model returned no records at all |
 | `filtered_to_empty` | The model returned records and reduction left none, which happens when no record answered any requested attribute |
 | `stopped_by_limit` | A ceiling ended the run and left no usable result, whether it refused the attempt before the provider was reached, emptied the result through the row cap, or was found crossed once the work was done |
+| `partial` | Extraction was answered but some work was interrupted, including a failed split leaf beside an answered sibling or a flat leaf that retained records before a late continuation failure |
 | `truncated` | The row ceiling cut the result short and records remain; `truncated_to` and `stopped_by` carry the detail |
 
 A caller deciding whether to ask a different source needs `model_returned_none` and `filtered_to_empty` kept apart, and a caller deciding whether to retry needs both kept apart from `stopped_by_limit`. Collapsing them into an empty list throws that away.
 
 `outcome` reaches a caller through `fetch` and `afetch` only. `execute_query` and `execute_query_nl` return the record list alone, because that is what the surface they match returns, so a caller that needs the reason uses the library surface.
 
-The precedence is a single ordered rule in `source.decide_outcome`, and the thing to know about it is that any `stopped_by` outranks what the run produced. A ceiling that fired reports `truncated` when the row cap was the ceiling and records survived it, and `stopped_by_limit` in every other case, including a run that produced records and was found over its cost ceiling during settlement. `filtered_to_empty` and `model_returned_none` are therefore reachable only when no ceiling fired at all. `Outcome` is exported from the package root alongside `ExecMeta`.
+Final classification reads all stop reasons. Partial interruption with an answered response reports `partial`; simultaneous caps remain visible in `stop_reasons`. Without interruption, a non-row stop reports `stopped_by_limit`, while a row-only trim reports `truncated` when records remain. `filtered_to_empty` and `model_returned_none` require that no stop fired. `Outcome` is exported from the package root alongside `ExecMeta`.
 
 ### `Estimate`
 
@@ -328,7 +403,7 @@ class Estimate:
     max_cost_per_attempt: float | None = None
 ```
 
-What one fetch could cost at most, returned by `LlmSource.estimate` and by the `LLM.ESTIMATE` op, computed without contacting the provider. Exported from the package root alongside `ExecMeta` and `FetchResult`.
+What one `flat` fetch could cost at most, returned by `LlmSource.estimate` and by the `LLM.ESTIMATE` op, computed without contacting the provider. It reads no `plan.*` setting, so a split request can cost several times this figure. Exported from the package root alongside `ExecMeta` and `FetchResult`.
 
 `max_cost` is an upper bound, not a prediction. It reserves the whole output allowance at the model's output rate and bounds the prompt by its encoded length, so a typical call costs a fraction of it. Being wrong high is the only safe direction here for the same reason it is in `pricing`: a figure that can be exceeded is not a bound, and a decision made against one is a decision made against a guess.
 
@@ -347,13 +422,33 @@ class FetchResult:
 
 Supports `len()` and iteration over its records, so a caller that only wants rows can treat it as a sequence.
 
+The dataclass retains exactly `records` and `meta`. A direct Python distribution-search result exposes an
+optional `planning_receipt` property and `with_planning_receipt(...)`; `to_dict()` adds the receipt
+only when present. Results without distribution search keep the existing two-key serialization.
+
+### `IdentityPartitionRule` and `PlanningReceipt`
+
+`IdentityPartitionRule` is a closed, versioned finite-domain rule under `planning`. Its wire fields
+are `dimension`, `ordered_primary_keys`, `kind`, `allowed_domain`, `parent_scope`, `provenance`, and
+`contract_version`. Source rules use `source_configuration`; per-call rules use `caller_declared`.
+
+`PlanningReceipt` is exported from the package root. Its closed wire form carries
+`contract_version`, `configured_rule_digests`, `planning_facts`, and `fetch_plan`. Constructor and
+deserialization checks keep the counters, accepted decisions, rules, and partitioned plan mutually
+consistent. The receipt is integrity evidence for this plan; it does not prove external
+authenticity, answer truth, completeness, or quality superiority.
+
 ### `LlmClientProtocol`
 
 ```python
 @runtime_checkable
 class LlmClientProtocol(Protocol):
-    def complete(self, prompt: str, properties: dict[str, Any] | None = None) -> str: ...
-    async def acomplete(self, prompt: str, properties: dict[str, Any] | None = None) -> str: ...
+    def complete(
+        self, prompt: str, properties: dict[str, Any] | None = None
+    ) -> str: ...
+    async def acomplete(
+        self, prompt: str, properties: dict[str, Any] | None = None
+    ) -> str: ...
 ```
 
 The model boundary. Any object with these two methods can be injected. Both take the prompt first and the merged per-call properties second, and both return the model's text; a client whose signature cannot be called that way is refused when it is resolved, with a `ConfigError` naming the contract, rather than failing later with a raw `TypeError`.
@@ -383,8 +478,12 @@ The axes are separate because what is provable differs between them. A client th
 @runtime_checkable
 class BudgetAwareClient(Protocol):
     def budget_capabilities(self) -> frozenset[str]: ...
-    def complete(self, prompt: str, properties: dict[str, Any] | None = None) -> str: ...
-    async def acomplete(self, prompt: str, properties: dict[str, Any] | None = None) -> str: ...
+    def complete(
+        self, prompt: str, properties: dict[str, Any] | None = None
+    ) -> str: ...
+    async def acomplete(
+        self, prompt: str, properties: dict[str, Any] | None = None
+    ) -> str: ...
 ```
 
 A client that states which ceilings it can be held to, and honours them. `budget_capabilities` is a method rather than an attribute so that satisfying the protocol takes a deliberate implementation rather than a name that happens to match, and it returns the axes the client will enforce against the budget it is handed for a call. A client satisfying this protocol receives the run's budget under the `budget` property on every call and claims against it. `DefaultLlmClient` declares `Capability.ALL`. `FunctionClient` declares rows alone, so a call, cost, or time ceiling against an `llm_fn` is refused rather than settled at zero, which is what an earlier version did and what made a cost ceiling appear to hold over a callable that might be spending anything.
@@ -592,7 +691,7 @@ What a child does not inherit is `stopped_by`. A parent that refused an earlier 
 
 `note_exhausted` reports only a ceiling something has actually crossed. Spending the last allowed call refuses nothing, and reporting it would make an ordinary run under an exact limit look truncated; the same reasoning applies to spending exactly the cost ceiling, which is why that comparison is strict.
 
-`rows_exhausted` is provided for a caller looping over multiple fetches and is not called from within this release, which makes one call per request. `check_deadline` is likewise published and not called from within the library, because `reserve` already performs the check at the only point this release contacts a provider. Treat both as available to callers rather than as part of the fetch path until that changes.
+`rows_exhausted` is provided for a caller looping over multiple fetches and is not called from within this release, whatever plan mode it runs. `check_deadline` is likewise published and not called from within the library, because `reserve` already performs the check at every point this release contacts a provider. Treat both as available to callers rather than as part of the fetch path until that changes.
 
 ### `Reservation`
 
@@ -661,18 +760,47 @@ Every message names the offending value and the accepted form, because a caller 
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `render_attributes(attrs)` | `str` | Renders the attribute block, or `(none specified)` |
-| `build_fetch_prompt(query, attrs, context)` | `str` | Builds the fetch prompt from the request, the rendered attributes, and the context |
+| `render_constraints(constraints)` | `list[str]` | One line per filter: `- field "region" must equal one of ["North", "South"]` |
+| `render_held(shown, total)` | `list[str]` | The exclusion block a continuation carries, with the total it was capped from |
+| `render_held_entries(shown)` | `list[str]` | Complete encoded lines for held records |
+| `rendered_held_entries_size(shown)` | `int` | UTF-8 byte size of the held-record block, including line separators |
+| `build_fetch_prompt(query, attrs, *, caller_context, constraints, held, held_total, primary_keys, estimate)` | `str` | Flat extraction and continuation prompt |
+| `build_initial_v2_fetch_prompt(...)` | `str` | Versioned non-flat leaf extraction prompt |
+| `build_analyse_prompt(query, context)` | `str` | Query-analysis prompt |
+| `build_schema_prompt(...)` | `str` | Independent schema prompt |
+| `build_cardinality_prompt(...)` | `str` | Independent cardinality prompt |
+| `build_bootstrap_prompt(...)` | `str` | Compatible combined analysis, schema, and cardinality prompt |
+| `build_partition_prompt(...)` | `str` | Partition-proposal prompt |
+| `build_distribution_prompt(...)` | `str` | Rule-backed distribution prompt |
+| `build_entity_prompt(...)` | `str` | Row-by-row entity-enumeration prompt |
 
-`FETCH` is the single prompt template. Substitution is one `str.format_map` over a fixed set of named fields, applied once. Caller text is inserted and never interpreted, so a request containing template syntax reaches the model as written.
+The nine templates are `FETCH`, `INITIAL_V2_FETCH`, `ANALYSE`, `SCHEMA`, `CARDINALITY`,
+`BOOTSTRAP`, `PARTITION`, `DISTRIBUTION`, and `ENUMERATE_ENTITIES`. Each builder passes `Slot`
+instances to `fill`, which applies one `str.format_map` over fixed named fields. Model-derived and
+structured values use encoded slots. Raw slots are limited to caller-owned request, context, and
+attribute text; an architecture test pins those uses.
+
+The builders take structured parts rather than assembled prompt strings. They are the only functions
+that assemble provider prompts; a test refuses prompt section headings outside this module.
+
+For the flat builder, filters pass through `render_constraints`, held records through `render_held`,
+and the query is encoded because the same slot carries caller text in flat mode and an analysis
+rewrite elsewhere. Encoding is not an authorization boundary: the caller remains the principal and
+supplies its own context and attribute text.
 
 ### `reduction.parsing`
 
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `strip_fence(text)` | `str` | Removes one surrounding code fence, matched as a fence rather than by language name |
-| `parse_records(text)` | `list[dict]` | Reads a JSON array of objects, accepting a bare object and the `items` / `rows` / `data` / `results` wrappers; raises `ParseError` otherwise |
+| `parse_records(text, wanted=None)` | `list[dict]` | Reads a JSON array of objects, accepting a bare object and supported wrappers; uses requested attributes to resolve an envelope with sibling metadata |
+| `salvage_records(text, wanted=None)` | `list[dict]` | Recovers a complete array prefix from a truncated response, then applies `parse_records` to it |
 
-An object wrapping the array is unwrapped only when the wrapper key is its *only* key. Matching on the key alone discarded every sibling, and `data`, `results`, `rows` and `items` are ordinary column names: a single-record answer such as `{"country": "France", "data": [...]}` lost `country` and promoted the nested list to be the records, so the caller was told the model had returned nothing while the metadata described keys the model never emitted at record level. Nesting deeper than a hundred levels is refused as well, because the walks downstream are recursive and a response the parser accepted could otherwise exhaust the stack after the call had been billed.
+An object whose only key is `items`, `rows`, `data`, or `results` is unwrapped. With sibling fields,
+both the envelope and its list may be records. When the caller supplied `wanted`, the reading that
+answers more requested attributes wins; without requested attributes, the envelope is kept because
+it discards nothing. This avoids both losing metadata siblings and dropping records under a wrapper.
+Nesting deeper than a hundred levels is refused because downstream walks are recursive.
 
 An object that repeats a key is rejected, at any nesting depth. Python's decoder keeps the last of such a pair and leaves no trace that the first existed, which resolves the ambiguity the opposite way from the rest of this pipeline and does it silently, so an `object_pairs_hook` refuses the object instead. An earlier version preserved both by renaming the later occurrence with a private marker, and that marker was itself legal JSON: it reached callers verbatim when no attributes were requested, and it marked duplicates nested inside values where alignment never looks. Rejecting is the honest answer, because which of two values for one key the model meant is not knowable here. `NaN`, `Infinity`, and `-Infinity` are rejected too, because they are not JSON and a record carrying one fails later somewhere less obvious. So is a number whose written form overflows the float conversion, such as `1e309`, which arrives as an ordinary literal rather than as one of those three words and so is caught on conversion rather than by the constant hook. Both routes end in a value that cannot be written back as JSON, which makes the result unusable to a caller who re-serialises it.
 
@@ -705,7 +833,7 @@ With no requested attributes the records pass through unchanged, `observed_keys`
 |----------|---------|-------------|
 | `verify(records, attrs)` | `tuple[list[dict], list[dict]]` | Coerces values to their declared types where the coercion is unambiguous, and returns the records alongside every value that would not coerce |
 | `drop_empty(records, matched, attrs)` | `list[dict]` | Removes records that answered none of the requested attributes, reading presence from `matched` rather than from the values, so a record whose only answer is an explicit null survives |
-| `dedupe(records, key=None)` | `list[dict]` | Removes exact duplicates, or duplicates on `key` when one is named |
+| `dedupe(records, key=None, origins=None)` | `tuple[list[dict], list[list[str]]]` | Removes exact or keyed duplicates and folds every contributing leaf into the kept record's origin list |
 
 ```python
 @dataclass

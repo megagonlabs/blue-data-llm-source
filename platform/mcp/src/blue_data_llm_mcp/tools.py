@@ -105,6 +105,117 @@ LIMIT_PROPERTIES: dict[str, Any] = {
 
 LIMIT_KEYS: tuple[str, ...] = tuple(LIMIT_PROPERTIES)
 
+# The plan namespace, spelled exactly as the library and the command line spell it, for the
+# reason the ceilings are: a key renamed at this boundary is read by nothing, and the run
+# proceeds under a default the caller did not choose and cannot see.
+PLAN_PROPERTIES: dict[str, Any] = {
+    "plan.mode": {
+        # No `enum`, deliberately: this server's validator does not enforce one, and a
+        # schema that advertises a closed set it will not check tells a generated client
+        # something the server does not do. The library refuses an unknown mode by name.
+        "type": "string",
+        "description": (
+            "How the ask is decomposed: `flat`, `partitioned`, or `row_by_row`. `flat` "
+            "asks once and is the default; non-flat modes add bounded planning before "
+            "leaf extraction. No mode is selected automatically, and an unknown one is refused."
+        ),
+    },
+    "plan.max_continuations": {
+        "type": "integer",
+        "description": (
+            "How many times a part may ask again for records it did not get. Zero by "
+            "default, so each part asks once. It bounds asks per part, not provider attempts "
+            "or planning calls; an ask may be retried up to limits.max_retries times."
+        ),
+        "minimum": 0,
+    },
+    "plan.max_leaves": {
+        "type": "integer",
+        "description": (
+            "The most parts a plan may hold; the term that bounds its worst cost. In "
+            "partitioned mode, values past it run grouped several to a part rather than "
+            "being dropped. In row_by_row, an entity list past it falls back to one unsplit ask."
+        ),
+        "minimum": 1,
+    },
+    "plan.partition_key": {
+        "type": "string",
+        "description": (
+            "Preferred dimension for the root partition proposal. Descendants may choose "
+            "other dimensions, but may not repeat an ancestor split dimension."
+        ),
+    },
+    "plan.max_depth": {
+        "type": "integer",
+        "description": "Deepest partition level. Zero disables subdivision. Default: 2.",
+        "minimum": 0,
+    },
+    "plan.max_partitions": {
+        "type": "integer",
+        "description": (
+            "Most children proposed for one partition node. A value below two leaves the "
+            "node unsplit. Default: 4."
+        ),
+        "minimum": 0,
+    },
+    "plan.target_rows_per_leaf": {
+        "type": "integer",
+        "description": (
+            "Uncertain row-count hint above which a descendant may split again. It is not "
+            "a completeness target. Default: 50."
+        ),
+        "minimum": 1,
+    },
+    "plan.schema_mode": {
+        "type": "string",
+        "description": (
+            "`preserve` keeps declared attributes and is the default. `enrich` lets "
+            "non-flat planning append inferred attributes while preserving declarations."
+        ),
+    },
+    "plan.planning_order": {
+        "type": "string",
+        "description": (
+            "Planning fact schedule: planning.research_order, planning.schema_first, "
+            "planning.locked_sequential, planning.locked_parallel, or planning.combined. "
+            "The locked schedules require a non-empty caller schema and ordered plan.keys."
+        ),
+    },
+    "plan.expose_estimate": {
+        "type": "boolean",
+        "description": "Whether extraction prompts include the planner's soft row estimate.",
+    },
+    "plan.key": {
+        "type": "string",
+        "description": (
+            "The attribute identifying a record, used to merge duplicates returned by "
+            "different parts. Must be one of the requested attributes. Without it records "
+            "from different parts are not merged, though exact whole-record duplicates are "
+            "still removed."
+        ),
+    },
+    "plan.keys": {
+        "type": "array",
+        "description": "Ordered fields that jointly identify one record.",
+        "items": {"type": "string"},
+    },
+    "plan.exact_rows": {
+        "type": "integer",
+        "description": (
+            "Hard row target for a single-leaf plan. A multi-leaf plan does not apply it "
+            "and reports exact_rows_not_leaf_bound."
+        ),
+        "minimum": 0,
+    },
+    "plan.max_exclusion_bytes": {
+        "type": "integer",
+        "description": "Most encoded bytes of whole key exclusions in one continuation.",
+        "minimum": 0,
+    },
+}
+
+PLAN_KEYS: tuple[str, ...] = tuple(PLAN_PROPERTIES)
+
 FETCH_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -115,6 +226,7 @@ FETCH_INPUT_SCHEMA: dict[str, Any] = {
             "minimum": 1,
         },
         **LIMIT_PROPERTIES,
+        **PLAN_PROPERTIES,
     },
     # No required key. The source treats a missing or empty query as a normal outcome and
     # reports it as `empty_query`, which the README documents; declaring it required told a
@@ -145,15 +257,17 @@ TOOLS: tuple[ToolSpec, ...] = (
         name=FETCH,
         description=(
             "Fetch structured records from a language model's own knowledge. Returns a "
-            "list of records and a meta object describing the call."
+            "list of records and a meta object describing the call, including any "
+            "reason rows may be missing."
         ),
         input_schema=FETCH_INPUT_SCHEMA,
     ),
     ToolSpec(
         name=ESTIMATE,
         description=(
-            "Bound what one llm_fetch of the same request could cost, without calling the "
-            "model. Returns an upper bound on the whole fetch, retries included."
+            "Bound what one flat llm_fetch of the same request could cost, without calling the "
+            "model. Returns an upper bound on the whole fetch, retries included. Reads no "
+            "plan.* setting, so a split request can cost several times this figure."
         ),
         input_schema=ESTIMATE_INPUT_SCHEMA,
     ),
@@ -171,14 +285,14 @@ def build_source() -> LlmSource:
 
 
 def limit_properties(args: dict[str, Any]) -> dict[str, Any] | None:
-    """The ceilings in *args*, as the per-call properties the library reads.
+    """The ceilings and plan settings in *args*, as per-call properties the library reads.
 
     None rather than an empty dict when the caller set none, so a call without a ceiling
     reaches the library exactly as it did before there was one to set. The library merges
     these over the source's own properties for this call and does not write them back, so
     one agent's ceiling cannot leak into the next call over the same server.
     """
-    properties = {key: args[key] for key in LIMIT_KEYS if key in args}
+    properties = {key: args[key] for key in LIMIT_KEYS + PLAN_KEYS if key in args}
     return properties or None
 
 
@@ -192,7 +306,15 @@ def meta_summary(meta: ExecMeta) -> dict[str, Any]:
         "completion_tokens": meta.completion_tokens,
         "cost": round(meta.cost, 6),
         "elapsed_seconds": round(meta.latency_seconds, 3),
+        "row_estimate": meta.row_estimate,
+        "cardinality_estimate": meta.cardinality_estimate,
+        "primary_keys": list(meta.primary_keys),
+        "observed_key_count": meta.observed_key_count,
+        "marginal_key_yields": list(meta.marginal_key_yields),
+        "incomplete_key_records": meta.incomplete_key_records,
     }
+    if meta.normalization_collisions:
+        summary["normalization_collisions"] = list(meta.normalization_collisions)
     if meta.type_mismatches:
         summary["type_mismatches"] = list(meta.type_mismatches)
     if meta.key_collisions:
@@ -209,6 +331,17 @@ def meta_summary(meta: ExecMeta) -> dict[str, Any]:
         summary["truncated_to"] = meta.truncated_to
     if meta.stopped_by:
         summary["stopped_by"] = meta.stopped_by
+    # Always, including empty. This is machine-readable metadata, and a key that appears
+    # only sometimes makes a reader branch on its presence rather than on its contents. The
+    # empty list says nothing was observed to be missing, which is a weaker claim than
+    # complete and the only one this package is allowed to make.
+    summary["gaps"] = list(meta.gaps)
+    summary["stop_reasons"] = list(meta.stop_reasons)
+    summary["requested_attrs"] = list(meta.requested_attrs)
+    if meta.record_origins:
+        summary["record_origins"] = [list(entry) for entry in meta.record_origins]
+    if meta.asked is not None:
+        summary["asked"] = meta.asked
     if not meta.accounting_known:
         # Only when it is false, so an ordinary result is unchanged. A model reading this
         # needs to know the calls and cost above are this library's bookkeeping rather than
@@ -342,9 +475,8 @@ async def _allm_estimate(
 _ASYNC_HANDLERS = {FETCH: allm_fetch, ESTIMATE: _allm_estimate, INFO: _allm_info}
 
 
-# Withdrawn before release. Named here as well as in the library because a tool call never
-# reaches the library's property validation: the handlers read the fields they know and drop
-# the rest, so an unrecognised key arrived as silence rather than as a refusal.
+# Named here as well as in the library because a tool call never reaches the library's property
+# validation: the handlers read known fields and would otherwise drop an unrecognised key.
 _DEFERRED_ARGS = {
     "llm.rate_limit": (
         "client-side call spacing is deferred to v2.0. Use 'llm.max_parallel' to cap "
@@ -443,6 +575,8 @@ def _check_value(label: str, value: Any, spec: dict[str, Any]) -> Any:
     declared = spec.get("type")
     if declared == "string" and not isinstance(value, str):
         raise ToolError(f"{label} must be a string, got {kind}", kind="ConfigError")
+    if declared == "boolean" and not isinstance(value, bool):
+        raise ToolError(f"{label} must be a boolean, got {kind}", kind="ConfigError")
     if declared == "integer":
         # bool is an int in Python and is never what a count meant.
         if isinstance(value, bool):

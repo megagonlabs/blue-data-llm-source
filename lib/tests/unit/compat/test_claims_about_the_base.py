@@ -29,14 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 # provider returned rather than prose this project maintains.
 SKIP = {".venv", "build", "__pycache__", ".pytest_cache", ".ruff_cache", "cassettes"}
 
-# The decision log records what was decided and when, so a claim inside a dated entry is
-# correct as history even once the world moves. Its entry on this subject keeps its original
-# wording with a dated update beneath it. The cost of exempting the file is that a genuinely
-# new false claim written there would not be caught
-# here; that is accepted because the log is append-only history rather than current guidance,
-# and anything it says that a reader might act on today is repeated in a document that is
-# scanned.
-HISTORICAL = {"13-decision-log.md"}
+HISTORICAL: set[str] = set()
 
 # The changelog is half record and half current guidance, so it is split rather than
 # exempted. A released section describes the release it names and stays true about it;

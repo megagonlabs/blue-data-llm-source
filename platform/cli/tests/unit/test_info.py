@@ -28,6 +28,7 @@ def test_help_lists_both_commands(runner: CliRunner) -> None:
     assert "fetch" in result.stdout
     assert "info" in result.stdout
     assert "--verbose" in result.stdout
+    assert "-v" in result.stdout
 
 
 def test_fetch_help_lists_every_option(runner: CliRunner) -> None:
@@ -38,6 +39,7 @@ def test_fetch_help_lists_every_option(runner: CliRunner) -> None:
         "--context",
         "--max-records",
         "--model",
+        "--effort",
         "--limit-cost",
         "--limit-seconds",
         "--limit-calls",

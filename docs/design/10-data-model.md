@@ -47,6 +47,44 @@ None of these names carries meaning to the fetch path. They exist so that a regi
 
 The three input fields correspond to what a source of this kind is specified to accept: a query, optional attribute names, and optional context that may resolve ambiguity in those names. The source accepts both the plain-name form and the typed form; the plain form shapes the output, and the typed form additionally drives coercion.
 
+Planning snapshots the normalized attributes into an ordered immutable schema. A caller may still construct a schema from a list, but later changes to that list cannot change a queued `LeafTask` or the identity used by reduction. Constraints use string, integer, finite number, or boolean values; null, non-finite numbers, and blank strings are not valid constraint values.
+
+### Planning state
+
+Non-flat requests pass through immutable planning contracts before execution:
+
+| Contract | Meaning |
+|----------|---------|
+| `DataTask` | Semantic query state: original and retrieval queries, typed constraints, accepted schema and cardinality, and partition identity. It has no provider handle, prompt, mutable parent link, or timestamp identity |
+| `QueryAnalysisResult` | Accepted rewrite and typed constraints, plus the root `DataTask` and parse diagnostics |
+| `SchemaDefinition` | Ordered immutable attributes, ordered primary keys, and the source of the key decision. `Schema` remains its public compatibility projection |
+| `CardinalityEstimate` | Soft `expected`, `lower`, and `upper` evidence with its row unit, source, parse status, and diagnostics |
+| `IdentityPartitionRule` | Caller- or source-owned finite identity domain with ordered primary keys, parent scope, provenance, and a closed versioned wire form |
+| `PartitionSafety` / `AppliedPartitionDecision` | Machine-checkable containment, disjointness, and coverage evidence plus the exact accepted rule |
+| `FetchPlan` / `PlanSchemaContract` | Versioned task tree and the ordered identity/schema facts needed to re-check its accepted decisions |
+| `PlanningFacts` / `PlanningReceipt` | Planning counters and decisions, bound to configured rule digests and the serialized plan for a direct Python distribution-search result |
+
+`PlanningContext` collects the accepted query-analysis, schema, and cardinality facts. Its canonical
+digest covers their semantic content and excludes the schedule, stage receipts, context-level
+diagnostics, and `plan.expose_estimate`. Equivalent locked sequential and locked parallel runs
+therefore have the same digest even though their wall time can differ. The safety decision, fetch
+plan, planning counters, and optional receipt are later contracts built from those facts.
+
+`LeafTask` is a different object. It is the versioned execution DTO produced after planning, with
+the prompt version and execution settings needed to cross the local or process boundary. Accepted
+`prompt_version` values are `initial-v2-1` for legacy wire version 1 and
+`research-v2-runtime-1` for current wire versions 2 and 3. It transports the cardinality estimate
+even when `plan.expose_estimate` is false; that setting only omits the estimate from extraction
+prompts. Model cardinality remains advisory throughout planning and extraction. `plan.exact_rows`
+is a hard target only when the plan has one leaf. A multi-leaf plan does not apply it and reports
+`exact_rows_not_leaf_bound` in `meta.gaps`.
+
+Rule-backed distribution search is direct-Python-only in this release. It requires partitioned mode,
+explicit ordered keys, declared finite-domain rules, and at least one rule applicable at the root.
+Invalid rules fail before provider contact. A planning receipt establishes internal agreement among
+the configured rule digests, planning facts, and plan; it does not establish authenticity, factual
+truth, completeness, or answer quality.
+
 `max_records` is a cap on what the source returns rather than an instruction to the model. Expressing a count inside the request itself is a different thing and influences what the model produces. A caller wanting both writes both.
 
 ---
@@ -57,7 +95,7 @@ A record is a JSON object. That is the whole contract, and the guarantees around
 
 **With requested attributes.** Every returned record carries exactly the requested attribute names as its keys, in the order requested, with `None` where the model supplied no value. Keys the model returned under a different spelling are mapped onto the requested name where the mapping is unambiguous. Keys that map to nothing are reported and do not appear in the record. Where two returned keys map to the same attribute, the first holds it and the second is reported with the value it carried, since which spelling was meant is not knowable here.
 
-**Without requested attributes.** Records pass through as the model produced them. Keys vary between records in the same result, and no key is guaranteed to be present. What the caller receives instead is the list of keys that appeared, so it can decide how to proceed. Deriving a schema when none is supplied is not part of this release.
+**Without requested attributes.** Flat records pass through as the model produced them, so keys may vary between records and no key is guaranteed. In non-flat modes, bootstrap infers a schema and may identify a key; the effective schema then shapes the records. `requested_attrs` remains empty so the caller can distinguish inferred shape from its own declaration.
 
 **In both cases.** Values are whatever the model returned, coerced only where a type was declared and the coercion is unambiguous. Nothing is checked for truth, and nothing is looked up anywhere.
 
@@ -97,10 +135,16 @@ Booleans are deliberately excluded from integer and float coercion. In Python a 
 | `records` | `list[dict]` | The records, after alignment, coercion, deduplication, and row capping |
 | `meta` | `ExecMeta` | What the run did and what it cost |
 
+These remain the only dataclass fields. A direct Python distribution-search result may expose an
+optional `planning_receipt` property. `to_dict()` adds a top-level receipt only when one exists;
+results without distribution search keep the two-key form. The CLI and MCP omit the receipt in this
+release.
+
 ### `ExecMeta`
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `gaps` | `list[str]` | Why rows may be missing, one entry per shortfall observed. Always present; empty means nothing was observed to be missing, not that the answer is complete |
 | `outcome` | `str` | Why the result looks the way it does, from the closed vocabulary below |
 | `model` | `str` | The model that answered, as reported by the client |
 | `calls` | `int` | Provider attempts claimed against the run's budget. A cache hit is not one, and a contacted attempt that failed is |
@@ -110,6 +154,13 @@ Booleans are deliberately excluded from integer and float coercion. In Python a 
 | `latency_seconds` | `float` | Wall-clock time for the whole run, including parsing and reduction |
 | `cache_hits` | `int` | Calls answered from cache |
 | `requested_attrs` | `list[str]` | The attribute names the caller asked for |
+| `row_estimate` | `int \| None` | Accepted non-flat bootstrap row-count hint for the root slice. Zero is retained; flat, unknown, and discarded bootstrap results use `None` |
+| `cardinality_estimate` | `dict[str, object] \| None` | Accepted non-flat bootstrap estimate with `expected`, `lower`, `upper`, `row_unit`, `source`, `parse_status`, and `diagnostics`. Flat mode or planning without this structure uses `None` |
+| `primary_keys` | `list[str]` | Ordered identifying attributes used for execution and reduction; empty when none was established |
+| `observed_key_count` | `int` | Distinct complete normalized keys in the final returned records after reduction, deduplication, and row capping; zero when no primary key exists |
+| `marginal_key_yields` | `list[int]` | New normalized key identities from each extraction attempt in leaf order; when no primary key exists, new exact records per attempt |
+| `incomplete_key_records` | `int` | Distinct per-leaf records missing at least one primary-key value; zero when no primary key exists |
+| `normalization_collisions` | `list[dict]` | Per-leaf complete keys that compare equal after declared-type-aware normalization but use different display values; each entry carries `primary_keys`, `kept`, and `collided` |
 | `observed_keys` | `list[str]` | Every key the model produced, in order of first appearance |
 | `remapped_keys` | `dict[str, str]` | Returned key mapped to the requested attribute it was matched to |
 | `unmapped_keys` | `list[str]` | Returned keys that matched no requested attribute |
@@ -117,9 +168,12 @@ Booleans are deliberately excluded from integer and float coercion. In Python a 
 | `key_collisions` | `list[dict]` | Every returned key whose value was not used because another key had already answered the same attribute |
 | `unchecked_types` | `list[str]` | Declared type names this library cannot check, reported once each |
 | `truncated_to` | `int \| None` | Record count after a row cap took effect |
-| `stopped_by` | `str \| None` | The limit axis that ended the run: `max_rows`, `max_seconds`, `max_cost`, or `max_calls` |
+| `stop_reasons` | `list[str]` | Ordered distinct extraction limits and discarded-final-output facts. Always present |
+| `stopped_by` | `str \| None` | First member of `stop_reasons`, retained as the singular compatibility projection |
+| `record_origins` | `list[list[str]]` | Which parts produced each record, parallel to `records`. A list per record, because overlapping parts can each return the same one |
+| `asked` | `str \| None` | The question that actually ran, when an analysis call restated it. `None` when nothing changed it |
 
-Five of these fields exist because their absence is what makes an LLM-backed source hard to reason about. `observed_keys` tells a caller what shape it actually received when it did not specify one. `remapped_keys` and `unmapped_keys` turn a silent column loss into a reported one. `type_mismatches` does the same one level down, for a value the caller was told is typed and is not, and `key_collisions` does it for a value that was dropped because two keys claimed the same column. `stopped_by` distinguishes a short answer that the source cut off from a short answer the model produced. `unchecked_types` closes the last gap in that set: a declared type is sent to the model verbatim, so a name this library cannot check is a legitimate instruction rather than necessarily a typo — but a *misspelled* one would otherwise check nothing while the caller believed their records were typed. It is reported once, against the request, instead of being raised against every value the caller received.
+These fields separate observations that the records alone cannot carry. `observed_keys`, remapping, mismatches, and collisions report shape changes. `stop_reasons` keeps simultaneous limits from overwriting one another, while `stopped_by` keeps the former singular interface. `requested_attrs` remains the caller declaration even when an inferred or enriched schema shapes the output. `row_estimate` is the `expected` compatibility value from `cardinality_estimate`. The estimate, `observed_key_count`, and `marginal_key_yields` describe planning input and this run's observations; they do not establish completeness. `gaps` reports operational failures and fallbacks; it is not a completeness score.
 
 `calls` and `cost` are read from the budget rather than summed from the usage entries. The budget claimed them under a lock, while two concurrent fetches through one reused client can read the same cursor into a shared usage list and each slice both entries, so a count taken from that list can carry another request's spend. The token detail and the model name still come from usage entries, but from a list the fetch created and handed the client for that one call under the `usage_sink` property, not from the client's own history. A private list is what removes the cursor rather than narrowing it. The consequence to know is that a client which does not claim against the run's budget reports zero calls and zero cost however many it made, which is why such a client is refused the ceilings on the axes it did not declare rather than measured through them.
 
@@ -133,12 +187,16 @@ An empty result is a valid answer from this source rather than a failure, which 
 | `empty_query` | The request was absent, empty, or whitespace, so no model was called |
 | `model_returned_none` | The model returned no records at all |
 | `filtered_to_empty` | The model returned records and reduction left none, which happens when no record answered any requested attribute |
+| `partial` | Extraction was answered but some work was interrupted, including a failed split leaf or a late continuation failure after records were parsed |
 | `stopped_by_limit` | A ceiling ended the run and left no usable result, whether it refused the attempt before the provider was reached, emptied the result through the row cap, or was found crossed once the work was done |
 | `truncated` | The row ceiling cut the result short and records remain |
 
 The field rides on `FetchResult`, so it reaches a caller through `fetch` and `afetch` alone. `execute_query` and `execute_query_nl` return the record list by the contract of the surface they match, and a caller that needs the reason for an empty list uses the library surface.
 
-The ordering to know is that any `stopped_by` outranks what the run produced, and it is one published rule, `source.decide_outcome`. A row cap that trims some records reports `truncated`; a row cap that leaves none reports `stopped_by_limit`, not `filtered_to_empty`, because the limit emptied the result rather than reduction doing so; and any other axis reports `stopped_by_limit` whether or not records survived, because a caller cannot trust the shape of an answer that was cut short. `truncated_to` and `stopped_by` carry the row limit in the first two cases. `filtered_to_empty` and `model_returned_none` are reachable only when no ceiling fired.
+Partial interruption outranks a simultaneous cap because each cap remains readable in `stop_reasons`.
+Without interruption, any non-row stop reports `stopped_by_limit`. A row-only cap reports
+`truncated` when records remain and `stopped_by_limit` when none do. `filtered_to_empty` and
+`model_returned_none` are reachable only when no stop fired.
 
 ### `TypeMismatch`
 
@@ -182,6 +240,8 @@ Per call rather than per run, recorded by the client and folded into `ExecMeta`.
 | `cost` | `float` | Spend for this call, or the reserved bound when the provider's accounting could not be read; zero on a cache hit |
 | `latency_seconds` | `float` | Wall-clock time for this call, recorded on a cache hit as well |
 | `cache_hit` | `bool` | Whether the response came from cache |
+| `finish_reason` | `str \| None` | Provider-reported generation stop reason, or `None` when no usable reason was reported |
+| `cost_known` | `bool` | Whether this call's provider cost was observed; false when the admitted bound was retained instead |
 
 A cache hit records latency and marks itself, and carries no tokens and no cost. This is deliberate: a caller reading a cost total should see what was spent, and a caller reading a latency total should see what was waited for, and those two are not the same measurement.
 
@@ -194,7 +254,7 @@ A cache hit records latency and marks itself, and carries no tokens and no cost.
 | Field | Type | Description |
 |-------|------|-------------|
 | `bounded` | `bool` | Whether a bound could be established at all |
-| `max_cost` | `float \| None` | The most one fetch of these arguments could cost, or `None` when unbounded |
+| `max_cost` | `float \| None` | The most one **flat** fetch of these arguments could cost, or `None` when unbounded. Reads no `plan.*` setting, so a decomposed or continued request can exceed it |
 | `reason` | `str \| None` | What was missing, when `bounded` is false |
 | `model` | `str` | The model the figure was computed for |
 | `prompt_bytes` | `int` | Encoded length of the prompt that was rendered |
@@ -202,7 +262,7 @@ A cache hit records latency and marks itself, and carries no tokens and no cost.
 | `max_cost_per_attempt` | `float \| None` | The most one provider attempt could cost |
 | `max_attempts` | `int` | Attempts the retry allowance permits, the first one included |
 
-`max_cost` bounds the whole fetch, not one attempt: it is `max_cost_per_attempt` accumulated
+`max_cost` bounds the whole of a `flat` fetch, not one attempt: it is `max_cost_per_attempt` accumulated
 `max_attempts` times, the same way the ledger accumulates it, so a ceiling set to exactly `max_cost`
 admits every attempt the figure accounted for. Accumulated rather than multiplied, because the two
 differ by a unit in the last place and that is enough to refuse the last attempt. Sizing a ceiling
@@ -260,9 +320,8 @@ The same key is used whichever store answers. Two stores ship, `MemoryCache` and
 
 Recorded so that a caller planning around this source knows which checks remain its own.
 
-- No schema is identified. When the caller supplies no attributes, none is derived, records may be ragged, and the source says so rather than implying a table.
-- No key field is nominated. Deduplication compares whole records. The verifier's `dedupe` takes an optional single-attribute key, but nothing reaches that parameter: no property, argument or op exposes it, so whole-record comparison is the only behaviour available to a caller.
-- No cardinality is estimated. Nothing in the result states how many records there should have been, so a short answer cannot be distinguished from a complete one by the source alone. `Estimate` answers what a request could cost, which is a different question from how large its answer ought to be.
+- No schema or key is factually verified. Non-flat bootstrap can infer both, while preserve mode keeps caller declarations and enrich mode may append fields. An inferred key controls deterministic merging; it is model-produced structure, not external truth.
+- No calibrated cardinality or completeness measure is reported. `cardinality_estimate` preserves the accepted non-flat bootstrap range, unit, source, parse status, and diagnostics, while `row_estimate` exposes its `expected` value for compatibility. Flat mode and planning without a usable structure use `None`. These fields do not state how many records should exist or whether they were all returned. `observed_key_count` and `marginal_key_yields` describe this run only. `Estimate` answers what a request could cost, which is a third question again.
 - No per-field confidence is reported. The source reports what it did, not how sure the model was.
-- No provenance or lineage is carried. One request is one call, so there is no partition, task, or sub-query for a record to be attributed to.
+- Provenance is carried alongside the records, not inside them. A record is the model's answer and nothing is added to it, so `meta.record_origins` runs parallel to `records` and names the part or parts that returned each one. A list per record because overlapping parts can each return the same record and all of them are true. It names the parts that returned a record; it does not claim they are the only parts that hold it. Lineage beyond that — which prompt, which attempt — is not carried.
 - No fact is verified. A record is checked against the shape it was asked for, and nothing in the result should be read as establishing that a value is true.

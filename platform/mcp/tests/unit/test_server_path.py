@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from blue_data_llm_source import ConfigError
 
 from blue_data_llm_mcp import tools
 
@@ -41,7 +42,7 @@ class _Source:
         return FetchResult(records=[{"name": "Ada"}], meta=ExecMeta(model="m", calls=1))
 
     def fetch(self, query: str, **kwargs: Any) -> Any:
-        raise RuntimeError(
+        raise ConfigError(
             "fetch() was called from inside a running event loop. Use afetch() instead."
         )
 

@@ -67,12 +67,8 @@ _CONTROL = {
     "price_per_input_token",
     "price_per_output_token",
 }
-# Withdrawn before release rather than shipped. Client-side call spacing has to reconcile
-# with per-attempt budget admission, and every arrangement tried let one of them corrupt the
-# other: spacing claimed before admission charged an interval to refused calls and let a
-# waiter hold a shared allowance a live sibling then lost, while spacing claimed after it
-# ran at the speed of the retry backoff. A key that is present and subtly wrong is worse
-# than one that is absent and says so, so it is refused by name and deferred.
+# Client-side call spacing must coordinate with per-attempt budget admission. Until one
+# mechanism owns both, the setting is refused by name instead of claiming a limit it cannot keep.
 _DEFERRED = {
     "rate_limit": (
         "client-side call spacing is deferred to v2.0. Use 'llm.max_parallel' to cap "
@@ -278,10 +274,7 @@ class DefaultLlmClient:
         """Answer *prompt*, cancelling any wait that outlives the run's time ceiling.
 
         The deadline surrounds the whole awaited path rather than the retry loop alone.
-        Capping only the backoff left every other wait unmeasured — a semaphore queue, a
-        rate-limit pause, and a provider that ignores the timeout it is handed each returned
-        eight to twenty times past a five-millisecond ceiling and then reported it. Naming a
-        limit after spending twenty times it is not bounding time.
+        Capping only retry backoff would leave the semaphore queue and provider wait outside it.
 
         What this does not bound is work that never yields, and there is no way to bound it
         from here: ``asyncio`` cannot interrupt code that is not awaiting, and a thread only
@@ -292,13 +285,9 @@ class DefaultLlmClient:
         A run that finished over its ceiling raises rather than returning a late answer as a
         success: a ceiling that fails silently is worse than one that reports late.
 
-        The deadline cancels the wait and then waits for the cancellation to be acknowledged.
-        Work that declines to acknowledge it holds this call open, and that is a documented
-        exclusion rather than a bound this can keep. Letting go of it instead was tried and
-        was worse: the caller's own cancellation stopped reaching the work, the abandoned
-        task could be collected mid-flight or keep ``asyncio.run`` from returning, and it
-        settled real cost into the caller's budget after a result reporting none had already
-        been handed back.
+        The deadline cancels the wait and then waits for acknowledgement. Work that does not
+        acknowledge cancellation holds the call open; abandoning it would detach accounting
+        and caller cancellation from the provider work.
 
         Expiry becomes ``BudgetExceeded`` naming ``max_seconds``, including when the work
         ends in a transport failure after the deadline has already passed: the run was over
@@ -561,6 +550,7 @@ class DefaultLlmClient:
             # A cache hit really did cost nothing; anything else is known only if the
             # provider's own accounting could be read.
             cost_known=True if cache_hit else cost_known,
+            finish_reason=_finish_reason(payload),
         )
         self.last_usage = record
         self.usages.append(record)
@@ -983,6 +973,23 @@ def _cache(cache: Any, key: str, payload: Any) -> None:
         cache.set(key, payload)
     except Exception:
         pass
+
+
+def _finish_reason(payload: dict[str, Any]) -> str | None:
+    """What the provider said about why it stopped, or None when it said nothing usable.
+
+    Only a string is a reason. A missing field, a null, or a value of some other shape is
+    reported as no reason at all rather than coerced, because every consumer above treats an
+    absent reason as "nothing was established" and a present one as an attestation.
+    """
+    choices: list[Any] = payload.get("choices") or []
+    if not choices:
+        return None
+    first = choices[0]
+    if not isinstance(first, dict):
+        return None
+    reason: Any = cast("dict[str, Any]", first).get("finish_reason")
+    return reason if isinstance(reason, str) and reason else None
 
 
 def _extract_text(payload: dict[str, Any]) -> str:

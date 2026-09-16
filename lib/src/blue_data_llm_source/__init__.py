@@ -12,6 +12,12 @@ from blue_data_llm_source._constants import (
 from blue_data_llm_source.cache import FileCache, MemoryCache
 from blue_data_llm_source.llm.budget import Budget, Limits, Reservation
 from blue_data_llm_source.llm.client import DefaultLlmClient, FunctionClient
+from blue_data_llm_source.planning.analysis import DataTask, QueryAnalysisResult, QueryAnalyzer
+from blue_data_llm_source.planning.cardinality import CardinalityEstimate, CardinalityEstimator
+from blue_data_llm_source.planning.context import PlanningContext
+from blue_data_llm_source.planning.receipt import PlanningReceipt
+from blue_data_llm_source.planning.schema import SchemaDefinition, SchemaGenerator
+from blue_data_llm_source.reduction.identity import KeyTuple, key_identity
 from blue_data_llm_source.source import LlmSource
 from blue_data_llm_source.types import (
     Attr,
@@ -20,11 +26,15 @@ from blue_data_llm_source.types import (
     CacheStore,
     Capability,
     ConfigError,
+    Constraint,
     Estimate,
+    Exact,
     ExecMeta,
     FetchResult,
+    JsonScalar,
     LlmClientProtocol,
     LlmSourceError,
+    OneOf,
     Outcome,
     ParseError,
     QueryError,
@@ -32,17 +42,22 @@ from blue_data_llm_source.types import (
     Usage,
 )
 
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 
 __all__ = [
     "Attr",
     "Budget",
     "BudgetAwareClient",
     "Capability",
+    "CardinalityEstimate",
+    "CardinalityEstimator",
     "BudgetExceeded",
     "CacheStore",
     "ConfigError",
+    "Constraint",
+    "DataTask",
     "Estimate",
+    "Exact",
     "DEFAULT_VARIANT",
     "DefaultLlmClient",
     "ExecMeta",
@@ -51,18 +66,28 @@ __all__ = [
     "FunctionClient",
     "Limits",
     "LlmClientProtocol",
+    "KeyTuple",
+    "JsonScalar",
     "LlmSource",
     "LlmSourceError",
     "MemoryCache",
     "OP_ESTIMATE",
     "OP_FETCH",
     "OP_MODELS",
+    "OneOf",
     "Outcome",
     "PROTOCOL",
     "ParseError",
+    "PlanningContext",
+    "PlanningReceipt",
+    "QueryAnalysisResult",
+    "QueryAnalyzer",
     "QueryError",
     "Reservation",
+    "SchemaDefinition",
+    "SchemaGenerator",
     "TransportError",
     "Usage",
+    "key_identity",
     "__version__",
 ]

@@ -15,6 +15,7 @@ check as well, since that is the one environment where the exported value is rea
 from __future__ import annotations
 
 import re
+import stat
 from pathlib import Path
 
 import pytest
@@ -49,6 +50,16 @@ PACKAGES = [
 QUOTED_VERSION = re.compile(r'^version\s{2,}(\d+\.\d+\.\d+)\s*$|"version":\s*"(\d+\.\d+\.\d+)"')
 
 SKIP = {".venv", "build", "__pycache__", ".pytest_cache", ".ruff_cache", "cassettes"}
+
+RELEASE_SCRIPTS = (
+    "lib/scripts/build.sh",
+    "lib/scripts/install.sh",
+    "lib/scripts/publish.sh",
+    "platform/cli/scripts/build.sh",
+    "platform/cli/scripts/install.sh",
+    "platform/cli/scripts/publish.sh",
+    "platform/mcp/scripts/install.sh",
+)
 
 
 def _declared(relative: str) -> str:
@@ -89,6 +100,16 @@ def test_every_package_exports_the_version_its_packaging_declares(
     )
 
 
+@pytest.mark.parametrize(("name", "pyproject", "_module"), PACKAGES, ids=[p[0] for p in PACKAGES])
+def test_every_package_declares_its_readme(name: str, pyproject: str, _module: str) -> None:
+    project = ROOT / pyproject
+    text = project.read_text(encoding="utf-8")
+    assert re.search(r'^readme\s*=\s*"README\.md"$', text, re.MULTILINE), (
+        f"{name} does not declare its README as package metadata"
+    )
+    assert (project.parent / "README.md").is_file()
+
+
 def test_every_documented_version_output_quotes_the_current_release() -> None:
     """The example outputs are the version a reader believes they are running.
 
@@ -115,6 +136,12 @@ def test_every_documented_version_output_quotes_the_current_release() -> None:
     )
 
 
+@pytest.mark.parametrize("relative", RELEASE_SCRIPTS)
+def test_release_scripts_are_executable(relative: str) -> None:
+    path = ROOT / relative
+    assert path.stat().st_mode & stat.S_IXUSR, f"{relative} is not executable by its owner"
+
+
 # A release qualifier attached to current behaviour: "in v1.0", "in v1.1". A forward-looking
 # deferral — "deferred to v2.0" — names a version the reader is not on, which does not go
 # stale on the next release, so it stays legal.
@@ -134,8 +161,8 @@ def test_no_shipped_runtime_string_dates_current_behaviour_to_a_release() -> Non
     nothing re-reads it: a refusal naming the version that will carry a feature sends a
     caller who upgrades to the version they are already running.
 
-    Scoped to shipped source rather than to documentation, because a changelog and a
-    decision log are the two places a version qualifier is the point.
+    Scoped to shipped source rather than documentation, because version qualifiers belong
+    in release history and forward-looking compatibility notes.
     """
     stale: list[str] = []
     scanned = 0

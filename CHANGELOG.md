@@ -2,11 +2,100 @@
 
 Notable changes per release. Prompt changes are called out explicitly, because a prompt change can move results without moving any version a caller can see.
 
-## 1.1.1 — unreleased
+## 1.2.0 — unreleased
+
+A minor release with opt-in planning features and compatibility-oriented behavioural repairs.
+
+**Added**
+
+- **The CLI has bounded effort levels.** `--effort low|medium|high` maps to zero, one, or two
+  continuations, allowing up to one, two, or three logical extraction asks per part when a primary
+  key is available. An explicit `--plan-continuations` value wins. Retries remain separate provider
+  attempts. Flat `medium`/`high` requests without a declared key fail before source construction.
+- **CLI machine output stays machine-readable.** Provider dependencies sometimes write diagnostics
+  through Python's `sys.stdout`. The CLI now redirects those writes to standard error while a fetch
+  runs, covering the known provider banners. Direct file-descriptor writes and output produced after
+  the fetch returns are outside the redirect.
+
+- **Initial v2 planning adapts the research task-tree approach to a bounded local runtime.** Non-flat
+  requests bootstrap a retrieval query and schema, then `partitioned` can split useful descendants
+  breadth first. `row_by_row` uses an explicit entity list or a bounded enumeration. Planning falls
+  back to the intact parent slice when a proposal is invalid, incomplete, or unaffordable. This does
+  not reproduce the research runner or promise identical results.
+- **Four hierarchy controls are public on Python, CLI, and MCP:** `plan.max_depth` (default `2`),
+  `plan.max_partitions` (default `4`), `plan.target_rows_per_leaf` (default `50`), and
+  `plan.schema_mode` (`preserve` by default or `enrich`). `plan.partition_key` constrains the root
+  proposal only; descendants may choose other dimensions.
+- **Non-flat requests can infer a schema.** Preserve mode keeps a nonempty caller schema unchanged.
+  Enrich mode may append inferred attributes while retaining every caller name, type, and key.
+  `meta.requested_attrs` remains the caller declaration, while output records follow the effective
+  schema.
+- **`meta.row_estimate` reports the accepted bootstrap root hint.** It preserves an estimate of zero
+  and is `None` for flat mode, an unknown estimate, or a discarded bootstrap transformation. CLI and
+  MCP machine metadata always include it; the CLI table footer prints the value or `unknown`.
+- **`meta.stop_reasons` retains simultaneous stop facts** as an ordered distinct list.
+  `meta.stopped_by` remains the highest-precedence projection. CLI and MCP machine output always
+  include `stop_reasons`, `gaps`, and `requested_attrs`; CLI table output prints every stop reason
+  without requiring `--verbose`.
+
+- **A request can be decomposed into parts.** `plan.mode` selects `flat` (the default), `partitioned`, or `row_by_row`. Non-flat modes add bootstrap planning, and partitioned mode may add one proposal call per eligible slice before leaf extraction. `flat` makes no planning call, so a caller who sets nothing retains the one-completion path.
+- **`plan.max_leaves` bounds the terminal slices in a plan.** A proposed expansion that cannot fit is rejected as a whole and the unchanged parent becomes a leaf. A row-by-row enumeration that cannot fit falls back to the unsplit batch request rather than executing a prefix.
+- **A part can ask again for records it did not get**, bounded by `plan.max_continuations`. `0` by default, so each part asks once unless you raise it. It bounds asks per leaf rather than billed attempts or planning calls; each ask may still be retried up to `limits.max_retries` times.
+- **`plan.key` names the attribute identifying a record**, so parts returning the same record merge rather than duplicating it. Without one, records from different parts are not merged, and exact whole-record duplicates are still removed.
+- **`meta.gaps` says why rows may be missing** when the source observed an operational failure, fallback, interruption, or discard. An empty list means no supported diagnostic fired. It does not mean the answer is complete.
+- **A response that ends mid-record keeps the records it completed.** An incomplete document used to discard the whole answer and raise, losing records already paid for.
+- **`plan.partition_key` guides the root proposal.** Descendants may split on another useful dimension and cannot repeat an ancestor dimension.
+- **Python, CLI, and MCP share 14 non-D plan settings.** The CLI uses `--plan-*` flags and MCP uses
+  the library's dotted property names on `llm_fetch`: mode, continuations, leaves, singular and
+  composite keys, exact rows, exclusion bytes, root partition key, depth, partitions, target rows,
+  schema mode, planning order, and estimate exposure.
+- **Direct Python callers can opt into rule-backed distribution search.** The three additional
+  controls are `plan.distribution_search`, `plan.identity_partitions`, and
+  `plan.max_strategy_candidates`. D requires partitioned mode, explicit ordered `plan.keys`, finite
+  declared identity rules, and at least one root-applicable rule. Invalid inputs fail before provider
+  contact; per-call rules replace source rules; all three D controls are stripped from provider
+  properties. A D-enabled direct fetch can carry a versioned `PlanningReceipt`. CLI and MCP do not
+  expose D or the receipt in this release.
+- **Direct Python also retains `plan.max_excluded_keys`.** This count bound complements the shared
+  encoded-byte bound on continuation exclusions. CLI and MCP use its default and do not expose a
+  separate control for it.
+
+**Changed**
+
+- **The public `source.decide_outcome` rule now accepts planning-aware execution facts.** Existing
+  four-argument calls retain their behavior. Keyword-only `answered`, `interrupted`, and
+  `stop_reasons` facts let the runtime report an answered but interrupted result as `partial`, while
+  retaining simultaneous limits in the stop fields. `LlmSource` uses this public rule directly.
+
+- **`meta.stopped_by` names the highest-precedence stop.** `meta.stop_reasons` preserves the other simultaneous limits. A partial run keeps `outcome=partial` while the stop fields report any cap; a retained result cut only by `max_rows` reports `truncated`.
+- **`meta.outcome` reports `partial` when extraction was answered but some work was interrupted.** This includes a failed split leaf beside an answered sibling and records retained before a late flat continuation failure. Simultaneous caps remain in `stop_reasons`. The CLI exits `8` for partial results.
+- **`meta.record_origins` names which parts produced each record**, parallel to `records`, a list per record because overlapping parts can each return the same one.
+- **`meta.asked` reports the question that actually ran** when an analysis call restated it, and is absent when nothing changed.
+- **`meta.gaps` is always present in machine-readable output**, empty list included, so a program branches on what it says rather than on whether the key arrived.
+- **Filters carry their own shape.** A part's constraints are `Exact` or `OneOf` rather than plain text, and reach the model with the operator said outright: `- field "region" must equal one of ["A, B", "C"]`. Joined into one string, a value containing the separator was indistinguishable from two values.
+
+**Known limits of this release, stated rather than discovered**
+
+- **Splitting preserves the enumeration it was given, not the coverage of the answer.** Each distinct alternative the analysis enumerated is encoded in exactly one part's filter. The enumeration itself comes from a model and may be wrong, the alternatives may overlap, and a model may omit records from a filter it was given correctly. None of that is checkable from here.
+- **A continuation cap that fires after a productive answer means completeness was not established, not that another record exists.** A model with one row left and a model with a thousand answer the last permitted call identically.
+- **An output-limit cause is reported only where the provider attested one.** `provider_output_limit` requires a recognised termination reason; without it a response that did not parse whole is `response_incomplete`, which says what was observed and nothing about why. A caller-supplied `llm_fn` can never attest, so it never gets the stronger name.
+- **Planning protects one next extraction rather than admitting the whole worst case.** Each optional planning call is checked against current call, cost, and deadline headroom. Actual provider attempts still claim the shared budget atomically, so later leaves may remain unserved.
+- **A model rewrite can still broaden or narrow the request.** Outside `flat`, an analysis call restates the request and that restatement is what runs. The prompt instructs against changing the meaning, which is an instruction and not a check. `meta.asked` reports the question that actually ran whenever it differs from the one you typed, so the substitution is visible rather than prevented.
+- **Encoding model text into prompts prevents it becoming a new instruction line. It does not make it inert.** Values, names, held records and the query are all encoded, so none can open a line of its own; nothing here stops a model from being influenced by instructions sitting inside data it is shown. The caller's own `context` is inserted raw, deliberately: the caller is the principal.
+- **`meta.record_origins` names the parts that returned a record.** It does not claim they are the only parts that hold it.
+- **A split request where every part came back unanswered for mixed reasons raises, and the ceiling that also fired is not reported.** Nothing was answered, so there is no partial result to carry it, and the exception belongs to the provider rather than to this library — writing the axis onto it would mutate an object a client may raise more than once. The failure is what a caller receives; the ceiling is visible only in the budget they supplied.
+
+- **`estimate` prices one flat fetch, not a decomposed request.** It reads no `plan.*` setting, and its figures cover the retry allowance of a single flat fetch. Bootstrap, proposal, enumeration, leaves, and continuations can make a non-flat request cost more. The planner reports its configured worst-case call bounds separately.
+- **Worst-case plan counts are diagnostics, not an admission reservation.** Flat work and optional continuations are admitted one provider attempt at a time. Non-flat planning uses bounded local look-ahead so it does not spend the last affordable call on an optional planning step.
+- **A planning receipt proves internal agreement, not answer quality.** It binds configured rule
+  digests, planning facts, and the serialized fetch plan. It does not prove rule authenticity,
+  factual truth, completeness, or improvement over another method.
+
+## 1.1.1 — released
 
 **Fixed**
 
-Thirteen defects in the shipped documentation are corrected: two documents that contradicted themselves, several that explained the same thing at length in five places apiece, and a number of passages that described how this package was developed rather than how it behaves.
+The shipped documentation now describes current package behaviour consistently and removes redundant or obsolete guidance.
 
 Runtime messages and documentation no longer date current behaviour to a release. A refusal from `execute_query_nl_tools`, the CLI's `--rate-limit` help, and four property tables described what the package does today as something it does in a named version, which is correct on that release and wrong on the next. No refusal itself changed. A scan over shipped source now fails the suite on any such qualifier; a forward-looking deferral, which names a version the reader is not on, stays legal.
 
@@ -19,7 +108,6 @@ Headings in `06-library.md` were made unique. Three constructors, two method sec
 - `docs/design/10-data-model.md` called the cache "the fourth contract" three lines after enumerating five, and dated current deduplication behaviour to a superseded release.
 - `lib/COMPATIBILITY.md` referred throughout to a design document it never named or linked, while instructing porters to rely on it. The document is now identified, and it is stated that it is internal and not shipped, so every difference is given in full rather than by reference.
 - The base-order explanation was reproduced at length in five documents, one of which announced that it was saying the thing twice. The full account stays in `04-detailed-architecture.md`; the others state the consequence and link to it. The same was done for the test that runs the CLI README's own commands, which was claimed in four documents and now lives in `11-testing-strategy.md`, and for the cost derivation restated in `platform/cli/README.md`.
-- `docs/design/13-decision-log.md` recorded an internal defect count, narrated a measurement run in place of the boundary it established, and left three superseded ADRs sending a reader down the supersession chain to find current behaviour. Each now carries a line naming where the current account lives. Accepted decision text is unchanged: this is a decision log, and the record of what was accepted is the artifact.
 - `docs/design/08-coding-style.md` appealed to a house style not available to a reader of this package, and narrated how the rule was reconciled with existing code.
 
 ## 1.1.0 — released

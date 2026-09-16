@@ -50,6 +50,23 @@ def test_the_message_goes_to_stderr(runner: CliRunner, install_raising_source: A
     assert "query must not be empty or whitespace" in result.stderr
 
 
+def test_provider_stdout_stays_off_stdout_when_fetch_fails(
+    runner: CliRunner, install_source: Any
+) -> None:
+    class NoisyFailingSource:
+        def fetch(self, *args: Any, **kwargs: Any) -> Any:
+            print("provider banner")
+            raise TransportError("connection reset by peer", code="provider_error")
+
+    install_source(NoisyFailingSource())
+    result = runner.invoke(cli, ["fetch", QUERY, "--format", "json"])
+
+    assert result.exit_code == config.EXIT_TRANSPORT
+    assert result.stdout == ""
+    assert "provider banner" in result.stderr
+    assert "TransportError: connection reset by peer" in result.stderr
+
+
 def test_an_empty_query_succeeds_with_no_records(runner: CliRunner, install_client: Any) -> None:
     """An empty ask is an empty answer, not an error, the way the library reports it.
 

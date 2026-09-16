@@ -84,32 +84,51 @@ def test_untyped_attributes_leave_other_fields_alone() -> None:
 
 def test_exact_duplicate_records_collapse() -> None:
     records = [{"name": "Ada"}, {"name": "Ada"}]
-    assert dedupe(records) == [{"name": "Ada"}]
+    assert dedupe(records)[0] == [{"name": "Ada"}]
 
 
 def test_key_order_does_not_make_two_records_distinct() -> None:
     records = [{"name": "Ada", "age": 36}, {"age": 36, "name": "Ada"}]
-    assert dedupe(records) == [{"name": "Ada", "age": 36}]
+    assert dedupe(records)[0] == [{"name": "Ada", "age": 36}]
 
 
 def test_distinct_records_are_all_kept_in_order() -> None:
     records = [{"name": "Ada"}, {"name": "Grace"}, {"name": "Katherine"}]
-    assert dedupe(records) == records
+    assert dedupe(records)[0] == records
 
 
 def test_records_differing_in_one_field_are_distinct() -> None:
     records = [{"name": "Ada", "age": 36}, {"name": "Ada", "age": 37}]
-    assert dedupe(records) == records
+    assert dedupe(records)[0] == records
 
 
 def test_dedupe_on_a_key_collapses_records_sharing_that_key() -> None:
     records = [{"name": "Ada", "age": 36}, {"name": "Ada", "age": 37}]
-    assert dedupe(records, key="name") == [{"name": "Ada", "age": 36}]
+    assert dedupe(records, key="name")[0] == [{"name": "Ada", "age": 36}]
 
 
 def test_dedupe_handles_unhashable_values() -> None:
     records = [{"terms": [2016, 2024]}, {"terms": [2016, 2024]}, {"terms": [2020]}]
-    assert dedupe(records) == [{"terms": [2016, 2024]}, {"terms": [2020]}]
+    assert dedupe(records)[0] == [{"terms": [2016, 2024]}, {"terms": [2020]}]
+
+
+def test_a_record_two_parts_produced_keeps_both_as_its_origin() -> None:
+    """This pass drops where the merge above it appends.
+
+    The merge records that two parts both returned a record by extending that record's
+    origin list. Dropping the second copy here without folding its origin in leaves the
+    survivor naming one part — not a smaller claim than naming both, but a different one.
+    """
+    records = [{"name": "Ada"}, {"name": "Ada"}, {"name": "Grace"}]
+    kept, origins = dedupe(records, origins=[["0.0"], ["0.1"], ["0.1"]])
+    assert kept == [{"name": "Ada"}, {"name": "Grace"}]
+    assert origins == [["0.0", "0.1"], ["0.1"]]
+
+
+def test_dedupe_without_origins_reports_none() -> None:
+    kept, origins = dedupe([{"name": "Ada"}, {"name": "Ada"}])
+    assert kept == [{"name": "Ada"}]
+    assert origins == [[]]
 
 
 # ------------------------------------------------ presence versus a null answer --

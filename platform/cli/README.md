@@ -33,7 +33,7 @@ Prints the protocol, the variant, and the version of the library underneath:
 ```text
 protocol  llm
 variant   openai
-version   1.1.1
+version   1.2.0
 ```
 
 ```bash
@@ -77,6 +77,22 @@ llm fetch "the largest lakes in Africa" --context "rank by surface area, not vol
 llm fetch "the member states of the European Union" --max-records 5
 ```
 
+`--effort` is a short form for the continuation allowance. `low`, `medium`, and `high` allow up to one,
+two, or three logical extraction asks per part when a primary key is available. Later asks request
+keys the earlier answers missed, so they can improve coverage. The allowance bounds asks, not billed
+attempts; transport retries can add provider attempts. If the last allowed ask under `medium` or
+`high` still adds new keys, the records gathered so far are printed, the result reports
+`stopped by: plan.max_continuations`, and the command exits 7. That means the effort allowance
+bounded the result, not that the provider failed. In flat mode, `medium` and `high` require a
+requested `--plan-key` or `--plan-keys`; the CLI rejects a missing key before constructing the
+source. Non-flat planning can infer a key. The default is `low`. Use
+`--plan-continuations` when you need an exact allowance; that option overrides `--effort`.
+
+```bash
+llm fetch "the member states of the European Union" \
+    --attr country --plan-key country --effort medium
+```
+
 `--format json` prints records and metadata as one JSON object:
 
 ```bash
@@ -97,13 +113,25 @@ llm fetch "the member states of the European Union" --format json
     "calls": 1,
     "prompt_tokens": 12,
     "completion_tokens": 34,
+    "gaps": [],
+    "stop_reasons": [],
+    "requested_attrs": ["country", "accession_year"],
+    "row_estimate": null,
+    "cardinality_estimate": null,
+    "primary_keys": [],
+    "observed_key_count": 0,
+    "marginal_key_yields": [],
+    "incomplete_key_records": 0,
     "cost": 0.0012,
     "elapsed_seconds": 0.31
   }
 }
 ```
 
-Careful with that pipe. The provider library writes its own coloured banners to standard output on some failure paths, and this package has no hook to suppress them, so a JSON reader on the other end of the pipe can choke on lines the CLI did not print. Redirecting standard error does not help, because the banners are on standard output. Anything scripted should read the accounting through the library rather than out of a pipe.
+During a fetch, the CLI redirects interpreter-level writes through `sys.stdout` to standard error.
+That covers the known provider banners: on success, normal `--format json` output is one JSON object,
+while provider diagnostics and command errors remain visible on standard error. A dependency that
+writes directly to file descriptor 1 or writes after the fetch returns is outside this redirect.
 
 The model and the spending limits are options, not configuration files. All three are claimed before a call, so a request that would cross one is refused rather than reported afterwards. `--limit-cost` is claimed against an upper bound on what the call can cost rather than an estimate of what it is likely to cost, and that bound is reconciled against the real figure once the call returns. See [The cost bound](../../lib/README.md#the-cost-bound) for how it is calculated and how to size one, and `--max-tokens` below for lowering it. A request refused this way prints no records and exits 7, the code for a run a ceiling ended; `--verbose` names it as `stopped by: max_cost`.
 
@@ -116,7 +144,8 @@ llm fetch "the member states of the European Union" \
 
 ### --verbose
 
-`--verbose` is global, so it goes before the subcommand. It adds the outcome, which is always printed, plus six things reported only when there is something to say: keys the model returned that no requested attribute matched, keys it renamed on the way in, the limit that stopped the run, values that did not match a declared attribute type, values dropped because two returned keys answered the same attribute, and declared type names this library cannot check.
+`--verbose` (or `-v`) is global, so it goes before the subcommand. Stop reasons and gaps are printed
+without it. The flag adds alignment details, type mismatches, and key collisions.
 
 ```bash
 llm --verbose fetch "the member states of the European Union" \
@@ -130,13 +159,63 @@ outcome: truncated
 stopped by: max_rows
 ```
 
-Every line except `outcome` appears only when there is something to report. Under `--format json` the same keys land in the `meta` object, where `outcome` is present with or without `--verbose`.
+Every line appears only when there is something to report. Under `--format json`, `gaps`,
+`stop_reasons`, `requested_attrs`, `row_estimate`, `cardinality_estimate`, `primary_keys`,
+`observed_key_count`, `marginal_key_yields`, and `incomplete_key_records` are always present.
+`row_estimate` is the accepted non-flat bootstrap hint or JSON `null`; the table footer prints its
+value or `unknown`. `normalization_collisions` appears when non-empty. `stopped_by` appears when a
+stop reason exists and remains the first reason for compatibility.
 
 Nothing here exposes a cost, time, or call ceiling as a persistent setting: the three `--limit-*` options apply to the one command that carries them, since the CLI builds a fresh source per invocation and reads no configuration file.
 
 That is the same shape the library has: a ceiling passed with a request bounds that request and does not leak into the next.
 
 There is no `llm estimate`. The library can report what a request would cost before running it, and this command does not expose it, so a person sizing a request ahead of time uses the library.
+
+## Decomposition
+
+One model call answers a request by default. A large ask can be split into parts, each asked
+separately and merged on the way back, which costs a call per part and is never chosen for
+you.
+
+`--plan-continuations` lets a part ask again for records the first answer did not include.
+It is `0` by default, so each part asks once unless you raise it. It bounds asks per part, not
+provider attempts or planning calls: each ask may still be retried up to `limits.max_retries` times,
+three attempts by default. Non-flat planning also uses the selected schedule and may add bounded
+proposal, distribution, or entity-enumeration calls before leaf extraction.
+
+```bash
+llm fetch "the member states of the European Union" --plan-continuations 2
+```
+
+`--plan-mode` selects the shape: `flat` asks once and is the default, `partitioned` splits
+the ask recursively, and `row_by_row` asks per entity. `--plan-key` names the attribute that
+identifies a record, so parts returning the same record merge rather than duplicating it;
+it has to be one of the attributes you asked for.
+
+`--plan-depth` bounds recursion, `--plan-partitions` bounds children per node, and
+`--plan-target-rows` supplies the uncertain row-count threshold for descendant splits.
+`--plan-partition-key` guides only the root proposal. `--plan-schema-mode preserve` keeps caller
+attributes; `enrich` lets non-flat planning append inferred attributes.
+
+The remaining standard controls are `--plan-keys` for ordered composite identity,
+`--plan-exact-rows` for a hard target when the plan has one leaf, `--plan-exclusion-bytes` for
+continuation-prompt size, `--plan-planning-order` for one of the five schedules, and
+`--plan-expose-estimate`/`--no-plan-expose-estimate` for extraction-prompt context. Together the CLI,
+MCP, and Python surfaces share 14 controls. The rule-backed distribution controls and optional
+planning receipt remain direct-Python-only in this release. The two locked schedules require a
+non-empty caller schema and ordered `--plan-keys`. A multi-leaf plan does not apply
+`--plan-exact-rows` and adds `exact_rows_not_leaf_bound` to the result's gaps.
+
+```bash
+llm fetch "the member states of the European Union" \
+    --attr name --attr capital --plan-key name --plan-continuations 1
+```
+
+When an answer is short, the reason is printed with it rather than left to be inferred from
+the row count — a `gap:` line per shortfall, and the same list under `gaps` in
+`--format json`. No gap means that no supported operational diagnostic fired; it is not a
+completeness result.
 
 ## Exit codes
 
@@ -152,6 +231,7 @@ Every error the library raises is caught and printed to stderr as one line. No t
 | 5 | `TransportError` — the provider failed or answered with something unusable |
 | 6 | `ParseError` — the model's answer was not a record list |
 | 7 | A ceiling ended the run. `meta.stopped_by` names the axis. A row cap stays 0, since it leaves a usable result |
+| 8 | Extraction returned an answered result after some work was interrupted. `meta.outcome` is `partial`; gaps and stop reasons carry the details |
 
 ```text
 llm: ParseError: model response is not valid JSON: Expecting value: line 1 column 1
@@ -167,7 +247,12 @@ llm: TransportError: litellm.InternalServerError: OpenAIException - Missing cred
 
 Code 4 covers a value that parsed and the library then rejected: a negative or non-finite ceiling, an unknown `llm.*` override, a setting deferred to v2.0, a cost ceiling whose bound cannot be established, and a missing optional extra.
 
-A cost, time, or call ceiling that stops a run exits 7. Whatever records were collected are printed first and the run is reported in `stopped_by`, so nothing is hidden, but the code is what a script branches on and a stopped run must not look like a completed one. The row cap is the exception: it is the one ceiling that leaves a usable result, so `--max-records` reports `outcome: truncated` and exits 0.
+A cost, time, call, or productive continuation ceiling that stops a run exits 7. The continuation
+allowance can come from `--effort medium`/`high` or an explicit `--plan-continuations`. Whatever
+records were collected are printed first and the run is reported in `stopped_by`, so nothing is
+hidden, but the code is what a script branches on and a stopped run must not look like a completed
+one. The row cap is the exception: it is the one ceiling that leaves a usable result, so
+`--max-records` reports `outcome: truncated` and exits 0.
 
 ## Tests
 

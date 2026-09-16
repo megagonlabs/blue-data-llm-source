@@ -127,7 +127,12 @@ def test_a_request_sized_against_its_estimate_is_not_refused_when_it_runs(
 
 
 def test_a_call_ceiling_narrows_the_attempts_the_estimate_counts() -> None:
-    """One allowed call cannot make three attempts, however many retries are configured."""
+    """One allowed call cannot make three attempts, however many retries are configured.
+
+    The estimate bounds what a run can spend, so every ceiling that clamps it belongs in the
+    figure. Admission asks the opposite question — whether a fan-out fits inside the call cap
+    — and there the cap is the capacity under test rather than a bound on the demand, which
+    is why the two sit behind separate accessors."""
     source = LlmSource(
         properties={"llm.model": "gpt-4o-mini", "llm.max_tokens": 64, "limits.max_calls": 1}
     )

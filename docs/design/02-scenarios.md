@@ -12,7 +12,10 @@ from blue_data_llm_source import LlmSource
 source = LlmSource()
 result = source.fetch(
     "the member states of the European Union",
-    attrs=[{"name": "country", "type": "string"}, {"name": "accession_year", "type": "int"}],
+    attrs=[
+        {"name": "country", "type": "string"},
+        {"name": "accession_year", "type": "int"},
+    ],
 )
 # result.records → [{"country": "Austria", "accession_year": 1995}, ...]
 # result.meta.model, result.meta.calls, result.meta.cost describe what it took
@@ -34,7 +37,9 @@ result = source.fetch("what should I know about shipping container standards?")
 # result.meta.observed_keys → ["designation", "length_ft", "width_ft", "max_gross_kg"]
 ```
 
-Records produced this way can be ragged: two records need not carry the same keys, and the source does not make them uniform. Deriving a schema when the caller supplies none is not part of this release.
+In default flat mode, records produced this way can be ragged: two records need not carry the same
+keys, and the source does not make them uniform. Explicit non-flat modes instead use bootstrap to
+infer a schema when the caller supplies none and report the accepted root `row_estimate` hint.
 
 ---
 
@@ -85,17 +90,21 @@ A data layer holds a registry of sources and queries them through a common surfa
 **Example:**
 
 ```python
-source.execute_query({
-    "op": "LLM.FETCH",
-    "query": "the member states of the European Union",
-    "attr_names": ["country", "accession_year"],
-})
+source.execute_query(
+    {
+        "op": "LLM.FETCH",
+        "query": "the member states of the European Union",
+        "attr_names": ["country", "accession_year"],
+    }
+)
 # → [{"country": "Austria", "accession_year": 1995}, ...]
 
 source.execute_query({"op": "LLM.MODELS"})
 # → [{"protocol": "llm", "variant": "openai"}]
 
-source.execute_query({"op": "LLM.ESTIMATE", "query": "the member states of the European Union"})
+source.execute_query(
+    {"op": "LLM.ESTIMATE", "query": "the member states of the European Union"}
+)
 # → [{"bounded": True, "max_cost": …, "model": "gpt-4o", ...}]
 ```
 
@@ -139,7 +148,11 @@ An exploratory planner is willing to spend a few cents and five seconds on a spe
 result = source.fetch(
     "commercial airports in France",
     attrs=["name", "iata_code"],
-    properties={"limits.max_cost": 0.10, "limits.max_seconds": 5, "limits.max_calls": 1},
+    properties={
+        "limits.max_cost": 0.10,
+        "limits.max_seconds": 5,
+        "limits.max_calls": 1,
+    },
 )
 # If a limit blocks the call: result.records is empty, result.meta.stopped_by names the limit,
 # and result.meta.outcome is "stopped_by_limit"
@@ -174,8 +187,12 @@ Both routes above bound one request. A caller that wants one ceiling over a sequ
 from blue_data_llm_source import Budget, Limits
 
 run = Budget(Limits(max_cost=0.50, max_calls=4))
-first = source.fetch("commercial airports in France", attrs=["name", "iata_code"], budget=run)
-second = source.fetch("commercial airports in Spain", attrs=["name", "iata_code"], budget=run)
+first = source.fetch(
+    "commercial airports in France", attrs=["name", "iata_code"], budget=run
+)
+second = source.fetch(
+    "commercial airports in Spain", attrs=["name", "iata_code"], budget=run
+)
 # The second fetch draws on what the first left, and is refused once the ceiling is reached.
 ```
 
@@ -183,7 +200,7 @@ second = source.fetch("commercial airports in Spain", attrs=["name", "iata_code"
 
 ## Scenario 8: An operator sizes a request before running it
 
-A planner or an operator has a request in hand and a ceiling to respect, and wants to know what the request could cost before spending anything on it. `estimate` answers from the prompt this source would actually send, so the figure belongs to the request being asked about rather than to an average of requests like it. It contacts nothing.
+A planner or an operator has a request in hand and a ceiling to respect, and wants to know what the request could cost before spending anything on it. `estimate` answers from the prompt this source would actually send, so the figure belongs to the request being asked about rather than to an average of requests like it. It contacts nothing. It describes a `flat` fetch and reads no `plan.*` setting, so an operator sizing a split request has to work its parts out by hand.
 
 The figure is an upper bound, not a prediction: it reserves the whole output allowance at the model's output rate and bounds the prompt by its encoded length, so a typical call costs a fraction of it. Being wrong high is the only safe direction, because a figure that can be exceeded is not a bound and a decision made against one is a decision made against a guess. It is the same bound the run reserves against, so an estimate a caller trusts and a ceiling the run enforces cannot disagree.
 
@@ -213,7 +230,7 @@ source.execute_query({"op": "LLM.ESTIMATE", "query": "...", "attrs": ["country"]
 
 ## Scenario 9: A tool-using agent reaches the source over MCP
 
-An agent in another framework has the MCP server configured. It sees three tools: `llm_fetch`, which fetches records for a request, `llm_estimate`, which bounds what one such fetch could cost without making it, and `llm_info`, which reports the protocol, the variant, and the library version. Each carries a JSON input schema, and the agent calls them the way it calls any other tool. Argument validation is the library's, which matters here in particular: an agent supplies arguments programmatically and sees only the exception text as its tool result, so every rejection names the offending value and the accepted form and is passed through unreworded.
+An agent in another framework has the MCP server configured. It sees three tools: `llm_fetch`, which fetches records for a request, `llm_estimate`, which bounds what one such fetch could cost without making it, provided it is not split, and `llm_info`, which reports the protocol, the variant, and the library version. Each carries a JSON input schema, and the agent calls them the way it calls any other tool. Argument validation is the library's, which matters here in particular: an agent supplies arguments programmatically and sees only the exception text as its tool result, so every rejection names the offending value and the accepted form and is passed through unreworded.
 
 **Example:**
 
@@ -225,8 +242,21 @@ An agent in another framework has the MCP server configured. It sees three tools
 ```
 
 ```json
-{ "records": [{"country": "France", "accession_year": 1958}],
-  "meta": {"outcome": "ok", "model": "gpt-4o", "calls": 1, "prompt_tokens": 12, "completion_tokens": 34, "cost": 0.0012, "elapsed_seconds": 0.31} }
+{
+  "records": [{"country": "France", "accession_year": 1958}],
+  "meta": {
+    "outcome": "ok",
+    "model": "gpt-4o",
+    "calls": 1,
+    "prompt_tokens": 12,
+    "completion_tokens": 34,
+    "cost": 0.0012,
+    "elapsed_seconds": 0.31,
+    "gaps": [],
+    "stop_reasons": [],
+    "requested_attrs": ["country", "accession_year"]
+  }
+}
 ```
 
 The ceiling is the agent's to set. `llm_fetch` takes `limits.max_cost`, `limits.max_seconds`, and `limits.max_calls`, and the server configures none of them itself, so a request that names no ceiling has none — an agent that has to stay inside one asks `llm_estimate` first and sets it.
@@ -257,7 +287,7 @@ llm fetch "the member states of the European Union" --attr country --attr access
 2 records | model gpt-4o | 1 call | 46 tokens | $0.0012 | 0.31s
 ```
 
-`--verbose` adds what the plain output leaves out: keys the model returned that matched no requested attribute, keys it renamed on the way in, the run's outcome, the limit that stopped it, and one line per value that did not fit its declared type. The outcome line is always present, since every run has one, and the rest appear only when there is something to report. The same fields appear in the `meta` object under `--format json`.
+Plain table output includes gaps and every stop reason. `--verbose` adds alignment, type, and collision details. JSON output always includes `gaps`, `stop_reasons`, and `requested_attrs`; `stopped_by` is the first stop reason when one exists.
 
 
 ---
@@ -266,9 +296,9 @@ llm fetch "the member states of the European Union" --attr country --attr access
 
 A caller asks for all commercial airports in France with their IATA code and the region they serve. There are roughly a hundred and fifty. A single model call returns twenty to forty, stops at a plausible place, and reports no problem.
 
-This release does not solve that. It makes one completion per request — up to `limits.max_retries + 1` provider attempts of it — and a request whose answer exceeds what one completion enumerates comes back short. What the caller does get is the accounting to notice it: the returned record count, the model and call count, and any limit that fired. What it does not get is an estimate of how many records there should have been, so nothing in this release can distinguish a short answer from a complete one on its own.
+The default path still makes one completion. `plan.mode=partitioned` opts into bootstrap analysis, bounded breadth-first partition proposals, leaf extraction, and exact-key reduction. A large or unknown descendant estimate may trigger another split up to `plan.max_depth`; `plan.max_continuations` can ask a productive leaf again. These controls can gather more records from a large request, but they do not establish that the result is complete.
 
-Decomposing a request into partitioned sub-requests, deriving a schema when none is supplied, and estimating the size of an answer before fetching it are the next release. They are described here as absent rather than omitted, because a caller planning around this source needs to know which of its own checks it still has to perform.
+Non-flat bootstrap also infers a schema when none is supplied. With declared attributes, preserve mode keeps them and enrich mode may append inferred fields. Row estimates remain uncertain operational hints. `meta.gaps` and `meta.stop_reasons` report observed failures, discarded output, and interrupted work; an empty list does not certify completeness.
 
 ---
 
@@ -279,5 +309,5 @@ Recorded so that scope has something written down to argue against:
 - Grounding an answer against a retrieved document. Closed-book is the premise, not a gap. Cross-checking against another source in the layer is a composition the planner performs, not a feature of this source.
 - Verifying that a returned claim is true. The source verifies that a record matches the shape it was asked for. Nothing in it establishes correctness, and no validator ships.
 - Owning provider credentials. The source is given a client or a callable and never reads, stores, or logs a key.
-- Distributed execution across processes or machines. The library carries no infrastructure dependency, so anything of that kind belongs in a service wrapper rather than here.
+- A deployed distributed executor. The library exposes serializable tasks and results and runs them with bounded local concurrency; process or machine distribution belongs in a service wrapper.
 - Planning across sources or operators. That belongs to the operator layer, which calls this source rather than the other way round.

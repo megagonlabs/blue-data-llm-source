@@ -4,11 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blue-data-llm-cli"
-version = "1.1.1"
+version = "1.2.0"
 description = "Command line interface for the Blue Data LLM Source Layer"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "blue-data-llm-source[llm]>=1.1.0",
+    "blue-data-llm-source[llm]>=1.2.0",
     "click>=8.0",
     "rich>=13.0",
 ]

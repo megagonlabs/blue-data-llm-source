@@ -20,6 +20,11 @@
 │  │        checks (validation) · prompts (rendering) · op dispatch     │  │
 │  └────────────────────────────────────────────────────────────────────┘  │
 │                                                                          │
+│  ┌────────────────────────────────────────────────────────────────────┐  │
+│  │                       Planning and Execution                       │  │
+│  │ facts · schedules · task tree · partition safety · leaf mapping   │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
 │  ┌──────────────────────────────┐    ┌────────────────────────────────┐  │
 │  │        Model Boundary        │    │           Reduction            │  │
 │  │                              │    │                                │  │
@@ -61,7 +66,7 @@ Interface adapters sit in front of LlmSource and delegate to the core library. T
 
 **Python Library** — Native Python API (`LlmSource` and the types it returns), distributed as `blue-data-llm-source` (built, not yet published; install from source). This is the canonical interface, and every other interface wraps it.
 
-**MCP Server** — Distributed as `blue-data-llm-mcp` (built, not yet published), speaking MCP over stdio. Exposes three tools — `llm_fetch`, `llm_estimate`, and `llm_info` — so an LLM agent can query the source within an agentic context, size a request before running it, and bound what one costs. Internally split so that the tool definitions and the argument translation import nothing from the protocol SDK, and one module owns the transport.
+**MCP Server** — Distributed as `blue-data-llm-mcp` (built, not yet published), speaking MCP over stdio. Exposes three tools — `llm_fetch`, `llm_estimate`, and `llm_info` — so an LLM agent can query the source within an agentic context, size a request before running it, and bound what one flat fetch costs. Internally split so that the tool definitions and the argument translation import nothing from the protocol SDK, and one module owns the transport.
 
 **CLI** — Distributed as `blue-data-llm-cli` (built, not yet published), providing the `llm` command with `fetch` and `info` subcommands. Built with Click for argument parsing and Rich for output. Option translation is separated from command declaration, so one module maps what a person typed onto library arguments and the other declares options and prints.
 
@@ -77,7 +82,7 @@ The base order is load-bearing rather than cosmetic: `DataSource` is a plain cla
 - Holds the connection properties that report `protocol` and `variant`. Protocol names the source family and is fixed at `llm`; variant names the implementation within it and defaults to `openai`.
 - Resolves which client answers a given request: a supplied `llm_fn` wins, then a client injected at construction, then the default client built from properties.
 - Assembles the run's `Limits` from the instance properties merged with whatever the call carried, so a ceiling handed to one request through `properties` or `optional_properties` binds that request and is not written back. It then produces the budget the run spends against: a fresh one when the caller supplied none, and otherwise a child derived from the caller's, so a request can never spend more than the caller has left. It hands that budget to the client under a per-call property rather than setting it on the client, because one client can serve several concurrent fetches and an attribute would let them overwrite each other's ceiling.
-- Answers `estimate` without contacting a provider. It resolves the client that would answer, because only that client knows what an attempt costs and it must declare `Capability.ESTIMATE` for a bound to be given at all, then builds the prompt the fetch path would send and bounds it through `pricing`. The figure describes the request being asked about. It bounds the whole fetch rather than one attempt: `max_cost` is `max_cost_per_attempt` accumulated over `max_attempts`, so a ceiling set to exactly `max_cost` admits every attempt the figure accounted for.
+- Answers `estimate` without contacting a provider. It resolves the client that would answer, because only that client knows what an attempt costs and it must declare `Capability.ESTIMATE` for a bound to be given at all, then builds the prompt the fetch path would send and bounds it through `pricing`. The figure describes the request being asked about. It bounds the whole of a `flat` fetch rather than one attempt: `max_cost` is `max_cost_per_attempt` accumulated over `max_attempts`, so a ceiling set to exactly `max_cost` admits every attempt the figure accounted for. It reads no `plan.*` setting and returns the same figures whatever one is passed, so a split request is not priced here.
 - Refuses each configured ceiling whose axis the resolved client does not declare, and folds the run's accounting into the returned `ExecMeta`: entries and spend from the budget, which claimed them under a lock, and token counts and the model name from the per-call usage list it handed the client for this call alone.
 - Decides the outcome through one published ordered rule, `decide_outcome`, so a ceiling that fired is never contradicted by a result that reads as complete.
 - Answers the metadata calls a registry walks, over a synthesised one-database, one-collection, one-entity hierarchy, since a model has none of its own.
@@ -88,9 +93,27 @@ Everything that happens between a caller's arguments and the text sent to a prov
 
 **checks** — Argument validation. Rejects a request that is not a string and passes an empty one through as an empty ask, normalises attributes from either a list of names or a list of `{name, type}` mappings, normalises context from a string or a list of strings, and requires positive integers where a count is expected. Messages name the offending value and the accepted form, because an agent calling through a tool interface sees only the exception text.
 
-**prompts** — Every prompt the package sends, in one module. One template, one renderer for the attribute block, and one builder. Substitution is a single `str.format_map` over a fixed set of named fields, which inserts caller text without interpreting it.
+**prompts** — Every prompt the package sends lives in one module: nine templates and their nine
+builders cover flat extraction, planned extraction, fact collection, partitioning, distribution,
+and entity enumeration. `Slot` marks each inserted value as encoded, raw, or already-rendered lines;
+`fill` then applies one `str.format_map` over a fixed set of named fields.
 
 **Op dispatch** — `execute_query` accepts either a plain string or a mapping carrying an `op` key. `LLM.FETCH` runs a fetch; `LLM.MODELS` reports protocol and variant; `LLM.ESTIMATE` bounds what the same fetch could cost, without contacting anything, and returns it as a one-record list because that is what this surface returns. An unrecognised op raises an error that lists the supported ones. Both surfaces also take `optional_properties`, which is where a per-request ceiling goes: the keys are merged over the instance's properties for that call and are not written back.
+
+### Planning and Execution
+
+Non-flat requests build immutable analysis, schema, and cardinality facts under one of five closed
+schedules, then coordinate a bounded task tree. Partitioned planning is breadth first; row-by-row
+planning uses an explicit or bounded entity list. `execution` converts accepted leaves into
+versioned `LeafTask` messages, runs them concurrently under the shared budget, and retains answered
+records when later work is interrupted.
+
+Direct Python callers can opt into rule-backed distribution search over declared finite identity
+domains. `PartitionSafety` must establish containment, pairwise disjointness, and coverage before a
+split is accepted. The plan records each applied decision, and an optional planning receipt binds
+configured rule digests, planning facts, and plan serialization. This checks internal agreement,
+not factual truth or completeness. CLI and MCP expose the 14 standard controls and omit rule-backed
+distribution search and the receipt in this release.
 
 ### Model Boundary
 
@@ -122,6 +145,10 @@ Turning a model's text into checked records. Each stage is a module of plain fun
 
 **verifier** — Coerces values to their declared types where the coercion is unambiguous, covering integers, floats, booleans, and dates in several common written forms. A value that will not coerce is left as it came back, because dropping a record over a formatting mismatch loses real data, and it is reported alongside the records rather than kept quietly. The module also provides exact duplicate removal, optionally keyed on a single attribute.
 
+**identity and coverage** — Normalize scalar and composite keys consistently across continuation,
+reduction, and rule validation. Coverage records marginal key yield, incomplete-key records, and
+normalization collisions without turning those observations into a completeness claim.
+
 ### Shared Contracts
 
 **types** — The data contracts and the exception hierarchy: `Attr`, `Usage`, `Outcome`, `Capability`, `ExecMeta`, `Estimate`, `FetchResult`, the `LlmClientProtocol`, `BudgetAwareClient`, and `CacheStore` protocols, and `LlmSourceError` with `ConfigError`, `QueryError`, `TransportError`, `ParseError`, and `BudgetExceeded` beneath it. `Outcome` is the closed vocabulary `ExecMeta.outcome` draws on, which is what makes an empty result a valid answer carrying a reason rather than an absence, and `Capability` is the closed vocabulary a client declares from. Contracts live here so that the modules and any platform adapter share them without circular imports.
@@ -140,8 +167,8 @@ The line the dependency does not cross is the one above the data layer. Nothing 
 
 ## What the architecture deliberately does not contain
 
-- A planning layer. There is no query rewriter, schema identifier, cardinality estimator, or partitioner. One request becomes one completion, taking up to `limits.max_retries + 1` provider attempts.
-- An execution layer. There is no task tree, no fan-out runner, no pagination loop, and no empty-partition fallback.
+- A calibrated cardinality or completeness measure. Non-flat bootstrap can infer a schema, and preserve or enrich caller declarations according to `plan.schema_mode`. Per-slice estimates guide splitting; `meta.row_estimate` exposes only the accepted root hint for operations, not an expected count or recall measure.
+- An empty-partition fallback. The task tree, the fan-out runner and the continuation loop ship; a valid empty part is answered work and creates no gap merely for being empty.
 - A validator stack. Format verification against declared types ships; factual verification does not, and per-run reporting is not a substitute for it.
 - A retrieval or grounding path. The premise is closed-book.
-- An infrastructure dependency. No server, no broker, no required database. The two cache stores that ship are a process-local dictionary and a directory of JSON files, and any other backend is a caller's choice behind the protocol.
+- A distributed runtime dependency. Ready leaves run with bounded local concurrency through serializable task and result contracts. No worker service, broker, or deployed cluster is supplied. The two cache stores are a process-local dictionary and a directory of JSON files; another backend remains a caller choice behind the protocol.

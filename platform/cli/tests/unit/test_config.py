@@ -45,6 +45,19 @@ def test_build_attrs_of_nothing_is_empty() -> None:
     assert config.build_attrs([]) == []
 
 
+@pytest.mark.parametrize(
+    ("effort", "continuations"),
+    [("low", 0), ("medium", 1), ("high", 2)],
+)
+def test_effort_maps_to_bounded_continuations(effort: str, continuations: int) -> None:
+    assert config.continuations_for_effort(effort) == continuations
+
+
+def test_unknown_effort_is_rejected() -> None:
+    with pytest.raises(ValueError, match="unknown effort"):
+        config.continuations_for_effort("extreme")
+
+
 def test_build_limits_carries_the_three_exposed_axes() -> None:
     limits = config.build_limits(limit_cost=0.5, limit_seconds=30.0, limit_calls=2)
     assert limits == Limits(max_cost=0.5, max_seconds=30.0, max_calls=2)
@@ -111,7 +124,7 @@ def test_meta_summary_is_compact_by_default() -> None:
     assert summary["model"] == "gpt-4o"
     assert summary["calls"] == 1
     assert "unmapped_keys" not in summary
-    assert "stopped_by" not in summary
+    assert summary["stopped_by"] == "max_rows"
 
 
 def test_meta_summary_verbose_adds_the_three_extras() -> None:
@@ -168,3 +181,73 @@ def test_an_uncheckable_declared_type_reaches_the_caller() -> None:
 
     # Absent when there is nothing to say, so an ordinary result is unchanged.
     assert "unchecked_types" not in config.meta_summary(ExecMeta(outcome="ok"))
+
+
+class TestThePlanOptionsTranslate:
+    """Passed through under the names the library reads, so a value it refuses is refused
+    with a message naming the setting the caller actually wrote."""
+
+    def test_plan_options_become_library_properties(self) -> None:
+        properties = config.build_properties(
+            None,
+            config.build_limits(None, None, None),
+            None,
+            "partitioned",
+            2,
+            "name",
+            8,
+            "region",
+        )
+        assert properties["plan.mode"] == "partitioned"
+        assert properties["plan.max_continuations"] == 2
+        assert properties["plan.key"] == "name"
+        assert properties["plan.max_leaves"] == 8
+        assert properties["plan.partition_key"] == "region"
+
+    def test_the_command_line_offers_every_plan_setting_the_server_does(self) -> None:
+        """Both interfaces were released saying they exposed the same settings and neither
+        exposed the same set: the command line could not bound a split and neither could
+        choose what to split on. A claim about two surfaces is checked across both."""
+        from click.testing import CliRunner
+
+        from blue_data_llm_cli.commands import cli
+
+        help_text = CliRunner().invoke(cli, ["fetch", "--help"]).output
+        for flag in (
+            "--plan-mode",
+            "--plan-continuations",
+            "--plan-key",
+            "--plan-leaves",
+            "--plan-partition-key",
+            "--plan-planning-order",
+            "--plan-expose-estimate",
+        ):
+            assert flag in help_text, flag
+
+    def test_unset_plan_options_add_nothing(self) -> None:
+        """An unset option must not become a default the caller never chose."""
+        properties = config.build_properties(None, config.build_limits(None, None, None))
+        assert not [k for k in properties if k.startswith("plan.")]
+
+    def test_zero_continuations_is_a_choice_not_an_absence(self) -> None:
+        properties = config.build_properties(
+            None, config.build_limits(None, None, None), None, None, 0, None
+        )
+        assert properties["plan.max_continuations"] == 0
+
+
+class TestGapsAreNotHiddenBehindVerbose:
+    def test_a_gap_is_reported_without_the_flag(self) -> None:
+        """A short answer and a complete one are the same list of rows. A caller cannot
+        infer the difference, so the gap is not a verbose-only diagnostic."""
+        summary = config.meta_summary(ExecMeta(gaps=["leaf_empty: leaf 0.0 returned nothing"]))
+        assert summary["gaps"] == ["leaf_empty: leaf 0.0 returned nothing"]
+
+    def test_a_clean_run_carries_an_empty_gaps_key(self) -> None:
+        """Present even when empty, because this is machine-readable output.
+
+        A key that appears only sometimes makes a program branch on whether the field is
+        there rather than on what it says, and the interface specification promises it is
+        always present. The empty list is a real answer: nothing was observed to be missing,
+        which is a weaker claim than complete and the only one this package may make."""
+        assert config.meta_summary(ExecMeta())["gaps"] == []

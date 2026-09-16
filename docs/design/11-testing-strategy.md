@@ -2,7 +2,7 @@
 
 ## Overview
 
-LlmSource uses a single test tier: **unit tests**. There is no integration tier, because there is no store to integrate with and the only external system is a model provider, which a test must not reach. Every I/O boundary is doubled. The suite runs offline, on every push in CI, and passes with no provider SDK installed.
+LlmSource uses a single test tier: **unit tests**. There is no integration tier, because there is no store to integrate with and the only external system is a model provider, which a test must not reach. Every I/O boundary is doubled. The suite runs offline and passes with no provider SDK installed. It is run manually today; running it on every push is part of the proposed CI pipeline.
 
 That last property is a design consequence rather than a testing convenience. The model boundary is a structural protocol and the provider package is imported lazily inside the call that uses it, so a test substitutes a scripted client rather than patching a vendor SDK, and the whole package remains importable and exercisable without one.
 
@@ -36,7 +36,9 @@ source = ["src"]
 
 ## 2. Test Layout
 
-Tests mirror the source layout under `lib/tests/`, split by concern where a module has several.
+Tests mirror the source layout under `lib/tests/`, split by concern where a module has several. The
+map below is representative: it names boundary and contract tests a maintainer needs to find, not
+every test module in the package.
 
 ```
 lib/tests/
@@ -45,6 +47,7 @@ lib/tests/
   cassettes/                   # four recorded provider responses and a spend receipt
   doubles/
     clients.py                 # ScriptedClient, FailingClient — satisfy LlmClientProtocol
+    truncation.py              # complete, truncated, and unanswered model responses
     provider.py                # LitellmStub, chat_payload, stream_chunks, install_litellm
     cache.py                   # a cache double
     network.py                 # the offline guard, its record, and its errors
@@ -61,8 +64,23 @@ lib/tests/
     test_version.py            # pyproject and __version__ agree
     test_offline_guard.py      # the guard itself refuses a socket
     test_offline_coverage.py   # subprocess and database access are refused and counted
+    test_source_planner.py     # facade property mapping into planning
+    test_initial_v2_facade.py  # non-flat facade behavior and metadata
+    test_initial_v2_result_facts.py # result facts shared with the adapters
+    test_distribution_source_facade.py # direct-Python distribution controls and receipt
+    test_research_runtime_slice.py # the research-compatible execution slice
+    test_admission_budget_chain.py # planning admission under nested budgets
+    test_outcome_precedence.py # partial, stopped, truncated, and empty outcomes
+    test_unanswered_classification.py # failures before and after an answered extraction
+    test_dropped_constraint.py # caller constraints survive planning and execution
+    test_rewritten_ask.py      # analysis rewrites reach every planned leaf
+    test_record_identity.py    # scalar and composite normalized identity
+    test_record_provenance.py  # leaf origins survive merge and deduplication
+    test_documented_surface.py # reference docs track public types and signatures
+    test_mutants.py            # guards fail when selected invariants are reversed
     prompts/
       test_fetch_prompt.py     # rendering, substitution, and template safety
+      test_prompt_provenance.py # every prompt section stays in the prompt module
     llm/
       test_budget.py           # reservation, settlement, derivation, row admission, concurrency
       test_pricing.py          # the bound holds for dense text; a model with no price is refused
@@ -74,12 +92,30 @@ lib/tests/
       test_client_stream.py    # a streamed call: same records, same pricing, unpriced when unpriceable
       test_client_usage.py     # token, cost, latency, and cache-hit accounting
       test_function_client.py  # the llm_fn path
+      test_finish_reason.py    # provider stop-reason attestation
+      test_response_attestation.py # answered, truncated, and refused response facts
     cache/
       test_stores.py           # MemoryCache and FileCache against the published protocol
+    planning/
+      test_admission.py        # optional planning-call look-ahead
+      test_analysis.py         # query analysis and typed constraints
+      test_bounds.py           # worst-case call and leaf counts
+      test_cardinality.py      # structured row estimates
+      test_constraint_algebra.py # containment, disjointness, and coverage
+      test_distribution_search.py # bounded rule-backed strategy selection
+      test_initial_v2_coordinator.py # schedule coordination and fallback
+      test_initial_v2_transport.py # versioned LeafTask wire validation
+      test_plan.py             # recursive plan construction and guards
+      test_planning_context.py # fact digests, schedules, and estimate exposure
+      test_schema.py           # schema preservation, enrichment, and keys
+    execution/
+      test_mapper.py           # concurrent leaves, continuations, and retained partials
     reduction/
       test_parsing.py          # fences, accepted shapes, malformed responses
       test_aligner.py          # match order, remapping, unmapped keys, no-attribute passthrough
       test_verifier.py         # coercions, reported mismatches, deduplication
+      test_coverage.py         # stop facts and observed-key coverage
+      test_salvage.py          # safe recovery of complete prefixes
     compat/
       test_blue_data.py        # the inheritance, the base order, and the alias
       test_contract.py         # signature contract against the data layer base class
@@ -93,7 +129,8 @@ Platform adapter tests live with their packages, under `platform/cli/tests/unit/
 
 ## 3. The Doubles
 
-Four boundaries, four doubles, all in `lib/tests/doubles/`. The model, the provider transport, the cache, and the outside world the guard closes off.
+Five double modules cover four boundaries in `lib/tests/doubles/`: model responses, including
+truncation; provider transport; cache; and the outside world the guard closes off.
 
 ### The model
 
@@ -113,7 +150,7 @@ A plain callable covers the `llm_fn` path, which reaches the model through `Func
 
 `DefaultLlmClient` is below the client protocol, so a scripted client cannot reach it. `LitellmStub` stands in for the provider module and is installed over the lazy import, which is exactly the seam the lazy import creates. It records the call arguments it received, returns a constructed chat payload, and can be told to fail.
 
-Because the import is lazy and the stub replaces it, the client's whole surface is testable with the provider package absent, which is how CI runs it.
+Because the import is lazy and the stub replaces it, the client's whole surface is testable with the provider package absent. The manual gate uses that configuration today, and the proposed CI pipeline keeps it.
 
 Response-shape defences use constructed payloads rather than recordings, because the interesting cases are the ones a provider produces rarely: a response with no `choices` list, an empty `choices` list, and a choice with no message content. Each must raise a `TransportError` naming the shape.
 
@@ -192,8 +229,16 @@ Every configuration key has a test proving that changing it changes observable b
 | `llm.cache`, `llm.cache_dir` | Second identical call is a cache hit; a different directory is a miss |
 | `llm.max_parallel` | Bounds in-flight calls under concurrent fetches |
 | `llm.rate_limit` | Refused with `ConfigError` naming the v2.0 deferral |
+| `llm.price_per_input_token`, `llm.price_per_output_token` | Make an otherwise unpriced model boundable; either key without the other is refused |
 | `limits.*` and `max_records` | Stop a run and name themselves in `stopped_by` |
 | `connection.variant` | Reported by the `variant` property and by `LLM.MODELS` |
+| `plan.mode`, `plan.partition_key`, `plan.max_depth`, `plan.max_partitions`, `plan.target_rows_per_leaf`, `plan.max_leaves` | Change or bound the accepted task tree; a refused expansion keeps the parent leaf intact |
+| `plan.max_continuations`, `plan.max_exclusion_bytes`, `plan.max_excluded_keys` | Change extraction call count or the whole-key exclusion block while respecting both caps |
+| `plan.key`, `plan.keys` | Change scalar or composite identity, merge, and continuation exclusions |
+| `plan.exact_rows` | Stops a single leaf at the trusted count; a multi-leaf plan reports `exact_rows_not_leaf_bound` instead |
+| `plan.schema_mode`, `plan.planning_order` | Change accepted schema facts or the closed schedule and its stage counts |
+| `plan.expose_estimate` | Changes only the extraction prompt; planning facts, topology, and affordability stay the same |
+| `plan.distribution_search`, `plan.identity_partitions`, `plan.max_strategy_candidates` | Change the bounded rule-backed candidates, accepted split, and optional planning receipt |
 
 An unknown `llm.*` key is asserted to raise `ConfigError` whose message lists the accepted names, and control keys are asserted not to appear in the provider call arguments.
 
@@ -233,7 +278,9 @@ The guarantee is what makes the suite runnable by anyone with a checkout, on any
 
 ## 10. Coverage
 
-Coverage is measured over `src` via `pytest-cov` and reported in CI output. No minimum threshold is enforced, and no merge is gated on a percentage.
+Coverage is measured over `src` via `pytest-cov` when requested. No minimum threshold is enforced,
+and no merge is gated on a percentage. A future CI pipeline may report it without changing that
+policy.
 
 What is gated is contract-surface coverage: every public member is either tested or explicitly recorded as out of scope with a reason. That question, "is this surface exercised", is the one a coverage number is a poor proxy for, and answering it directly is cheaper than arguing about a threshold.
 

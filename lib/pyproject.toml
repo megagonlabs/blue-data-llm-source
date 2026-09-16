@@ -4,8 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blue-data-llm-source"
-version = "1.1.1"
+version = "1.2.0"
 description = "Blue Data LLM Source Layer"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "blue-data>=0.1.0",
@@ -13,9 +14,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-llm  = ["litellm", "diskcache"]
+llm  = ["litellm>=1.95.0,<2", "diskcache>=5.6,<6"]
 dev  = ["pytest", "pytest-asyncio", "pytest-cov", "ruff", "pyright", "build", "twine"]
-all  = ["litellm", "diskcache"]
+all  = ["litellm>=1.95.0,<2", "diskcache>=5.6,<6"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

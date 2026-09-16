@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from blue_data_llm_source.types import ParseError
 
@@ -18,6 +18,17 @@ def strip_fence(text: str) -> str:
     """Remove one surrounding code fence, if present."""
     match = _FENCE.match(text)
     return match.group(1) if match else text.strip()
+
+
+# A fence whose closing marker never arrived, which is what a response cut off at the
+# output ceiling leaves behind. `_FENCE` requires both markers and so matches nothing here,
+# and the leftover ```` ```json ```` line would sit in front of the document being salvaged.
+_OPENING_FENCE = re.compile(r"^\s*```[a-zA-Z0-9_-]*\s*\n")
+
+
+def _unfenced(text: str) -> str:
+    """The document inside a fence, whether or not the fence was ever closed."""
+    return _OPENING_FENCE.sub("", strip_fence(text), count=1)
 
 
 # Deeper than any real answer, and shallow enough that the recursive walks downstream —
@@ -172,3 +183,90 @@ def parse_records(text: str | None, wanted: list[str] | None = None) -> list[dic
             raise ParseError(f"record {i} is {type(item).__name__}, expected an object", raw=text)
         records.append(cast("dict[str, Any]", item))
     return records
+
+
+_OPENERS: Final = {"[": "]", "{": "}"}
+
+
+def _completed_prefix(body: str) -> str | None:
+    """*body* cut back to its last whole record and closed off, or None.
+
+    None means there is nothing to salvage, and it covers three different situations that
+    all end the same way: the document closes on its own so it was never truncated, it
+    holds no array of records, or the cut landed before the first record finished.
+
+    A character scan rather than a parser. The input is by definition not JSON, so every
+    reader in the standard library refuses it, and the one fact needed here — where the
+    last complete record ends — is positional. Strings are tracked because a brace inside
+    a value is not structure, and an escaped quote does not end the string it sits in;
+    without both, a record holding ``{`` or ``\\"`` moves the cut to the wrong place.
+    """
+    stack: list[str] = []
+    array_depth: int | None = None
+    last_complete: int | None = None
+    closers = ""
+    in_string = False
+    escaped = False
+
+    for i, ch in enumerate(body):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in _OPENERS:
+            stack.append(ch)
+            if ch == "[" and array_depth is None:
+                # The first array is the one holding the records, whether it is the whole
+                # document or the value under a wrapper key. Later arrays are values
+                # inside a record and closing one does not finish anything.
+                array_depth = len(stack)
+        elif ch in ("]", "}"):
+            if not stack or _OPENERS[stack[-1]] != ch:
+                # Mismatched, so the document is malformed rather than cut off. Salvaging
+                # from it would return records from a response no reader agrees about.
+                return None
+            stack.pop()
+            if not stack:
+                # The document closed. Whatever made it unreadable, it was not truncation,
+                # and the error the caller already has is the accurate one.
+                return None
+            if len(stack) == array_depth:
+                last_complete = i + 1
+                closers = "".join(_OPENERS[c] for c in reversed(stack))
+
+    if last_complete is None:
+        return None
+    return body[:last_complete] + closers
+
+
+def salvage_records(text: str | None, wanted: list[str] | None = None) -> list[dict[str, Any]]:
+    """The whole records from a response that stopped mid-document, or raise ParseError.
+
+    A model that reaches its output ceiling stops mid-token. The records it had already
+    finished are complete and correct, and the call was billed in full, so rejecting the
+    document whole discards rows that are paid for and present — and hands the caller an
+    exception instead of the answer it partly has.
+
+    The recovered prefix goes back through :func:`parse_records` rather than being read
+    here. Every rule that decides what a record is — the wrapper reading, duplicate keys,
+    non-finite numbers, the nesting ceiling — then applies to a salvaged response exactly
+    as it does to a whole one. A second reader with its own rules would accept, from a
+    truncated response, records the parser beside it rejects.
+
+    Raises rather than returning an empty list when there is nothing to salvage. No records
+    and a response that could not be read are different facts, and the caller has to be
+    able to keep reporting the second as an error.
+    """
+    if text is None or not text.strip():
+        raise ParseError("model returned an empty response", raw=text)
+
+    prefix = _completed_prefix(_unfenced(text))
+    if prefix is None:
+        raise ParseError("model response is unreadable and does not look truncated", raw=text)
+    return parse_records(prefix, wanted)

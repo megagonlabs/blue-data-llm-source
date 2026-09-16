@@ -73,7 +73,12 @@ There is no `blue-data` extra. It existed to gate the compatibility adapter whil
 
 Two pieces of it are used as more than transport, and both are places where writing our own would mean keeping a second copy of somebody else's contract. `completion_cost` reads what a call was billed. `stream_chunk_builder` rebuilds one response from the chunks of a streamed call, which is what lets `llm.stream=True` be supported without a separate downstream path. Neither is trusted blindly: an unreadable cost is reported as unknown rather than as zero, and the assembler's habit of filling in token counts from a local tokenizer is worked around rather than repeated as accounting. `04-detailed-architecture.md` has the detail.
 
-One behaviour of that dependency reaches the outside world and is worth recording. On some failure paths `litellm` writes its own coloured banners to standard output rather than to standard error, and this package has no hook to suppress them. Anything reading a process's standard output as machine-readable text, such as the CLI under `--format json`, can therefore receive lines this package did not write.
+One behaviour of that dependency reaches the process boundary and is worth recording. On some
+failure paths `litellm` writes coloured banners to standard output rather than standard error. The
+CLI redirects interpreter-level `sys.stdout` writes for the synchronous fetch boundary, and the MCP
+server redirects them for the server run. Those redirects cover the known banners, but not direct
+file-descriptor writes or output produced outside the protected lifetime. A program embedding the
+library owns its process streams and may still receive the dependency's output.
 
 The model boundary is a structural protocol with two methods:
 
@@ -119,7 +124,7 @@ The `llm.cache` switch is not wired to either of them and still opens `diskcache
 | Server | Low-level server over stdio |
 | Tools | `llm_fetch`, `llm_estimate`, `llm_info` |
 | Entry point | `blue-data-llm-mcp` |
-| Dependencies | `blue-data-llm-source[llm]>=1.1.0`, `mcp==1.27.2` |
+| Dependencies | `blue-data-llm-source[llm]>=1.2.0`, `mcp==1.27.2` |
 
 The low-level server is used rather than the decorator-derived one because the tool schemas are written by hand. Deriving a schema from a handler signature would put the tool contract in a Python signature instead of in the JSON a client actually sees, and that JSON is the contract an agent reads.
 
@@ -135,7 +140,7 @@ The `mcp` import is confined to the transport module. Tool definitions and argum
 | Output formatting | `rich>=13.0` |
 | Commands | `llm fetch`, `llm info` |
 | Entry point | `llm` |
-| Dependencies | `blue-data-llm-source[llm]>=1.1.0`, `click>=8.0`, `rich>=13.0` |
+| Dependencies | `blue-data-llm-source[llm]>=1.2.0`, `click>=8.0`, `rich>=13.0` |
 
 Click commands are synchronous and call the library's synchronous wrapper. Rich markup is disabled on output, because a record value containing square brackets is data rather than a style tag.
 
@@ -181,8 +186,8 @@ Line length is 100 and the target version is 3.10. Details are in [08-coding-sty
 |---------|-----------|--------|------|
 | `blue-data` | `>=0.1.0` | internal | The `DataSource` base class this source inherits (required) |
 | `tenacity` | `>=9.0.0` | PyPI | Transport retry (required) |
-| `litellm` | latest stable | PyPI | Provider transport (`llm` extra) |
-| `diskcache` | latest stable | PyPI | On-disk response cache (`llm` extra) |
+| `litellm` | `>=1.95.0,<2` | PyPI | Provider transport (`llm` extra) |
+| `diskcache` | `>=5.6,<6` | PyPI | On-disk response cache (`llm` extra) |
 | `mcp` | `==1.27.2` | PyPI | MCP server SDK (`blue-data-llm-mcp` runtime) |
 | `click` | `>=8.0` | PyPI | CLI argument parsing (`blue-data-llm-cli` runtime) |
 | `rich` | `>=13.0` | PyPI | CLI output formatting (`blue-data-llm-cli` runtime) |

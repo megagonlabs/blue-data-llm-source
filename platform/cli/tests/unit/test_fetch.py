@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 import pytest
-from blue_data_llm_source import BudgetExceeded, LlmSource
+from blue_data_llm_source import BudgetExceeded, ExecMeta, FetchResult, LlmSource, Outcome
 from click.testing import CliRunner
 
 from blue_data_llm_cli import commands
@@ -92,6 +92,64 @@ def test_fetch_max_records_caps_the_result(runner: CliRunner) -> None:
     assert len(_json(result.stdout)["records"]) == 1
 
 
+def test_medium_effort_allows_one_continuation_with_a_primary_key(
+    runner: CliRunner,
+    default_client: Any,
+) -> None:
+    result = runner.invoke(
+        cli,
+        [
+            "fetch",
+            QUERY,
+            "--attr",
+            "country",
+            "--plan-key",
+            "country",
+            "--effort",
+            "medium",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert _json(result.stdout)["meta"]["calls"] == 2
+    assert len(default_client.prompts) == 2
+
+
+def test_productive_last_effort_ask_reports_the_exhausted_allowance(
+    runner: CliRunner,
+    install_client: Any,
+) -> None:
+    client = install_client(
+        [
+            json.dumps([{"country": "France"}]),
+            json.dumps([{"country": "Germany"}]),
+        ]
+    )
+    result = runner.invoke(
+        cli,
+        [
+            "fetch",
+            QUERY,
+            "--attr",
+            "country",
+            "--plan-key",
+            "country",
+            "--effort",
+            "medium",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 7, result.output
+    payload = _json(result.stdout)
+    assert payload["records"] == [{"country": "France"}, {"country": "Germany"}]
+    assert payload["meta"]["stop_reasons"] == ["plan.max_continuations"]
+    assert len(client.prompts) == 2
+
+
 def test_fetch_json_output_carries_records_and_meta(runner: CliRunner) -> None:
     result = runner.invoke(cli, ["fetch", QUERY, "--format", "json"])
     assert result.exit_code == 0, result.output
@@ -139,18 +197,32 @@ def test_model_and_limits_reach_the_call(runner: CliRunner, default_client: Any)
     assert "model gpt-4o" in result.stdout
 
 
-def test_a_budget_stop_returns_no_records_and_names_the_limit(
+def test_an_initial_budget_stop_returns_no_records_and_names_the_limit(
     runner: CliRunner, install_client: Any
 ) -> None:
     install_client(BudgetExceeded("call limit reached (2)", limit="max_calls"))
     result = runner.invoke(cli, ["--verbose", "fetch", QUERY, "--limit-calls", "2"])
-    # Exit 7, the code the interface table has always documented for a budget stop. It was
-    # unreachable until now: the library turns a crossed ceiling into an empty result rather
-    # than raising, so no BudgetExceeded ever reached the error handler and a run that blew
-    # its ceiling exited 0 with nothing to see unless --verbose was asked for.
     assert result.exit_code == 7, result.output
     assert "0 records" in result.stdout
     assert "stopped by: max_calls" in result.stdout
+
+
+def test_a_partly_answered_run_exits_on_its_own_code(
+    runner: CliRunner, install_source: Any
+) -> None:
+    """Not 7, which names a budget ceiling, and not 0, which would look complete."""
+
+    class PartlyAnswered:
+        def fetch(self, *args: Any, **kwargs: Any) -> FetchResult:
+            return FetchResult(
+                records=[{"name": "Ada"}],
+                meta=ExecMeta(outcome=Outcome.PARTIAL, gaps=["leaf_failed: leaf 0.1 raised"]),
+            )
+
+    install_source(PartlyAnswered())
+    result = runner.invoke(cli, ["fetch", QUERY])
+
+    assert result.exit_code == 8, result.output
 
 
 def test_a_row_cap_is_not_a_failure(runner: CliRunner, install_client: Any) -> None:
@@ -178,13 +250,15 @@ def test_verbose_reports_unmapped_remapped_and_stop_reason(
     assert "stopped by: max_rows" in result.stdout
 
 
-def test_without_verbose_those_three_stay_out(runner: CliRunner, install_client: Any) -> None:
+def test_without_verbose_alignment_details_stay_out_but_stop_facts_do_not(
+    runner: CliRunner, install_client: Any
+) -> None:
     install_client(MESSY_RECORDS)
     result = runner.invoke(cli, ["fetch", QUERY, "--attr", "country", "--max-records", "1"])
     assert result.exit_code == 0, result.output
     assert "unmapped keys" not in result.stdout
     assert "remapped keys" not in result.stdout
-    assert "stopped by" not in result.stdout
+    assert "stopped by: max_rows" in result.stdout
 
 
 def test_verbose_json_adds_the_same_three(runner: CliRunner, install_client: Any) -> None:

@@ -40,9 +40,11 @@ afetch(...)   # the async form; fetch() wraps it
 
 `query` is the question. `attrs` is either a list of names or a list of `{"name": ..., "type": ...}` dicts. `context` is free text that may clarify what an attribute name means. `max_records` caps the rows returned. `llm_fn` is a `(prompt) -> str` callable used as the client for that call. `budget` is a `Budget` you own; supply one and the fetch derives a child from it, so the ceilings accumulate across every call you hand it to, and omit it to have one built from the configured limits for that call alone.
 
-`fetch` raises if called from inside a running event loop. Use `afetch` there.
+`fetch` raises `ConfigError` if called from inside a running event loop. Use `afetch` there.
 
-Returns a `FetchResult` with `records` and `meta`.
+Returns a `FetchResult` with `records` and `meta`. A direct Python fetch with rule-backed
+distribution search enabled can also expose an optional `planning_receipt` property; the dataclass
+itself retains its two original fields.
 
 ### estimate
 
@@ -50,7 +52,7 @@ Returns a `FetchResult` with `records` and `meta`.
 estimate(query, attrs=None, context=None, properties=None, llm_fn=None) -> Estimate
 ```
 
-What one fetch of `query` could cost at most, answered without contacting anything. It builds the prompt this source would actually send and bounds it, so the figure belongs to the request you are asking about rather than to an average of requests like it, and it bounds the whole fetch rather than one attempt. A fetch may retry, so `max_cost` is the per-attempt figure accumulated once per attempt — added the way the budget ledger adds it, not multiplied. Below six attempts the two are identical in binary floating point. From six upward they diverge, and the gap widens with the attempt count — about half of all per-attempt figures differ by one unit in the last place at six attempts, and nearly all of them differ by more at a hundred. Any of it is enough to refuse the final attempt of a request sized against its own estimate. The shipped default is three attempts, so this is latent until someone raises `limits.max_retries` past four. The estimate accumulates the way the thing it is checked against accumulates, so it cannot drift out from under a caller who does. Sizing a ceiling against the per-attempt figure means one transient failure consumes it and the retry is refused.
+What one **flat** fetch of `query` could cost at most, answered without contacting anything. It reads no `plan.*` setting, so a request with parts or continuations can cost several times this figure. It builds the prompt this source would actually send and bounds it, so the figure belongs to the request you are asking about rather than to an average of requests like it, and it bounds the whole fetch rather than one attempt. A fetch may retry, so `max_cost` is the per-attempt figure accumulated once per attempt — added the way the budget ledger adds it, not multiplied. Below six attempts the two are identical in binary floating point. From six upward they diverge, and the gap widens with the attempt count — about half of all per-attempt figures differ by one unit in the last place at six attempts, and nearly all of them differ by more at a hundred. Any of it is enough to refuse the final attempt of a request sized against its own estimate. The shipped default is three attempts, so this is latent until someone raises `limits.max_retries` past four. The estimate accumulates the way the thing it is checked against accumulates, so it cannot drift out from under a caller who does. Sizing a ceiling against the per-attempt figure means one transient failure consumes it and the retry is refused.
 
 `llm_fn` is accepted so the estimate is asked of whatever would actually answer, and a callable cannot price itself, so a request against one is reported unestimable. The same is true of an injected client that does not implement `bound_for_attempt`.
 
@@ -354,17 +356,121 @@ print(third.meta.outcome, third.meta.stopped_by, run.rows)
 
 Each fetch derives a child from that budget, so it spends from what the parent has left and the effective ceiling on every axis is the smaller of the two, retry depth included. The three fetches above return one record, one record, and none: by the third the parent's two rows are gone, so it comes back empty with `stopped_by` naming `max_rows` rather than raising. The row axis is the one this example can use with an `llm_fn`, since `FunctionClient` declares no other; a call, cost, or time ceiling on a caller-owned budget needs a client that declares that axis, and is refused otherwise. A child does not inherit its parent's `stopped_by`, so a later affordable request under the same budget does not report an earlier refusal as its own. `Budget` also reports `committed`, which is settled spend plus the reservations still outstanding.
 
+## Decomposition
+
+One model call answers a request by default. A large ask can be split into parts, each asked
+separately and merged on the way back. Nothing selects a shape for you.
+
+| Property | Default | Meaning |
+|---|---|---|
+| `plan.mode` | `flat` | `flat` asks once. `partitioned` splits the ask by a key the analysis found. `row_by_row` asks once per entity in a list the analysis found. An unknown value raises `ConfigError`. |
+| `plan.max_continuations` | `0` | How many times a part may ask again for records it did not get. At `0` each part asks once. It bounds asks per part, not provider attempts or planning calls; each ask may still be retried up to `limits.max_retries` times, three attempts by default. |
+| `plan.max_leaves` | `24` | Most terminal slices. An expansion that cannot fit is rejected as a whole; row-by-row falls back to the intact batch slice rather than running a prefix. |
+| `plan.key` | none | The attribute identifying a record, so parts returning the same record merge. Must be one of the attributes you asked for. |
+| `plan.partition_key` | none | Preferred root split dimension. Descendants may choose another dimension and cannot repeat an ancestor dimension. |
+| `plan.max_depth` | `2` | Deepest partition level. `0` disables subdivision while retaining non-flat bootstrap analysis. |
+| `plan.max_partitions` | `4` | Most children one proposal may create. A value below `2` leaves the node unsplit. |
+| `plan.target_rows_per_leaf` | `50` | Uncertain row-count hint above which a descendant may split again. Unknown estimates are also eligible. This is not a completeness target. |
+| `plan.schema_mode` | `preserve` | `preserve` keeps declared attributes. `enrich` lets non-flat bootstrap append inferred attributes while retaining caller declarations. Flat plus `enrich` is rejected because flat makes no planning call. |
+| `plan.keys` | empty | Ordered fields that jointly identify one record. Required explicitly for distribution search. |
+| `plan.exact_rows` | none | Hard target when the plan has one leaf. A multi-leaf plan does not apply it and adds `exact_rows_not_leaf_bound` to `meta.gaps`. |
+| `plan.max_exclusion_bytes` | `16384` | Encoded byte cap for whole-key exclusions in a continuation prompt. |
+| `plan.max_excluded_keys` | `50` | Direct-Python-only count cap for whole-key exclusions; CLI and MCP use this default. |
+| `plan.planning_order` | `planning.schema_first` | One of five schedules: research order, schema first, locked sequential, locked parallel, or combined. The locked schedules require a non-empty caller schema and ordered `plan.keys`. |
+| `plan.expose_estimate` | `True` | Whether extraction prompts include the soft estimate. Planning facts and task transport retain it either way. |
+| `plan.distribution_search` | `False` | Direct-Python-only opt-in for rule-backed distribution selection. Requires `partitioned`. |
+| `plan.identity_partitions` | empty | Direct-Python-only list of versioned finite-domain rule mappings accepted by `IdentityPartitionRule.from_dict()`. |
+| `plan.max_strategy_candidates` | `5` | Direct-Python-only candidate bound. Must be at least `1` when distribution search is enabled. |
+
+### Rule-backed distribution search
+
+Distribution search is opt-in and is exposed only through direct Python calls in this release. It
+requires `plan.mode="partitioned"`, explicit ordered `plan.keys`, and a nonempty list of declared
+finite-domain rules. Every rule's `ordered_primary_keys` must exactly match `plan.keys`; its
+`dimension` must be one of those keys; and at least one rule must apply at the root. Rule domains are
+nonempty JSON scalars with normalized duplicates rejected. Source rules use
+`source_configuration`; per-call rules use `caller_declared` and replace the source list. Invalid
+rules fail before provider contact, and the distribution-search settings are removed from the
+provider property map.
+
+An accepted split records its rule and safety decision in the plan. A distribution-search result may
+carry a `PlanningReceipt` with `contract_version`, configured rule digests, planning facts, and the
+versioned fetch plan. The receipt checks internal consistency; it does not prove rule authenticity,
+factual truth, completeness, or answer quality. CLI and MCP intentionally omit distribution search
+and this receipt.
+
+`flat` makes no planning call. For non-flat modes, `planning.combined` makes at most one fact call,
+the locked schedules make at most two, and research order or schema first make at most three. The
+planner may then make bounded proposal, distribution, or entity-enumeration calls before extracting
+the leaves. Planning is breadth first and bounded by depth, per-node partitions, total leaves,
+strategy candidates, and the shared execution budget.
+
+```python
+result = source.fetch(
+    "commercial airports in France",
+    attrs=["name", "city"],
+    properties={"plan.mode": "partitioned", "plan.key": "name"},
+)
+```
+
+**What this does not do.** `estimate` does not price a decomposed request — it bounds a flat fetch,
+retries included, and reads none of these settings. Pass any `plan.*` value and it returns the same
+figures. Use `planning.worst_case_attempts(PlanLimits(...), mode)` for the conservative configured
+attempt diagnostic; a hand formula that omits the selected schedule or proposal work understates the
+request.
+
+A split plan is not reserved at its worst case. Before each optional planning call, the coordinator
+checks that the planning call and one extraction attempt fit the current call, cost, and deadline
+headroom. Each provider attempt still claims the budget atomically. A later leaf can therefore remain
+unserved after another consumer spends shared headroom. Flat work is weighed one attempt at a time.
+
+## Gaps
+
+`meta.gaps` is a list of operational diagnostics that may explain missing rows, and it is always
+present. An empty list says that no supported diagnostic fired. It does not establish completeness.
+
+```python
+for gap in result.meta.gaps:
+    print(gap)  # leaf_failed: leaf 0.1 raised TransportError(...)
+```
+
+It reports what this source can see: a part that failed, a continuation cap that fired, a
+response cut off at the model's output limit, a plan refused for exceeding `plan.max_leaves`, records
+kept unmerged because no key was identified. A valid empty response alone is not a gap. It does not
+report a model that simply answered with fewer records than exist because nothing in such a response
+says it is short.
+
 ## FetchResult and ExecMeta
 
-`FetchResult` holds `records` and `meta`, and supports `len()` and iteration over the records.
+`FetchResult` holds `records` and `meta`, and supports `len()` and iteration over the records. Those
+remain its only dataclass fields. Direct Python distribution-search results expose
+`.planning_receipt` and `.with_planning_receipt(...)`; `to_dict()` adds a top-level
+`planning_receipt` only when one exists.
+Results without distribution search and refusals before plan construction keep the two-key
+serialization.
 
-`ExecMeta` reports `outcome`, `model`, `calls`, `prompt_tokens`, `completion_tokens`, `cost`, `latency_seconds`, `cache_hits`, `requested_attrs`, `observed_keys`, `remapped_keys`, `unmapped_keys`, `type_mismatches`, `key_collisions`, `unchecked_types`, `truncated_to`, `stopped_by`, and `accounting_known`.
+`ExecMeta` reports `gaps`, `stop_reasons`, `stopped_by`, `record_origins`, `asked`, `outcome`, `model`, `calls`, `prompt_tokens`, `completion_tokens`, `cost`, `latency_seconds`, `cache_hits`, `requested_attrs`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records`, `normalization_collisions`, `observed_keys`, `remapped_keys`, `unmapped_keys`, `type_mismatches`, `key_collisions`, `unchecked_types`, `truncated_to`, and `accounting_known`.
+
+`row_estimate` is the accepted non-flat bootstrap hint for the root slice. A reported zero remains
+zero. Flat mode, an unknown estimate, or a bootstrap transformation rejected during fallback reports
+`None`. It is neither the returned row count nor an expected-completeness measure.
+
+`stop_reasons` is the ordered, distinct list of extraction limits and discarded final output.
+`stopped_by` is its first member for callers that consume one reason. `gaps` carries operational
+diagnostics, including planning fallback, failed or unserved tasks, and discarded records. An empty
+gap list says only that no supported diagnostic fired.
 
 **Read `accounting_known` before reading `cost`.** It is `False` when the answer came from a caller-supplied `llm_fn`, because a callable may answer from memory, contact one provider, or fan out to several, and none of that is visible from here. When it is `False` the accounting fields describe this library's own bookkeeping and nothing else — so a `cost` of `0.0` means "not measured", not "free", and a `calls` of `1` counts one invocation of your callable rather than one provider request.
 
 `unmapped_keys` matters. When the model returns a key that cannot be matched to a requested attribute, the key is reported there rather than dropped in silence. `key_collisions` is the same idea for the opposite problem: when two returned keys map to one requested attribute, the first wins and the second is reported with the value it carried, because which spelling the model meant is not knowable here. Two occurrences of the identical key inside one JSON object are a different case and raise `ParseError`, since there the two values have nothing to tell them apart by and Python's decoder would otherwise keep the last of the pair without a trace.
 
-`outcome` follows one ordered rule, `source.decide_outcome`, which is public so the precedence can be read rather than inferred. Any `stopped_by` outranks what the run produced: the row cap gives `truncated` when records remain and `stopped_by_limit` when none do, and every other axis gives `stopped_by_limit` whether or not records survived. With no ceiling in play, records present is `ok`, nothing from the model is `model_returned_none`, and records that reduction removed is `filtered_to_empty`.
+`outcome` uses the closed vocabulary `ok`, `empty_query`, `model_returned_none`,
+`filtered_to_empty`, `partial`, `stopped_by_limit`, and `truncated`. A partial plan outranks a
+simultaneous cap because every cap still appears in `stop_reasons`. Without interruption, any
+non-row stop produces `stopped_by_limit`;
+`max_rows` produces `truncated` when records remain and `stopped_by_limit` when none do. With no stop,
+records produce `ok`, an answered empty response produces `model_returned_none`, and records removed
+by reduction produce `filtered_to_empty`.
 
 `calls` and `cost` are read from the run's budget rather than summed from usage, so they count what was actually claimed, including an attempt that reached the provider and failed. Tokens and the model name come from the `Usage` entries the client appended to this call's `usage_sink` list, and from nothing else, which is what keeps two concurrent fetches through one client from reporting each other's tokens.
 
@@ -378,7 +484,10 @@ Nothing else escapes `fetch`, `afetch` or `estimate`. Anything unexpected is wra
 
 A missing provider credential is **not** a `ConfigError`. This library never reads a credential, so it cannot find one missing; the provider SDK reports it as a failed call, which arrives as a `TransportError`. Read a `TransportError` mentioning credentials as "the key is absent or wrong" rather than as a network fault.
 
-`BudgetExceeded` raised inside a fetch does not reach the caller. It is converted into an empty result whose `meta.stopped_by` names the axis, because a ceiling is an answer rather than an error. It is public for callers driving a `Budget` themselves.
+`BudgetExceeded` raised inside a fetch does not reach the caller. A refusal before any extraction
+answer returns no records with `outcome=stopped_by_limit`. If later work is refused after an
+extraction answered, the answered records are retained with `outcome=partial`. In both cases the
+stop fields name the axis. `BudgetExceeded` remains public for callers driving a `Budget` directly.
 
 `ParseError` carries the raw response text, because re-running a query is not guaranteed to reproduce the failure.
 
