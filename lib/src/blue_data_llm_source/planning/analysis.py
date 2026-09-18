@@ -61,7 +61,7 @@ class Analysis:
 
 @dataclass(frozen=True)
 class BootstrapAnalysis:
-    """The query fields accepted from the combined initial-v2 bootstrap."""
+    """The query fields accepted from the combined bootstrap call."""
 
     ask: str
     constraints: dict[str, Constraint] = field(default_factory=dict[str, Constraint])

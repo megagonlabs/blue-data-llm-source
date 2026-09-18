@@ -1,0 +1,45 @@
+flat (the default): one call, no planning stage
+  calls    ['extract']
+  records 
+      {'name': 'Charles de Gaulle', 'city': 'Paris'}
+      {'name': 'Orly', 'city': 'Paris'}
+      {'name': "Nice Cote d'Azur", 'city': 'Nice'}
+      {'name': 'Ajaccio Napoleon Bonaparte', 'city': 'Ajaccio'}
+  origins  [['0.0'], ['0.0'], ['0.0'], ['0.0']]
+  outcome  ok
+  gaps     []
+
+flat with continuations: the same part asks again, merging on plan.key
+  calls    ['extract', 'extract', 'extract', 'extract', 'extract']
+  records 
+      {'name': 'Charles de Gaulle', 'city': 'Paris'}
+      {'name': 'Orly', 'city': 'Paris'}
+      {'name': "Nice Cote d'Azur", 'city': 'Nice'}
+      {'name': 'Ajaccio Napoleon Bonaparte', 'city': 'Ajaccio'}
+  origins  [['0.0'], ['0.0'], ['0.0'], ['0.0']]
+  outcome  ok
+  gaps     []
+
+partitioned: bootstrap, one partition proposal, then one extraction per part
+  calls    ['bootstrap', 'proposal', 'extract', 'extract', 'extract']
+  records 
+      {'name': 'Charles de Gaulle', 'city': 'Paris'}
+      {'name': 'Orly', 'city': 'Paris'}
+      {'name': "Nice Cote d'Azur", 'city': 'Nice'}
+      {'name': 'Ajaccio Napoleon Bonaparte', 'city': 'Ajaccio'}
+  origins  [['0.0'], ['0.0'], ['0.1'], ['0.2']]
+  outcome  ok
+  gaps     []
+
+row_by_row: bootstrap, an entity enumeration, then one extraction per entity
+  calls    ['bootstrap', 'entities', 'extract', 'extract', 'extract']
+  records 
+      {'country': 'Canada', 'capital': 'Ottawa'}
+      {'country': 'France', 'capital': 'Paris'}
+      {'country': 'Japan', 'capital': 'Tokyo'}
+  origins  [['0.0'], ['0.1'], ['0.2']]
+  outcome  ok
+  gaps     []
+
+record_origins names the part each record came from, so a split result can be
+traced back to the ask that produced it.

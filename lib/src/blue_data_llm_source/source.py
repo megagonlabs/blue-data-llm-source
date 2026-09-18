@@ -22,6 +22,7 @@ from blue_data_llm_source.llm.client import (
     DEFAULT_MODEL,
     DefaultLlmClient,
     FunctionClient,
+    accepted_adapter_keys,
     check_adapter_keys,
 )
 from blue_data_llm_source.planning.bounds import (
@@ -54,6 +55,7 @@ from blue_data_llm_source.planning.schema import (
     Schema,
 )
 from blue_data_llm_source.planning.transport import LeafTask
+from blue_data_llm_source.redaction import redact
 from blue_data_llm_source.reduction import aligner, verifier
 from blue_data_llm_source.reduction.coverage import FAILED, LeafInput, LeafOutcome, reduce_leaves
 from blue_data_llm_source.reduction.identity import key_identity, normalized_value
@@ -135,6 +137,43 @@ budget is sized against, while the `PlanLimits` field sizes a recommendation not
 path asks for. Offering both here is how a caller sets one and moves the other. A library
 caller holding :class:`PlanLimits` directly still has every field; what closes is the
 settings door, which cannot deliver them."""
+
+# The keys that carry no namespace. `connection` is the transport block every source in the
+# data layer has, `cache_store` hands a client a cache object directly, and `budget` and
+# `usage_sink` are the per-call channels a fetch writes into the map it passes down — an
+# injected client constructed with either carries it back through the resolved map.
+# `_class` is not this package's. `blue_data.registry.DataRegistry.register_source` records
+# it alongside the source's own properties and `connect_source` reads it back to rebuild the
+# class, so a source that has been through the registry round trip arrives carrying it.
+# Refusing it would break that round trip for every source in the layer, not only this one.
+_BARE_KEYS = frozenset(
+    {"connection", "cache_store", "_class", C.BUDGET_PROPERTY, C.USAGE_SINK_PROPERTY}
+)
+
+# The namespaces with a closed key set of their own. A key inside one has already been
+# accepted or refused by name before the whole-map check reads it.
+_NAMESPACES: Final = ("llm.", "limits.", "plan.")
+
+# Request fields the data-layer surfaces read out of `optional_properties`, because their
+# signatures have nowhere else to put them. On `fetch` each is a parameter, so they are
+# lifted out of the map before the property vocabulary is checked rather than joining it.
+_REQUEST_KEYS: Final = ("attrs", "attr_names", "context", "max_records")
+
+
+def _take_request_keys(options: dict[str, Any]) -> dict[str, Any]:
+    """Remove the request fields from a data-layer options map and return them."""
+    return {key: options.pop(key) for key in _REQUEST_KEYS if key in options}
+
+
+def _accepted_properties() -> list[str]:
+    """Every property key this source reads, under the name a caller writes."""
+    return sorted(
+        _BARE_KEYS
+        | accepted_adapter_keys()
+        | {f"limits.{name}" for name in _LIMIT_KEYS}
+        | {f"plan.{name}" for name in _PLAN_KEYS}
+    )
+
 
 _STOP_REASON_PRECEDENCE: Final = (
     "max_seconds",
@@ -480,8 +519,7 @@ class LlmSource(DataSource):
         # injected client's own properties reached the provider without ever crossing the
         # closed boundary: `llm.stream=True` was forwarded instead of refused by name, and
         # `llm.max_parallel=0` built a semaphore with no permits and waited.
-        self._check_limit_keys(resolved)
-        check_adapter_keys(resolved)
+        self._check_property_keys(resolved)
         return resolved
 
     # The default matches the base class, which gained one upstream. Without it this override
@@ -868,17 +906,31 @@ class LlmSource(DataSource):
         )
 
     @staticmethod
-    def _check_limit_keys(properties: dict[str, Any]) -> None:
-        """Refuse a misspelled limit rather than running unbounded under it.
+    def _check_property_keys(properties: dict[str, Any]) -> None:
+        """Refuse a property key this source does not read.
 
-        ``limits.max_cst`` was accepted and ignored, so a run that looked bounded was not.
-        That is the defect class this package exists to prevent, and the adapter keys are
-        already checked the same way.
+        The whole map is closed, not the three namespaces inside it. A key outside them all
+        is as ignorable as a misspelled one within them, and on this surface a setting the
+        caller believes they made is the difference between the request they described and
+        the one that is billed.
         """
+        # First, because every check below reads a key as a string. A key that is not one
+        # left as a bare AttributeError, which tells a caller what broke rather than what
+        # to write.
+        mistyped = sorted(
+            (key for key in cast("dict[Any, Any]", properties) if not isinstance(key, str)),
+            key=repr,
+        )
+        if mistyped:
+            named = ", ".join(f"{key!r} ({type(key).__name__})" for key in mistyped)
+            raise ConfigError(
+                f"property keys must be strings: {named}. Accepted: {_accepted_properties()}"
+            )
         # The adapter keys are a closed set too, and are checked here for the same reason:
         # only the built-in client reads them, so validating there let a typo through on
         # every other path.
         check_adapter_keys(properties)
+        # `limits.max_cst` was accepted and ignored, so a run that looked bounded was not.
         unknown = sorted(
             key
             for key in properties
@@ -895,13 +947,22 @@ class LlmSource(DataSource):
         near_misses = sorted(
             key for key in properties if key.startswith("limit.") or key in ("limits", "plan")
         )
-        if not unknown and not near_misses:
-            return
-        raise ConfigError(
-            f"unknown limit {', '.join(repr(k) for k in unknown + near_misses)}. "
-            f"Accepted: {sorted('limits.' + name for name in _LIMIT_KEYS)} and "
-            f"{sorted('plan.' + name for name in _PLAN_KEYS)}"
+        if unknown or near_misses:
+            raise ConfigError(
+                f"unknown limit {', '.join(repr(k) for k in unknown + near_misses)}. "
+                f"Accepted: {sorted('limits.' + name for name in _LIMIT_KEYS)} and "
+                f"{sorted('plan.' + name for name in _PLAN_KEYS)}"
+            )
+        # Last, so a key that belongs to a namespace is refused by the check that knows what
+        # that namespace offers and gets the shorter list to correct itself against.
+        outside = sorted(
+            key for key in properties if key not in _BARE_KEYS and not key.startswith(_NAMESPACES)
         )
+        if outside:
+            raise ConfigError(
+                f"unknown property {', '.join(repr(k) for k in outside)}. "
+                f"Accepted: {_accepted_properties()}"
+            )
 
     # ------------------------------------------------------------------ fetch --
     async def _afetch_inner(
@@ -1345,7 +1406,9 @@ class LlmSource(DataSource):
         # the fallback alongside a reason saying none was configured is a contradiction a
         # caller has no way to resolve.
         configured = merged.get("llm.model")
-        model = str(configured) if configured else ""
+        # Published, never used to look anything up, so it is masked once here: a
+        # credential pasted into `llm.model` must not return through the estimate.
+        model = redact(str(configured)) if configured else ""
         # Before the empty-request short circuit, so the closed key set is closed on this
         # route too and a caller can check its configuration without spending anything.
         limits = self._limits(properties)
@@ -1392,7 +1455,9 @@ class LlmSource(DataSource):
         except ConfigError as e:
             return Estimate(
                 bounded=False,
-                reason=str(e),
+                # The message names the model, which is a value the caller supplied and
+                # may have supplied wrongly; a pasted credential must not come back out.
+                reason=redact(str(e)),
                 model=model,
                 prompt_bytes=prompt_bytes,
                 max_attempts=attempts,
@@ -1557,42 +1622,53 @@ class LlmSource(DataSource):
         ops are listed in the error raised for an unknown one.
         """
         options = dict(optional_properties or {})
+        request = _take_request_keys(options)
         # Before the op is read, so a bad key is refused on every op rather than on the ones
         # that happen to reach a fetch. LLM.MODELS answered from local state and returned
         # before the check, which made the same ceiling accepted on one op and refused on
         # the next.
-        self._check_limit_keys(options)
-        check_adapter_keys(options)
+        self._check_property_keys(options)
 
         if isinstance(query, dict):
             spec = cast("dict[str, Any]", query)
             op = spec.get("op")
             if op == C.OP_MODELS:
                 return [{"protocol": self.protocol, "variant": self.variant}]
+            if op not in (C.OP_FETCH, C.OP_ESTIMATE):
+                raise QueryError(f"unknown op {op!r}. Supported ops: {', '.join(C.OPS)}")
+            text = spec.get("query", "")
+            # Read once for both ops, from both places, with the spec losing to a field the
+            # caller put in `optional_properties`. Reading the estimate's attributes from the
+            # spec alone priced a request without them while the fetch of the same arguments
+            # sent them, and the difference is invisible to the caller reading the figure.
+            request.setdefault("attrs", spec.get("attrs", spec.get("attr_names")))
+            request.setdefault("context", spec.get("context"))
+            request.setdefault("max_records", spec.get("max_records"))
             if op == C.OP_ESTIMATE:
+                if request.get("max_records") is not None:
+                    raise ConfigError(
+                        "max_records does not change an estimate and this op does not take "
+                        "one: the model is asked once and the surplus records are dropped on "
+                        "arrival, so the call costs the same. Drop it, or bound the spend "
+                        "with limits.max_cost."
+                    )
                 # Returned as a one-record list because that is what this surface returns.
                 # A caller wanting the record itself calls estimate() directly.
                 estimate = self.estimate(
-                    spec.get("query", ""),
-                    attrs=spec.get("attrs", spec.get("attr_names")),
-                    context=spec.get("context"),
+                    text,
+                    attrs=request.pop("attrs", None) or request.pop("attr_names", None),
+                    context=request.pop("context", None),
                     properties=options or None,
                 )
                 return [asdict(estimate)]
-            if op != C.OP_FETCH:
-                raise QueryError(f"unknown op {op!r}. Supported ops: {', '.join(C.OPS)}")
-            text = spec.get("query", "")
-            options.setdefault("attrs", spec.get("attrs", spec.get("attr_names")))
-            options.setdefault("context", spec.get("context"))
-            options.setdefault("max_records", spec.get("max_records"))
         else:
             text = query
 
         result = self.fetch(
             text,
-            attrs=options.pop("attrs", None) or options.pop("attr_names", None),
-            context=options.pop("context", None),
-            max_records=options.pop("max_records", None),
+            attrs=request.pop("attrs", None) or request.pop("attr_names", None),
+            context=request.pop("context", None),
+            max_records=request.pop("max_records", None),
             properties=options or None,
         )
         return result.records
@@ -1613,11 +1689,12 @@ class LlmSource(DataSource):
         used as the client for this call when one is supplied.
         """
         options = dict(optional_properties or {})
+        request = _take_request_keys(options)
         return self.fetch(
             query,
-            attrs=options.pop("attrs", None) or options.pop("attr_names", None),
-            context=options.pop("context", None),
-            max_records=options.pop("max_records", None),
+            attrs=request.pop("attrs", None) or request.pop("attr_names", None),
+            context=request.pop("context", None),
+            max_records=request.pop("max_records", None),
             properties=options or None,
             llm_fn=llm_fn,
         ).records
@@ -1688,8 +1765,12 @@ class LlmSource(DataSource):
                 )
             # Checked for every tool rather than only the one that spends, for the reason
             # execute_query checks it before reading the op: a ceiling key accepted on one
-            # call and refused on the next is a ceiling a caller believes they have set.
-            self._check_limit_keys(dict(optional_properties or {}))
+            # call and refused on the next is a ceiling a caller believes they have set. The
+            # base dispatcher hands this map to `execute_query`, which reads the request
+            # fields out of it, so they are not properties here either.
+            forwarded = dict(optional_properties or {})
+            _take_request_keys(forwarded)
+            self._check_property_keys(forwarded)
             missing = _missing_tool_input(served[name], tool_input)
             if missing:
                 raise QueryError(

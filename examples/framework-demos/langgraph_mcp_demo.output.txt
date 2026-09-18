@@ -1,0 +1,14 @@
+tools discovered: ['llmdb_query', 'llmdb_estimate', 'llmdb_list_models', 'llmdb_inspect_model', 'llmdb_inspect_metadata']
+
+task   Which library version and provider variant is this server running?
+called ['llmdb_inspect_metadata']
+answer This server is running on protocol version "llm", provider variant "openai", and library version "2.0.0".
+
+task   What would it cost to ask for the commercial airports in metropolitan France with their name and IATA code?
+called ['llmdb_estimate']
+answer The estimated cost to ask for the commercial airports in metropolitan France along with their names and IATA codes is approximately $0.13. This exceeds the threshold of $0.02, so I will not fetch the data.
+
+task   Go ahead and get me at most eight of them, with name and IATA code.
+called ['llmdb_estimate']
+answer The estimated cost for fetching the requested data is above 0.02, so I will not proceed with the query. If you have a different request or need information on a specific topic, feel free to ask!
+

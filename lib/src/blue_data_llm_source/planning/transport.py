@@ -22,8 +22,8 @@ from blue_data_llm_source.planning.schema import (
     Schema,
 )
 from blue_data_llm_source.prompts import (
-    INITIAL_V2_PROMPT_VERSION,
-    LEGACY_INITIAL_V2_PROMPT_VERSION,
+    KEYED_LEAF_FETCH_PROMPT_VERSION,
+    LEGACY_LEAF_FETCH_PROMPT_VERSION,
 )
 from blue_data_llm_source.reduction.identity import clean_key_names
 from blue_data_llm_source.types import (
@@ -40,7 +40,7 @@ from blue_data_llm_source.types import (
 WIRE_VERSION: Final = 2
 SAFETY_WIRE_VERSION: Final = 3
 LEGACY_WIRE_VERSION: Final = 1
-PROMPT_VERSION: Final = INITIAL_V2_PROMPT_VERSION
+PROMPT_VERSION: Final = KEYED_LEAF_FETCH_PROMPT_VERSION
 EXECUTION_SETTING_KEYS: Final = frozenset(
     {
         "empty_leaf_retry",
@@ -115,7 +115,7 @@ def _check_versions(data: Mapping[str, Any]) -> int:
         raise ConfigError(f"unsupported wire_version {data.get('wire_version')!r}")
     prompt_version = data.get("prompt_version")
     expected_prompt = (
-        LEGACY_INITIAL_V2_PROMPT_VERSION if wire_version == LEGACY_WIRE_VERSION else PROMPT_VERSION
+        LEGACY_LEAF_FETCH_PROMPT_VERSION if wire_version == LEGACY_WIRE_VERSION else PROMPT_VERSION
     )
     if type(prompt_version) is not str or prompt_version != expected_prompt:
         raise ConfigError(f"unsupported prompt_version {data.get('prompt_version')!r}")

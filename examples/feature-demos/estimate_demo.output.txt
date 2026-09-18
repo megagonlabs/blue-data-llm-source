@@ -1,0 +1,51 @@
+a priced model, the shipped retry allowance of three attempts
+  bounded             True
+  model               gpt-4o-mini
+  prompt bytes        798
+  max output tokens   512
+  max attempts        3
+  cost per attempt    0.0004365
+  max cost            0.0013095
+
+the floor is the output allowance alone; the prompt contributes little
+  llm.max_tokens=256   max_cost=0.0008487
+  llm.max_tokens=512   max_cost=0.0013095
+  llm.max_tokens=4096  max_cost=0.007760700000000001
+  a limits.max_cost under that floor refuses every call before one is made
+
+a model the rate table has never heard of: a reason, not a guess
+  bounded             False
+  model               some-private-deployment
+  prompt bytes        798
+  max output tokens   4096
+  max attempts        3
+  cost per attempt    None
+  max cost            None
+  reason              no published prices for model 'some-private-deployment', so a cost ceiling cannot be bounded before the call. Set llm.price_per_input_token and llm.price_per_output_token, or drop limits.max_cost and bound the run on calls, time or rows instead
+
+the same model, with rates the caller maintains
+  bounded             True
+  model               some-private-deployment
+  prompt bytes        798
+  max output tokens   512
+  max attempts        3
+  cost per attempt    0.0011639999999999999
+  max cost            0.0034919999999999994
+
+an llm_fn cannot price itself, so the request against one is unestimable
+  bounded             False
+  model               gpt-4o
+  prompt bytes        798
+  max output tokens   0
+  max attempts        3
+  cost per attempt    None
+  max cost            None
+  reason              this client does not report what an attempt will cost, so a bound cannot be given for it. Only a client that drives the provider itself knows the model and rates the call will use.
+
+plan.* settings are not read: a decomposed request is not what this bounds
+  flat        0.0013095
+  partitioned 0.0013095
+  identical, and the partitioned run can cost many times it
+
+an empty request never reaches a model, so it is bounded at zero
+  bounded True  max cost 0.0

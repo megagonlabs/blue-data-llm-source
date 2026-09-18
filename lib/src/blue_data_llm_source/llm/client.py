@@ -1,10 +1,9 @@
 """The default model client.
 
-Derived from the client shipped in the operator library, which was itself derived from
-the research prototype. The behaviours kept from it are the ones that were learned the
-hard way: a closed override key set so an unknown knob fails loudly, control keys that
-never reach the provider, reserved fields stripped after every merge, accounting that
-cannot raise, cache hits that cost nothing but still record latency, per-event-loop
+Derived from the client shipped in the operator library. The behaviours kept from it
+are the ones worth keeping: a closed override key set so an unknown knob fails loudly,
+control keys that never reach the provider, reserved fields stripped after every merge,
+accounting that cannot raise, cache hits that cost nothing but still record latency, per-event-loop
 concurrency bounds, and response-shape validation before extraction.
 
 Two things are new. Injection is structural rather than an isinstance check against this
@@ -71,22 +70,46 @@ _CONTROL = {
 # mechanism owns both, the setting is refused by name instead of claiming a limit it cannot keep.
 _DEFERRED = {
     "rate_limit": (
-        "client-side call spacing is deferred to v2.0. Use 'llm.max_parallel' to cap "
-        "concurrency, or throttle above this library where the whole request sequence is "
-        "visible"
+        "client-side call spacing has to reconcile with per-attempt budget admission, and "
+        "this library does not do it. Use 'llm.max_parallel' to cap concurrency, or "
+        "throttle above this library where the whole request sequence is visible"
     ),
 }
 # Stripped after every merge so an override cannot smuggle transport fields through.
 _RESERVED = {"api", "service_url", "variant", "protocol"}
 
 
+def accepted_adapter_keys() -> frozenset[str]:
+    """The full ``llm.*`` names this client accepts.
+
+    Read by the source's own property check, so the two refusals cannot disagree about
+    which overrides exist.
+    """
+    return frozenset(f"llm.{name}" for name in _ACCEPTED)
+
+
 def check_adapter_keys(properties: dict[str, Any]) -> None:
-    """Refuse an unknown ``llm.*`` override, whichever client will answer.
+    """Refuse an unknown or out-of-range ``llm.*`` override, whichever client will answer.
 
     Checked at the source boundary rather than inside the call-argument builder, because
     only the built-in client reaches that builder: a typo alongside an injected client or an
     ``llm_fn`` was accepted and ignored, which is exactly what a closed key set is for.
+
+    A key inside the set but holding a value its consumer cannot use is the same fault with
+    a better disguise, so the ranges are checked here too. Each range is the one its reader
+    already has: the wire transport refuses a ``model`` that is not a non-empty string, a
+    ``max_output_tokens`` that is not a positive integer and a ``temperature`` that is not
+    finite, and :meth:`_with_deadline` refuses a timeout that is not a finite positive
+    number. None of those run before an unbounded request reaches a billed provider call.
     """
+    model = properties.get("llm.model")
+    if model is not None and (not isinstance(model, str) or not model.strip()):
+        # The bound the wire transport already keeps for a task's own `model`, lifted to
+        # where every client passes. `_call_kwargs` tests the name for truth, so anything
+        # truthy — an integer, a list — was forwarded to the provider as a model to call.
+        raise ConfigError(
+            f"'llm.model' must be a non-empty string, or None for the default, got {model!r}"
+        )
     parallel = properties.get("llm.max_parallel")
     if parallel is not None and (
         isinstance(parallel, bool) or not isinstance(parallel, int) or parallel < 1
@@ -98,6 +121,31 @@ def check_adapter_keys(properties: dict[str, Any]) -> None:
         raise ConfigError(
             f"'llm.max_parallel' must be a whole number of at least 1, got {parallel!r}"
         )
+    allowance = properties.get("llm.max_tokens")
+    if allowance is not None and (
+        isinstance(allowance, bool) or not isinstance(allowance, int) or allowance < 1
+    ):
+        # `None` stays legal and means no cap, which is the state `bound_cost` refuses to
+        # price and `llmdb_inspect_model` reports as an unsupported cost ceiling.
+        raise ConfigError(
+            f"'llm.max_tokens' must be a whole number of at least 1, or None for no cap, "
+            f"got {allowance!r}"
+        )
+    temperature = properties.get("llm.temperature")
+    if temperature is not None and (
+        isinstance(temperature, bool)
+        or not isinstance(temperature, (int, float))
+        or not math.isfinite(temperature)
+    ):
+        # Finite is the whole claim. The usable range differs by provider — two for one
+        # family, one for another — so a numeric bound here would refuse a value the
+        # provider accepts, which is worse than the silence it replaces.
+        raise ConfigError(f"'llm.temperature' must be a finite number, got {temperature!r}")
+    timeout = properties.get("llm.timeout")
+    if timeout is not None and _positive_finite_number(timeout) is None:
+        raise ConfigError(
+            f"'llm.timeout' must be a finite positive number of seconds, got {timeout!r}"
+        )
     deferred = sorted(key for key in properties if key.startswith("llm.") and key[4:] in _DEFERRED)
     if deferred:
         first = deferred[0]
@@ -108,7 +156,7 @@ def check_adapter_keys(properties: dict[str, Any]) -> None:
     if unknown:
         raise ConfigError(
             f"unknown adapter override {', '.join(repr(k) for k in unknown)}. "
-            f"Accepted: {sorted('llm.' + k for k in _ACCEPTED)}"
+            f"Accepted: {sorted(accepted_adapter_keys())}"
         )
 
 

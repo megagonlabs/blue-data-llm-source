@@ -14,13 +14,13 @@ from blue_data_llm_source.planning.cardinality import CardinalityEstimate
 from blue_data_llm_source.planning.schema import SchemaDefinition
 from blue_data_llm_source.types import ConfigError
 
-PLANNING_RESEARCH_ORDER: Final = "planning.research_order"
+PLANNING_CARDINALITY_FIRST: Final = "planning.cardinality_first"
 PLANNING_SCHEMA_FIRST: Final = "planning.schema_first"
 PLANNING_LOCKED_SEQUENTIAL: Final = "planning.locked_sequential"
 PLANNING_LOCKED_PARALLEL: Final = "planning.locked_parallel"
 PLANNING_COMBINED: Final = "planning.combined"
 PLANNING_ORDERS: Final = (
-    PLANNING_RESEARCH_ORDER,
+    PLANNING_CARDINALITY_FIRST,
     PLANNING_SCHEMA_FIRST,
     PLANNING_LOCKED_SEQUENTIAL,
     PLANNING_LOCKED_PARALLEL,

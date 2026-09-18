@@ -1,0 +1,85 @@
+ok -- records, nothing stopped
+  records      1
+  outcome      ok
+  stopped by   None
+  stop reasons []
+  gap: none fired
+
+empty_query -- nothing was asked
+  records      0
+  outcome      empty_query
+  stopped by   None
+  stop reasons []
+  gap: none fired
+
+model_returned_none -- the model answered, and its answer was empty
+  records      0
+  outcome      model_returned_none
+  stopped by   None
+  stop reasons []
+  gap: none fired
+
+filtered_to_empty -- it answered, and nothing it returned was what was asked for
+  records      0
+  outcome      filtered_to_empty
+  stopped by   None
+  stop reasons []
+  gap: none fired
+
+truncated -- a row cap fired and records remain
+  records      1
+  outcome      truncated
+  stopped by   max_rows
+  stop reasons ['max_rows']
+  gap: result_rows_discarded: global row cap kept 1 of 2 record(s)
+
+stopped_by_limit -- the same cap, with nothing left after it
+  records      0
+  outcome      stopped_by_limit
+  stopped by   max_rows
+  stop reasons ['max_rows']
+  gap: result_rows_discarded: global row cap kept 0 of 1 record(s)
+
+key_unavailable -- continuation asked for without a key to merge on
+  records      0
+  outcome      model_returned_none
+  stopped by   None
+  stop reasons []
+  gap: key_unavailable: continuation was disabled because no identifying column was established
+
+a split request where every part answered
+  records      4
+  outcome      ok
+  stopped by   None
+  stop reasons []
+  gap: none fired
+
+partial -- one part was lost, and the run says so instead of reporting ok
+  records      2
+  outcome      partial
+  stopped by   None
+  stop reasons []
+  gap: leaf_failed: leaf 0.0 raised
+
+partial outranks a cap that fired at the same time; the cap is still in stop_reasons
+  records      1
+  outcome      partial
+  stopped by   max_rows
+  stop reasons ['max_rows']
+  gap: result_rows_discarded: global row cap kept 1 of 2 record(s)
+  gap: leaf_failed: leaf 0.0 raised
+
+guard_collapsed -- the expansion did not fit under plan.max_leaves
+  records      0
+  outcome      model_returned_none
+  stopped by   None
+  stop reasons []
+  gap: guard_collapsed: complete expansion would exceed max_leaves=2
+
+exact_rows_not_leaf_bound -- a root row target cannot be applied to separate parts
+  records      4
+  outcome      ok
+  stopped by   None
+  stop reasons []
+  gap: exact_rows_not_leaf_bound: trusted root count cannot be applied to separate leaves
+

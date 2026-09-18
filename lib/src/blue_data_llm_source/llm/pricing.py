@@ -82,6 +82,17 @@ def rates_for(model: str) -> tuple[float, float] | None:
     return None
 
 
+def priceable_models() -> tuple[str, ...]:
+    """The model names this package carries a published price for, sorted.
+
+    A tuple rather than the table itself: ``PRICES`` is a mutable snapshot of
+    time-sensitive list prices, and handing it out as a public surface would make a
+    contract this package cannot keep across a price change. What a caller needs is the
+    names it can bound a ceiling against, which is this.
+    """
+    return tuple(sorted(PRICES))
+
+
 def positive_finite(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None

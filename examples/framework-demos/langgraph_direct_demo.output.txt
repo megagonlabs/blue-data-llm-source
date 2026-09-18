@@ -1,0 +1,21 @@
+task     Draft a one-line note naming the Paris airports a traveller can fly into.
+outcome  ok
+records  2
+gaps     none
+reply    Travellers can fly into Charles de Gaulle Airport (CDG) and Orly Airport (ORY) in Paris.
+
+task     Draft the same note for the whole country.
+outcome  truncated
+records  5
+gaps     ['result_rows_discarded: global row cap kept 5 of 10 record(s)']
+reply    Please note that the following list of major airports in France may be incomplete due to retrieval limitations: 
+
+1. Charles de Gaulle Airport (CDG)
+2. Orly Airport (ORY)
+3. Nice Côte d'Azur Airport (NCE)
+4. Lyon-Saint Exupéry Airport (LYS)
+5. Marseille Provence Airport (MRS) 
+
+For a comprehensive overview, additional airports may exist that are not included in this list.
+
+budget: calls 2 cost 0.000226

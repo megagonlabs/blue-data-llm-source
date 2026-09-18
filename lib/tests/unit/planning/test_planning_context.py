@@ -20,10 +20,10 @@ from blue_data_llm_source.planning.cardinality import (
     CardinalityEstimator,
 )
 from blue_data_llm_source.planning.context import (
+    PLANNING_CARDINALITY_FIRST,
     PLANNING_COMBINED,
     PLANNING_LOCKED_PARALLEL,
     PLANNING_LOCKED_SEQUENTIAL,
-    PLANNING_RESEARCH_ORDER,
     PLANNING_SCHEMA_FIRST,
     PlanningContext,
     PlanningStage,
@@ -232,10 +232,10 @@ def test_analysis_intersects_overlapping_caller_and_model_constraints() -> None:
 
 
 @pytest.mark.asyncio
-async def test_research_and_schema_first_pass_only_prior_stage_facts() -> None:
-    research_client = PlanningClient()
+async def test_cardinality_first_and_schema_first_pass_only_prior_stage_facts() -> None:
+    cardinality_client = PlanningClient()
     schema_client = PlanningClient()
-    research = await context_for(PLANNING_RESEARCH_ORDER, research_client)
+    cardinality_first = await context_for(PLANNING_CARDINALITY_FIRST, cardinality_client)
     schema_first = await context_for(PLANNING_SCHEMA_FIRST, schema_client)
 
     assert [
@@ -244,7 +244,7 @@ async def test_research_and_schema_first_pass_only_prior_stage_facts() -> None:
         else "cardinality"
         if "Estimate the number of records" in prompt
         else "schema"
-        for prompt in research_client.prompts
+        for prompt in cardinality_client.prompts
     ] == ["analysis", "cardinality", "schema"]
     assert [
         "analysis"
@@ -254,9 +254,9 @@ async def test_research_and_schema_first_pass_only_prior_stage_facts() -> None:
         else "cardinality"
         for prompt in schema_client.prompts
     ] == ["analysis", "schema", "cardinality"]
-    assert '"expected": 120' in research_client.prompts[2]
+    assert '"expected": 120' in cardinality_client.prompts[2]
     assert '"country"' in schema_client.prompts[2]
-    assert research.cardinality.expected == schema_first.cardinality.expected == 120
+    assert cardinality_first.cardinality.expected == schema_first.cardinality.expected == 120
     assert all(stage.request_digest for stage in schema_first.stages)
     assert all(stage.raw_digest for stage in schema_first.stages)
     assert all(stage.parsed_digest for stage in schema_first.stages)
@@ -636,7 +636,7 @@ async def test_planning_prices_the_estimate_bearing_leaf_prompt() -> None:
     probe, _ = await run(1.0)
     child = next(leaf for leaf in probe.plan.leaves if long_values[0] in str(leaf.constraints))
     assert child.cardinality is not None
-    exposed_prompt = prompts.build_initial_v2_fetch_prompt(
+    exposed_prompt = prompts.build_leaf_fetch_prompt(
         original_query=child.original_query,
         retrieval_query=child.query,
         attrs=probe.schema.attrs,
@@ -645,7 +645,7 @@ async def test_planning_prices_the_estimate_bearing_leaf_prompt() -> None:
         primary_keys=probe.schema.primary_keys,
         estimate=child.cardinality.to_dict(),
     )
-    hidden_prompt = prompts.build_initial_v2_fetch_prompt(
+    hidden_prompt = prompts.build_leaf_fetch_prompt(
         original_query=child.original_query,
         retrieval_query=child.query,
         attrs=probe.schema.attrs,

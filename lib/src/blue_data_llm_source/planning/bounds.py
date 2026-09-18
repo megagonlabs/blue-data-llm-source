@@ -126,8 +126,18 @@ def distribution_node_attempt_limit(limits: PlanLimits) -> int:
     return max_nodes(limits, MODE_PARTITIONED)
 
 
-def initial_v2_logical_calls(limits: PlanLimits, mode: str) -> int:
-    """The initial-v2 logical-call ceiling for one request."""
+def planned_logical_calls(limits: PlanLimits, mode: str) -> int:
+    """Logical model calls one request in this mode can make, at worst, the plan included.
+
+    The calls that decide the shape of the plan plus the calls its leaves then make.
+    ``partitioned`` is charged the bootstrap and every partition proposal it is allowed to
+    attempt; ``row_by_row`` the bootstrap and the entity enumeration; ``flat`` has no plan to
+    build and is one leaf.
+
+    :func:`request_calls` counts the leaves and the bootstrap alone, so the two figures differ
+    by :func:`proposal_attempt_limit` on a partitioned plan and by the enumeration call on a
+    row-by-row one.
+    """
     _check_mode(mode)
     per_leaf = 1 + limits.max_continuations + (1 if limits.empty_leaf_retry else 0)
     if mode == MODE_FLAT:
@@ -137,9 +147,9 @@ def initial_v2_logical_calls(limits: PlanLimits, mode: str) -> int:
     return 1 + proposal_attempt_limit(limits) + limits.max_leaves * per_leaf
 
 
-def initial_v2_provider_attempts(limits: PlanLimits, mode: str) -> int:
-    """The logical ceiling multiplied by the configured transport attempts."""
-    return attempts(initial_v2_logical_calls(limits, mode), limits)
+def planned_provider_attempts(limits: PlanLimits, mode: str) -> int:
+    """:func:`planned_logical_calls` multiplied by the configured transport attempts."""
+    return attempts(planned_logical_calls(limits, mode), limits)
 
 
 def max_nodes(limits: PlanLimits, mode: str) -> int:

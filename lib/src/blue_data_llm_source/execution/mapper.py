@@ -28,9 +28,9 @@ from blue_data_llm_source.planning.bounds import PlanLimits
 from blue_data_llm_source.planning.cardinality import CardinalityEstimate
 from blue_data_llm_source.planning.plan import Leaf
 from blue_data_llm_source.prompts import (
-    INITIAL_V2_PROMPT_VERSION,
+    KEYED_LEAF_FETCH_PROMPT_VERSION,
     build_fetch_prompt,
-    build_initial_v2_fetch_prompt,
+    build_leaf_fetch_prompt,
     render_held,
     rendered_held_entries_size,
 )
@@ -317,8 +317,8 @@ def _leaf_loop(
 
     while True:
         shown = _bounded_exclusions(seen, max_excluded_keys, max_exclusion_bytes)
-        if prompt_version == INITIAL_V2_PROMPT_VERSION:
-            prompt = build_initial_v2_fetch_prompt(
+        if prompt_version == KEYED_LEAF_FETCH_PROMPT_VERSION:
+            prompt = build_leaf_fetch_prompt(
                 original_query=leaf.original_query,
                 retrieval_query=leaf.query,
                 attrs=attrs,

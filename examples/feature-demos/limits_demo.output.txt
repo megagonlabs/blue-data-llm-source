@@ -1,0 +1,37 @@
+max_rows truncates and says so
+  records      ['Charles de Gaulle', 'Orly']
+  outcome      truncated
+  truncated to 2
+  stopped by   max_rows
+  stop reasons ['max_rows']
+  gaps         ['result_rows_discarded: global row cap kept 2 of 3 record(s)']
+
+a row ceiling that leaves nothing is stopped_by_limit, not truncated
+  records  []
+  outcome  stopped_by_limit
+
+the provider-level axes are refused over an llm_fn, one message per axis
+  cost
+    ConfigError: limits.max_cost cannot be enforced against this client. It declares ['rows'], and a ceiling this source cannot hold is worse than no ceiling because a caller believes it. Use a client that enforces those axes, drop those limits, or use limits.max_rows, which this source enforces itself.
+  calls
+    ConfigError: limits.max_calls cannot be enforced against this client. It declares ['rows'], and a ceiling this source cannot hold is worse than no ceiling because a caller believes it. Use a client that enforces those axes, drop those limits, or use limits.max_rows, which this source enforces itself.
+  time
+    ConfigError: limits.max_seconds cannot be enforced against this client. It declares ['rows'], and a ceiling this source cannot hold is worse than no ceiling because a caller believes it. Use a client that enforces those axes, drop those limits, or use limits.max_rows, which this source enforces itself.
+
+the key set is closed, and near misses are named
+  unknown key
+    ConfigError: unknown limit 'limits.max_words'. Accepted: ['limits.max_calls', 'limits.max_cost', 'limits.max_retries', 'limits.max_rows', 'limits.max_seconds'] and ['plan.distribution_search', 'plan.exact_rows', 'plan.expose_estimate', 'plan.identity_partitions', 'plan.key', 'plan.keys', 'plan.max_continuations', 'plan.max_depth', 'plan.max_excluded_keys', 'plan.max_exclusion_bytes', 'plan.max_leaves', 'plan.max_partitions', 'plan.max_strategy_candidates', 'plan.mode', 'plan.partition_key', 'plan.planning_order', 'plan.schema_mode', 'plan.target_rows_per_leaf']
+  wrong prefix
+    ConfigError: unknown limit 'limit.max_rows'. Accepted: ['limits.max_calls', 'limits.max_cost', 'limits.max_retries', 'limits.max_rows', 'limits.max_seconds'] and ['plan.distribution_search', 'plan.exact_rows', 'plan.expose_estimate', 'plan.identity_partitions', 'plan.key', 'plan.keys', 'plan.max_continuations', 'plan.max_depth', 'plan.max_excluded_keys', 'plan.max_exclusion_bytes', 'plan.max_leaves', 'plan.max_partitions', 'plan.max_strategy_candidates', 'plan.mode', 'plan.partition_key', 'plan.planning_order', 'plan.schema_mode', 'plan.target_rows_per_leaf']
+
+values are checked when the ceiling is built
+  negative
+    ConfigError: limits.max_rows must not be negative, got -1
+  boolean
+    ConfigError: limits.max_rows must be a whole number, got True
+  not a number
+    ConfigError: limits.max_rows must be a whole number, got nan
+
+a ceiling passed with the request binds that request and does not leak
+  with the ceiling    1 record(s), truncated
+  the next call       3 record(s), ok

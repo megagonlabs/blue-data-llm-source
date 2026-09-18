@@ -1,0 +1,24 @@
+one flat ask: a short answer that looks like a complete one
+  asks made  1
+  records    6 of 24
+  outcome    ok
+  gaps       none fired
+
+a key and two continuations: still short, and this time the run says so
+  asks made  3
+  records    18 of 24
+  outcome    stopped_by_limit
+  gaps       ['leaf_stopped_by_limit: leaf 0.0 stopped before it finished', 'leaf_at_cap: leaf 0.0 returned 18 record(s) and reached its continuation cap after an answer that was still adding records, so completeness was not established']
+
+enough continuations to exhaust the set: complete, and no diagnostic fires
+  asks made  5
+  records    24 of 24
+  outcome    ok
+  gaps       none fired
+
+Before: 6 of 24 records, no error, no diagnostic, no way to know.
+After:  24 of 24, or a named gap saying exactly how far the run got.
+
+Continuations cost asks. plan.max_continuations bounds asks per part, and each
+ask may still be retried up to limits.max_retries times, so the ceiling on the
+whole request is a Budget rather than this one number.

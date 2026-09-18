@@ -1,0 +1,92 @@
+{
+  "BLUE_DATA_LLM_SOURCE_MAX_RECORDS": {
+    "default": null,
+    "prompt": "Row ceiling for a query when --max-records is not given",
+    "required": false,
+    "cast": "int"
+  },
+  "BLUE_DATA_LLM_SOURCE_MAX_TOKENS": {
+    "default": null,
+    "prompt": "Output allowance per call (the floor a cost ceiling has to clear)",
+    "required": false,
+    "cast": "int"
+  },
+  "BLUE_DATA_LLM_SOURCE_TEMPERATURE": {
+    "default": null,
+    "prompt": "Sampling temperature",
+    "required": false,
+    "cast": "float"
+  },
+  "BLUE_DATA_LLM_SOURCE_TIMEOUT": {
+    "default": null,
+    "prompt": "Seconds to wait for one provider call",
+    "required": false,
+    "cast": "float"
+  },
+  "BLUE_DATA_LLM_SOURCE_MAX_PARALLEL": {
+    "default": null,
+    "prompt": "Provider calls in flight at once (1 = sequential)",
+    "required": false,
+    "cast": "int"
+  },
+  "BLUE_DATA_LLM_SOURCE_CACHE": {
+    "default": null,
+    "prompt": "Answer a repeated call from the on-disk cache",
+    "required": false,
+    "cast": "bool"
+  },
+  "BLUE_DATA_LLM_SOURCE_CACHE_DIR": {
+    "default": null,
+    "prompt": "Where cached answers are kept. Default: the cache directory in the CLI home",
+    "required": false,
+    "cast": "directory"
+  },
+  "BLUE_DATA_LLM_SOURCE_PRICE_PER_INPUT_TOKEN": {
+    "default": null,
+    "prompt": "Your input rate per token, for a model the price table does not carry",
+    "required": false,
+    "cast": "float"
+  },
+  "BLUE_DATA_LLM_SOURCE_PRICE_PER_OUTPUT_TOKEN": {
+    "default": null,
+    "prompt": "Your output rate per token, for a model the price table does not carry",
+    "required": false,
+    "cast": "float"
+  },
+  "BLUE_DATA_LLM_SOURCE_VARIANT": {
+    "default": null,
+    "prompt": "Source variant within the llm protocol",
+    "required": false,
+    "cast": "str"
+  },
+  "BLUE_DATA_LLM_SOURCE_LIMIT_COST": {
+    "default": null,
+    "prompt": "Default spend ceiling for one request, in USD",
+    "required": false,
+    "cast": "float"
+  },
+  "BLUE_DATA_LLM_SOURCE_LIMIT_SECONDS": {
+    "default": null,
+    "prompt": "Default age ceiling for one request, in seconds",
+    "required": false,
+    "cast": "float"
+  },
+  "BLUE_DATA_LLM_SOURCE_LIMIT_CALLS": {
+    "default": null,
+    "prompt": "Default call ceiling for one request",
+    "required": false,
+    "cast": "int"
+  },
+  "BLUE_DATA_LLM_SOURCE_MAX_RETRIES": {
+    "default": null,
+    "prompt": "Retries allowed per ask",
+    "required": false,
+    "cast": "int"
+  },
+  "BLUE_DATA_LLM_SOURCE_EFFORT": {
+    "default": null,
+    "prompt": "Continuation allowance: low, medium, or high",
+    "required": false,
+    "cast": "str"
+  }
+}

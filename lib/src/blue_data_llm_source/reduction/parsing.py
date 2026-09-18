@@ -8,9 +8,9 @@ from typing import Any, Final, cast
 
 from blue_data_llm_source.types import ParseError
 
-# Anchored fence stripping. The monolith replaces every occurrence of the substring
-# "json" in the response with an empty string, which corrupts any data value containing
-# it. Matching the fence itself is both narrower and correct.
+# Anchored fence stripping. Deleting the substring "json" wherever it appears would take
+# it out of any data value carrying it too, so this matches an actual surrounding fence and
+# leaves everything between the markers alone.
 _FENCE = re.compile(r"^\s*```[a-zA-Z0-9_-]*\s*\n(.*?)\n?\s*```\s*$", re.DOTALL)
 
 

@@ -1,13 +1,12 @@
 """Every prompt this package sends, in one module.
 
-The monolith holds two copies of this prompt with divergent wording and different
-variable names, one on the source and one on the operator. Keeping them in one place
-means a change is visible as a change, and the recorded cassettes move with it.
+One text per prompt, with no second copy elsewhere. A prompt that exists twice drifts in
+wording and in variable names, and a change to one of the copies is invisible; with one text
+a change is visible as a change, and the recorded cassettes move with it.
 
-Substitution is a single ``str.format_map`` over a fixed set of named fields. It is
-deliberately not a template engine: the monolith runs Template substitution followed by
-Jinja2, repeatedly, until the string stops changing, which expands any ``${...}`` or
-``{{...}}`` that happens to appear in a user's query.
+Substitution is a single ``str.format_map`` over a fixed set of named fields, and is
+deliberately not a template engine. A query is inserted as a value and never re-read, so a
+``${...}`` or ``{{...}}`` a user happens to type stays literal instead of being expanded.
 """
 
 from __future__ import annotations
@@ -19,8 +18,12 @@ from typing import Any, Final
 
 from blue_data_llm_source.types import Attr, Constraint, OneOf
 
-LEGACY_INITIAL_V2_PROMPT_VERSION: Final = "initial-v2-1"
-INITIAL_V2_PROMPT_VERSION: Final = "research-v2-runtime-1"
+# The two prompt contracts a leaf task can declare, named for what the prompt states: the
+# keyed one gives the model the ordered primary key and may give it a row estimate, and the
+# other gives neither. Only the keyed one is produced; the other is accepted on a
+# wire-version-1 task.
+LEGACY_LEAF_FETCH_PROMPT_VERSION: Final = "leaf-fetch-1"
+KEYED_LEAF_FETCH_PROMPT_VERSION: Final = "keyed-leaf-fetch-1"
 
 FETCH = """\
 Your task is to answer a query from your own knowledge and return the result as JSON.
@@ -282,7 +285,7 @@ def build_fetch_prompt(
     )
 
 
-INITIAL_V2_FETCH = """\
+LEAF_FETCH = """\
 Your task is to answer a query from your own knowledge and return the result as JSON.
 
 Requirements:
@@ -304,7 +307,7 @@ Output:
 """
 
 
-def build_initial_v2_fetch_prompt(
+def build_leaf_fetch_prompt(
     *,
     original_query: str,
     retrieval_query: str,
@@ -314,7 +317,7 @@ def build_initial_v2_fetch_prompt(
     primary_keys: Sequence[str] = (),
     estimate: object = None,
 ) -> str:
-    """Build the versioned leaf prompt used by planning and initial-v2 execution."""
+    """Build the versioned leaf prompt used by planning and by non-flat execution."""
     schema = [{"name": attr.name, "type": attr.type} for attr in attrs]
     filters = {
         name: (
@@ -328,8 +331,8 @@ def build_initial_v2_fetch_prompt(
         [] if estimate is None else [f"Estimated rows for this leaf: {_json(estimate)}"]
     )
     return fill(
-        INITIAL_V2_FETCH,
-        prompt_version=Slot.encoded(INITIAL_V2_PROMPT_VERSION),
+        LEAF_FETCH,
+        prompt_version=Slot.encoded(KEYED_LEAF_FETCH_PROMPT_VERSION),
         original_query=Slot.encoded(original_query),
         retrieval_query=Slot.encoded(retrieval_query),
         schema=Slot.encoded(schema),

@@ -12,11 +12,13 @@ from blue_data_llm_source._constants import (
 from blue_data_llm_source.cache import FileCache, MemoryCache
 from blue_data_llm_source.llm.budget import Budget, Limits, Reservation
 from blue_data_llm_source.llm.client import DefaultLlmClient, FunctionClient
+from blue_data_llm_source.llm.pricing import can_bound, priceable_models, rates_for
 from blue_data_llm_source.planning.analysis import DataTask, QueryAnalysisResult, QueryAnalyzer
 from blue_data_llm_source.planning.cardinality import CardinalityEstimate, CardinalityEstimator
 from blue_data_llm_source.planning.context import PlanningContext
 from blue_data_llm_source.planning.receipt import PlanningReceipt
 from blue_data_llm_source.planning.schema import SchemaDefinition, SchemaGenerator
+from blue_data_llm_source.redaction import redact
 from blue_data_llm_source.reduction.identity import KeyTuple, key_identity
 from blue_data_llm_source.source import LlmSource
 from blue_data_llm_source.types import (
@@ -41,8 +43,9 @@ from blue_data_llm_source.types import (
     TransportError,
     Usage,
 )
+from blue_data_llm_source.views import meta_view
 
-__version__ = "1.2.0"
+__version__ = "2.0.0"
 
 __all__ = [
     "Attr",
@@ -88,6 +91,11 @@ __all__ = [
     "SchemaGenerator",
     "TransportError",
     "Usage",
+    "can_bound",
     "key_identity",
+    "meta_view",
+    "priceable_models",
+    "redact",
+    "rates_for",
     "__version__",
 ]

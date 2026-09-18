@@ -1,4 +1,4 @@
-"""Async planning for the initial-v2 task tree."""
+"""Async planning for the fetch task tree."""
 
 from __future__ import annotations
 
@@ -285,7 +285,7 @@ def _fetch_prompt(
     schema: Schema,
     caller_context: str,
 ) -> str:
-    return prompts.build_initial_v2_fetch_prompt(
+    return prompts.build_leaf_fetch_prompt(
         original_query=leaf.original_query,
         retrieval_query=leaf.query,
         attrs=schema.attrs,

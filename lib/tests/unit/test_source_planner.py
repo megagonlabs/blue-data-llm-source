@@ -137,7 +137,7 @@ ANALYSIS = json.dumps(
 
 
 class Planner:
-    """Answer each initial-v2 call class from a deterministic script."""
+    """Answer each non-flat call class from a deterministic script."""
 
     def __init__(self, analysis: str = ANALYSIS) -> None:
         self.analysis = analysis

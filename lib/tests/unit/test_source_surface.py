@@ -86,6 +86,61 @@ def test_optional_properties_reach_the_client() -> None:
     assert client.seen_properties[0]["llm.temperature"] == 0.0
 
 
+ESTIMATE_PRICED = {"llm.model": "gpt-4o-mini", "llm.max_tokens": 32}
+
+
+def _estimate(spec: dict[str, Any], **options: Any) -> dict[str, Any]:
+    """One `LLM.ESTIMATE` record, priced against a model with published rates."""
+    records = LlmSource(properties=dict(ESTIMATE_PRICED)).execute_query(
+        spec, optional_properties=options or None
+    )
+    assert len(records) == 1
+    return records[0]
+
+
+def test_an_estimate_op_reads_the_request_the_way_a_fetch_op_does() -> None:
+    """The figure has to describe the request that would actually be sent.
+
+    Attributes and context both change the prompt, so an estimate that read them from the
+    spec alone priced something other than the fetch of the same arguments.
+    """
+    plain = _estimate({"op": C.OP_ESTIMATE, "query": "who?"})
+    from_spec = _estimate({"op": C.OP_ESTIMATE, "query": "who?", "attrs": ["name", "age"]})
+    from_options = _estimate({"op": C.OP_ESTIMATE, "query": "who?"}, attrs=["name", "age"])
+
+    assert from_options == from_spec
+    assert from_options != plain
+
+    by_name = _estimate({"op": C.OP_ESTIMATE, "query": "who?"}, attr_names=["name", "age"])
+    assert by_name == from_spec
+
+    with_context = _estimate({"op": C.OP_ESTIMATE, "query": "who?"}, context="be brief")
+    assert with_context["prompt_bytes"] != plain["prompt_bytes"]
+
+
+def test_an_estimate_op_gives_optional_properties_the_precedence_a_fetch_op_gives_them() -> None:
+    """Same precedence on both ops, or the same call prices one request and sends another."""
+    both = _estimate(
+        {"op": C.OP_ESTIMATE, "query": "who?", "attrs": ["name"]}, attrs=["name", "age"]
+    )
+    assert both == _estimate({"op": C.OP_ESTIMATE, "query": "who?", "attrs": ["name", "age"]})
+
+
+def test_an_estimate_op_refuses_the_row_cap_it_cannot_honour() -> None:
+    """`estimate` takes no row cap: the model is asked once and the surplus is dropped.
+
+    Accepting one would report a figure the caller believes their cap moved.
+    """
+    for spec, options in (
+        ({"op": C.OP_ESTIMATE, "query": "who?"}, {"max_records": 3}),
+        ({"op": C.OP_ESTIMATE, "query": "who?", "max_records": 3}, {}),
+    ):
+        with pytest.raises(ConfigError, match="max_records"):
+            LlmSource(properties=dict(ESTIMATE_PRICED)).execute_query(
+                spec, optional_properties=options or None
+            )
+
+
 # ---------------------------------------------------------- execute_query_nl --
 def test_execute_query_nl_returns_records() -> None:
     client = ScriptedClient([ONE_RECORD])
@@ -422,6 +477,66 @@ def test_an_unusable_max_parallel_is_refused_at_the_boundary(value: object) -> N
         LlmSource(properties={"llm.max_parallel": value}).fetch("q", llm_fn=_answering("[]"))
 
 
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("llm.model", 123),
+        ("llm.model", ""),
+        ("llm.model", "   "),
+        ("llm.model", ["gpt-4o"]),
+        ("llm.max_tokens", 0),
+        ("llm.max_tokens", -5),
+        ("llm.max_tokens", 1.5),
+        ("llm.max_tokens", "many"),
+        ("llm.max_tokens", True),
+        ("llm.temperature", "warm"),
+        ("llm.temperature", float("nan")),
+        ("llm.temperature", float("inf")),
+        ("llm.temperature", True),
+        ("llm.timeout", 0),
+        ("llm.timeout", -1.0),
+        ("llm.timeout", "soon"),
+        ("llm.timeout", float("nan")),
+        ("llm.timeout", True),
+    ],
+)
+def test_an_adapter_override_outside_its_range_is_refused(key: str, value: object) -> None:
+    """The output allowance is the one that costs money on an unbounded request.
+
+    A zero, negative or non-numeric `llm.max_tokens` only raised from `pricing.bound_cost`,
+    which does not run unless a cost ceiling is set, so it reached a billed call untouched
+    on every other request. `llm.model` is the same shape of hole with no numeric range at
+    all: the call builder asks whether the name is truthy, so `123` was sent as a model.
+    """
+    with pytest.raises(ConfigError, match=key.replace(".", r"\.")):
+        LlmSource(properties={key: value}).fetch("q", llm_fn=_answering("[]"))
+
+
+@pytest.mark.parametrize(
+    "properties",
+    [
+        {"llm.model": "gpt-4o-mini"},
+        {"llm.model": None},
+        {"llm.max_tokens": 1},
+        {"llm.max_tokens": 4096},
+        {"llm.max_tokens": None},
+        {"llm.temperature": 0},
+        {"llm.temperature": 2.0},
+        {"llm.temperature": -0.5},
+        {"llm.timeout": 30},
+        {"llm.timeout": 0.5},
+    ],
+)
+def test_a_value_its_consumer_can_use_is_still_accepted(properties: dict[str, Any]) -> None:
+    """The half of the range that matters: a bound too tight refuses a working request.
+
+    `None` for the allowance means no cap. A negative temperature is outside every provider's
+    documented range but inside the one the wire transport keeps, and this library does not
+    hold a table of provider ranges to be more specific than that.
+    """
+    assert LlmSource(properties=properties).fetch("q", llm_fn=_answering("[]")).records == []
+
+
 def test_accounting_is_known_only_when_the_answering_client_can_attest() -> None:
     """Read from the client that answered, not from which argument the caller used.
 
@@ -459,7 +574,7 @@ def test_accounting_is_known_only_when_the_answering_client_can_attest() -> None
     ("properties", "match"),
     [
         ({"llm.max_parallel": 0}, "max_parallel"),
-        ({"llm.rate_limit": 10}, "deferred to v2.0"),
+        ({"llm.rate_limit": 10}, "call spacing"),
         ({"llm.nosuchkey": 1}, "unknown adapter override"),
     ],
 )
@@ -933,6 +1048,151 @@ def test_a_type_name_this_library_cannot_check_is_reported_once_not_per_value() 
     assert checked.meta.unchecked_types == []
 
 
+# -------------------------------------------------------- the property map --
+UNKNOWN = "unknown property"
+
+
+def _injected_model(_prompt: str) -> str:
+    return "[]"
+
+
+def test_a_key_outside_every_namespace_is_refused() -> None:
+    """The map is closed, not only the three namespaces inside it."""
+    client = ScriptedClient([ONE_RECORD])
+
+    with pytest.raises(ConfigError, match=UNKNOWN) as caught:
+        LlmSource(client=client).fetch("who?", properties={"llm_fn": _injected_model})
+
+    message = str(caught.value)
+    assert "'llm_fn'" in message, "the refusal has to name the key the caller wrote"
+    assert "llm.model" in message, "and list what it would have accepted"
+    assert client.prompts == []
+
+
+def test_the_refusal_arrives_before_a_client_exists() -> None:
+    """No client is injected here, so the only thing that can answer is the default one.
+
+    Moving the check past client resolution turns this into a transport failure or a
+    connection the suite's offline guard counts, rather than a ConfigError.
+    """
+    with pytest.raises(ConfigError, match=UNKNOWN):
+        LlmSource().fetch("who?", properties={"llm_fn": _injected_model})
+
+
+def test_an_unknown_property_is_refused_for_an_empty_request_too() -> None:
+    """A closed map that only applies to requests reaching the model is not closed."""
+    client = ScriptedClient([])
+
+    with pytest.raises(ConfigError, match=UNKNOWN):
+        LlmSource(client=client).fetch("", properties={"llm_fn": _injected_model})
+
+    assert client.prompts == []
+
+
+def test_every_surface_that_takes_properties_refuses_an_unknown_key() -> None:
+    """One key set, wherever the map arrives from."""
+    calls: dict[str, Callable[[], object]] = {
+        "constructor": lambda: LlmSource(
+            properties={"nope": 1}, client=ScriptedClient([ONE_RECORD])
+        ).fetch("who?"),
+        "fetch": lambda: LlmSource(client=ScriptedClient([ONE_RECORD])).fetch(
+            "who?", properties={"nope": 1}
+        ),
+        "afetch": lambda: asyncio.run(
+            LlmSource(client=ScriptedClient([ONE_RECORD])).afetch("who?", properties={"nope": 1})
+        ),
+        "estimate": lambda: LlmSource(client=ScriptedClient()).estimate(
+            "who?", properties={"nope": 1}
+        ),
+        "execute_query": lambda: LlmSource(client=ScriptedClient([ONE_RECORD])).execute_query(
+            "who?", optional_properties={"nope": 1}
+        ),
+        "execute_query op": lambda: LlmSource(client=ScriptedClient([ONE_RECORD])).execute_query(
+            {"op": C.OP_FETCH, "query": "who?"}, optional_properties={"nope": 1}
+        ),
+        "models op": lambda: LlmSource(client=ScriptedClient()).execute_query(
+            {"op": C.OP_MODELS}, optional_properties={"nope": 1}
+        ),
+        "estimate op": lambda: LlmSource(client=ScriptedClient()).execute_query(
+            {"op": C.OP_ESTIMATE, "query": "who?"}, optional_properties={"nope": 1}
+        ),
+        "execute_query_nl": lambda: LlmSource(client=ScriptedClient([ONE_RECORD])).execute_query_nl(
+            "who?", optional_properties={"nope": 1}
+        ),
+        "execute_nl_tool": lambda: LlmSource(client=ScriptedClient([ONE_RECORD])).execute_nl_tool(
+            "execute_query", {"query": "who?"}, optional_properties={"nope": 1}
+        ),
+    }
+
+    for surface, call in calls.items():
+        with pytest.raises(ConfigError, match=UNKNOWN) as caught:
+            call()
+        assert "'nope'" in str(caught.value), surface
+
+
+def test_a_request_field_written_into_the_property_map_is_refused() -> None:
+    """Each of these is a parameter of `fetch`, so in the map it changes nothing."""
+    for key, value in (
+        ("attrs", ["name"]),
+        ("attr_names", ["name"]),
+        ("context", "be brief"),
+        ("max_records", 1),
+    ):
+        client = ScriptedClient([TWO_RECORDS])
+        with pytest.raises(ConfigError, match=UNKNOWN):
+            LlmSource(client=client).fetch("who?", properties={key: value})
+        assert client.prompts == []
+
+
+def test_the_data_layer_surfaces_still_read_the_request_fields_they_are_handed() -> None:
+    """`optional_properties` is where those surfaces receive a request, not only a config.
+
+    Refusing them there would break the one path that has nowhere else to put them.
+    """
+    by_name = ScriptedClient([TWO_RECORDS])
+    assert LlmSource(client=by_name).execute_query(
+        "who?", optional_properties={"attr_names": ["name"], "max_records": 1}
+    ) == [{"name": "Ada"}]
+
+    by_attrs = ScriptedClient([TWO_RECORDS])
+    assert LlmSource(client=by_attrs).execute_query_nl(
+        "who?", optional_properties={"attrs": ["name"], "context": "be brief"}
+    ) == [{"name": "Ada"}, {"name": "Grace"}]
+    assert "be brief" in by_attrs.prompts[0]
+
+
+def test_a_property_key_that_is_not_a_string_is_refused_by_name() -> None:
+    """Every check below it reads a key as a string, and a bare AttributeError names none."""
+    # Cast because the annotation already says `str`; the caller under test is the one who
+    # is not reading it, which is the only way this key arrives.
+    mistyped = cast("dict[str, Any]", {1: 2})
+    with pytest.raises(ConfigError, match="property keys must be strings") as caught:
+        LlmSource(client=ScriptedClient([ONE_RECORD])).fetch("who?", properties=mistyped)
+
+    message = str(caught.value)
+    assert "1 (int)" in message, "the refusal has to name the key and what it is"
+
+
+def test_the_keys_the_library_reads_without_a_namespace_are_accepted() -> None:
+    """`budget` and `usage_sink` are the channels a fetch writes into the map it passes down.
+
+    An injected client constructed with either carries it back through the resolved map, so
+    a set that did not hold them would refuse the library's own vocabulary.
+    """
+    client = ScriptedClient([ONE_RECORD])
+    source = LlmSource(
+        properties={
+            "connection": {"variant": "openai"},
+            "cache_store": None,
+            C.BUDGET_PROPERTY: Budget(Limits()),
+            C.USAGE_SINK_PROPERTY: [],
+        },
+        client=client,
+    )
+
+    assert source.fetch("who?").records == [{"name": "Ada", "age": 36}]
+
+
 # ------------------------------------------------------------- the tool path --
 SERVED_TOOLS = ["list_databases", "list_collections", "get_schema", "execute_query"]
 
@@ -1110,3 +1370,27 @@ class TestSynchronousEntryInsideAnEventLoop:
     def test_it_does_not_refuse_outside_a_loop(self) -> None:
         result = LlmSource().fetch("anything", llm_fn=_empty)
         assert result.records == []
+
+
+def test_a_source_rebuilt_by_the_registry_still_answers() -> None:
+    """`register_source` records `_class` beside the properties and `connect_source` reads
+    it back, so a rebuilt source arrives carrying a key this package never set. The closed
+    property map has to admit it or the registry round trip fails for every source."""
+    from blue_data.registry.data_registry import (  # pyright: ignore[reportMissingTypeStubs]
+        DataRegistry,
+    )
+
+    registry = DataRegistry()  # pyright: ignore[reportUnknownVariableType]
+    registry.register_source(LlmSource(properties={"llm.model": "gpt-4o"}))
+    rebuilt = cast("LlmSource", registry.connect_source("llm"))
+
+    # The regression is the refusal, not the answer: the rebuilt source carries a key this
+    # package never set, and a closed map that does not admit it ends the round trip here.
+    def answer(prompt: str, **_kw: Any) -> str:
+        return '{"records":[{"name":"CDG"}]}'
+
+    rebuilt.execute_query_nl(
+        "two airports",
+        llm_fn=answer,
+        optional_properties={"attrs": ["name"]},
+    )

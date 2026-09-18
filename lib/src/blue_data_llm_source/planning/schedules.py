@@ -23,10 +23,10 @@ from blue_data_llm_source.planning.cardinality import (
     estimate_from_reported,
 )
 from blue_data_llm_source.planning.context import (
+    PLANNING_CARDINALITY_FIRST,
     PLANNING_COMBINED,
     PLANNING_LOCKED_PARALLEL,
     PLANNING_LOCKED_SEQUENTIAL,
-    PLANNING_RESEARCH_ORDER,
     PlanningContext,
     PlanningStage,
     validate_planning_order,
@@ -617,7 +617,7 @@ async def build_planning_context(
                 provider_attempts=provider_attempts,
             )
 
-        if schedule == PLANNING_RESEARCH_ORDER:
+        if schedule == PLANNING_CARDINALITY_FIRST:
             cardinality_prompt = prompts.build_cardinality_prompt(
                 original_query=original_query,
                 retrieval_query=analysis.ask,

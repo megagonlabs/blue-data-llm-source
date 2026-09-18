@@ -1,0 +1,407 @@
+# Extending blue-data-llm-source
+
+The seams this library is built to have something plugged into, and what each one commits you to.
+
+There is no plugin registry and no hook mechanism. Every extension point below is a protocol you satisfy structurally: an object with the right methods, handed in as an argument or a property. Nothing here performs an `isinstance` check against a concrete class.
+
+| Seam | What you supply | Handed in as | What it replaces |
+|---|---|---|---|
+| [The injected client](#the-injected-client) | An object with `complete` and `acomplete` | `LlmSource(client=...)` | The provider call for every request through that source |
+| [`llm_fn`](#llm_fn-the-one-function-form) | A `(prompt) -> str` callable | `fetch(llm_fn=...)` | The provider call for one request |
+| [Cache backends](#cache-backends) | An object with `get` and `set` | `properties={"cache_store": ...}` | Where provider responses are stored |
+| [Your own price table](#your-own-price-table) | Two per-token rates | `llm.price_per_input_token`, `llm.price_per_output_token` | The published rates a cost ceiling is bounded against |
+| [Identity partition rules](#identity-partition-rules) | Declared finite domains | `plan.identity_partitions` | The model's own choice of how to split a request |
+| [A budget you own](#a-budget-you-own) | A `Budget` | `fetch(budget=...)` | The per-call budget the source would build |
+| [The stage parsers](#the-stage-parsers) | Nothing (you reuse them) | imported directly | Nothing; they are pure functions you can call yourself |
+
+What is **not** an extension point: the prompts, the reduction pipeline, the outcome rule, and the closed key sets. Those are fixed, and changing them is a change to this library, not a use of it.
+
+Every example on this page runs as shown, offline.
+
+## The injected client
+
+This is the main seam. A client is any object with two methods, and it becomes the model for every request through the source it was constructed with.
+
+```python
+from typing import Any, Protocol
+
+
+class InjectedClient(Protocol):
+    def complete(self, prompt: str, properties: dict[str, Any] | None = None) -> str: ...
+    async def acomplete(self, prompt: str, properties: dict[str, Any] | None = None) -> str: ...
+
+    # Optional. Without it, a cost, time, or call ceiling is refused for this client.
+    def budget_capabilities(self) -> frozenset[str]: ...
+
+    # Optional, and needed for `estimate` to give a figure, together with declaring
+    # Capability.ESTIMATE. Without both, a request against this client is reported
+    # unestimable rather than guessed at.
+    def bound_for_attempt(self, prompt: str, properties: dict[str, Any]) -> float: ...
+```
+
+The shape is checked when the client is resolved, not at the first call. A missing method, or one whose signature cannot be called as `complete(prompt, properties)` (a keyword-only or one-argument form included) raises `ConfigError` naming the contract rather than failing later with a raw `TypeError`.
+
+`afetch` calls `acomplete`, and `fetch` wraps `afetch`, so the asynchronous form is the one every fetch reaches. `complete` is there for a caller driving the client directly.
+
+### What arrives in `properties`
+
+Two keys are written by the source on every call it makes.
+
+| Key | Type | What to do with it |
+|---|---|---|
+| `budget` | `Budget` | Claim against it once per provider attempt, and resolve every claim |
+| `usage_sink` | `list[Usage]` | Append this call's `Usage` entries. The fetch reads its token counts and model name from this list and nothing else |
+
+Both are passed per call instead of being set on the client, because one client can serve several concurrent fetches and an attribute would let them overwrite each other's ceiling. For the same reason, read the budget out of `properties` rather than caching it on `self`.
+
+Everything else in `properties` is the merged property map for that call. Your client's own properties sit under the caller's.
+
+### Declaring capabilities
+
+`budget_capabilities()` says which ceilings the source may hold you to. It returns names from `Capability`, and every configured ceiling on an axis you do not name is refused with a `ConfigError` at the first fetch.
+
+| Declare | Only if your client |
+|---|---|
+| `Capability.CALLS` | Knows how many provider calls one invocation makes, and stops at the limit |
+| `Capability.COST` | Knows what each call is billed, and stops at the limit |
+| `Capability.SECONDS` | Can stop at a deadline |
+| `Capability.ROWS` | Always safe; the source counts records itself |
+| `Capability.ESTIMATE` | Implements `bound_for_attempt`, **and** makes at most `budget.effective_retries() + 1` provider attempts per call |
+
+Declare only what you can prove. Reporting a ceiling that is not holding anything is worse than declining to hold it, because the caller believes it.
+
+`Capability.ALL` is all five, so declaring it commits you to the two `ESTIMATE` promises as well. A client with its own retry or fallback policy that ignores the attempt allowance will spend past the estimate it published, and a caller who sized a ceiling from that estimate then has an attempt refused. A client that cannot promise it omits `ESTIMATE`, and `estimate` reports `bounded=False` with a reason, the honest answer rather than a figure the run can exceed.
+
+### Claiming and resolving
+
+Claim inside `budget.attempt(...)` and resolve on every path out of it. The context manager exists so the cleanup is registered before the claim is taken; `reserve` is still correct but leaves a window in which an interrupt orphans a claim.
+
+| Call | For |
+|---|---|
+| `reservation.settle(actual)` | A call that returned and whose cost you can read. Releases the overshoot |
+| `reservation.settle(actual, cache_hit=True)` | An answer that never reached the provider. Releases the attempt too |
+| `reservation.keep_unpriced()` | A call that reached the provider and failed, or one whose cost you cannot read |
+| `reservation.release()` | An attempt abandoned before the provider entry point was invoked |
+
+A claim left outstanding is headroom the budget never grants again, and the retry that follows takes more of it.
+
+### A complete client
+
+```python
+from typing import Any
+
+from blue_data_llm_source import Budget, Capability, LlmSource, Usage
+
+PER_ATTEMPT_BOUND = 0.002
+
+
+async def my_provider_call(prompt: str) -> str:
+    """Stand in for a real provider call, so this example runs offline."""
+    return '[{"country": "France"}, {"country": "Germany"}]'
+
+
+class MyClient:
+    def budget_capabilities(self) -> frozenset[str]:
+        return Capability.ALL
+
+    def bound_for_attempt(self, prompt: str, properties: dict[str, Any]) -> float:
+        # The same figure the reservation below claims. Declaring ALL includes ESTIMATE,
+        # so without this the client says it supports a bounded estimate and cannot
+        # produce one.
+        return PER_ATTEMPT_BOUND
+
+    def complete(self, prompt: str, properties: dict[str, Any] | None = None) -> str:
+        raise NotImplementedError("this source always calls acomplete")
+
+    async def acomplete(self, prompt: str, properties: dict[str, Any] | None = None) -> str:
+        props = properties or {}
+        budget = props.get("budget") or Budget()
+        with budget.attempt(PER_ATTEMPT_BOUND) as reservation:
+            try:
+                text = await my_provider_call(prompt)
+            except BaseException:
+                reservation.keep_unpriced()
+                raise
+            reservation.settle(0.0011)  # what it did cost
+        sink = props.get("usage_sink")
+        if sink is not None:
+            sink.append(Usage(model="my-model", prompt_tokens=188, completion_tokens=89))
+        return text
+
+
+source = LlmSource(properties={"limits.max_cost": 0.05, "limits.max_calls": 4}, client=MyClient())
+sized = source.estimate("the member states of the European Union", attrs=["country"])
+print(sized.bounded, sized.max_cost, sized.max_attempts)
+
+result = source.fetch("the member states of the European Union", attrs=["country"])
+print(result.records)
+print(result.meta.model, result.meta.calls, round(result.meta.cost, 4))
+print(result.meta.prompt_tokens, result.meta.completion_tokens, result.meta.accounting_known)
+```
+
+Raising from `complete` is a deliberate choice in that example, not a requirement: every fetch reaches `acomplete`, so a client embedded in async code need not implement a synchronous path that would never run. Implement both if you intend to drive the client yourself.
+
+### What no check can prove
+
+The shape check confirms your client can be called. It cannot confirm that a client declaring `Capability.COST` actually stops at a cost ceiling, or that one declaring `Capability.ESTIMATE` keeps within the attempt allowance. Those remain your responsibility, which is why declaring them takes a method rather than an attribute that happens to match a name.
+
+### Swapping the provider
+
+`DefaultLlmClient` reaches a provider through `litellm`, imported lazily. There is no provider-abstraction layer beneath it, so "use a different provider" and "inject a client" are the same task: write the client above around whatever SDK you want, and construct the source with it.
+
+Reuse what you can. `blue_data_llm_source.llm.pricing.bound_cost(prompt, model, max_tokens, properties)` gives a true upper bound on one call against the rates it holds, which is what `bound_for_attempt` needs, and it raises `ConfigError` rather than inventing a figure when no bound can be established.
+
+## `llm_fn`: the one-function form
+
+For a test, a stub, or a model you already have a function for, a plain callable is enough. The library wraps it in a `FunctionClient`.
+
+```python
+from blue_data_llm_source import LlmSource
+
+source = LlmSource()
+result = source.fetch(
+    "the member states of the European Union",
+    attrs=["country"],
+    llm_fn=lambda prompt: '[{"country": "France"}]',
+)
+print(result.records, result.meta.accounting_known)
+```
+
+The callable may also be `async def`, or return a coroutine; the result is awaited.
+
+Two things follow from what a wrapper around your function can prove. It declares `Capability.ROWS` alone, so `limits.max_calls`, `limits.max_cost`, and `limits.max_seconds` on a run supplying `llm_fn` are **refused**. And the result sets `meta.accounting_known` to `False`, so its `calls`, `cost`, and token counts describe this library's bookkeeping rather than provider work: a callable that fans out to five providers and spends real money still reports one call and no cost, because none of that is visible from here.
+
+Reporting it as unknown is the honest answer. If you need any of those three ceilings over your own model call, write the client above — the same work plus one method.
+
+`llm_fn` is a parameter of `fetch`, `afetch`, `estimate`, and `execute_query_nl`. It is **not** a property: a key named `llm_fn` in `properties` or in `execute_query`'s `optional_properties` is merged into the property map, never read, and the request then resolves the provider-backed client instead. `execute_query` has no `llm_fn` parameter at all, so inject at construction for that surface.
+
+## Cache backends
+
+Two stores ship, and the protocol is two methods.
+
+```python
+from typing import Any
+
+from blue_data_llm_source import CacheStore, LlmSource
+
+
+class CountingCache:
+    """Any object with get and set is a cache store. This one counts its reads."""
+
+    def __init__(self) -> None:
+        self.reads = 0
+        self._data: dict[str, Any] = {}
+
+    def get(self, key: str) -> Any | None:
+        self.reads += 1
+        return self._data.get(key)
+
+    def set(self, key: str, value: Any) -> None:
+        self._data[key] = value
+
+
+cache = CountingCache()
+print(isinstance(cache, CacheStore))
+source = LlmSource(properties={"cache_store": cache})
+print(source.fetch("airports", attrs=["name"], llm_fn=lambda p: '[{"name": "Orly"}]').records)
+```
+
+The client that reaches a provider drives the store with `get` and `set` alone. Do not assume `in` or `[]` will be used. They will not, so a store written to the published interface is enough.
+
+| Rule | Why |
+|---|---|
+| A read that fails is a miss, not an error | A cache that can fail a request it was meant to make cheaper is worse than no cache. Both shipped stores swallow their own read failures |
+| A write that fails is skipped, not raised | The same reasoning on the other side |
+| The key is a long serialised mapping | It covers the model, the prompt, and every forwarded parameter. It is not path-safe; `FileCache` hashes it before using it as a filename |
+| Keep `get` fast | `CacheStore` is synchronous, and a store that reaches a network sits outside the time ceiling entirely. This is listed in [what the time ceiling bounds](../lib/README.md#what-the-time-ceiling-actually-bounds) |
+| Values are JSON-shaped provider payloads | Whatever the client stored comes back to the client. Keep it serialisable if your store persists |
+
+The `cache_store` property takes precedence over the separate `llm.cache` switch, which opens a `diskcache` backend and does not use either shipped store. Treat the two paths as unconnected.
+
+`MemoryCache` and `FileCache` are worth reading before writing a third: `cache/memory.py` is thirty lines of locked LRU, and `cache/file.py` shows the temp-file-and-rename write and the ownership check that keeps `clear()` from deleting JSON it did not write.
+
+**A cache backend cannot be wired through an `llm_fn`.** The client is what consults the cache, and `FunctionClient` does not. The example above accepts the store and never reads it. To cache your own model calls, consult the store inside the client you inject.
+
+## Your own price table
+
+The published rates are a static snapshot with no effective date. To bound a cost ceiling against rates you maintain, supply both:
+
+```python
+from blue_data_llm_source import LlmSource
+
+source = LlmSource(properties={
+    "llm.model": "a-model-nobody-here-prices",
+    "llm.max_tokens": 512,
+    "llm.price_per_input_token": 0.0000004,
+    "llm.price_per_output_token": 0.0000016,
+})
+sized = source.estimate("commercial airports in France", attrs=["name"])
+print(sized.bounded, round(sized.max_cost, 6), sized.model)
+```
+
+Presence decides that you meant to override, not validity: supplying one key commits you to both, and a value that is not a finite positive number raises `ConfigError` instead of falling back to the table. Falling back would accept an explicit instruction and then ignore it, which against a stale table produces a bound below the one you asked for.
+
+Both keys are consumed locally and never forwarded to the provider.
+
+`rates_for(model)` returns `None` for a model the table does not carry, `priceable_models()` lists the ones it does, and `can_bound(model, max_tokens, properties)` answers whether a ceiling could be claimed (without raising), so you can check before configuring one.
+
+## Identity partition rules
+
+When a request is split, something has to decide along which dimension and into which values. By default the model proposes it. A rule says the domain is yours: a finite list of values the model may estimate over but not alter.
+
+This reaches a direct Python caller only. Neither the command-line interface nor the MCP server exposes it.
+
+```python
+import json
+
+from blue_data_llm_source import LlmSource
+
+AIRPORTS = {
+    "Île-de-France": [{"name": "Charles de Gaulle", "region": "Île-de-France"},
+                      {"name": "Orly", "region": "Île-de-France"}],
+    "Provence": [{"name": "Marseille Provence", "region": "Provence"}],
+}
+
+RULE = {
+    "dimension": "region",
+    "ordered_primary_keys": ["region", "name"],
+    "kind": "finite_domain",
+    "allowed_domain": ["Île-de-France", "Provence"],
+    "parent_scope": {},
+    "provenance": "caller_declared",
+    "contract_version": "identity-partition-rule-1",
+}
+
+
+def answer(prompt: str) -> str:
+    """Stand in for the model at each stage, so this example runs offline."""
+    if prompt.startswith("Your task is to prepare a data request"):
+        return json.dumps({"ask": "commercial airports in France", "constraints": {}})
+    if prompt.startswith("Resolve the output schema"):
+        return json.dumps({"attrs": [{"name": "name"}, {"name": "region"}],
+                           "primary_keys": ["name"]})
+    if prompt.startswith("Estimate the number of records"):
+        return json.dumps({"expected": 3, "lower": 2, "upper": 8, "row_unit": "airports"})
+    if prompt.startswith("Estimate the distribution of records"):
+        return json.dumps({
+            "key": "region",
+            "partitions": [
+                {"value": "Île-de-France", "estimate": {"expected": 2, "lower": 1, "upper": 4}},
+                {"value": "Provence", "estimate": {"expected": 1, "lower": 1, "upper": 2}},
+            ],
+            "ambiguity": 0.1,
+            "reasoning": "two declared regions",
+        })
+    for region, records in AIRPORTS.items():
+        if region in prompt:
+            return json.dumps(records)
+    return "[]"
+
+
+result = LlmSource().fetch(
+    "commercial airports in France",
+    attrs=["name", "region"],
+    llm_fn=answer,
+    properties={
+        "plan.mode": "partitioned",
+        "plan.keys": ["region", "name"],
+        "plan.distribution_search": True,
+        "plan.identity_partitions": [RULE],
+        "plan.max_depth": 1,
+    },
+)
+print([record["name"] for record in result.records])
+print(result.meta.outcome, result.meta.calls, result.meta.gaps)
+
+receipt = result.planning_receipt
+payload = receipt.to_dict()
+print(payload["contract_version"], payload["planning_facts"]["selected_partition_key"])
+print(payload["planning_facts"]["partition_safety_status"])
+```
+
+### What a rule must satisfy
+
+| Field | Requirement |
+|---|---|
+| `dimension` | One of `plan.keys` |
+| `ordered_primary_keys` | Exactly `plan.keys`, in order |
+| `kind` | `"finite_domain"`, the only kind supported |
+| `allowed_domain` | Non-empty JSON scalars, with no duplicates after normalisation |
+| `parent_scope` | The constraints under which this rule applies. `{}` makes it root-applicable, and at least one rule must be |
+| `provenance` | `"caller_declared"` for a rule passed with the call, `"source_configuration"` for one set on the source |
+| `contract_version` | `"identity-partition-rule-1"` |
+
+Per-call rules **replace** the source's list; they do not add to it. Rules may not come from an injected client's own properties. Every rule is validated before the provider is contacted, so a malformed one costs nothing, and all three distribution-search settings are removed from the property map handed to the client.
+
+`plan.distribution_search` additionally requires `plan.mode="partitioned"`, explicit ordered `plan.keys`, and `plan.max_strategy_candidates` of at least 1.
+
+### The safety check and the receipt
+
+A split proposed under a rule is accepted only after `PartitionSafety` establishes containment, pairwise disjointness, and coverage against the declared domain. A proposal that fails leaves the node unsplit rather than producing children that overlap or miss values.
+
+An accepted run may carry a `PlanningReceipt`, reachable as `result.planning_receipt` and serialisable with `to_dict()`. It binds the configured rule digests, the planning facts, and the versioned plan, and it checks that the three agree: that every applied rule was configured, that the counts match, and that the last applied decision is the one the facts name.
+
+**It proves internal agreement and nothing else.** It does not establish rule authenticity, factual truth, completeness, or answer quality. Read it as a record of what the planner did, not as evidence that what it did was right.
+
+An ordinary result carries no receipt, and `FetchResult.to_dict()` keeps its two keys.
+
+## A budget you own
+
+`Budget` is a public class, not only an internal one. Construct one, hand it to every call that should share a total, and read it afterwards.
+
+```python
+from blue_data_llm_source import Budget, Limits, LlmSource
+
+source = LlmSource()
+run = Budget(Limits(max_rows=3))
+answer = lambda prompt: '[{"name": "Orly"}]'
+
+for question in ("airports in France", "airports in Spain", "airports in Italy"):
+    result = source.fetch(question, attrs=["name"], llm_fn=answer, budget=run)
+    print(question, len(result), result.meta.outcome)
+
+print(run.rows, run.calls, run.committed, run.stopped_by)
+print(run.remaining_calls(), run.remaining_cost(), run.configured_axes())
+```
+
+Each fetch calls `derive` on it, producing a child whose effective ceiling on every axis is the smaller of its own and what the parent has left, retry depth included. Elapsed time is measured from the parent's start, so a time ceiling covers the whole unit of work rather than restarting with each fetch.
+
+The observation methods narrow along the chain, so what you read on a derived budget is what it can actually spend, not what it was nominally given. `configured_axes()` walks the chain the other way, reporting which axes carry a ceiling anywhere. That is what the capability refusal reads, which is why a ceiling on your budget alone is still checked against the client that answers.
+
+`check_deadline()` and `rows_exhausted()` are published for callers driving a budget directly; this release's own paths recheck the deadline inside `reserve` instead.
+
+## The stage parsers
+
+The three planning-stage parsers are pure: each takes a model's text and returns a value, and none of them calls a model. They are exported so you can reuse them: to validate a recorded response, to build a fixture, or to drive a stage yourself.
+
+```python
+import json
+
+from blue_data_llm_source import CardinalityEstimator, QueryAnalyzer
+
+analysis = QueryAnalyzer.parse(
+    json.dumps({"ask": "commercial airports in France", "constraints": {"country": "France"}}),
+    asked="airports in France",
+)
+print(analysis.ask, dict(analysis.constraints), analysis.rewritten)
+
+estimate = CardinalityEstimator.parse(
+    json.dumps({"expected": 40, "lower": 30, "upper": 60, "row_unit": "airports"}),
+    row_unit="airports",
+)
+print(estimate.expected, estimate.lower, estimate.upper, estimate.parse_status)
+
+unusable = CardinalityEstimator.parse("not json at all", row_unit="airports")
+print(unusable.parse_status, unusable.expected, unusable.diagnostics)
+```
+
+A parser that cannot read its input returns a value saying so instead of raising, which is what lets a planning stage fall back to the caller's declaration and record a diagnostic instead of failing the request.
+
+`SchemaGenerator.parse(text, declared, *, mode)` is the third. Its `declared` argument is a `Schema`, which is reachable as `blue_data_llm_source.planning.schema.Schema` but is not exported from the package root. Import it from that module if you need to call this parser directly.
+
+## Where to go next
+
+- [api-reference.md](api-reference.md): the exact signature of everything above.
+- [architecture.md](architecture.md): where each seam sits in the whole.
+- [`lib/COMPATIBILITY.md`](../lib/COMPATIBILITY.md): the client contract stated once more, alongside what changed for a caller being ported.
+- [`design/04-detailed-architecture.md`](../design/04-detailed-architecture.md): the reasoning behind the client, capability, and budget design.

@@ -26,12 +26,12 @@ from blue_data_llm_source.reduction.verifier import dedupe
 from blue_data_llm_source.types import ExecMeta, Outcome
 
 ROOT = Path(__file__).resolve().parents[3]
-"""The payload root — `lib/tests/unit/x.py` up to the directory holding `docs/` and `lib/`."""
+"""The repository root: `lib/tests/unit/x.py` up to the directory holding `design/` and `lib/`."""
 
 REFERENCE = [
-    "docs/design/06-library.md",
-    "docs/design/09-api-interface-spec.md",
-    "docs/design/10-data-model.md",
+    "design/06-library.md",
+    "design/09-api-interface-spec.md",
+    "design/10-data-model.md",
     "lib/README.md",
 ]
 """Documents that publish the result types as a reference a reader relies on.
@@ -41,7 +41,7 @@ passing and is not claiming to enumerate them. These references carry the field 
 outcome vocabulary, and a member missing from one of them is a reference that is wrong.
 """
 
-PLATFORM_READMES = ["platform/cli/README.md", "platform/mcp/README.md"]
+PLATFORM_READMES = ["platform/llm-cli/README.md", "platform/llm-mcp/README.md"]
 # Adapter tests derive the full default key set from each serializer and compare it with the
 # fenced sample. This list checks only the shared names both platform READMEs promise in prose.
 ALWAYS_PRESENT_PLATFORM_FIELDS = [
@@ -97,7 +97,7 @@ def test_a_document_that_reproduces_the_outcome_class_reproduces_all_of_it() -> 
     prose two paragraphs later described. A reader trusts the block over the prose, because a
     block looks generated.
     """
-    body = text("docs/design/06-library.md")
+    body = text("design/06-library.md")
     block = re.search(r"class Outcome:\n(.*?)\n```", body, re.S)
     assert block is not None, "06-library.md no longer publishes the Outcome class"
     for member in Outcome.ALL:
@@ -119,7 +119,7 @@ def test_the_published_outcome_vocabulary_is_closed() -> None:
 
 
 def test_prompt_reference_names_every_shipped_builder_and_version() -> None:
-    documented_builders = text("docs/design/06-library.md")
+    documented_builders = text("design/06-library.md")
     builders = {
         name
         for name, value in vars(prompts).items()
@@ -129,9 +129,9 @@ def test_prompt_reference_names_every_shipped_builder_and_version() -> None:
     for name in builders:
         assert f"`{name}(" in documented_builders, f"06-library.md omits {name}"
 
-    data_model = text("docs/design/10-data-model.md")
-    assert prompts.LEGACY_INITIAL_V2_PROMPT_VERSION in data_model
-    assert prompts.INITIAL_V2_PROMPT_VERSION in data_model
+    data_model = text("design/10-data-model.md")
+    assert prompts.LEGACY_LEAF_FETCH_PROMPT_VERSION in data_model
+    assert prompts.KEYED_LEAF_FETCH_PROMPT_VERSION in data_model
 
 
 @pytest.mark.parametrize(
@@ -146,7 +146,7 @@ def test_prompt_reference_names_every_shipped_builder_and_version() -> None:
 def test_reference_signatures_name_every_current_parameter(
     function: Callable[..., object], name: str
 ) -> None:
-    body = text("docs/design/06-library.md")
+    body = text("design/06-library.md")
     row = re.search(rf"^\| `{name}\(([^`]*)\)`", body, re.M)
     assert row is not None, f"06-library.md omits the {name} signature"
     for parameter in signature(function).parameters:
@@ -156,7 +156,7 @@ def test_reference_signatures_name_every_current_parameter(
 
 
 def test_configuration_reference_names_every_facade_plan_key() -> None:
-    body = text("docs/design/11-testing-strategy.md")
+    body = text("design/11-testing-strategy.md")
     section = body.split("## 6. Configuration Tests", 1)[1].split("## 7. The Base Class Tests", 1)[
         0
     ]

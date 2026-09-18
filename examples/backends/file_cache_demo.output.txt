@@ -1,0 +1,18 @@
+first fetch (provider)
+  records          4
+  calls            1
+  cache hits       0
+  prompt tokens    176
+  cost             8.2e-05
+  latency seconds  2.857
+
+second fetch (same question)
+  records          4
+  calls            0
+  cache hits       1
+  prompt tokens    0
+  cost             0.0
+  latency seconds  0.0
+
+cache files written: 1
+same records: True

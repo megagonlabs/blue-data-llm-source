@@ -1,0 +1,90 @@
+1. types declared and honoured
+  response       [{"name": "ETH Zurich", "founded": 1855}]
+  records        [{'name': 'ETH Zurich', 'founded': 1855}]
+  outcome        ok
+  unmapped keys  []
+  key collisions []
+  mismatches     []
+  unchecked      []
+
+2. a numeric string under a declared integer is converted, not reported
+  response       [{"name": "ETH Zurich", "founded": "1855"}]
+  records        [{'name': 'ETH Zurich', 'founded': 1855}]
+  outcome        ok
+  unmapped keys  []
+  key collisions []
+  mismatches     []
+  unchecked      []
+
+3. a value that will not convert keeps what the model sent and is reported
+  response       [{"name": "ETH Zurich", "founded": "the 1850s"}]
+  records        [{'name': 'ETH Zurich', 'founded': 'the 1850s'}]
+  outcome        ok
+  unmapped keys  []
+  key collisions []
+  mismatches     [{'record_index': 0, 'attribute': 'founded', 'declared_type': 'integer', 'value': "'the 1850s'"}]
+  unchecked      []
+
+4. the other direction: a number under a declared string is reported, not stringified
+  response       [{"name": 1855}]
+  records        [{'name': 1855}]
+  outcome        ok
+  unmapped keys  []
+  key collisions []
+  mismatches     [{'record_index': 0, 'attribute': 'name', 'declared_type': 'string', 'value': '1855'}]
+  unchecked      []
+
+5. a key nobody asked for: reported rather than discarded quietly
+  response       [{"name": "ETH Zurich", "founded": 1855, "rector": "Joel Mesot"}]
+  records        [{'name': 'ETH Zurich', 'founded': 1855}]
+  outcome        ok
+  unmapped keys  ['rector']
+  key collisions []
+  mismatches     []
+  unchecked      []
+
+6. two keys for one attribute: the first wins, the second is reported with its value
+  response       [{"name": "ETH Zurich", "Name": "EPFL"}]
+  records        [{'name': 'ETH Zurich'}]
+  outcome        ok
+  unmapped keys  []
+  key collisions [{'record_index': 0, 'attribute': 'name', 'kept_key': 'name', 'ignored_key': 'Name', 'ignored_value': 'EPFL'}]
+  mismatches     []
+  unchecked      []
+
+7. a type this source does not check is named rather than pretended
+  response       [{"name": "ETH Zurich", "campus": {"lat": 47.3, "lon": 8.5}}]
+  records        [{'name': 'ETH Zurich', 'campus': {'lat': 47.3, 'lon': 8.5}}]
+  outcome        ok
+  unmapped keys  []
+  key collisions []
+  mismatches     []
+  unchecked      ['geojson']
+
+8. an attribute the model left out is filled with None, and the record is kept
+  response       [{"name": "ETH Zurich"}]
+  records        [{'name': 'ETH Zurich', 'founded': None}]
+  outcome        ok
+  unmapped keys  []
+  key collisions []
+  mismatches     []
+  unchecked      []
+
+9. an explicit JSON null is indistinguishable from an absent key here
+  response       [{"name": "ETH Zurich", "founded": null}]
+  records        [{'name': 'ETH Zurich', 'founded': None}]
+  outcome        ok
+  unmapped keys  []
+  key collisions []
+  mismatches     []
+  unchecked      []
+
+10. a record answering none of the requested attributes is dropped entirely
+  response       [{"rector": "Joel Mesot"}]
+  records        []
+  outcome        filtered_to_empty
+  unmapped keys  ['rector']
+  key collisions []
+  mismatches     []
+  unchecked      []
+

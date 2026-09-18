@@ -1,0 +1,28 @@
+registered sources  ['llm']
+recorded class      blue_data_llm_source.source.LlmSource
+recorded connection {'protocol': 'llm', 'variant': 'openai', 'host': '', 'port': None, 'user': '', 'password': ''}
+recorded model      gpt-4o-mini
+
+execute_query_nl: a plain string in, a list of dicts out
+   {'name': 'Charles de Gaulle', 'iata_code': 'CDG'}
+   {'name': 'Orly', 'iata_code': 'ORY'}
+   {'name': "Nice Cote d'Azur", 'iata_code': 'NCE'}
+
+the same call with a ceiling that binds only this call
+   [{'name': 'Charles de Gaulle'}]
+
+execute_query with an op dict, routed through the registry
+  LLM.MODELS   [{'protocol': 'llm', 'variant': 'openai'}]
+  LLM.FETCH    [{'name': 'Charles de Gaulle'}, {'name': 'Orly'}, {'name': "Nice Cote d'Azur"}]
+  LLM.ESTIMATE [{'bounded': False, 'max_cost': None, 'reason': 'this client does not report what an attempt will cost, so a bound cannot be given for it. Only a client that drives the provider itself knows the model and rates the call will use.', 'model': 'gpt-4o-mini', 'prompt_bytes': 766, 'max_output_tokens': 0, 'max_attempts': 3, 'max_cost_per_attempt': None}]
+
+drop the live instance and the registry rebuilds one from the recorded class
+  same object  False
+  type         LlmSource
+  name         llm
+  protocol     llm / openai
+  properties   gpt-4o-mini 512
+
+A rebuilt source carries the recorded properties but not the injected client,
+so a query against it goes through llm_fn or the default provider client.
+  rebuilt, with llm_fn: [{'name': 'Charles de Gaulle'}]

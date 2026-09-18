@@ -1,0 +1,16 @@
+records           [{'country': 'France'}, {'country': 'Germany'}]
+model             ledger-demo-1
+calls             1
+prompt tokens     188
+completion tokens 41
+cost              0.0011
+accounting known  True
+
+A cost ceiling binds this client, because it declared the cost axis:
+  outcome   stopped_by_limit
+  stopped   max_cost
+  records   []
+  the reservation is the bound, 0.002, which does not fit under 0.001
+
+The same ceiling over an llm_fn is refused rather than reported:
+  limits.max_cost cannot be enforced against this client. It declares ['rows'], and a ceiling this source cannot hold is worse than no ceiling because a caller believes it. Use a client that enforces those axes, drop those limits, or use limits.max_rows, which this source enforces itself.

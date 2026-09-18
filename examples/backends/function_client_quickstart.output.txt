@@ -1,0 +1,19 @@
+records
+  {'name': 'Charles de Gaulle', 'iata_code': 'CDG', 'opened': 1974}
+  {'name': 'Orly', 'iata_code': 'ORY', 'opened': 1932}
+  {'name': "Nice Cote d'Azur", 'iata_code': 'NCE', 'opened': 1956}
+
+outcome           ok
+requested attrs   ['name', 'iata_code', 'opened']
+observed keys     ['name', 'iata_code', 'opened']
+unmapped keys     []
+type mismatches   []
+gaps              []
+stopped by        None
+
+model             injected
+calls             1
+cost              0.0
+accounting known  False
+
+A cost of 0.0 with accounting_known False means 'not measured', not 'free'.

@@ -1,0 +1,12 @@
+MemoryCache is bounded and evicts least-recently-used
+  paris   hit 
+  berlin  miss
+  madrid  hit 
+  entries 2
+
+FileCache persists one JSON file per entry
+  written   ['llmcache-1670f2e42fefa5044d59a65349e47c566009488fc57d7b4376dd5787b59e3c57.json']
+  reopened  {"choices": [{"message": {"content": "[{\"name\": \"Orly\"}]"}}]}
+  missing   None
+  after clear, files the cache did not write are still here:
+    ['settings.json']

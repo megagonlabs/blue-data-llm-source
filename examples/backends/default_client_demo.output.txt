@@ -1,0 +1,28 @@
+estimate bounded  True
+estimate max cost 0.0008709
+estimate model    gpt-4o-mini
+
+records
+  {'name': 'Charles de Gaulle Airport', 'iata_code': 'CDG'}
+  {'name': 'Orly Airport', 'iata_code': 'ORY'}
+  {'name': "Nice Côte d'Azur Airport", 'iata_code': 'NCE'}
+  {'name': 'Lyon-Saint Exupéry Airport', 'iata_code': 'LYS'}
+  {'name': 'Marseille Provence Airport', 'iata_code': 'MRS'}
+  {'name': 'Toulouse-Blagnac Airport', 'iata_code': 'TLS'}
+  {'name': 'Bordeaux-Mérignac Airport', 'iata_code': 'BOD'}
+  {'name': 'Nantes Atlantique Airport', 'iata_code': 'NTE'}
+  {'name': 'Strasbourg Airport', 'iata_code': 'SXB'}
+  {'name': 'Montpellier-Méditerranée Airport', 'iata_code': 'MPL'}
+
+model             gpt-4o-mini-2024-07-18
+calls             1
+prompt tokens     178
+completion tokens 244
+cost              0.000173
+latency seconds   4.08
+cache hits        0
+accounting known  True
+outcome           ok
+gaps              []
+
+settled cost against the estimate: 0.000173 of 0.0008709

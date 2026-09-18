@@ -1093,7 +1093,7 @@ def root_plan(
     estimate: int | None,
     cardinality: CardinalityEstimate | None = None,
 ) -> FetchPlan:
-    """Create the protected root slice used by the initial-v2 coordinator."""
+    """Create the protected root slice used by the planning coordinator."""
     if mode not in MODES:
         raise ConfigError(f"unknown mode {mode!r}; expected one of {', '.join(MODES)}")
     return FetchPlan(
@@ -1131,7 +1131,7 @@ def _ancestor_keys(plan: FetchPlan, leaf: Leaf) -> set[str]:
     return keys
 
 
-def _initial_v2_children(
+def _proposal_children(
     plan: FetchPlan,
     leaf: Leaf,
     proposal: PartitionProposal | None,
@@ -1249,7 +1249,7 @@ def apply_partition_proposal(
     leaf = next((candidate for candidate in plan.leaves if candidate.id == leaf_id), None)
     if leaf is None:
         raise ConfigError(f"unknown frontier leaf {leaf_id!r}")
-    children, node, reason = _initial_v2_children(plan, leaf, proposal, schema, limits)
+    children, node, reason = _proposal_children(plan, leaf, proposal, schema, limits)
     if proposal is None and proposal_failure is not None:
         reason = proposal_failure
     if plan.attempted_proposals >= proposal_attempt_limit(limits):

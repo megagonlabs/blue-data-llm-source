@@ -1,0 +1,16 @@
+a row ceiling shared by three fetches
+  France  1 record(s)  outcome=ok  stopped_by=None  rows spent=1
+  Spain   1 record(s)  outcome=ok  stopped_by=None  rows spent=2
+  Italy   0 record(s)  outcome=stopped_by_limit  stopped_by=max_rows  rows spent=2
+
+a call ceiling shared by three fetches, against a client that declares it
+  France  1 record(s)  outcome=ok  stopped_by=None
+  Spain   1 record(s)  outcome=ok  stopped_by=None
+  Italy   0 record(s)  outcome=stopped_by_limit  stopped_by=max_calls
+  budget: calls=2 cost=0.0024 committed=0.0024
+
+a cost ceiling on the same client, spent over three fetches
+  France  1 record(s)  outcome=ok  stopped_by=None  spent=0.0012
+  Spain   1 record(s)  outcome=ok  stopped_by=None  spent=0.0024
+  Italy   0 record(s)  outcome=stopped_by_limit  stopped_by=max_cost  spent=0.0024
+  0.0024 settled after two calls, and the third reservation of 0.002 does not fit

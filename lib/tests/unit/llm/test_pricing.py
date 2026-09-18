@@ -14,6 +14,28 @@ from blue_data_llm_source.llm import pricing
 from blue_data_llm_source.types import ConfigError
 
 
+def test_the_pricing_surface_a_caller_may_rely_on_is_exported_from_the_package_root() -> None:
+    """An adapter listing or checking models should not reach into a private module.
+
+    `PRICES` deliberately stays out of it: it is a mutable snapshot of time-sensitive list
+    prices, so publishing the table would be a contract this package cannot keep across a
+    price change. What is published is behaviour over it.
+    """
+    import blue_data_llm_source as pkg
+
+    for name in ("rates_for", "can_bound", "priceable_models"):
+        assert hasattr(pkg, name), name
+        assert name in pkg.__all__, name
+    assert "PRICES" not in pkg.__all__
+
+
+def test_priceable_models_lists_the_table_sorted_and_immutably() -> None:
+    models = pricing.priceable_models()
+    assert isinstance(models, tuple)
+    assert list(models) == sorted(pricing.PRICES)
+    assert all(pricing.rates_for(name) is not None for name in models)
+
+
 def test_a_known_model_uses_its_own_rates() -> None:
     cheap = pricing.bound_cost("x" * 300, "gpt-4o-mini", 100)
     dear = pricing.bound_cost("x" * 300, "gpt-4", 100)

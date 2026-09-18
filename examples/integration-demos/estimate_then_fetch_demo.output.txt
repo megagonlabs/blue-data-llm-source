@@ -1,0 +1,40 @@
+the ceiling this caller is willing to spend on one request: 0.004
+
+1. the request as first written
+  bounded          True
+  prompt bytes     798
+  output allowance 4096
+  attempts allowed 3
+  cost per attempt 0.0050536
+  max cost         0.0151608
+  over the ceiling: 0.0151608 > 0.004, so nothing is spent on it
+  max_cost is the whole fetch, retries included; sizing a ceiling against the
+  per-attempt figure means one transient failure consumes it and the retry is
+  refused.
+
+2. the same request with an output allowance the answer needs
+  bounded          True
+  prompt bytes     798
+  output allowance 256
+  attempts allowed 3
+  cost per attempt 0.0012136
+  max cost         0.0036408
+  under the ceiling: 0.0036408 <= 0.004, retries and all
+
+3. run it under a budget carrying that ceiling
+     {'name': 'Charles de Gaulle', 'iata_code': 'CDG', 'city': 'Paris'}
+     {'name': 'Orly', 'iata_code': 'ORY', 'city': 'Paris'}
+     {'name': "Nice Cote d'Azur", 'iata_code': 'NCE', 'city': 'Nice'}
+
+4. reconcile
+  reserved per attempt 0.0012136
+  calls                1
+  settled cost         0.00066748
+  accounting known     True
+  outcome              ok
+  gaps                 []
+  budget committed     0.00066748
+  budget headroom      0.00333252
+
+The overshoot between the reservation and the settled cost is released back to
+the budget, so the next request under it is sized against what is really left.

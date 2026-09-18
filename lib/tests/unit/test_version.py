@@ -2,9 +2,9 @@
 
 Six declarations, all maintained by hand. This file checked one pair of them, so the two
 interface packages went out declaring 1.1.0 to `pip` and exporting 1.0.0 from `__version__`:
-anything introspecting an installed interface reported the previous release while `llm info`
-reported the current one. Checking the library alone is what let that happen, so all three
-pairs are checked here.
+anything introspecting an installed interface reported the previous release while the
+metadata that interface printed reported the current one. Checking the library alone is what
+let that happen, so all three pairs are checked here.
 
 The interface pairs are read as text rather than imported. This suite runs in the library's
 environment, where neither interface package is installed, and a check that silently skips
@@ -34,20 +34,29 @@ PACKAGES = [
     ),
     (
         "blue-data-llm-cli",
-        "platform/cli/pyproject.toml",
-        "platform/cli/src/blue_data_llm_cli/__init__.py",
+        "platform/llm-cli/pyproject.toml",
+        "platform/llm-cli/src/blue_data_llm_cli/__init__.py",
     ),
     (
         "blue-data-llm-mcp",
-        "platform/mcp/pyproject.toml",
-        "platform/mcp/src/blue_data_llm_mcp/__init__.py",
+        "platform/llm-mcp/pyproject.toml",
+        "platform/llm-mcp/src/blue_data_llm_mcp/__init__.py",
     ),
 ]
 
-# The two shapes an `llm info` or `llm_info` answer takes in a document: the CLI's aligned
-# text block and the server's JSON. Both are read as fact by whoever is checking which
-# release they are on.
-QUOTED_VERSION = re.compile(r'^version\s{2,}(\d+\.\d+\.\d+)\s*$|"version":\s*"(\d+\.\d+\.\d+)"')
+# The shapes a version output reaches a reader in: the table `blue-llmdb metadata inspect`
+# renders, and the JSON object it returns under `--format json`, which is also what the
+# server's `llmdb_inspect_metadata` returns. Both are read as fact by whoever is checking
+# which release they are on.
+#
+# Kept as a map so each shape is counted separately. The aligned text block that stood here
+# in place of the table matched nothing anywhere once the command stopped printing one, and
+# the scan went on passing on the strength of the other shape alone.
+VERSION_OUTPUTS = {
+    "the metadata table": re.compile(r"^\s*\u2502\s*version\s*\u2502\s*(\d+\.\d+\.\d+)\s*\u2502"),
+    "the metadata JSON": re.compile(r'"version":\s*"(\d+\.\d+\.\d+)"'),
+    "the CLI version line": re.compile(r"^blue-llmdb (\d+\.\d+\.\d+)$"),
+}
 
 SKIP = {".venv", "build", "__pycache__", ".pytest_cache", ".ruff_cache", "cassettes"}
 
@@ -55,10 +64,12 @@ RELEASE_SCRIPTS = (
     "lib/scripts/build.sh",
     "lib/scripts/install.sh",
     "lib/scripts/publish.sh",
-    "platform/cli/scripts/build.sh",
-    "platform/cli/scripts/install.sh",
-    "platform/cli/scripts/publish.sh",
-    "platform/mcp/scripts/install.sh",
+    "platform/llm-cli/scripts/build.sh",
+    "platform/llm-cli/scripts/install.sh",
+    "platform/llm-cli/scripts/publish.sh",
+    "platform/llm-mcp/scripts/build.sh",
+    "platform/llm-mcp/scripts/install.sh",
+    "platform/llm-mcp/scripts/publish.sh",
 )
 
 
@@ -115,22 +126,35 @@ def test_every_documented_version_output_quotes_the_current_release() -> None:
 
     Scanned rather than listed, because a listed set has the same failure as correcting the
     declarations one at a time: the document nobody remembered stays stale.
+
+    Every shape has to be found, rather than the total having to clear a number. A total is
+    met by whichever shape happens to be common, so a shape that stops matching takes its
+    documents out of the scan and the count stays legal — which is how a version bump came
+    to leave a documented output behind with nothing failing.
     """
     current = blue_data_llm_source.__version__
     stale: list[str] = []
-    found = 0
+    found = dict.fromkeys(VERSION_OUTPUTS, 0)
+    documents = 0
     for path in ROOT.rglob("*.md"):
         if SKIP & set(path.relative_to(ROOT).parts):
             continue
+        documents += 1
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            match = QUOTED_VERSION.search(line)
-            if match is None:
-                continue
-            found += 1
-            quoted = match.group(1) or match.group(2)
-            if quoted != current:
-                stale.append(f"{path.relative_to(ROOT)}:{number} quotes {quoted}")
-    assert found >= 3, f"the scan found only {found} version outputs; it is not reaching them"
+            for shape, pattern in VERSION_OUTPUTS.items():
+                match = pattern.search(line)
+                if match is None:
+                    continue
+                found[shape] += 1
+                if match.group(1) != current:
+                    stale.append(f"{path.relative_to(ROOT)}:{number} quotes {match.group(1)}")
+    assert documents >= 20, f"the scan read only {documents} documents; it is not reaching them"
+    unmatched = sorted(shape for shape, count in found.items() if count == 0)
+    assert not unmatched, (
+        f"no document shows {', '.join(unmatched)}. Either the output changed shape and this "
+        f"scan no longer recognises it, or it stopped being documented. Both leave every "
+        f"version written in that shape unguarded."
+    )
     assert not stale, (
         f"the library exports {current} and these outputs say otherwise:\n  " + "\n  ".join(stale)
     )
@@ -142,15 +166,17 @@ def test_release_scripts_are_executable(relative: str) -> None:
     assert path.stat().st_mode & stat.S_IXUSR, f"{relative} is not executable by its owner"
 
 
-# A release qualifier attached to current behaviour: "in v1.0", "in v1.1". A forward-looking
-# deferral — "deferred to v2.0" — names a version the reader is not on, which does not go
-# stale on the next release, so it stays legal.
-RELEASE_QUALIFIER = re.compile(r"\bin v\d+\.\d+")
+# A release qualifier attached to current behaviour: "in v1.0", "in v1.1". Forward deferrals
+# were once exempt, on the reasoning that a version still ahead cannot go stale — but a
+# version only stays ahead until it ships, and the release it named arrived. Whoever reads a
+# runtime message is running some release, so naming any release is the fault. A refusal says
+# what is unsupported and what to use instead.
+RELEASE_QUALIFIER = re.compile(r"\bin v\d+\.\d+|\bdeferred to v\d+\.\d+")
 
 SRC_ROOTS = (
     "lib/src",
-    "platform/cli/src",
-    "platform/mcp/src",
+    "platform/llm-cli/src",
+    "platform/llm-mcp/src",
 )
 
 

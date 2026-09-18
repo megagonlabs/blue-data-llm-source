@@ -29,13 +29,12 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 # provider returned rather than prose this project maintains.
 SKIP = {".venv", "build", "__pycache__", ".pytest_cache", ".ruff_cache", "cassettes"}
 
-HISTORICAL: set[str] = set()
-
-# The changelog is half record and half current guidance, so it is split rather than
-# exempted. A released section describes the release it names and stays true about it;
-# scanning one would make rewriting a shipped release the only way to pass, which is the
-# opposite of what a changelog is for. The unreleased section is a claim about what is
-# about to ship, and is scanned like anything else.
+# The changelog is part record and part claim about what is about to ship, so it is split
+# rather than exempted. A released section describes the release it names and stays true
+# about it; scanning one would make rewriting a shipped release the only way to pass, which
+# is the opposite of what a changelog is for. An unreleased section is scanned like anything
+# else. Between releases there is no unreleased section and the whole file is record, until
+# the next section opens and comes back under the scan on its own.
 CHANGELOG = "CHANGELOG.md"
 
 FALSE_CLAIMS = [
@@ -79,10 +78,13 @@ FALSE_CLAIMS = [
         "rather than being refused. Proven by the tests in llm/test_client_stream.py.",
     ),
     (
-        r"not supported in v1\.0|deferred to v1\.1|v1\.1 deferral",
-        "llm.rate_limit is refused by this release, and this release is 1.1, so a refusal "
-        "or a table deferring it to v1.1 sends a caller to the version they are already "
-        "running. It is deferred to v2.0, and the setting is unsupported in 1.1. Proven by "
+        r"not supported in v\d+\.\d+|deferred to v\d+\.\d+|v\d+\.\d+ deferral",
+        "llm.rate_limit is refused by this release, so a refusal or a table deferring it to "
+        "v1.0 or v1.1 names a version the reader is already running or past. Naming any "
+        "release is the fault: the message is read by whoever is running, and a promise "
+        "attached to a version goes stale the moment that version ships — as the "
+        "replacement for these two, deferring it to v2.0, did on 2.0.0. A refusal says what "
+        "is unsupported and what to do instead, and stops there. Proven by "
         "test_client_side_rate_limiting_is_refused_by_name. The claim was written in ten "
         "files — two refusal messages, a Click help string, five documents and two READMEs "
         "— which is why it is scanned rather than corrected one file at a time.",
@@ -97,8 +99,6 @@ def _shipped_text_files() -> list[Path]:
             continue
         if SKIP & set(path.relative_to(REPO_ROOT).parts):
             continue
-        if path.name in HISTORICAL:
-            continue
         if path.name == Path(__file__).name:
             # This file holds the patterns as literals, so it matches itself.
             continue
@@ -109,18 +109,20 @@ def _shipped_text_files() -> list[Path]:
 def _current_lines(path: Path) -> list[tuple[int, str]]:
     """The lines of *path* that speak about now, numbered from one.
 
-    Everything except the changelog's released sections, for the reason recorded above
-    the CHANGELOG constant.
+    For the changelog that is the preamble and the newest section only. The newest section
+    describes the software as it currently behaves whether or not its heading still says
+    unreleased, so it is the one where a false claim would mislead a reader; every section
+    below it describes a release that is past and stays true about itself.
     """
     numbered = list(enumerate(path.read_text(encoding="utf-8").splitlines(), 1))
     if path.name != CHANGELOG:
         return numbered
     out: list[tuple[int, str]] = []
-    released = False
+    sections = 0
     for number, line in numbered:
         if line.startswith("## "):
-            released = "unreleased" not in line
-        if not released:
+            sections += 1
+        if sections <= 1:
             out.append((number, line))
     return out
 
@@ -155,15 +157,38 @@ def test_the_scan_actually_reaches_the_repository() -> None:
     # Anchored on paths that exist ONLY at the repository root, so a scan that reaches
     # `lib/` alone cannot satisfy this.
     relative = {str(p.relative_to(REPO_ROOT)) for p in files}
-    for anchor in ("CHANGELOG.md", "docs/design/01-overview.md", "lib/README.md"):
+    for anchor in ("CHANGELOG.md", "design/01-overview.md", "lib/README.md"):
         assert anchor in relative, f"scan is not reaching {anchor}"
 
 
-def test_the_changelog_is_scanned_up_to_the_first_released_section() -> None:
+def test_the_changelog_carve_out_skips_a_released_section_and_nothing_else(
+    tmp_path: Path,
+) -> None:
     """Narrowing a scan is only safe if it narrows to what it meant to.
 
-    The released sections are skipped and the unreleased one is not, and a carve-out that
-    quietly swallowed the whole file would pass every pattern for the wrong reason.
+    A carve-out that quietly swallowed the whole file would pass every pattern for the wrong
+    reason, so the split is exercised against a changelog holding both kinds of section. It
+    is a fixture and not the shipped file because between releases every section of the
+    shipped file is released, and the mechanism still has to be checked then.
+    """
+    both = tmp_path / CHANGELOG
+    both.write_text(
+        "# Changelog\n\npreamble\n\n"
+        "## 3.0.0 — unreleased\n\nabout to ship\n\n"
+        "## 2.0.0 — released\n\nalready shipped\n",
+        encoding="utf-8",
+    )
+    scanned = {line for _, line in _current_lines(both)}
+    assert "about to ship" in scanned, "the newest section must be scanned"
+    assert "already shipped" not in scanned, "an older section is a record and is not scanned"
+    assert "preamble" in scanned, "the text before the first heading is not part of any section"
+
+
+def test_every_released_section_of_the_shipped_changelog_is_skipped() -> None:
+    """The same carve-out, against the file that ships.
+
+    Which sections it has depends on where the repository is in its release cycle, so this
+    reads the headings and requires the split to land on each one correctly.
     """
     path = REPO_ROOT / CHANGELOG
     headings = [
@@ -171,13 +196,11 @@ def test_the_changelog_is_scanned_up_to_the_first_released_section() -> None:
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
         if line.startswith("## ")
     ]
-    unreleased = [number for number, line in headings if "unreleased" in line]
-    released = [number for number, line in headings if "unreleased" not in line]
-    assert unreleased and released, (
-        "the changelog no longer has both an unreleased and a released section, so this "
-        "check is no longer testing what it claims to"
-    )
+    assert headings, "the changelog no longer has version sections, so nothing is being split"
 
     scanned = {number for number, _ in _current_lines(path)}
-    assert unreleased[0] in scanned, "the unreleased section must still be scanned"
-    assert released[0] not in scanned, "a released section is a record and is not scanned"
+    newest, *older = headings
+    assert newest[0] in scanned, f"{newest[1]!r} is the newest section and must be scanned"
+    for number, line in older:
+        assert number not in scanned, f"{line!r} is a record and is not scanned"
+    assert 1 in scanned, "the changelog's own preamble must still be scanned"
