@@ -2,9 +2,9 @@
 
 ## The Source Base Class
 
-`LlmSource` is declared as `class LlmSource(DataSource)`, taking `blue_data.source.source.DataSource` as its base, which is the same base every other source in the data layer takes. `blue-data>=0.1.0` is a declared core dependency for that reason, alongside `tenacity>=9.0.0`, and it brings `pandas`, `numpy`, and `jsonpath-ng` into the install. `blue_data` is imported in exactly one module, `source.py`, and nothing in the package imports `blue` or `blue_data_ops`, which a test asserts: depending on the data layer this source belongs to is one thing, and depending on the orchestrator that queries it is another.
+`LlmSource` is declared as `class LlmSource(DataSource)`, using the same `blue_data.source.source.DataSource` base as the other sources in the data layer. The core dependencies are therefore `blue-data>=0.1.0` and `tenacity>=9.0.0`; `blue-data` also installs `pandas`, `numpy`, and `jsonpath-ng`. Only `source.py` imports `blue_data`. The package imports neither `blue` nor `blue_data_ops`, and a test enforces that separation from the orchestration layer.
 
-The base order carries weight that is easy to miss. `DataSource` is a plain class, not an abstract one. Most of its methods return an empty result instead of raising, so one left unoverridden here answers nothing instead of failing. That is not true of all of them any more: the transaction methods raise `NotImplementedError` naming this source, and the orchestrator-tool methods carry real behaviour, which is why this source overrides those three rather than inheriting them: two are narrowed to the tools it can answer, and `execute_query_nl_tools` is refused. Listed the other way round, or simply left unwritten, `fetch_databases` would return an empty list and `execute_query` would return no records without a model ever being contacted, and nothing would report a problem. A test walks the shared surface and asserts each method resolves to `LlmSource`, which is what turns an ordering mistake into a failing test, not a silently empty source.
+Base-class order affects behavior because `DataSource` is a concrete class whose default methods often return empty results. If a required override is omitted, calls such as `fetch_databases` or `execute_query` can appear successful while doing no work. Transaction methods raise `NotImplementedError`; `get_nl_tools` and `execute_nl_tool` are narrowed to supported tools, and `execute_query_nl_tools` is refused. A test walks the shared surface and verifies that each required method resolves to `LlmSource`.
 
 Inheritance does not extend to construction by protocol name. `DataRegistry.connect_source` returns the live instance while it is registered, and reconstructs one from the class path recorded at registration once it is not, so the registration outlives the object. `DataRegistry.register_source` takes an already-built instance, stores it under its name, and reads only `name` and `properties`, which is the route that works. A protocol-name arm would be an upstream change, and is not needed: reconstruction goes through the recorded class.
 
@@ -14,10 +14,10 @@ All interfaces are thin adapters over the Python library. Every path that fetche
 
 | Interface | Package | Technology | Primary Use | State |
 |-----------|---------|-----------|-------------|-------|
-| Python Library | `blue-data-llm-source` | Native Python API | Embedding the source in applications, planners, and operators | Shipped |
-| MCP Server | `blue-data-llm-mcp` | MCP over stdio | LLM agent tool use, through `llmdb_query`, `llmdb_estimate`, `llmdb_list_models`, `llmdb_inspect_model` and `llmdb_inspect_metadata` | Shipped |
-| CLI | `blue-data-llm-cli` | Click + Rich | Interactive exploration, debugging, scripting | Shipped |
-| REST API | — | — | — | Not implemented, not scheduled |
+| Python Library | `blue-data-llm-source` | Native Python API | Embedding the source in applications, planners, and operators | Available |
+| MCP Server | `blue-data-llm-mcp` | MCP over stdio | LLM agent tool use, through `llmdb_query`, `llmdb_estimate`, `llmdb_list_models`, `llmdb_inspect_model` and `llmdb_inspect_metadata` | Available |
+| CLI | `blue-data-llm-cli` | Click + Rich | Interactive exploration, debugging, scripting | Available |
+| REST API | — | — | — | Not implemented or scheduled |
 
 ### Python Library
 
@@ -80,7 +80,7 @@ Click commands are synchronous, so the adapter calls the library's synchronous w
 2. Instance properties are merged with any per-call properties, and the model name and the output allowance are read from the merge.
 3. An empty request returns a bounded estimate of zero. It never reaches a model, so it cannot cost anything.
 4. `checks` normalises the attributes and the context, and `prompts.build_fetch_prompt` renders the same prompt the fetch path would send. No provider is contacted. A client *is* resolved and a budget *is* built, because the bound comes from the client that would answer: it must declare `Capability.ESTIMATE` and expose `bound_for_attempt`, and one that does neither produces `bounded` false carrying a reason instead of a figure.
-5. `pricing.bound_cost` bounds that prompt. A `ConfigError` from it becomes an `Estimate` with `bounded` false carrying the error's text as `reason`, rather than propagating, because asking what a request might cost is reasonable even for a model this package cannot price and the honest answer there is that it cannot say.
+5. `pricing.bound_cost` bounds that prompt. If pricing raises `ConfigError`, `estimate` returns `bounded=False` and carries the error text in `reason` instead of propagating the exception.
 6. Otherwise the result is an `Estimate` carrying `bounded`, `max_cost`, `model`, `prompt_bytes`, `max_output_tokens`, `max_cost_per_attempt`, and `max_attempts`. `max_cost` bounds the whole of a `flat` fetch: it is the per-attempt figure accumulated over the permitted attempts, so a ceiling set to exactly `max_cost` admits every attempt the figure accounted for.
 
 The figure is the same one the client reserves against for the same request, since both reach `bound_cost` with the same rendered prompt, the same model, and the same output allowance. That is the property worth protecting, not an incidental consequence: an estimate a caller trusts and a ceiling the run enforces have to be one number, or a request that sizes inside a ceiling is refused when it runs.
@@ -136,7 +136,7 @@ The budget reaches whichever client answers as a per-call property, not as an at
 5. On a miss a per-event-loop semaphore bounds concurrency.
 6. The retry loop begins. Each attempt caps the provider timeout at the time the budget has left, bounds those call arguments through `pricing.bound_cost` when a cost ceiling is configured, and reserves one attempt and that bound against the budget the run handed down, which is also where the deadline is rechecked. A configured `llm.timeout` is checked for being a finite positive number before it is capped, because a `NaN` survives the comparison that narrows it and would be handed to the provider as the timeout, and an integer too large to become a float raises a `ConfigError` naming the field rather than an `OverflowError` from inside the conversion. The call arguments are built and priced first, so anything that can fail locally fails uncharged. The bound is then checked against the budget *without claiming*, because importing the shipped adapter fetches a remote price map on first use and a request the budget was always going to refuse should not reach the network to be told so. The provider is imported next and the attempt claimed last, immediately before entry: a claim held across the import was visible to a sibling sharing the budget, which was refused on an allowance the final ledger said was free. A missing provider extra raises `ConfigError` naming it, uncharged, because nothing has been claimed at that point. Any provider exception becomes a `TransportError` carrying the original and keeps its reservation unpriced, because the provider was contacted. Retry depth comes from `Budget.effective_retries()`, as that many attempts plus one, so a derived budget cannot spend more attempts than its parent authorised, and a retry that cannot reserve raises `BudgetExceeded` naming the ceiling.
 7. The response is materialised to a mapping and rejected unless it carries a `choices` list. Materialisation sits inside the same guard as the call, so a response that cannot be read resolves its reservation instead of leaving the claim outstanding while the retry takes another. The guard also covers the exits that are not ordinary exceptions, a cancelled task or a keyboard interrupt among them, since the provider was contacted either way and an unresolved claim on a caller-owned budget is headroom every later request loses. Cost is read from the provider response, and a cost that cannot be read, including a non-finite one, is reported as unknown rather than as zero, because converting an accounting failure into a free call is how a ceiling comes to admit every remaining attempt while the running total stays where it started.
-8. A known cost settles the reservation, which releases whatever the bound overshot by. An unknown one resolves it at the bound, which then stands as the call's recorded cost as well. The cache stores the payload, usage is recorded on the client and appended to the call's `usage_sink` list when one was supplied, and the message content is extracted. A response with no choices, or a choice with no content, raises a `TransportError`.
+8. A known cost settles the reservation, which releases whatever the bound overshot by. An unknown one resolves it at the bound and records the bound as the call's cost. The cache stores the payload, usage is recorded on the client and appended to the call's `usage_sink` list when one was supplied, and the message content is extracted. A response with no choices, or a choice with no content, raises a `TransportError`.
 
 ---
 
@@ -208,7 +208,7 @@ Two matching rules follow from the same reasoning. A model name resolves only wh
 
 The same reasoning removed the fallback that priced an unlisted model at the table's dearest entry, since a model the table has never heard of may cost more than that, and a figure invented for it is not a bound either.
 
-The consequence for a caller is that the floor of the bound is the whole `max_tokens` allowance at the model's output rate. With the shipped defaults of `gpt-4o` and 4096 output tokens that floor is about $0.041, so a smaller `limits.max_cost` refuses every call before one is made, and the remedy is a smaller `llm.max_tokens`, not a larger ceiling.
+The minimum cost bound is the full `max_tokens` allowance at the model's output rate. With the default `gpt-4o` model and 4096 output tokens, it is about $0.041. A lower `limits.max_cost` refuses the call before provider contact. Reduce `llm.max_tokens` when the answer needs fewer tokens.
 
 `LlmSource.estimate` publishes this module's answer for a request the caller has in hand, which is how that floor stops being a surprise. It reaches `bound_cost` with the prompt the fetch path would render, so the figure it reports and the figure a run reserves against are the same number, and a caller can size a ceiling against the request it is going to bound rather than against an example. Where `bound_cost` raises, `estimate` reports the refusal as an unbounded result carrying the reason instead of propagating it, since a caller asking what something might cost is entitled to an answer of "not knowable here".
 
@@ -281,7 +281,7 @@ It declares rows and nothing else, so a `limits.max_calls`, `limits.max_cost`, o
 
 **Validation on construction**
 
-Each `Limits` field is checked as the object is built. `max_rows`, `max_calls`, and `max_retries` must be whole numbers and not booleans; `max_seconds` and `max_cost` must be real, finite numbers; none may be negative. A violation raises `ConfigError` naming the field and the value. The non-finite check earns its place: a `NaN` ceiling compares false against every spend, so it reads as configured and enforces nothing, which is the exact failure this component exists to prevent. A non-finite provider cost is treated the same way one level down, as unreadable rather than as zero.
+Each `Limits` field is checked as the object is built. `max_rows`, `max_calls`, and `max_retries` must be whole numbers and not booleans; `max_seconds` and `max_cost` must be real, finite numbers; none may be negative. A violation raises `ConfigError` naming the field and the value. The non-finite check prevents a `NaN` ceiling from appearing configured while comparing false against every spend. A non-finite provider cost is treated the same way one level down, as unreadable rather than as zero.
 
 **Enforcement order within `reserve`**
 
@@ -309,7 +309,7 @@ A reservation resolves exactly once and raises if resolved twice. `release` is c
 
 `configured_axes` answers a different question and walks the chain the other way: which axes carry a ceiling anywhere from this budget to the root, whatever its value. That is what the capability refusal reads, because a ceiling set on a parent is still a ceiling the run has to honour and the client that has to honour it is the one answering this request.
 
-`check_deadline` and `rows_exhausted` are published for callers and are not reached from within this release, which rechecks the deadline inside `reserve` on every call it makes (one on the `flat` path, and one per part plus one to plan the split otherwise). `note_exhausted` is reached: the facade calls it once the run is over, so a ceiling that completed work crossed is reported without being raised.
+`check_deadline` and `rows_exhausted` are public methods for callers that manage a budget directly. The library does not call them because `reserve` rechecks the deadline on every provider attempt: once on the `flat` path, or once per part plus the planning calls for a split request. The facade calls `note_exhausted` after the run so a ceiling crossed by completed work is reported without raising.
 
 ---
 
@@ -344,7 +344,7 @@ Accepting a bare object and the common wrapper keys costs nothing and avoids fai
 
 **A repeated key**
 
-An object that carries the same key twice is rejected, and the check runs at every nesting depth rather than on record keys alone, since alignment only ever sees record-level keys and nesting would otherwise be a way past it. Python's decoder keeps the last of such a pair and leaves no trace that the first existed, which resolves the ambiguity the opposite way from the rest of this pipeline and does it silently. Rejecting is the honest answer, because which of two values for one key the model meant is not knowable here and keeping either is a guess the caller never sees.
+An object that carries the same key twice is rejected at every nesting depth. Alignment sees only record-level keys, so a shallower check would miss nested duplicates. Python's decoder otherwise keeps the final value without recording the duplicate. The library cannot determine which value the model intended, so it rejects the object instead of choosing silently.
 
 This is a different case from two keys that merely normalise alike, and the two are answered differently on purpose. `First Name` beside `first_name` leaves two distinguishable keys, so alignment can keep the first, report the second in `ExecMeta.key_collisions` with the value it carried, and hand the caller enough to decide. One key repeated leaves nothing to tell the values apart by and nothing to name in a report.
 

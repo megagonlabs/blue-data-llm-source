@@ -2,9 +2,9 @@
 
 ## Overview
 
-LlmSource uses a single test tier: **unit tests**. There is no integration tier, because there is no store to integrate with and the only external system is a model provider, which a test must not reach. Every I/O boundary is doubled. The suite runs offline and passes with no provider SDK installed. It is run manually today; running it on every push is part of the proposed CI pipeline.
+LlmSource uses one test tier: **unit tests**. The source has no backing store, and tests must not contact the only external system, the model provider. Each I/O boundary therefore has a test double. The suite runs offline without a provider SDK. It currently runs manually; the proposed CI pipeline would run it on every push.
 
-That last property is a design consequence, not a testing convenience. The model boundary is a structural protocol and the provider package is imported lazily inside the call that uses it, so a test substitutes a scripted client instead of patching a vendor SDK, and the whole package remains importable and exercisable without one.
+The model boundary is a structural protocol, and the provider package is imported lazily inside the call that uses it. Tests can therefore supply a scripted client without patching a vendor SDK, and the package remains importable and testable without the provider dependency.
 
 ---
 
@@ -155,7 +155,7 @@ Because the import is lazy and the stub replaces it, the client's whole surface 
 
 Response-shape defences use constructed payloads, not recordings, because the interesting cases are the ones a provider produces rarely: a response with no `choices` list, an empty `choices` list, and a choice with no message content. Each must raise a `TransportError` naming the shape.
 
-The same stub answers a call that asked for a stream, yielding the chunks it was built with through an ordinary iterator on the synchronous path and an asynchronous one on the other. It also carries the chunk assembler the client calls. One property of that assembler is deliberate, not incidental: it always attaches a usage block, counting the assembled text itself when the chunks carried none, because the real one does. A double that simply left usage out would let a client that priced the assembled block pass here and settle an invented figure against a real provider, so the double reproduces the trap rather than smoothing it away. Removing that behaviour is enough on its own to stop the accounting tests failing when the client's handling of it is reverted, which is what makes it load-bearing.
+The same stub answers a call that asked for a stream, yielding the chunks it was built with through an ordinary iterator on the synchronous path and an asynchronous one on the other. It also carries the chunk assembler the client calls. The assembler always attaches a usage block, counting the assembled text itself when the chunks carried none, because the real one does. A double that left usage out would let a client that priced the assembled block pass here and settle an invented figure against a real provider. Removing this behavior is enough to stop the accounting tests from detecting a regression in the client's handling of it.
 
 ### The cache
 
@@ -247,15 +247,15 @@ An unknown `llm.*` key is asserted to raise `ConfigError` whose message lists th
 
 ## 7. The Base Class Tests
 
-`LlmSource` inherits the data layer's `DataSource`, and four files cover what that gives, what it does not, the line it must not cross, and what every shipped file is allowed to say about it.
+Four test files cover inheritance from `DataSource`, signature compatibility, dependency boundaries, and documentation claims.
 
-`test_blue_data.py` asserts the inheritance itself, that `BlueDataLlmSource` is the same object as `LlmSource`, not a subclass of it, and that the query surface and the virtual hierarchy answer from this class and not from the base. That last assertion is why the file exists. The companion contract test does not require every upstream method to resolve locally: six transaction methods are listed in its `OUT_OF_SCOPE` map with the reason for each, one test asserts that upstream really does refuse those for this source instead of answering empty, and another fails if an exemption outlives the method it exempts. Anything upstream adds that is on neither list fails the test until someone decides which it is, which is what makes an inherited addition impossible to ship unreviewed. Most `DataSource` methods return an empty result rather than raising, so one left unoverridden makes the source report no databases and return no records without failing anywhere, which is the quietest way a source can be broken.
+`test_blue_data.py` verifies inheritance, confirms that `BlueDataLlmSource` aliases `LlmSource`, and checks that the query surface and virtual hierarchy resolve locally. Six transaction methods are listed in the contract test's `OUT_OF_SCOPE` map with a reason for each. Tests verify that upstream refuses those methods and that exemptions disappear when their corresponding methods do. Any new upstream method must be classified before the suite passes.
 
-`test_contract.py` compares signatures against the upstream `DataSource` with `inspect.signature`, parameter by parameter, alongside a table of deliberate variances each carrying its reason. Inheritance turns most upstream drift into a type error, so what this covers is the rest: a signature that still type-checks because the base method is untyped, and a method that resolves to the base rather than to this class. It prints the path of the `blue_data` it compared against, because an installed copy can be older than a checkout and confirming against a version nobody runs is worse than not checking.
+`test_contract.py` compares signatures with the upstream `DataSource` using `inspect.signature` and records each deliberate variance. It covers untyped signature drift and methods that resolve to the base rather than to this class. The test prints the path of the inspected `blue_data` package so the result can be tied to the installed dependency.
 
-`test_packaging.py` guards the other side of the same line. It scans the package for an import of `blue` or `blue_data_ops` and fails on either, because depending on the data layer this source belongs to is one thing and depending on the orchestration runtime that queries it would make the source unusable outside that runtime. A boundary that lives only in a document holds until someone adds an import.
+`test_packaging.py` fails if the package imports `blue` or `blue_data_ops`. This keeps the source dependent on the data layer without coupling it to the orchestration runtime.
 
-`test_claims_about_the_base.py` covers the prose, not the code. It walks every shipped `.md`, `.py` and `.toml` in the repository and fails on a phrasing that asserts something the runtime contradicts: that every base method returns empty, that the registry cannot reach this source by name, that a streamed call cannot be asked for, that a withdrawn setting is held back until a release the reader is already running. Each pattern is paired with why it is false and with the test that proves it, and a claim that becomes true again is meant to move its pattern in the same commit. Correcting such a claim file by file is what this replaces: the same one was fixed four times, in a different file each time, and the copy nobody thought to grep for outlived all four.
+`test_claims_about_the_base.py` scans shipped `.md`, `.py`, and `.toml` files for statements contradicted by runtime behavior. Each pattern records why the statement is false and names the test that establishes the current behavior. If a statement becomes true, its pattern is updated in the same change.
 
 ---
 
@@ -265,17 +265,17 @@ Each platform package tests its own translation layer and nothing below it. Both
 
 **CLI.** Tests cover all twelve commands through Click's runner, plus the four layers under them: the option translation and the settings envelope, the profile store and its precedence chain, the renderer and its control-character and formula guards, and the error-to-exit-code mapping for each classified error kind. The profile tests run against a throwaway CLI home, and a guard fails the run if the real `~/.blue-llmdb` appears or disappears. One test checks the shape of the CLI itself (the command tree, the version, that every result command accepts all four formats) because those are claims about every command at once. Another reads the CLI README, extracts every `blue-llmdb` command from its shell blocks, and runs them in the order they appear against one throwaway home, since the README is a walkthrough and the sequence has to work. Install and tooling blocks are not executed. A command that stops working there fails the suite rather than surviving as a false claim about the product.
 
-**MCP.** Tests cover the three tool handlers, the ceilings binding through the tool path, the dispatcher's behaviour on an unknown tool name, and the input schemas, which are validated with `jsonschema` because they are hand-written and are the contract an agent actually reads. A separate test asserts the import boundary: the module holding the tool definitions and the translation must not import the protocol SDK, which is what keeps that module testable without it. A further file drives the server's own `call_tool` coroutine rather than the translation under it, reconstructed from the module's source because the SDK is absent here. That one earns its awkwardness: the translation tests stayed green while the shipped handler dispatched synchronously from an async context, so the library refused every fetch over the transport and nothing below the server could see it.
+**MCP.** Tests cover the five tool handlers, ceilings through the tool path, unknown-tool dispatch, and the hand-written input schemas. A separate test verifies that tool definitions and argument translation do not import the protocol SDK. Another drives the server's `call_tool` coroutine, reconstructed from source when the SDK is absent, to cover async dispatch at the transport boundary.
 
 ---
 
 ## 9. The Offline Guarantee
 
-The suite makes no network call, spawns no subprocess, and touches no database. All three are asserted, not assumed: an autouse guard replaces the entry points for each class, raises on any attempt, counts what was attempted, and fails the test if any count is non-zero. Guarding sockets alone would leave a suite free to shell out or open a database and still call itself offline. The guard has its own tests, one per class, because a guard that silently stopped working would take the guarantee with it.
+The suite makes no network call, spawns no subprocess, and touches no database. An autouse guard replaces the entry points for each class, raises on any attempt, records attempts, and fails when a count is non-zero. The guard has one self-test for each class.
 
 The one deliberate hole is the `llm.cache` branch, whose backend is a local sqlite file. Those tests carry a marker that permits sqlite and nothing else; the remote drivers stay blocked.
 
-The guarantee is what makes the suite runnable by anyone with a checkout, on any machine, with no credential. It also removes the incentive to skip a test because running it costs money, which is how a suite quietly stops covering its own boundaries.
+The suite therefore runs from a checkout without credentials or paid provider calls.
 
 ---
 

@@ -1,12 +1,12 @@
 # Features
 
-Everything the library does, one short example each.
+This page gives a short, runnable example for each major library feature.
 
-Every example on this page runs offline, because each supplies its own `llm_fn`, a plain `(prompt) -> str` callable used as the model for that call. Replace it with nothing at all to reach a real provider, and read [guide.md](guide.md#choosing-a-model-and-provider-settings) first, because that spends money.
+Every example runs offline by supplying an `llm_fn`, a plain `(prompt) -> str` callable used as the model for that call. Omit `llm_fn` to use a configured provider. Review [the provider settings](guide.md#choosing-a-model-and-provider-settings) first because provider calls may incur charges.
 
 ## Structured records from a model's own knowledge
 
-A natural-language question in, a list of dicts out, drawn from the model rather than from a store.
+The library asks a model a natural-language question and returns the answer as a list of dictionaries. It does not query a backing store.
 
 ```python
 from blue_data_llm_source import LlmSource
@@ -42,7 +42,7 @@ print(result.records)
 
 ## Diagnostics on every result
 
-A result says what happened to it. Keys the model returned under a different spelling, keys that matched nothing, values that failed their declared type, and two keys that reached one attribute are all reported, never swallowed.
+Each result includes diagnostics for remapped keys, unmatched keys, type mismatches, and multiple returned keys that map to the same attribute.
 
 ```python
 from blue_data_llm_source import LlmSource
@@ -141,7 +141,7 @@ print(unpriced.bounded, unpriced.max_cost)
 
 ## An injectable model client
 
-Any object with `complete` and `acomplete` can be the model. Injection is structural — no subclassing, no registry, no `isinstance` check against a concrete class.
+Any object with `complete` and `acomplete` can provide model responses. Injection is structural; it requires no subclass, registry, or `isinstance` check against a concrete class.
 
 ```python
 import asyncio
@@ -373,4 +373,4 @@ Two adapters ship over this library. Neither holds retrieval logic of its own. S
 
 ## Not built
 
-There is no REST interface, no retrieval or grounding path, no factual validator, and no completeness measure. [architecture.md](architecture.md#what-this-architecture-deliberately-does-not-contain) says why for each.
+There is no REST interface, no retrieval or grounding path, no factual validator, and no completeness measure. [architecture.md](architecture.md) describes these boundaries and the three implemented interfaces.

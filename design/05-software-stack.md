@@ -110,7 +110,7 @@ Caching is optional and is a property of the client rather than of the source. T
 
 Two implementations ship in `cache/` and need nothing beyond the standard library. `MemoryCache` is in process and bounded, evicting least-recently-used entries past its ceiling. `FileCache` writes one JSON file per entry into a directory, keyed by the SHA-256 of the cache key, replacing each file atomically so a reader never sees a partial entry. Both are reached through `cache_store`.
 
-The `llm.cache` switch is not wired to either of them and still opens `diskcache`, which means the persistent cache reached by that switch requires the `llm` extra while the shipped file store does not. Treat the two paths as unconnected until this is reconciled in code.
+The `llm.cache` switch is separate from both stores and opens `diskcache`. That persistent cache requires the `llm` extra, while the included file store does not. Treat the two cache paths as independent until they are reconciled in code.
 
 ---
 
@@ -147,7 +147,7 @@ Click commands are synchronous and call the library's synchronous wrapper. Rich 
 
 ### REST API
 
-Not implemented and not scheduled. No HTTP framework, ASGI server, or route handler exists in this repository.
+Not implemented or scheduled. No HTTP framework, ASGI server, or route handler exists in this repository.
 
 ---
 

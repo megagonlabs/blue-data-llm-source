@@ -1,8 +1,8 @@
 # REST API
 
-**There is no REST API.** No HTTP application, route handler, ASGI server, or web dependency exists in any package in this repository, and none is scheduled.
+**There is no REST API, and none is scheduled.** The packages contain no HTTP application, route handler, ASGI server, or web dependency.
 
-The decision is recorded in [`design/03-high-level-architecture.md`](../design/03-high-level-architecture.md), the component status table in [`design/04-detailed-architecture.md`](../design/04-detailed-architecture.md), and the stack choices in [`design/05-software-stack.md`](../design/05-software-stack.md). [architecture.md](architecture.md#what-this-architecture-deliberately-does-not-contain) is the user-facing version of the same statement.
+The architecture is documented in [`design/03-high-level-architecture.md`](../design/03-high-level-architecture.md), [`design/04-detailed-architecture.md`](../design/04-detailed-architecture.md), and [`design/05-software-stack.md`](../design/05-software-stack.md). See also the user-facing [architecture summary](architecture.md#what-this-architecture-does-not-contain).
 
 ## The three interfaces that do exist
 
@@ -12,7 +12,7 @@ The decision is recorded in [`design/03-high-level-architecture.md`](../design/0
 | `blue-llmdb` | A command line: twelve commands over four components, with profiles and four output formats. | [cli.md](cli.md) |
 | `blue-data-llm-mcp` | An MCP server over stdio, five tools, for an agent rather than a person. | [mcp.md](mcp.md) |
 
-Pick by caller. Python when you are writing code against the library, the command line when a person or a shell script is driving, MCP when a model-driven client is.
+Use Python for application code, the command line for interactive or scripted shell use, and MCP for model-driven clients.
 
 ## If you need HTTP
 

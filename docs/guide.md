@@ -1,6 +1,6 @@
 # Developer Guide
 
-The library task by task: asking a question, shaping the answer, bounding what it costs, splitting a large request, and deciding whether to trust what came back.
+This guide covers the main library tasks: asking a question, shaping the answer, setting cost bounds, splitting a large request, and evaluating the result metadata.
 
 Every example here runs as shown. Most supply an `llm_fn`, a plain `(prompt) -> str` callable used as the model for that call, so they execute offline and for free. The two examples that would reach a provider say so in a line above the block.
 
@@ -33,7 +33,7 @@ for record in result.records:
 print(result.meta.outcome)
 ```
 
-`FetchResult` supports `len()` and iteration over the records, so `len(result)` and `for record in result` both work. `result.is_empty` is the same question asked once.
+`FetchResult` supports `len()` and iteration over its records, so `len(result)` and `for record in result` both work. The `result.is_empty` property reports whether the record list is empty.
 
 `attrs` accepts a list of names, a list of `Attr` objects, or a list of `{"name": ..., "type": ...}` dicts. `context` is free text that clarifies what an attribute name means. Put "airport code in the IATA three-letter form" there rather than in the question.
 
@@ -165,7 +165,7 @@ print(sized.max_attempts, round(sized.max_cost_per_attempt, 6))
 
 `max_cost` bounds the whole fetch, not one try: it is the per-attempt figure accumulated once per attempt the fetch is permitted, added the way the budget ledger adds it. Size a ceiling against `max_cost`, not against `max_cost_per_attempt`, or one transient failure consumes the ceiling and the retry is refused.
 
-**Size a cost ceiling against the floor of the bound, which is the output allowance alone.** The prompt contributes little; `llm.max_tokens` at the model's output rate contributes the rest. With the shipped defaults of `gpt-4o` and 4096 output tokens that floor is about $0.041, so a `limits.max_cost` below it refuses every call before one is made. Lower `llm.max_tokens` to what the answers actually need rather than raising the ceiling.
+**The minimum cost bound is the full output allowance.** The prompt contributes relatively little; `llm.max_tokens` at the model's output rate contributes the rest. With the default `gpt-4o` model and 4096 output tokens, the minimum is about $0.041. A lower `limits.max_cost` refuses the call before provider contact. Reduce `llm.max_tokens` when the answer needs fewer tokens.
 
 An unpriced model is answered, not raised on:
 
@@ -378,7 +378,7 @@ print(source.execute_query_nl(
 ))
 ```
 
-**`optional_properties` is not a way to inject a client.** `execute_query_nl` takes `llm_fn` as a real parameter, as above. `execute_query` does not, and a key named `llm_fn` placed in its `optional_properties` is merged into the property map, ignored, and the request falls through to the provider-backed client — a billed call where you expected your callable. The closed-key check covers the `llm.*`, `limits.*`, and `plan.*` namespaces only, so any other name is accepted and unused. To drive `execute_query` against your own model, inject the client at construction:
+**`optional_properties` cannot inject a client.** `execute_query_nl` takes `llm_fn` as a parameter, but `execute_query` does not. Placing `llm_fn` in `optional_properties` raises `ConfigError` before provider contact because the property map is closed. To use a custom model with `execute_query`, inject the client at construction:
 
 ```python
 import asyncio

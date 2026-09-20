@@ -1,8 +1,8 @@
 # Architecture
 
-How a request becomes records, which component does what, and where the money is spent, enough to decide whether this fits your system.
+This page traces a request through the system, identifies each component's responsibility, and shows where provider calls occur.
 
-This is the user-facing subset of [`design/03-high-level-architecture.md`](../design/03-high-level-architecture.md) and [`design/04-detailed-architecture.md`](../design/04-detailed-architecture.md), which remain the source of truth for anything stated here.
+For contributor-oriented detail, see [`design/03-high-level-architecture.md`](../design/03-high-level-architecture.md) and [`design/04-detailed-architecture.md`](../design/04-detailed-architecture.md).
 
 ## Overview
 
@@ -20,7 +20,7 @@ Every path that returns records ends up in `LlmSource.afetch`. The adapters tran
 
   ┌───────────────┐  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
   │  Python lib   │  │  MCP server   │  │      CLI      │  │   REST API    │
-  │   (shipped)   │  │   (shipped)   │  │   (shipped)   │  │(not built)    │
+  │  (available)  │  │  (available)  │  │  (available)  │  │(not available)│
   └───────┬───────┘  └───────┬───────┘  └───────┬───────┘  └───────────────┘
           └──────────────────┴──────────────────┘
                              │
@@ -60,7 +60,7 @@ Every path that returns records ends up in `LlmSource.afetch`. The adapters tran
                      └────────────────────────────┘
 ```
 
-There is no REST interface. No HTTP application, route handler, or server dependency exists in any package, and none is scheduled.
+There is no REST interface, and none is scheduled. No package contains an HTTP application, route handler, or server dependency.
 
 ## Components
 
@@ -77,11 +77,11 @@ There is no REST interface. No HTTP application, route handler, or server depend
 | Shared contracts | `types.py`, `views.py`, `_constants.py` | The dataclasses, protocols, exception hierarchy, outcome vocabulary, and the one serialization of `ExecMeta` every adapter publishes |
 | Compatibility alias | `compat/blue_data.py` | Binds `BlueDataLlmSource` to `LlmSource` so an older import keeps working |
 
-`LlmSource` extends `blue_data.source.source.DataSource`, so it is a source of the data layer by type rather than by resemblance. `blue_data` is imported in exactly one module. Nothing in the package imports `blue` or `blue_data_ops`, and a test asserts it: depending on the data layer this source belongs to is one thing, depending on the orchestrator that queries it is another.
+`LlmSource` extends `blue_data.source.source.DataSource`, so it implements the data-layer source type directly. Only `source.py` imports `blue_data`; the package does not import the `blue` or `blue_data_ops` orchestration layers. A test enforces that dependency boundary.
 
 ## Data flow: a flat fetch
 
-The default. One question, one model call, one list of records.
+The default path sends one question in one model call and returns one list of records.
 
 1. Arguments are normalised. A query that is not a string is a caller mistake and raises; an empty one is an empty ask and returns immediately with `outcome="empty_query"`, before a budget or a client exists.
 2. Instance properties, an injected client's own properties, and per-call properties are merged in that precedence order. Every `llm.*`, `limits.*`, and `plan.*` name is checked against a closed set, so a misspelling is refused rather than accepted and ignored.
@@ -96,7 +96,7 @@ Steps 1 to 4 and 6 to 8 contact nothing. Step 5 is the only place money is spent
 
 ## Data flow: a decomposed fetch
 
-A large ask can be split. Nothing chooses a shape for you — `plan.mode` does, and it defaults to `flat`.
+A large request can be split into smaller requests. The caller selects the shape with `plan.mode`, whose default is `flat`.
 
 | Mode | What it does | Extra model calls before extraction |
 |---|---|---|
@@ -124,13 +124,13 @@ Direct Python callers can additionally opt into rule-backed distribution search 
 4. The client that would answer is resolved and asked for its bound. Only a client that drives the provider itself can give one, so a client that declares `Capability.ESTIMATE` and implements `bound_for_attempt` produces a figure and anything else produces `bounded=False` with a reason.
 5. The per-attempt figure is accumulated once per attempt the fetch is permitted, giving a bound on the whole fetch rather than on one try.
 
-The estimate and the reservation are one number asked for at two moments: both reach the same bound with the same prompt, model, and output allowance. That is what stops a request that sizes inside a ceiling from being refused when it runs.
+The estimate and runtime reservation use the same prompt, model, output allowance, and bound calculation. A request estimated within a ceiling therefore uses the same bound when it runs.
 
 `estimate` reads no `plan.*` setting. A decomposed request costs this figure times the calls it makes.
 
 ## The budget
 
-Four axes, each optional, each `None` meaning unlimited.
+The budget has four optional axes. `None` means unlimited on that axis.
 
 | Axis | When it is enforced | Enforced by |
 |---|---|---|
@@ -139,21 +139,21 @@ Four axes, each optional, each `None` meaning unlimited.
 | `limits.max_cost` | An upper bound is claimed before the attempt and reconciled against the real cost after | The answering client |
 | `limits.max_rows` | Applied once the records are parsed, because that is when the count exists | `LlmSource` itself |
 
-Calls, time, and cost are claimed *before* the provider is contacted, not recorded after it, which is the difference between preventing an overrun and reporting one. Cost cannot be known before a call returns, so what is claimed is an upper bound: the prompt's length in UTF-8 bytes plus a framing allowance at the model's input rate, plus the whole output allowance at its output rate. Where no bound can be established, the ceiling is refused rather than claimed against a guess.
+Calls, time, and cost are claimed *before* the provider is contacted. Cost is unknown until a call returns, so the reservation uses an upper bound: the prompt's UTF-8 byte length plus a framing allowance at the model's input rate, plus the full output allowance at its output rate. If the bound cannot be established, the request is refused under a cost ceiling.
 
 Claims are taken under one lock shared by a whole budget family, so a fan-out of concurrent leaves cannot collectively overshoot while each sees room for one more call. Each claim is a handle that resolves exactly once: settled against the real cost, kept at the bound when the cost cannot be read, or released for an attempt that never reached the provider.
 
-A `Budget` you own accumulates across every call you hand it to. Each fetch derives a child that spends from what the parent has left, so the effective ceiling on every axis is the smaller of the two. That is what lets a planner hand one budget to ten fetches without giving each a full allowance.
+A caller-owned `Budget` accumulates across every call that receives it. Each fetch derives a child that spends from the parent's remaining allowance, so the effective ceiling on every axis is the smaller of the parent and child limits. A planner can therefore share one total across several fetches.
 
 Which ceilings bind depends on the client. A client declares its axes through `budget_capabilities()`, and a ceiling on an axis it does not declare is refused at the first fetch rather than reported as holding. The practical case is `llm_fn`: a wrapper around your callable can prove it invoked the callable once and nothing more, so it declares rows alone.
 
-The time axis promises less than the other three. It bounds admission and every cooperative wait, not work that never yields. `asyncio` cannot interrupt code that is not awaiting. [What the time ceiling actually bounds](../lib/README.md#what-the-time-ceiling-actually-bounds) is the one place the exclusions are listed.
+The time axis covers admission and cooperative waits, but not work that never yields. `asyncio` cannot interrupt code that is not awaiting. See [what the time ceiling actually bounds](../lib/README.md#what-the-time-ceiling-actually-bounds) for the complete list of exclusions.
 
 ## The model boundary
 
 One structural protocol, two methods: `complete(prompt, properties)` and `acomplete(prompt, properties)`. Any object carrying them can be substituted, and nothing in the package performs an `isinstance` check against a concrete client class. `afetch` calls `acomplete`, and `fetch` wraps `afetch`, so the asynchronous form is the one every fetch reaches.
 
-Two clients ship. `DefaultLlmClient` reaches a provider through `litellm`, imported lazily inside the call so the package installs and its whole test suite runs with no provider SDK present; it declares every capability. `FunctionClient` wraps a plain `(prompt) -> str` callable, which is what gives the data layer's `llm_fn` parameter a meaning here and is the simplest way to drive the library offline.
+Two clients are included. `DefaultLlmClient` reaches a provider through `litellm`, imported lazily inside the call so the package can be installed and tested without a provider SDK; it declares every capability. `FunctionClient` wraps a plain `(prompt) -> str` callable, providing the implementation behind the data layer's `llm_fn` parameter and a simple offline path.
 
 Two properties reach whichever client answers, on every call rather than as attributes on the client: `budget` carries the run's budget, and `usage_sink` carries a list this call owns. The fetch reads its token counts and model name from that list alone, which is what stops two concurrent fetches through one client from reporting each other's tokens.
 
@@ -180,17 +180,17 @@ Inheriting the base class does not make the source reachable by protocol name. B
 
 `execute_query` and `execute_query_nl` return a plain `list[dict]`, because that is what the shared surface returns. Call `fetch` when you need the outcome, the stop information, the accounting, or the schema diagnostics.
 
-## What this architecture deliberately does not contain
+## What this architecture does not contain
 
 - A completeness or recall measure. Per-slice row estimates guide splitting. `meta.row_estimate` is an accepted planning hint, not an expected count, and `meta.gaps` being empty says no supported diagnostic fired rather than that nothing is missing.
 - A factual validator. Format verification against declared types ships; verification that a record is true does not.
 - A retrieval or grounding path. The premise is closed-book: answers come from the model's own knowledge, not from a corpus.
 - A distributed runtime. Leaves run with bounded local concurrency through serializable task and result contracts. No worker service, broker, or cluster is supplied.
-- A cache server. The two shipped stores are a process-local dictionary and a directory of JSON files. Anything else is a caller's own object behind the `CacheStore` protocol.
+- A cache server. The two included stores are a process-local dictionary and a directory of JSON files. Other backends can be supplied through the `CacheStore` protocol.
 
 ## Where to go next
 
 - [features.md](features.md): what it can do, one short example each.
 - [guide.md](guide.md): the same components, task by task.
 - [extending.md](extending.md): the seams in the diagram you are meant to implement against.
-- [`design/03-high-level-architecture.md`](../design/03-high-level-architecture.md) and [`design/04-detailed-architecture.md`](../design/04-detailed-architecture.md): the contributor-facing originals this page summarises.
+- [`design/03-high-level-architecture.md`](../design/03-high-level-architecture.md) and [`design/04-detailed-architecture.md`](../design/04-detailed-architecture.md): detailed architecture for contributors.

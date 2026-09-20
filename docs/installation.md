@@ -1,10 +1,10 @@
 # Installation
 
-Every way this repository can be installed, using the scripts it actually ships.
+This page covers the supported installation paths for the library, CLI, and MCP server.
 
 ## Components
 
-`blue-data-llm-source` is a core library (`lib/`) and two platform components (`platform/`). Install `lib` first: both platform components depend on it, and it in turn depends on the sibling `blue-data` repository's `lib/`, which supplies the `DataSource` base class this source inherits.
+`blue-data-llm-source` consists of a core library (`lib/`) and two platform components (`platform/`). Install `lib` first. Both platform components depend on it, and it depends on `lib/` from a local checkout of `blue-data`, which supplies the `DataSource` base class.
 
 ```
 blue-data-llm-source/
@@ -25,14 +25,14 @@ The `mcp` pin is exact rather than a floor. The low-level server API that compon
 ## Requirements
 
 - Python 3.10 or later.
-- A checkout of the sibling `blue-data` repository. It is not on a public package index, so it is installed from source.
+- A local checkout of the `blue-data` repository. It is not on a public package index, so it must be installed from source.
 - A provider credential in the environment for any request that reaches a model. The library never reads it; the provider SDK does. A request with an injected client or an `llm_fn` needs none.
 
-Installing `blue-data` also installs `pandas`, `numpy`, and `jsonpath-ng`, which is what the dependency costs beyond this package's own code.
+Installing `blue-data` also installs `pandas`, `numpy`, and `jsonpath-ng`.
 
 ## Scripts
 
-Each component has a `scripts/` directory holding the same three scripts. Each one resolves paths from its own location, so it can be run from anywhere.
+Each component has a `scripts/` directory with the same three scripts. The scripts resolve paths from their own locations and can be run from any working directory.
 
 | Script | What it does |
 |---|---|
@@ -48,7 +48,7 @@ Both platform `install.sh` scripts call `lib/scripts/install.sh` first and then 
 
 Satisfy [Requirements](#requirements) first. Both routes below assume a `blue-data` checkout is already on disk, and `lib/scripts/install.sh` exits with a message rather than guessing when it cannot find one.
 
-Every route below needs network access: only `blue-data` comes from the local checkout, and every other dependency is resolved from a package index. All of them are editable installs, so each package is imported from its working tree, not from a copy under `site-packages`. Once the CLI component is in place, `blue-llmdb --version` prints the release it resolved to.
+Every route below needs network access. Only `blue-data` comes from the local checkout; all other dependencies are resolved from a package index. These are editable installs, so Python imports each package from its working tree instead of a copy under `site-packages`. Once the CLI component is installed, `blue-llmdb --version` prints the installed version.
 
 The whole repository, in dependency order:
 
@@ -128,21 +128,21 @@ Each writes a wheel and an sdist into that component's `dist/`. `build.sh` needs
 
 ## Running tests
 
-Run from each component's own directory. Every component's `pyproject.toml` already puts the right source roots on the path, so no `PYTHONPATH` is needed.
+Run these commands from the repository root. Each command enters one component in a subshell, and its `pyproject.toml` puts the correct source roots on the path, so no `PYTHONPATH` is needed.
 
 ```bash
-cd lib && python -m pytest tests/unit -q
-cd platform/llm-cli && python -m pytest tests/unit -q
-cd platform/llm-mcp && python -m pytest tests/unit -q
+(cd lib && python -m pytest tests/unit -q)
+(cd platform/llm-cli && python -m pytest tests/unit -q)
+(cd platform/llm-mcp && python -m pytest tests/unit -q)
 ```
 
 Unit tests only. Every I/O boundary is doubled and no test touches the network or needs a credential. Coverage is not collected by default and no threshold is enforced; pass `--cov=src` to measure it.
 
-`lib/tests/unit/compat/test_contract.py` compares this source's method signatures against the installed `blue_data.source.source.DataSource` and prints the path of the `blue_data` it compared against. Run it after installing or upgrading `blue-data`: an installed copy can be older than a checkout, and confirming against a version nobody runs is worse than not checking.
+`lib/tests/unit/compat/test_contract.py` compares this source's method signatures with the installed `blue_data.source.source.DataSource` and prints the inspected package path. Run it after installing or upgrading `blue-data` so the comparison covers the package used by the current environment.
 
 ## Environment variables
 
-This package names, reads, and logs no environment variable of its own. The two below belong to other things.
+The library runtime defines no environment variables of its own. The install script and provider SDK read the two entries below.
 
 | Variable | Read by | Purpose |
 |---|---|---|

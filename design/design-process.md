@@ -1,14 +1,14 @@
 # Design Process
 
-How a repository in this family gets its design documents: the order they are written in, what each one owes its reader, and the review protocol that keeps them true once there is code to check them against.
+This document defines the order, scope, and review requirements for the repository's design documents.
 
-This document is the meta-document. It is copied into a new repository first, alongside [repo-organization-template.md](repo-organization-template.md), and it is the only one of the two that is then edited as little as possible: the process is meant to be the same across repositories.
+New repositories copy this file together with [repo-organization-template.md](repo-organization-template.md). The process should remain consistent across repositories; project-specific content belongs in the numbered design documents.
 
 ---
 
 ## The Sequence
 
-Thirteen numbered documents, written in order. Each informs the next, which is why the order is fixed, not a suggestion: an architecture written before the scenarios it has to serve is an architecture nobody can check.
+Write the thirteen numbered documents in order because each establishes inputs for the next. For example, scenarios define the requirements against which the architecture is evaluated.
 
 | # | Document | The question it answers |
 |---|---|---|
@@ -26,14 +26,14 @@ Thirteen numbered documents, written in order. Each informs the next, which is w
 | 12 | `12-deployment-ops.md` | How is it installed, configured, and run, and what does an operator need? |
 | 13 | `13-decision-log.md` | Why is it built this way, one decision at a time? |
 
-Two unnumbered documents sit beside them and belong to the family rather than to any one repository.
+Two unnumbered templates accompany the project-specific documents.
 
 | Document | Purpose |
 |---|---|
-| `design-process.md` | This document: the sequence, the writing rules, and the review protocol |
+| `design-process.md` | The sequence, writing rules, and review protocol |
 | `repo-organization-template.md` | A blank annotated skeleton a new repository copies |
 
-The contents below are fixed by this family's documentation convention, not chosen per repository. The overview carries an Objective, a What It Does, and a Design Philosophy section and nothing else. The repo-organization document carries a full annotated tree in which every entry has a trailing purpose comment, plus a Layout Rationale that maps modules to architecture components in a table. The coding-style document opens with a tooling table giving the concern, the tool, and where its configuration lives. The decision log carries one `## ADR-NNN — <Title>` per decision with all five fields.
+The documentation convention fixes the following structure across repositories. The overview contains Objective, What It Does, and Design Philosophy. The repository-organization document contains an annotated tree and a Layout Rationale table that maps modules to architecture components. The coding-style document begins with a tooling table. The decision log uses one `## ADR-NNN — <Title>` section per decision with all five fields.
 
 ---
 
@@ -46,7 +46,7 @@ The contents below are fixed by this family's documentation convention, not chos
 | Before the first release | 11 and 12 | The testing strategy and the operational story are what a release is judged against |
 | From the first decision onward | 13 | Created empty at the start and appended to for the life of the repository |
 
-The decision log is created first and finished never. A decision recorded when it is made carries its alternatives and its cost; the same decision reconstructed six months later carries only the outcome, and the reason a reader needs is exactly the part that was lost.
+Create the decision log at the start of the project and append decisions when they are made. Each entry records the alternatives, rationale, and consequences; reconstructing a decision later often preserves the outcome but loses its rationale.
 
 The user-facing directories follow the design documents instead of preceding them. `docs/` tracks current code behaviour and is written once there is behaviour to track. `examples/` holds runnable scripts with their real captured output, so an example cannot be written before the thing it runs.
 
@@ -60,7 +60,7 @@ These are binding on every document in `design/`, and on the user-facing documen
 - Use a table wherever the content has two or more parallel attributes: tool and configuration, construct and convention, command and purpose. Prose for a table's worth of content is prose a reader has to sort themselves.
 - Make every code example copy-pasteable and runnable as shown, not a fragment with an implied surrounding.
 - Cross-link with relative markdown links, never a bare filename. A filename in prose is a link a reader has to resolve by hand, and a broken one is invisible.
-- Name the source of truth explicitly wherever a document duplicates another. A synced copy says which document it mirrors.
+- Identify the authoritative copy wherever one document duplicates another. A synchronized copy states which document it mirrors.
 - State a placeholder plainly ("not built yet, this points at the design sketch") rather than omitting it and leaving the reader to infer that a gap is an oversight.
 - No marketing language. Describe a capability as a plain declarative statement of what it does.
 - One line per paragraph in the source file, with no hard wrapping, so a change to a sentence is a change to one line in a diff.
@@ -70,21 +70,19 @@ These are binding on every document in `design/`, and on the user-facing documen
 
 ## Review Protocol
 
-Three passes per document, then one standing obligation.
+| Review | When | Check |
+|---|---|---|
+| Completeness | Before drafting | Compare the required sections with the available inputs and identify missing or underspecified requirements. |
+| Consistency | After drafting | Compare the document with earlier design documents and resolve contradictions. |
+| Implementation | Once code exists | Verify claims against the code rather than against another document. |
 
-**1. Completeness, before the document is written.** Take the section list fixed for that document and the input the document is being written from, and name what is missing or underspecified before writing anything. It is cheaper to discover that the scenarios do not cover a whole class of caller now than after the architecture has been drawn around them.
+When code and documentation disagree, determine which is incorrect before making a change. Correct stale documentation, fix code that violates an accepted design, or record an unresolved design decision before changing either side.
 
-**2. Integrity, after the document is written.** Read it against every earlier document in the sequence. A contradiction between two design documents is always a defect in one of them, and the question of which one is the interesting part: sometimes the new document is wrong, and sometimes it is the first time anyone noticed that the earlier one was.
+Automate checks for facts that can be derived from code, such as public types, methods, outcome values, and commands. These checks detect missing or stale surface descriptions but do not establish that the surrounding prose is accurate. See [11-testing-strategy.md](11-testing-strategy.md).
 
-**3. Ground truth, once code exists.** Read the document against the code it describes and verify every claim in the source, not against another document. A document that was true when it was written and a code path that moved since are the ordinary case, not the exception, and a second document that repeats the first one's claim is not evidence.
+Append ADRs rather than rewriting them. When a decision is replaced, add an **Addendum** that names the replacement and explains why. Every entry records Date, Status, Decision, Rationale, and Consequences.
 
-**Drift is a defect in whichever side is wrong.** When a document and the code disagree, decide which one is right before changing either. If the code is right, the document is corrected. If the document describes what was intended and the code does something else, that is a bug and the code is fixed. A document must never be edited to match a defect, because doing so destroys the only record that the defect is one. If neither is right, the disagreement is a decision that was never made, and it belongs in the decision log before either side changes.
-
-**Check mechanically whatever can be checked mechanically.** A claim about a shipped type, a documented method, an enumerated set of outcomes, or a command that a document says exists can be derived from the code by a test that reads the document. That does not judge prose (a document may describe a field correctly or wrongly and a test cannot tell those apart), but it refuses a reference document that has not heard of a field at all, which is the failure that actually happens. The same applies to a claim that was true once and is repeated in several files: correcting the copies one at a time is what fails, so the claim gets a check rather than a correction. See [11-testing-strategy.md](11-testing-strategy.md) for how this repository does it.
-
-**ADRs are appended, never rewritten.** A decision that is replaced keeps its entry and gains an **Addendum** naming what replaced it and why. Deleting or editing the original destroys the reason the reader came for, which is usually not the current rule but the constraint that produced it. Every entry carries Date, Status, Decision, Rationale, and Consequences, and the Consequences field is the one most often left thin. It is where the cost of the decision is recorded, and a decision recorded without its cost reads as free.
-
-**The standing obligation.** Re-run the ground-truth pass on any document whose subject changed, in the same change that changed it, and on all of them before a release. A design document is only worth reading if a reader can act on it without checking.
+Repeat the implementation review whenever a document's subject changes and across the full design set before a release.
 
 ---
 

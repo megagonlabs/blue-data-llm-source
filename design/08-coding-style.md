@@ -8,7 +8,7 @@
 | Linting | `ruff` | `pyproject.toml` |
 | Type checking | `pyright` (strict) | `pyproject.toml` |
 
-All three are expected to pass before a change is committed, and all three are run by hand today: no CI platform is configured yet, and the pipeline that would run them on every push is the proposal in [12-deployment-ops.md](12-deployment-ops.md).
+Run all three checks before committing a change. They currently run manually because no CI platform is configured; [12-deployment-ops.md](12-deployment-ops.md) describes the proposed pipeline.
 
 ### `pyproject.toml` configuration
 
@@ -135,13 +135,11 @@ Import ordering is enforced by `ruff` through its isort rules.
 
 ## Docstrings
 
-Module docstrings carry the *why*: what the module is for, and what constraint or past failure shaped it. These may run to several lines and are the main place where rationale belongs in the code, not in a design document.
+Module docstrings state the module's purpose and any non-obvious constraint that governs it.
 
-A class or public method docstring opens with one line. It gains a paragraph below that line only where a caller can get the behaviour wrong from the signature alone, which is where the same *why* rule applies: a contract that reads as obvious and is not, or a constraint that a reasonable reading would miss. Anything self-explanatory from the name stops at the one line. No docstrings on `__init__`, and no multi-line parameter documentation, because types belong in signatures. A property follows the same test as a method: none where the name says it, one where a caller could get the contract wrong from the signature alone. Two carry one, and both are cases where the value is not what the name suggests on first reading.
+Classes and public methods use a one-line docstring unless callers need additional contract information that the signature does not express. Types and defaults remain in signatures. Do not add docstrings to `__init__`; apply the same rule to properties.
 
-A private function follows the same test as a public one rather than a blanket prohibition: no docstring where the name says it, and a docstring where the *why* would otherwise be lost. Most of the private functions here have one, because most of them exist to hold an invariant that a reasonable reading would miss: which ordering a claim and an import must take, why a comma is stripped only in one shape, why a finite check is asked of floats and not of ints. That rationale has nowhere better to live: a design document is too far from the code to be re-read when the line is edited, and a comment inside the body is not returned by `help()` or shown by an editor at the call site.
-
-A private function may carry a docstring when it preserves a non-obvious invariant.
+Private functions use a docstring only when it preserves a non-obvious invariant or ordering requirement. Otherwise the function name and signature are sufficient.
 
 ```python
 """Budget on five axes, reserved before spend and reconciled after it.
@@ -187,7 +185,7 @@ class Budget:
         ...
 ```
 
-The second form earns its paragraph: `reserve` reads as one call per operation, it is one call per attempt, and a caller that gets that wrong configures a limit that does not hold.
+The second form needs the additional contract text because `reserve` reads as one call per operation but is called once per attempt. A caller that assumes otherwise can configure a limit that does not hold.
 
 ---
 
@@ -240,7 +238,7 @@ An exception that a caller may need to act on carries the data required to act. 
 **Eight stated exceptions to the last two rules**, each with its reason written at the site:
 
 - Usage accounting converts an unreadable token count to zero instead of failing a call that already succeeded. Accounting is total by contract.
-- Cost extraction from a provider response reports an unreadable cost as unknown rather than failing the call, and the reservation's estimate then stands as the charge. Unknown is not zero: converting an accounting failure into a free call is how a ceiling comes to admit every remaining attempt while the running total stays where it started.
+- Cost extraction from a provider response reports an unreadable cost as unknown rather than failing the call, and the reservation's estimate remains charged. Unknown is not zero: converting an accounting failure into a free call is how a ceiling comes to admit every remaining attempt while the running total stays where it started.
 - The client resolves its reservation on any failure before re-raising, and converts an unrecognised provider failure into a `TransportError` carrying the original. Both must cover every failure path, not an enumerated subset: a reservation left outstanding is headroom the budget will never grant again, and a provider exception the caller has never heard of is not a contract this library wants to pass through. A failure after the provider was contacted resolves at the estimate rather than releasing it, or every failed retry would be free.
 - `FileCache` treats an entry it cannot read, write, or serialise as a miss and returns. A cache that can fail the request it was meant to make cheaper is worse than no cache. The catch names the error types, never catching broadly, and a partially written file is removed before the error leaves.
 - The client's cache *write* swallows anything the store raises. By the time it runs the provider has been contacted and billed, so losing that answer to a cache error is the one outcome worth ruling out. The read is deliberately not guarded: it happens before the provider is contacted, nothing is lost yet, and a caller whose store is broken should hear about it rather than silently pay full price for every request.

@@ -1,6 +1,6 @@
 # LlmSource — API / Interface Spec
 
-Three external interfaces exist over the core library: the Python library itself, an MCP server, and a CLI, each built as its own package and none of them on a package index. A REST API is **not implemented and not scheduled**. No business logic belongs in any interface layer; each is a translation layer over the Python library, and each passes the library's own error messages through unreworded. Authentication and authorisation are left to the deployment layer, and no interface reads or forwards a provider credential.
+The core library has three interfaces: the Python API, an MCP server, and a CLI. Each is a separate package installed from source. No REST API is implemented or scheduled. Interface packages translate arguments and results but contain no retrieval, planning, or budgeting logic. They preserve library error messages. Authentication and authorization belong to the deployment layer, and no interface reads or forwards a provider credential.
 
 ---
 
@@ -403,7 +403,7 @@ The field rides on `FetchResult`, so it is available through `fetch` and `afetch
 
 `Outcome` is defined in `blue_data_llm_source.types` and re-exported from the package root. Partial interruption with an answered response reports `partial`, with simultaneous limits retained in `stop_reasons`. Otherwise a non-row stop reports `stopped_by_limit`; a row-only trim reports `truncated` when records remain. `filtered_to_empty` and `model_returned_none` describe runs where no stop fired.
 
-`partial` outranks all of them, and the reason is which facts have somewhere else to live. A continuation cap has `stopped_by`; a row trim has `truncated_to`; a part that never came back has nowhere but `outcome`. So `outcome` goes to the fact that would otherwise be erased, and the other two are read where they already are: a run that lost a part *and* hit a cap reports `outcome=partial` with `stopped_by` still naming the cap, and both facts survive. That does not invert the rule above: "a ceiling outranks what the run produced" is about the shape of an answer, and `partial` is not a claim about shape.
+`partial` takes precedence when some extraction succeeded but other work was interrupted. Limit information remains in `stopped_by`, and row trimming remains in `truncated_to`. A run that loses a part and also reaches a ceiling therefore reports `outcome=partial` while retaining the ceiling in `stopped_by`.
 
 `stopped_by` may be `None` on a `partial` run. It names the axis a caller can raise, and a provider call that raised is not one; the failure is in `meta.gaps`.
 
@@ -461,7 +461,15 @@ Six module-level functions are exported from the package root alongside the type
 
 The price table itself stays internal. It is a mutable snapshot of time-sensitive list prices, and publishing it would be a contract this package cannot keep across a price change; what is published is behaviour over it. Supply `llm.price_per_input_token` and `llm.price_per_output_token` to bound a model the table does not carry.
 
-`meta_view` publishes three tiers. *Always present:* `outcome`, `model`, `calls`, `prompt_tokens`, `completion_tokens`, `cost`, `elapsed_seconds`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records`, `gaps`, `stop_reasons`, `requested_attrs` (published even when empty, so a consumer branches on what they say rather than on whether they arrived). *Present when populated:* `normalization_collisions`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to`, `cache_hits`, and `accounting_known` in its false form only. *Verbose only:* `unmapped_keys`, `remapped_keys`, `type_mismatches`, `key_collisions`, which carry arbitrary model output. `observed_keys` is in no tier: it grows with the answer and `observed_key_count` already carries the fact a consumer acts on. The MCP server calls it with `verbose=True`, because those four diagnostics are part of its published result; the CLI passes its own `--verbose` flag. Four fields leave through `redact`: `model`, `requested_attrs`, `asked` and `unchecked_types`, each of which narrates the call instead of carrying the answer to it. The rest are published as they stand, because they are or they index the records, and a key name masked in a diagnostic would describe a record that still holds it under its own name. `requested_attrs` has a claim on both sides and is masked anyway, being the caller's own text handed straight back. A test walks what the view produces and requires every string in it to be masked or to carry a written reason for not being.
+`meta_view` publishes three field tiers:
+
+- Always present: `outcome`, `model`, `calls`, `prompt_tokens`, `completion_tokens`, `cost`, `elapsed_seconds`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records`, `gaps`, `stop_reasons`, and `requested_attrs`.
+- Present when populated: `normalization_collisions`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to`, `cache_hits`, and `accounting_known` when false.
+- Verbose only: `unmapped_keys`, `remapped_keys`, `type_mismatches`, and `key_collisions`.
+
+`observed_keys` is omitted because it grows with the answer and `observed_key_count` carries the usable count. The MCP server requests the verbose view; the CLI exposes it through `--verbose`.
+
+`redact` processes `model`, `requested_attrs`, `asked`, and `unchecked_types`. Other fields are published unchanged because they contain records or indexes into records. A test examines every returned string and requires it to be redacted or explicitly exempted.
 
 ---
 
@@ -494,11 +502,11 @@ Ceilings reach the `execute_query` tool the way they reach the query surface. A 
 
 Package `blue-data-llm-mcp`, entry point `blue-data-llm-mcp`, speaking MCP over stdio. It exposes the source to LLM agents as five tools: `llmdb_query`, `llmdb_estimate`, `llmdb_list_models`, `llmdb_inspect_model` and `llmdb_inspect_metadata`. Every name carries the server's own prefix, because a client holds one flat tool namespace and two Blue Data servers in it would otherwise be offering the same name for different things. Beyond moving values across the boundary the server holds one piece of logic of its own: it enforces the schema it advertises.
 
-Argument validation is split by kind. The server checks shape against the published JSON schema, before the library sees the call: that the arguments are an object, that no key outside the advertised set appears at any depth, that a declared object carries its required keys, that each value matches its declared JSON type, that a string declared non-blank carries a character that is not whitespace, that an array declared unique does not repeat an entry, and that a numeric value clears its declared `minimum`. It does this itself rather than leaving it to the SDK, whose prevalidator is switched off for this handler: running first, it answered a withdrawn key such as `llm.rate_limit` with a generic schema error instead of the message naming what to use instead, so the server's own checker has to do the whole job. The library keeps domain and configuration validation: whether a query is empty, whether an `llm.*` override is a name it accepts, whether a ceiling is a finite positive number the resolved client can be held to, whether a model can be priced, and whether the model's answer parses.
+The server validates argument shape against the published JSON schema before calling the library. It checks object shape, allowed keys, required fields, JSON types, non-blank strings, unique arrays, and numeric minima. The SDK prevalidator is disabled for this handler so withdrawn settings can receive the package's migration message rather than a generic schema error. The library retains domain and configuration validation, including empty queries, accepted overrides, enforceable ceilings, model pricing, and response parsing.
 
-That split shows in the messages, which matters here in particular: an agent supplies arguments programmatically and sees only the exception text as its tool result. A library rejection is passed through in the library's own words, naming the setting and the accepted form. A shape rejection is the server's own message and names the argument and what the schema declares. Neither reads back a value that missed a declared set, because the accepted set is the part the caller cannot work out and their own string returned to them is one more copy of it in a transcript; an unknown *key* is quoted, because a misspelling is the one thing the caller has to be shown to find. Every message leaves with credential shapes masked.
+Library rejections preserve the library message, including the setting and accepted form. Schema rejections name the argument and its declared constraint. Values outside a declared set are not repeated; unknown keys are quoted so callers can locate misspellings. Credential-shaped text is masked in every returned message.
 
-The low-level server is used instead of the schema-deriving one, because the tool schemas are written by hand. Deriving a schema from a handler signature would put the contract in a Python signature instead of in the JSON a client reads.
+The server uses the low-level API because tool schemas are maintained explicitly as the JSON contract presented to clients.
 
 ### Tool: `llmdb_query`
 
@@ -832,7 +840,7 @@ Neither cost is rounded, unlike the spend in a fetch's `meta`. That one is a mea
 }
 ```
 
-These two tools exist because `limits.max_cost` is refused before the first call when the configured model carries no published rates, and without them the only way for an agent to learn that was to have a query refused. `cost_ceiling_supported` is the predicate that decides it, and it needs both the rates and a finite output allowance, so it is reported rather than inferred from `priceable` alone. It is evaluated against the properties this deployment would run the fetch with, which is what makes it the same answer `llmdb_estimate` gives as `bounded`: where the deployment supplied its own rates a ceiling binds even though `priceable` is false, `priceable` being a fact about the table, not about this server. A model the table does not carry answers `priceable: false`, which mirrors `bounded: false` from `llmdb_estimate`: a successful call reporting that the thing asked for cannot be established, not a failure.
+These tools let clients check pricing support before a query is refused under `limits.max_cost`. `cost_ceiling_supported` requires both usable rates and a finite output allowance, so it cannot be inferred from `priceable` alone. It is evaluated with the source properties used for a fetch. Caller-supplied rates can therefore make `cost_ceiling_supported` true while `priceable` remains false, because `priceable` describes only the packaged table. An unsupported model returns `priceable: false` as a successful inspection result.
 
 ---
 
@@ -856,9 +864,11 @@ These two tools exist because `limits.max_cost` is refused before the first call
 
 The MCP schema exposes the same 14 standard planning controls as the CLI. It intentionally omits the
 three distribution-search properties, and `llmdb_query` does not return the direct-Python planning
-receipt in this release.
+receipt.
 
-Requesting a tool that does not exist returns `UnknownTool` and names the ones that do. No tool exposes a provider endpoint or a credential. Beyond the protocol, the variant and the library version, the only configuration a result reflects is the output allowance `llmdb_inspect_model` reports and its verdict on whether a ceiling could be bounded here; the rates a deployment supplied are read to reach that verdict and are not published. Every string a tool hands back that narrates the call rather than answering it is passed through `redact`: any message, the model name a result echoes, the attributes a request asked for, the rewritten ask, an uncheckable declared type, and an unbounded estimate's `reason`. A credential a caller sends by mistake is not returned to them, and that does not rest on the list above staying complete: a test walks what every tool returns and requires each string in it to be masked or to carry a written reason for not being.
+Requesting an unknown tool returns `UnknownTool` and lists the available tools. No tool exposes a provider endpoint or credential. Inspection results report the protocol, variant, library version, output allowance, and whether a cost ceiling can be bounded; caller-supplied rates are used for that decision but are not returned.
+
+Messages, model names, requested attributes, rewritten queries, unchecked types, and unbounded-estimate reasons pass through `redact`. A test examines every returned string and requires it to be redacted or explicitly exempted.
 
 ---
 

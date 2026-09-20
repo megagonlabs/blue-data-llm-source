@@ -1,6 +1,6 @@
 # blue-data-llm-cli
 
-The `blue-llmdb` command. It asks a language model a question and prints the answer as records, which is what `blue-data-llm-source` does; this package parses arguments, keeps configuration, and prints results.
+`blue-llmdb` is the command-line interface for `blue-data-llm-source`. It manages profiles, translates command options into library settings, and formats query results.
 
 ## Install
 
@@ -12,7 +12,7 @@ That installs `blue-data`, then the library from `../../lib`, then this package,
 
 `pip install blue-data-llm-cli` works only where `blue-data` is resolvable, which means an internal index: it is a core dependency of the library underneath and is not on the public one.
 
-Both packages point `pyright` at a `.venv` in their own directory, matching the sibling subrepos. Create and activate one before installing, or the type gate reports every import as unresolved instead of reporting real typing errors:
+Both packages point `pyright` at a `.venv` in their own directory. Create and activate one before installing, or the type check reports every import as unresolved:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -28,7 +28,7 @@ blue-llmdb --help
 blue-llmdb --version
 ```
 
-Twelve commands over four components, in the shape the Blue CLI family uses (`blue-llmdb <component> <action> <parameters>`):
+The CLI provides twelve commands over four components, using the form `blue-llmdb <component> <action> <parameters>`:
 
 ```
 blue-llmdb [--version] [-h|--help] [--profile NAME]
@@ -50,7 +50,7 @@ blue-llmdb [--version] [-h|--help] [--profile NAME]
     └── inspect [--format]
 ```
 
-There is no `database`, `schema` or `cache` component. A source that answers from a model's own knowledge has one synthetic database and one synthetic collection, no stored schema, and no cache-introspection API to build a management screen on. Rather than ship four commands that return `{}`, this CLI leaves them out and says so here. `data search` is absent for a related reason: for this source, searching and querying are one operation, and one operation gets one name.
+There is no `database`, `schema`, or `cache` component. A model-backed source has one synthetic database and collection, no stored schema, and no cache-introspection API. `data search` is also omitted because searching and querying are the same operation for this source.
 
 ```bash
 blue-llmdb metadata inspect
@@ -134,7 +134,7 @@ blue-llmdb profile select default
 blue-llmdb profile remove staging --confirm
 ```
 
-`--confirm` skips the question. Without it, `profile remove` asks, and answering no changes nothing and exits 0. Declining a question you were asked is not a failure. Removing a profile deletes that section of the profiles file and nothing else: not the cache directory, not another profile, and not the selection unless it pointed at what you removed, in which case it moves to a profile that exists (`default` where that survives, otherwise the first one left), and the command says which. The last profile cannot be removed. The selection has to name a profile that is there, and a store with nothing in it has nothing to name.
+`--confirm` skips the prompt. Without it, answering no leaves the store unchanged and exits 0. Removing a profile deletes only that profile; it does not remove caches or other profiles. If the removed profile was selected, selection moves to `default` when available or to the first remaining profile, and the command reports the change. The last profile cannot be removed because selection must always name an existing profile.
 
 ### Parameters
 
@@ -160,7 +160,7 @@ blue-llmdb profile remove staging --confirm
 | `BLUE_DATA_LLM_SOURCE_MAX_RETRIES` | int | — | | `limits.max_retries` |
 | `BLUE_DATA_LLM_SOURCE_EFFORT` | str | `low` | | `plan.max_continuations` |
 
-A parameter name is also its environment variable name, so exporting `BLUE_DATA_LLM_MODEL` overrides the profile for one shell without editing anything. Exporting one *empty* is refused rather than read as unset. `BLUE_DATA_LLM_MODEL=''` is a tier with a value in it, and taking it as absent would hand the setting down to the profile without saying so. That is the one thing a precedence chain must not do. `unset BLUE_DATA_LLM_MODEL` is how you take a variable out of the chain. The store refuses a blank value for the same reason: it would be written, reported as set, and then skipped by every read.
+A parameter name is also its environment-variable name, so exporting `BLUE_DATA_LLM_MODEL` overrides the profile for one shell without editing it. An empty exported value is refused instead of treated as unset. `BLUE_DATA_LLM_MODEL=''` is still an explicit value; falling through to the profile would hide a configuration error. Use `unset BLUE_DATA_LLM_MODEL` to remove the environment tier. Profile storage also refuses blank values because they would otherwise be written but skipped during resolution.
 
 Nothing blocks on a parameter being unset. "Asked on a first run" means `blue-llmdb profile config` with no argument walks those two, and nothing more. `profile`, `model`, `metadata` and `data estimate` contact no provider and run against an empty profile. A missing credential surfaces only when `data query` reaches the provider, as `ERROR: TRANSPORT`.
 
@@ -179,7 +179,7 @@ Every write goes to a temporary file in the same directory and is moved into pla
 
 A secret is never accepted as a value on the command line, where it would land in shell history. `blue-llmdb profile config OPENAI_API_KEY` prompts with the input hidden. Enter `$MY_KEY` at that prompt to store a reference to an environment variable instead of the secret itself; `profile inspect` then shows `$MY_KEY (set)` or `$MY_KEY (unset)`, so you can see what to export.
 
-A directly entered secret is stored base64-encoded behind an `enc:` prefix. **That is obfuscation, not encryption**: anyone who can read the file can decode it, and the file mode is the real protection. No command prints a secret value — not `profile inspect`, not `profile list`, not a log line, not an error message.
+A directly entered secret is stored as base64 behind an `enc:` prefix. **This is obfuscation, not encryption.** Anyone who can read the file can decode it; the file permissions provide the protection. Commands do not print secret values in profile output, logs, or error messages.
 
 The last two are not the store's doing. An error message and a `--log` line carry text this CLI did not write: a library message quoting what you typed, and a provider SDK's exception, which is free to include a request header or a fragment of a key. Every error line, every JSON error object, every log line and the traceback `--log` prints go through the library's `redact`, which replaces a value the environment holds under a credential's name, and anything written in a credential's shape, with `***`. So does the model name a run reports, on every format (the table footer, the `nl` sentence and `meta.model`) and the `llm.model` entry in the `settings` envelope, because a deployment that pastes a credential into that setting gets it echoed back in the most visible line the CLI prints. A model name that is only a model name is unchanged. The rest of the `settings` envelope is not masked: a cache directory is a path, and a path is high-entropy enough that masking it would report `***` for a directory you chose. Records do not: they are model output, and a record value that happens to read like a token is the answer you asked for.
 
@@ -263,7 +263,7 @@ blue-llmdb data query "the member states of the European Union" \
 
 `--plan-depth` bounds recursion, `--plan-partitions` bounds children per node, and `--plan-target-rows` supplies the uncertain row-count threshold for descendant splits. `--plan-leaves` bounds the parts a split may run, grouping values past it several to a part. `--plan-partition-key` guides only the root proposal. `--plan-schema-mode preserve` keeps caller attributes; `enrich` lets non-flat planning append inferred attributes.
 
-The remaining standard controls are `--plan-keys` for ordered composite identity, `--plan-exact-rows` for a hard target when the plan has one leaf, `--plan-exclusion-bytes` for continuation-prompt size, `--plan-planning-order` for one of the five schedules, and `--plan-expose-estimate`/`--no-plan-expose-estimate` for extraction-prompt context. Together the CLI, MCP and Python surfaces share 14 controls. The rule-backed distribution controls and the optional planning receipt remain direct-Python-only in this release. The two locked schedules need a non-empty caller schema and ordered `--plan-keys`. A multi-leaf plan does not apply `--plan-exact-rows` and adds `exact_rows_not_leaf_bound` to the result's gaps.
+The remaining standard controls are `--plan-keys` for ordered composite identity, `--plan-exact-rows` for a hard target when the plan has one leaf, `--plan-exclusion-bytes` for continuation-prompt size, `--plan-planning-order` for one of the five schedules, and `--plan-expose-estimate`/`--no-plan-expose-estimate` for extraction-prompt context. The CLI, MCP, and Python APIs share these 14 controls. Rule-backed distribution controls and the optional planning receipt are available only through direct Python calls. The two locked schedules need a non-empty caller schema and ordered `--plan-keys`. A multi-leaf plan does not apply `--plan-exact-rows` and adds `exact_rows_not_leaf_bound` to the result's gaps.
 
 None of the `--plan-*` controls has a profile parameter, so none of them is in the precedence chain: each is read from the command line and nowhere else. A plan setting describes one ask, not a deployment, and a partition key or a row target left in a profile would apply itself to the next, unrelated query. `--effort` is the one planning-adjacent option that does read configuration, as `BLUE_DATA_LLM_SOURCE_EFFORT`, because a continuation allowance is an appetite for spending rather than a shape.
 

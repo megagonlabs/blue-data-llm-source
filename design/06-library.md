@@ -8,7 +8,7 @@
 
 Entry point for everything the package does. It inherits `blue_data.source.source.DataSource` and remains instantiable on its own, since that base class has no abstract members either. It holds connection properties, resolves a model client per request, and delegates rendering, parsing, alignment, and verification to the modules below.
 
-The base order is load-bearing. A test walks the shared surface and asserts each method resolves to `LlmSource`, so an ordering mistake is a failing test and not a source that quietly answers nothing. [The Source Base Class](04-detailed-architecture.md#the-source-base-class) has the rest, including what `fetch_databases` and `execute_query` would return if the bases were listed the other way round.
+A contract test checks that every shared method resolves to `LlmSource`. This protects the required base-class order; reversing it would select the empty `DataSource` implementations. [The Source Base Class](04-detailed-architecture.md#the-source-base-class) describes the affected methods.
 
 Inheriting the base class is not the same as being constructible by protocol name. `DataRegistry.connect_source` returns the registered instance, or rebuilds one from the recorded class path when the live entry is gone; `DataRegistry.register_source` takes a built instance and reads only `name` and `properties`, which is the route that works.
 
@@ -174,11 +174,11 @@ The most one **flat** fetch of `query` could cost, without contacting the provid
 2. Return a bounded estimate of zero for an empty request. It never reaches a model, so it cannot cost anything.
 3. Normalise the attributes and context through `checks`, and render the prompt through `prompts.build_fetch_prompt`, the same prompt the fetch path would send for these arguments.
 4. Bound that prompt through `pricing.bound_cost`. A `ConfigError` becomes an `Estimate` with `bounded` false carrying the error's text as `reason`, rather than propagating.
-5. Multiply nothing: accumulate the per-attempt bound once per permitted attempt, the way the ledger will, and return an `Estimate` carrying `bounded`, `max_cost`, `max_cost_per_attempt`, `max_attempts`, `model`, `prompt_bytes`, and `max_output_tokens`. A product and a running total differ by an ulp, which is enough for a ceiling set to exactly the published figure to refuse the last attempt that figure accounted for.
+5. Accumulate the per-attempt bound once per permitted attempt, in the same order as the ledger, and return an `Estimate` carrying `bounded`, `max_cost`, `max_cost_per_attempt`, `max_attempts`, `model`, `prompt_bytes`, and `max_output_tokens`. Repeated addition is used because multiplication can differ from the ledger by one unit in the last place, enough to refuse the final accounted attempt at an exact ceiling.
 
-Two properties of this are the reason it exists. It builds the real prompt instead of approximating one, so the figure belongs to the request being asked about, not to an average of requests like it. And it reaches `bound_cost` with the same arguments the client's reservation will, so the estimate and the ceiling it is checked against are one number.
+The method renders the actual prompt rather than using an average request. It also calls `bound_cost` with the same arguments used by runtime reservation, so estimation and enforcement use the same value.
 
-Refusing to raise on an unpriceable model is the other deliberate part. `bound_cost` raises because a ceiling built on an invented figure is not a ceiling, but a caller asking what a request might cost is not asking for a ceiling, and "I cannot tell you, because this model has no published price" is a usable answer where an exception is not.
+For an unpriceable model, `estimate` returns `bounded=False` with a reason instead of propagating the `ConfigError` raised by `bound_cost`. This lets callers inspect why no estimate is available without treating the query as a failed operation.
 
 ### `LlmSource` source surface
 
@@ -202,7 +202,7 @@ Runs a natural language query and returns `list[dict]`. Argument extraction matc
 
 `llm_fn` is the parameter that means something different here than elsewhere. For other sources it translates natural language into a native dialect before execution. This source has no other dialect, so translation is the identity, and the callable, typed `(prompt: str) -> str`, is exactly the shape of a model call. It is therefore used as the model client for this run, with the configured client as the fallback when none is passed.
 
-`schema` is accepted for signature compatibility and is not used in this release.
+`schema` is accepted for signature compatibility and is currently unused.
 
 #### `translate_nl_to_native_query(query, schema, llm_fn)`
 
@@ -405,7 +405,7 @@ class Estimate:
 
 What one `flat` fetch could cost at most, returned by `LlmSource.estimate` and by the `LLM.ESTIMATE` op, computed without contacting the provider. It reads no `plan.*` setting, so a split request can cost several times this figure. Exported from the package root alongside `ExecMeta` and `FetchResult`.
 
-`max_cost` is an upper bound, not a prediction. It reserves the whole output allowance at the model's output rate and bounds the prompt by its encoded length, so a typical call costs a fraction of it. Being wrong high is the only safe direction here for the same reason it is in `pricing`: a figure that can be exceeded is not a bound, and a decision made against one is a decision made against a guess.
+`max_cost` is an upper bound, not a prediction. It prices the entire output allowance at the model's output rate and bounds the prompt by its encoded length, so the actual cost is usually lower. The calculation must not underestimate the cost because the same value is used to decide whether a request fits within a configured ceiling.
 
 `bounded` is `False` when no bound can be established at all, and `reason` then carries what is missing, in the words `pricing` used. That is a normal answer rather than an error, because a caller asking what a request might cost is not yet asking for a ceiling, and a model this package has no price for is a fact the caller can act on.
 
@@ -535,7 +535,7 @@ FileCache(directory: str | os.PathLike[str] = ".llm_cache")
 
 Persists one JSON file per entry under `directory`, which is created if absent. A key is hashed with SHA-256 to produce the filename, because cache keys are long serialised request mappings and are not path-safe. A write goes to a temporary file in the same directory and is then moved into place, so a reader never sees a half-written entry. A corrupt, unreadable, or unserialisable entry is treated as a miss and skipped rather than raised, because a cache that can fail the request it was meant to make cheaper is worse than no cache. `clear()` is also available.
 
-Both are passed to the client through the `cache_store` property. The `llm.cache` switch remains a separate path that opens a `diskcache` cache under `llm.cache_dir`, so a caller who wants the shipped file store supplies it as `cache_store` instead. Treat the two as unconnected until that is reconciled in code.
+Both are passed to the client through the `cache_store` property. The separate `llm.cache` switch opens a `diskcache` cache under `llm.cache_dir`. To use the included file store, pass it as `cache_store`; the two paths remain independent until they are reconciled in code.
 
 ---
 
@@ -579,7 +579,7 @@ Both return the model's message content as a string. The asynchronous form addit
 3. On a hit, record usage as a cache hit and return without touching the budget.
 4. On a miss, enter the retry loop.
 5. For each attempt, cap the provider timeout at the time the budget has left, bound those call arguments through `pricing.bound_cost`, and reserve one attempt and that bound against the budget, which is also where the time limit is rechecked. Then call the provider.
-6. On failure, resolve the reservation with `keep_unpriced` and re-raise: the provider was contacted, so the bound stands as the charge and is not released. A transport failure is retried, and the next attempt reserves again, so a retry sequence cannot outrun the call ceiling.
+6. On failure, resolve the reservation with `keep_unpriced` and re-raise: the provider was contacted, so the bound remains charged and is not released. A transport failure is retried, and the next attempt reserves again, so a retry sequence cannot outrun the call ceiling.
 7. On success, settle the reservation against the real cost, which releases whatever the bound overshot by, then store the payload in the cache, record usage, and extract the message content. A cost the provider's accounting will not yield resolves the reservation at the bound instead, and that figure is what the call reports as its cost.
 
 The bound is computed only when it will be enforced. `remaining_cost()` returning `None` means no cost ceiling is configured anywhere up the budget chain, and in that case the reservation is made at zero and `pricing` is never consulted, so a run with no cost ceiling is never refused because this package has never heard of its model.
@@ -590,7 +590,7 @@ Everything after the provider entry point is invoked sits inside one guard, incl
 
 **Accepted `llm.*` overrides**
 
-`model`, `temperature`, `max_tokens`, `stream`, `timeout`, `cache`, `cache_dir`, `max_parallel`, `price_per_input_token`, `price_per_output_token`. The set is closed and an unknown name raises `ConfigError` listing the accepted ones. The last five are consumed locally and never forwarded, the two price keys among them, which is what lets a caller bound a model `pricing.PRICES` does not carry. Transport-shaped names are stripped after every merge. That strip is unreachable in practice, because the closed key set refuses those names first; it stands as a second line rather than as the defence, and the closed set is the defence.
+`model`, `temperature`, `max_tokens`, `stream`, `timeout`, `cache`, `cache_dir`, `max_parallel`, `price_per_input_token`, `price_per_output_token`. The set is closed and an unknown name raises `ConfigError` listing the accepted ones. The last five are consumed locally and never forwarded, the two price keys among them, which is what lets a caller bound a model `pricing.PRICES` does not carry. Transport-shaped names are stripped after every merge. That strip is unreachable in practice because the closed key set refuses those names first. The strip provides a second line of defense; the closed set is the primary defense.
 
 **Streaming**
 
@@ -654,7 +654,7 @@ class Limits:
 
 Configured ceilings, where `None` means unlimited on that axis. Assembled by `LlmSource` from `limits.*` properties, with a `max_records` argument replacing `max_rows` for that run. `max_retries` is a count of retries rather than of attempts, so the client makes `max_retries + 1` attempts and defaults to three.
 
-Every field is validated on construction, and a wrong type, a `bool`, a negative number, or a non-finite number raises `ConfigError` naming the field and the value. The non-finite case is the one worth stating: a `NaN` ceiling compares false against everything, so it reads as configured and enforces nothing, which is a limit that is present, accepted, and silently off. That is the failure this package exists to prevent, so it is refused at the boundary rather than discovered from an invoice. A `bool` is refused for the same reason at a smaller scale, since `True` as a ceiling of one is never what anyone meant and Python would otherwise accept it as an integer.
+Every field is validated on construction. A wrong type, `bool`, negative number, or non-finite number raises `ConfigError` naming the field and value. `NaN` is explicitly rejected because every spend comparison with it is false, leaving an apparently configured ceiling unenforced. A `bool` is rejected because Python would otherwise accept `True` as the integer ceiling `1`.
 
 The set of `limits.*` property names is closed in the same way the `llm.*` set is. An unknown one raises `ConfigError` listing the accepted names, as do the near misses `limit.*` and a bare `limits`. `limits.max_cst` was accepted and ignored, so a run that looked bounded was not.
 
@@ -683,7 +683,7 @@ Tracks spend against `Limits` and refuses the attempt that would cross one. The 
 
 Reservation happens under a lock so that a concurrent fan-out cannot admit two calls that each saw room for one. It is claimed once per provider attempt, including every retry, so a retry sequence spends its limit rather than escaping it, and each attempt rechecks the deadline on the way through.
 
-Cost is claimed against a genuine upper bound rather than an average-case estimate. A bound that is usually right is a ceiling that is occasionally crossed, so `pricing` either produces a figure that cannot be exceeded or refuses to produce one at all. Claiming, not checking, is what makes the two hard cases work: a cost that cannot be read leaves its reservation standing, so an accounting failure is not a free call, and ten concurrent leaves each commit a bound before spending, so they cannot collectively overshoot by ten calls' worth while each sees room for one.
+Cost is claimed against an upper bound rather than an average-case estimate. If `pricing` cannot establish that bound, it refuses to return a figure. Reserving the bound before each attempt also covers two failure cases: an unreadable provider cost leaves its reservation in place, and concurrent attempts cannot all spend against the same remaining budget.
 
 The headroom methods, `effective_retries`, and `derive` all narrow along the parent chain, so the effective ceiling on every axis is the smallest value from this budget up to the root. A child with no limits of its own is bounded entirely by its parent, which is what a fan-out leaf should be; without it a planner could hand ten leaves a full budget each. A derived child also measures elapsed time from its parent's start, so a caller's time ceiling covers the whole unit of work and does not restart with each fetch.
 
@@ -691,7 +691,7 @@ What a child does not inherit is `stopped_by`. A parent that refused an earlier 
 
 `note_exhausted` reports only a ceiling something has actually crossed. Spending the last allowed call refuses nothing, and reporting it would make an ordinary run under an exact limit look truncated; the same reasoning applies to spending exactly the cost ceiling, which is why that comparison is strict.
 
-`rows_exhausted` is provided for a caller looping over multiple fetches and is not called from within this release, whatever plan mode it runs. `check_deadline` is likewise published and not called from within the library, because `reserve` already performs the check at every point this release contacts a provider. Treat both as available to callers rather than as part of the fetch path until that changes.
+`rows_exhausted` supports callers that loop over multiple fetches, but the library does not call it in any plan mode. `check_deadline` is also public but not part of the fetch path because `reserve` performs the deadline check before every provider attempt.
 
 ### `Reservation`
 
@@ -704,7 +704,7 @@ budget is refused rather than silently resolved somewhere else.
 | Member | Description |
 |--------|-------------|
 | `settle(actual_cost, cache_hit=False)` | Replaces the bound with what the attempt really cost, releasing the overshoot. With `cache_hit=True` the whole claim is released, including the attempt, since nothing reached the provider |
-| `keep_unpriced()` | Resolves an attempt whose real cost could not be read; the bound stands as the charge |
+| `keep_unpriced()` | Resolves an attempt whose real cost could not be read; the bound remains charged |
 | `issuer` | The budget this claim was taken against |
 | `release()` | Gives back the bound and the attempt for a call that never reached the provider |
 | `estimate` | What was claimed |
@@ -729,11 +729,11 @@ The bound rests on one property: tokens never outnumber the bytes of the encoded
 
 Two things must be known before a bound exists at all, and neither can be assumed. A model absent from the table may be priced above everything in it, so `rates_for` returns `None` rather than the dearest entry, and a request with no finite positive output cap can produce output until the provider stops it. Where either is missing `bound_cost` raises `ConfigError` naming what is missing and what to do about it, and the caller is refused the cost ceiling instead of holding one built on a guess. A caller who knows what an unlisted model costs supplies `llm.price_per_input_token` and `llm.price_per_output_token`, which must be given together because a bound needs both halves.
 
-The consequence to size a ceiling against is that the floor of the bound is the whole `max_tokens` allowance at the model's output rate, whatever the prompt says. With the shipped defaults of `gpt-4o` and `llm.max_tokens` of 4096 that floor is about $0.041, so a `limits.max_cost` below it refuses every call before one is made. The fix is to lower `llm.max_tokens` to what the answer actually needs, which lowers the bound proportionally, instead of raising the ceiling.
+The minimum cost bound is the full `max_tokens` allowance at the model's output rate, independent of the prompt. With the default `gpt-4o` model and `llm.max_tokens=4096`, it is about $0.041. A lower `limits.max_cost` refuses the call before provider contact. Reducing `llm.max_tokens` lowers the bound proportionally.
 
 `PRICES` is public list-price data and goes stale in the safe direction, since providers cut prices far more often than they raise them. It is a file to update rather than a mechanism to redesign.
 
-The two price keys are reachable through the shipped path as well as through `pricing` itself. `DefaultLlmClient` accepts `llm.price_per_input_token` and `llm.price_per_output_token` among its `llm.*` overrides and consumes them locally rather than forwarding them, and `LlmSource.estimate` reads them from the merged properties the same way, so an unlisted model can be given a cost ceiling or an estimate by whoever knows its rates without a client of one's own.
+The two price keys are available through the normal client path as well as through `pricing` itself. `DefaultLlmClient` accepts `llm.price_per_input_token` and `llm.price_per_output_token` as local `llm.*` overrides and does not forward them. `LlmSource.estimate` reads the same merged properties, allowing callers to estimate or cap an unlisted model when they supply its rates.
 
 `bound_cost` is also what `LlmSource.estimate` reports, which is the point of publishing the module rather than burying it in the client. A caller can ask for the figure that will bound its request before it makes the request, and get the same number.
 
@@ -802,7 +802,7 @@ answers more requested attributes wins; without requested attributes, the envelo
 it discards nothing. This avoids both losing metadata siblings and dropping records under a wrapper.
 Nesting deeper than a hundred levels is refused because downstream walks are recursive.
 
-An object that repeats a key is rejected, at any nesting depth. Python's decoder keeps the last of such a pair and leaves no trace that the first existed, which resolves the ambiguity the opposite way from the rest of this pipeline and does it silently, so an `object_pairs_hook` refuses the object instead. An earlier version preserved both by renaming the later occurrence with a private marker, and that marker was itself legal JSON: it reached callers verbatim when no attributes were requested, and it marked duplicates nested inside values where alignment never looks. Rejecting is the honest answer, because which of two values for one key the model meant is not knowable here. `NaN`, `Infinity`, and `-Infinity` are rejected too, because they are not JSON and a record carrying one fails later somewhere less obvious. So is a number whose written form overflows the float conversion, such as `1e309`, which arrives as an ordinary literal rather than as one of those three words and so is caught on conversion instead of by the constant hook. Both routes end in a value that cannot be written back as JSON, which makes the result unusable to a caller who re-serialises it.
+An object that repeats a key is rejected at any nesting depth through an `object_pairs_hook`. Python's decoder would otherwise keep the final value and discard the earlier one without a trace. An earlier implementation renamed later occurrences with a private marker, but that marker could reach callers when no attributes were requested and also marked nested duplicates that alignment never examines. The library cannot determine which value the model intended, so it rejects the object. `NaN`, `Infinity`, and `-Infinity` are also rejected because they are not valid JSON. Numeric literals that overflow float conversion, such as `1e309`, are caught during conversion. Either case would otherwise produce a value that cannot be serialized back to JSON.
 
 ### `reduction.aligner`
 

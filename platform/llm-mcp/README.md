@@ -1,8 +1,8 @@
 # blue-data-llm-mcp
 
-An MCP server over `blue-data-llm-source`. It registers as `blue-data-llm`, speaks stdio, exposes five tools and no resources, and holds one piece of logic of its own: it enforces the schema it advertises, checking argument shape before the library sees the call. Everything else is arguments in, library call, JSON result out. Domain and configuration validation, alignment, and budgets belong to the library, and its error messages are written to be read by a model, so they are passed through rather than reworded.
+This package exposes `blue-data-llm-source` through an MCP server named `blue-data-llm`. The server uses stdio and provides five tools and no resources. It validates each tool call against the advertised schema, translates the arguments into a library call, and returns JSON. The library remains responsible for domain validation, configuration, alignment, and budgets. Library errors are returned with their original wording so a model-driven client can act on them.
 
-**A ceiling here is per call, and a call that sets none has none.** `llmdb_query` takes `limits.max_cost`, `limits.max_seconds`, and `limits.max_calls`, and `llmdb_estimate` says what a request could cost before it runs. But the server still constructs its source with no properties, so nothing is configured out of band on the agent's behalf: an agent that omits the ceilings can spend whatever the configured provider charges. That is what to weigh before handing this transport a live credential. [Ceilings](#ceilings) below has the detail and the alternative.
+**Each ceiling applies to one call. A call that sets no ceiling is unbounded.** `llmdb_query` accepts `limits.max_cost`, `limits.max_seconds`, and `limits.max_calls`, while `llmdb_estimate` calculates a cost bound before a query runs. The server constructs its source with no default properties, so omitted ceilings are not supplied elsewhere and the provider may charge without a per-call spending cap. Configure the client accordingly before exposing a provider credential. See [Ceilings](#ceilings) for details and alternatives.
 
 ## Tools
 
@@ -14,7 +14,7 @@ An MCP server over `blue-data-llm-source`. It registers as `blue-data-llm`, spea
 | `llmdb_inspect_model` | Report one model's rates and whether a cost ceiling can be bounded against it. | no |
 | `llmdb_inspect_metadata` | Report the protocol, the variant, and the library version. | no |
 
-The names are prefixed because several Blue Data servers can load into one client's tool namespace at once, where a bare `query` or `list_models` would collide. The verb after the prefix is the verb the `blue-llmdb` CLI uses for the same operation.
+The `llmdb_` prefix prevents collisions when a client loads several data-source servers into one tool namespace. The remainder of each name matches the corresponding `blue-llmdb` operation.
 
 Versions before 2.0.0 exposed `llm_fetch`, `llm_estimate` and `llm_info`. Those names are removed rather than aliased; a client still calling one gets an `UnknownTool` error naming every tool that does exist.
 
@@ -89,7 +89,7 @@ A call and its result:
 }
 ```
 
-`outcome` is always present and says why the result looks the way it does: `ok`, `empty_query`, `model_returned_none`, `filtered_to_empty`, `partial`, `stopped_by_limit`, or `truncated`. It is what tells an empty record list that the model found nothing apart from one a limit cut short.
+`outcome` is always present and explains the result: `ok`, `empty_query`, `model_returned_none`, `filtered_to_empty`, `partial`, `stopped_by_limit`, or `truncated`. Use it to distinguish a model-produced empty result from one caused by filtering, interruption, or a limit.
 
 Every field in that sample is always present, so a program branches on what it says rather than on whether the key arrived. `gaps` reports an observed failed or interrupted part, a ceiling, or discarded output; a valid empty answer alone does not create one. `stop_reasons` retains simultaneous limits in precedence order. `row_estimate` is the accepted non-flat bootstrap root hint or JSON `null`.
 
@@ -106,12 +106,12 @@ What one **flat** `llmdb_query` of the same request could cost, without calling 
 ```json
 {
   "bounded": true,
-  "max_cost": 0.12924,
-  "max_cost_per_attempt": 0.04308,
+  "max_cost": 0.1292025,
+  "max_cost_per_attempt": 0.0430675,
   "max_attempts": 3,
   "reason": null,
   "model": "gpt-4o",
-  "prompt_bytes": 784,
+  "prompt_bytes": 779,
   "max_output_tokens": 4096
 }
 ```
@@ -235,7 +235,7 @@ The `blue-llmdb` CLI spells the same settings as hyphenated flags, because a dot
 | `plan.planning_order` | `--plan-planning-order` |
 | `plan.expose_estimate` | `--plan-expose-estimate` / `--no-plan-expose-estimate` |
 
-`max_records` is the row axis of the same `Limits` object the ceilings live on: `fetch` assigns it to `Limits.max_rows`, overwriting whatever was configured there. There is one name for it on each surface, and no `limits.max_rows` argument here — the server refuses that spelling rather than accepting a second name for one knob.
+`max_records` maps to `Limits.max_rows` and overrides any configured value for that call. The MCP surface has no separate `limits.max_rows` argument; the server refuses that spelling to avoid two names for the same setting.
 
 ## What this server does not expose
 
@@ -245,7 +245,7 @@ The `blue-llmdb` CLI spells the same settings as hyphenated flags, because a dot
 | `model select` | The same CLI-local state. A server started per client session has nowhere to put a selection. |
 | The `llm.*` request settings (`model`, `max_tokens`, `temperature`, `timeout`, `max_parallel`, `cache`, `cache_dir`, `price_per_input_token`, `price_per_output_token`) | Deployment configuration on this transport, not per-call arguments. The server builds its source from the process configuration the client started it with, and a cost ceiling is claimed against that configured model. |
 | A `--format` equivalent | An MCP tool's wire format is fixed JSON by protocol. `--format table/json/nl/csv` is a CLI concern and is deliberately not mirrored here. |
-| MCP resources | This server is tools-only. The one candidate, the price table, is ten names with nothing to page or subscribe to, and every other read here is either a live provider call (which a client must not be able to trigger by prefetching context) or a single fact a tool already returns. |
+| MCP resources | This server is tools-only. The price table contains ten names with no paging or subscription behavior, and each other read is either a live provider call, which a client must not be able to trigger by prefetching context, or a fact already returned by a tool. |
 | The library's registry surface (`fetch_schema`, `fetch_databases`, `fetch_database_collections` and the rest) | They exist so a registry sync has a hierarchy to walk. `fetch_databases()` returns one synthetic name and `fetch_schema()` returns `{}`; there is nothing for an agent to read. |
 | The `DataSource` orchestrator-tool surface (`get_nl_tools`, `execute_nl_tool`, `execute_query_nl`) | That is how Blue's own orchestrator drives a source, and it is already a tool-dispatch layer. Putting it behind an MCP tool would nest one tool protocol inside another and give an agent two routes to the same fetch. `llmdb_query` is that fetch. |
 
@@ -263,11 +263,9 @@ The ceilings are per call and nothing sets them for the agent. The server constr
 
 ## Errors
 
-One rule, and every tool follows it.
+Every tool follows the same error rule. A call that produces no result is an MCP-level error with `isError: true`. A completed call with a readable result is successful at the protocol level; partial results and stops are represented in the result fields.
 
-**A call that produced no result is an MCP-level error, `isError: true`. A call that ran and produced a result you can read is a success, and whatever went wrong with it is a field in the payload.**
-
-Error text is always `Kind: message`, with the library's own wording. Two things are done to it before it leaves. Anything in it shaped like a credential is replaced with `***`, because an exception from the provider SDK can quote the request it sent, headers included. And a value that missed a declared set is not read back: the message names the argument and the values this server accepts, which is the part the caller cannot work out. An unknown *key* is still quoted, since a misspelling is the one thing they have to be shown to find.
+Error text uses `Kind: message` and preserves the library's wording. Before the text is returned, credential-shaped content is replaced with `***` because provider exceptions can include request headers. For a value outside a declared set, the message identifies the argument and lists accepted values without repeating the rejected value. Unknown keys are quoted so callers can locate misspellings.
 
 | Kind | Raised for |
 |---|---|
@@ -307,13 +305,13 @@ blue-data-llm-mcp
 
 `pip install blue-data-llm-mcp` works only where `blue-data` is resolvable, which means an internal index. It is a core dependency of the library underneath and is not on the public one, so a plain install fails to resolve it. From a checkout, `scripts/install.sh` puts it in place first; set `BLUE_DATA_PATH` if it does not sit alongside this repository.
 
-This package points `pyright` at a `.venv` in its own directory, matching the sibling subrepos. Create and activate one before installing, or the type gate reports every import as unresolved instead of reporting real typing errors:
+This package points `pyright` at a `.venv` in its own directory. Create and activate one before installing, or the type check reports every import as unresolved:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 ```
 
-The server speaks MCP over stdio, so it is started by the client rather than by hand. stdio is the whole family's transport; this server opens no port and has nothing to bind. Point a client at it the usual way:
+The MCP client starts the server over stdio. The server opens no network port. Configure a client as follows:
 
 ```json
 {
@@ -332,9 +330,9 @@ The server speaks MCP over stdio, so it is started by the client rather than by 
 
 This server reads no configuration file and no `BLUE_DATA_*` environment variable. It constructs its source with no properties, so every setting is the library's default and every ceiling is whatever arrived with the call.
 
-`OPENAI_API_KEY` in the snippet above is the provider SDK's variable, not this package's. Nothing in the library or in this package reads it; the provider SDK reads it out of the process environment the client started the server with. No tool takes a credential as an argument. Nothing this server publishes carries one either. The line is what the text is doing: anything this server narrates *about* a call leaves through `redact`, which masks a value the environment holds under a credential's name as well as the shapes a key is written in. That covers every error message, the model name a result echoes, the attributes a request asked for, the rewritten ask, an uncheckable declared type, and the `reason` an unbounded estimate gives. A test walks what every tool returns and requires each string in it to be masked or to carry a written reason for not being, so a field added to a result lands on one side of the line or fails. The records a query returns are not masked. They are model output, which is the answer, and a record value that happens to read like a token is data this server was asked to fetch.
+`OPENAI_API_KEY` in the snippet above belongs to the provider SDK. The SDK reads it from the server process environment; neither this package nor the library reads it directly, and no tool accepts a credential as an argument. Text about a call passes through `redact`, including errors, model names, requested attributes, rewritten queries, unchecked types, and unbounded-estimate reasons. A test examines every returned string and requires it to be redacted or explicitly exempted. Returned records are exempt because they are the query result; a token-shaped record value remains data.
 
-The `blue-llmdb` CLI does have profiles, environment variables and a precedence chain, under `~/.blue-llmdb/`. This server deliberately does not read them. A profile is CLI-local state; a client in another session has no business reading it, and a profile supplying ceilings out of band would make the per-call guarantee above false. A deployment that wants configured ceilings embeds the library instead. The one thing both surfaces share is the property vocabulary, which is the mapping table above.
+The `blue-llmdb` CLI stores profiles and applies its own environment-variable precedence chain under `~/.blue-llmdb/`. The MCP server does not read that state because ceilings are explicit per-call inputs. A deployment that requires server-side default ceilings should embed the library. Both interfaces use the property names shown in the mapping table above.
 
 ## Layout
 
@@ -347,4 +345,4 @@ python3 -m pytest tests/unit -q
 python3 -m ruff format --check . && python3 -m ruff check .
 ```
 
-The suite pins this file to the live server. The tool names, the advertised schemas, the declared enums and the JSON samples above are all asserted against what the shipped `tools/list` and `tools/call` handlers actually return.
+Tests compare the documented tool names, schemas, enums, and JSON examples with the `tools/list` and `tools/call` handlers.

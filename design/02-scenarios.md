@@ -2,7 +2,7 @@
 
 ## Scenario 1: A planner needs a small table no source holds
 
-A planner is resolving a query that joins a vendor table against European Union membership. The vendor table is in Postgres. There is no membership table anywhere in the registry, and nobody is going to create one for a list that changes once a decade. The planner asks LlmSource for it, naming the columns it wants and the type of each, and receives records it can hand straight to a relational operator.
+A planner needs to join a vendor table in Postgres with European Union membership, but the registry has no membership table. The planner asks LlmSource for the membership data, specifies the required columns and types, and passes the returned records to a relational operator.
 
 **Example:**
 
@@ -21,7 +21,7 @@ result = source.fetch(
 # result.meta.model, result.meta.calls, result.meta.cost describe what it took
 ```
 
-The request becomes one prompt and one completion, taking up to `limits.max_retries + 1` provider attempts — three by default. The response is stripped of any code fence, parsed as JSON, aligned to the two requested attributes, coerced to the declared types, and deduplicated. This is the shape most requests take, and it is the one the release is built around.
+The default path uses one prompt and one completion, with up to `limits.max_retries + 1` provider attempts (three by default). The response is stripped of any code fence, parsed as JSON, aligned to the two requested attributes, coerced to the declared types, and deduplicated.
 
 ---
 
@@ -85,7 +85,7 @@ result = source.fetch(
 
 ## Scenario 5: The source is registered and queried like any other
 
-A data layer holds a registry of sources and queries them through a common surface. LlmSource inherits `blue_data.source.source.DataSource` and overrides `execute_query`, `execute_query_nl`, and the metadata surface, so it is a source of that layer by type, not by resemblance, and a divergence from those signatures is a type error rather than something an integrator discovers at runtime.
+A data layer holds a registry of sources and queries them through a common interface. `LlmSource` inherits `blue_data.source.source.DataSource` and implements its query and metadata methods, so signature drift is detected by type checking.
 
 **Example:**
 
@@ -110,9 +110,9 @@ source.execute_query(
 
 Its connection properties report protocol `llm` and variant `openai`, following the same scheme under which the relational sources report `sql`/`postgres` and `sql`/`mysql`. `execute_query` also accepts a plain string, which is treated as the request itself, and an unrecognised op raises `QueryError` listing the three above.
 
-What the base class does not buy is construction by protocol name, and the two registry paths differ on exactly that. `register_source` takes an instance, stores it under its name, and reads only `name` and `properties`, so handing it an `LlmSource` works. `connect_source` returns the live instance while it is registered, and otherwise reconstructs one from the class path recorded at registration, with the properties it was registered with. Protocol-name dispatch is a legacy path for older records and is not how this source is reached. Adding that arm is a change in `blue-data`, so the supported integration is to build the source and register the instance, which is what it was before this package took the dependency.
+Registration requires a constructed instance. `register_source` records the instance name, properties, and class path; `connect_source` returns the live instance or reconstructs it from that record. Construction by protocol name is not supported.
 
-Base-class order carries the weight that inheritance does buy, and getting it wrong fails quietly. `LlmSource` is declared with `DataSource` as its base so its own implementations come first, and a test asserts that every method on the shared surface resolves to this class. [The Source Base Class](04-detailed-architecture.md#the-source-base-class) has the account: which methods the base answers empty, which transaction methods raise `NotImplementedError` instead, which three carry real behaviour and why `execute_query_nl_tools` is refused, and what a registry walking the source would find if the order were wrong.
+A contract test verifies that required shared-surface methods resolve to `LlmSource` rather than to default base implementations. See [The Source Base Class](04-detailed-architecture.md#the-source-base-class) for the method-level rules.
 
 ---
 
@@ -134,7 +134,7 @@ records = source.execute_query_nl(
 
 A caller that already holds a configured model reuses it and pays nothing extra. A caller that does not is unaffected, because the configured client answers as before.
 
-What the wrapper around that callable can be held to is rows, and nothing else. It can prove that it invoked the function once, and one invocation is not one provider call: the callable may answer from its own memory, contact a provider once, or fan out to several, and none of that is visible from here. A `limits.max_calls`, `limits.max_cost`, or `limits.max_seconds` on a run that supplies `llm_fn` is therefore refused with a `ConfigError` naming the ceiling, while `limits.max_rows` binds as it does everywhere, because this source counts the records itself. A caller that wants any of the other three over its own model call injects a client that declares those axes and claims against the budget it is handed, which is Scenario 7's boundary, not this one's.
+The wrapper can enforce only the row limit because it cannot observe the callable's provider calls, cost, or deadline behavior. A run that supplies `llm_fn` therefore refuses `limits.max_calls`, `limits.max_cost`, and `limits.max_seconds`, while `limits.max_rows` remains available. To enforce other axes, inject a client that declares them and reserves against the supplied budget.
 
 ---
 
@@ -160,17 +160,15 @@ result = source.fetch(
 
 The four axes are row count, elapsed time, API cost, and call count. Rows are capped after the records are in hand, because that is when the count is known. Time, calls, and cost are reserved before each provider attempt, under a lock, so neither a fan-out nor a retry sequence can race past a ceiling. A cache hit consumes no provider call, no tokens and no cost. Rows it returns still count against the row cap, and elapsed-time admission still applies, so a hit under a spent deadline is refused. The time axis bounds admission and cooperative waiting, not the whole run; [what it bounds](../lib/README.md#what-the-time-ceiling-actually-bounds) lists the exclusions.
 
-The cost bound is not tuned to the average, and the difference decides how a ceiling is sized. It counts the prompt's UTF-8 bytes rather than dividing anything by an average, because a byte-pair tokenizer merges byte sequences and so consumes at least one byte of the encoded prompt per token it emits; and it counts the whole `llm.max_tokens` allowance at the model's output rate, since nothing observable predicts how much of it a model will use. The floor of the bound is therefore that output allowance alone, which for the shipped defaults of `gpt-4o` and 4096 tokens is about $0.041. A `limits.max_cost` of 0.10 leaves room for that; a `limits.max_cost` of 0.01 would refuse every call before making one, and the fix is a smaller `llm.max_tokens`, not a larger ceiling.
+The cost calculation uses the prompt's UTF-8 byte length and the full `llm.max_tokens` allowance to produce an upper bound. With the default `gpt-4o` model and 4096 output tokens, its minimum is about $0.041. A `limits.max_cost` of 0.10 admits the example request, while 0.01 refuses it before provider contact. Reduce `llm.max_tokens` when the answer needs fewer tokens.
 
-Counting the prompt's characters would not have been a bound, which is worth stating because it reads like one. A tokenizer splits a character whose encoding it has no merge for, so a composed emoji of several code points can cost more tokens than it has characters, and a 1,400-character sequence has been measured at 2,200 tokens. Bytes are what the tokenizer actually consumes, so the claim holds there and nowhere above it.
-
-Where the bound cannot be established the ceiling is refused rather than approximated. A model this package carries no price for, with no `llm.price_per_input_token` and `llm.price_per_output_token` supplied, raises a `ConfigError` naming what is missing, as does an `llm.max_tokens` that is not a finite positive number. A model name resolves to a published price only when it matches an entry exactly or extends one with a dated suffix, so `gpt-4o-mini-2024-07-18` is priced as `gpt-4o-mini` while `gpt-4o-miniature-premium` is refused: a longer name is a different model, not a variant of the one whose name it happens to start with. Supplying either price key commits the caller to both, and a value that is not a finite positive number is refused instead of being passed over in favour of the table, since an override that was meant and then ignored produces a bound lower than the one the caller asked for.
+The source refuses a cost ceiling when it cannot establish a bound, including when model rates are unavailable or `llm.max_tokens` is not a finite positive number. Callers can supply both token rates for an unlisted model. See [Pricing helpers](../docs/api-reference.md#pricing-helpers) for the name-matching and validation rules.
 
 Which ceilings bind at all depends on the client that answers. A client declares its axes through `budget_capabilities()`, and each configured ceiling on an axis it did not declare is refused with a `ConfigError` naming it. The default client declares all four. A callable passed as `llm_fn` declares rows only, because nothing here can know how many provider calls that callable makes, what it is billed, or how to stop it when a deadline passes, so a call, cost, or time ceiling over an `llm_fn` is refused rather than quietly settled at zero. The row cap binds any client, since this source counts the records itself.
 
-The refusal reads every ceiling in the budget chain, not only the ones this request configured. A `limits.max_cost` carried on a planner's own budget and never mentioned in the call is still a ceiling the run would have to honour, so it is checked against the answering client in the same pass as the rest.
+Capability checks include ceilings inherited through the budget chain, not only values configured on the current request.
 
-A caller reaching the source through the query surface rather than through `fetch` sets the same ceiling the same way, because `optional_properties` is merged over the instance's properties for that call. This is the first route to reach for, since it needs nothing beyond the arguments the surface already takes and the ceiling stays with the request it arrived on.
+A caller using the query surface sets the same per-call ceilings through `optional_properties`, which is merged over the instance properties without changing later calls.
 
 ```python
 records = source.execute_query(
@@ -202,7 +200,7 @@ second = source.fetch(
 
 A planner or an operator has a request in hand and a ceiling to respect, and wants to know what the request could cost before spending anything on it. `estimate` answers from the prompt this source would actually send, so the figure belongs to the request being asked about, not to an average of requests like it. It contacts nothing. It describes a `flat` fetch and reads no `plan.*` setting, so an operator sizing a split request has to work its parts out by hand.
 
-The figure is an upper bound, not a prediction: it reserves the whole output allowance at the model's output rate and bounds the prompt by its encoded length, so a typical call costs a fraction of it. Being wrong high is the only safe direction, because a figure that can be exceeded is not a bound and a decision made against one is a decision made against a guess. It is the same bound the run reserves against, so an estimate a caller trusts and a ceiling the run enforces cannot disagree.
+The estimate is an upper bound rather than a prediction: it reserves the full output allowance and bounds the prompt by its encoded length. Runtime reservation uses the same calculation, so a request estimated within a ceiling is evaluated against that same bound when it runs.
 
 **Example:**
 
@@ -216,7 +214,7 @@ if estimate.bounded and estimate.max_cost <= 0.05:
     records = source.fetch("the member states of the European Union", attrs=["country"])
 ```
 
-A model this package cannot price returns `bounded=False` with a `reason` rather than raising, because asking what a request might cost is fair even where the answer is unknown, and the honest answer is that it cannot say. Supplying `llm.price_per_input_token` and `llm.price_per_output_token` makes such a model estimable.
+A model without known rates returns `bounded=False` with a `reason` instead of raising. Supplying `llm.price_per_input_token` and `llm.price_per_output_token` makes the model estimable.
 
 The same question is reachable through the query surface, for a caller that has this source through the registry rather than as an object:
 
@@ -277,7 +275,7 @@ The ceiling is the agent's to set. `llmdb_query` takes `limits.max_cost`, `limit
 
 `outcome` is on every result. An empty record list is not an error here, so an agent reads that field to tell an empty request from a model that returned nothing, a result reduction filtered away, and a run a ceiling stopped.
 
-The server speaks MCP over stdio and is started by the client. It is a thin adapter over the library, holding only the enforcement of the schema it advertises, and the split inside it is deliberate: the tool definitions and the argument translation import nothing from the protocol SDK, so both can be exercised with only the library installed. A REST interface is not implemented and is not scheduled.
+The client starts the MCP server over stdio. The server validates calls against its advertised schemas and translates arguments into library calls. Tool definitions and argument translation do not import the protocol SDK, so they can be tested with only the library installed. No REST interface is implemented or scheduled.
 
 ---
 
@@ -319,7 +317,7 @@ Non-flat bootstrap also infers a schema when none is supplied. With declared att
 
 ## Non-scenarios
 
-Recorded so that scope has something written down to argue against:
+The following capabilities are outside this source's scope:
 
 - Grounding an answer against a retrieved document. Closed-book is the premise, not a gap. Cross-checking against another source in the layer is a composition the planner performs, not a feature of this source.
 - Verifying that a returned claim is true. The source verifies that a record matches the shape it was asked for. Nothing in it establishes correctness, and no validator ships.

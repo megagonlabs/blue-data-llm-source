@@ -1,10 +1,10 @@
 # blue-data-llm-source Examples
 
-Runnable examples organized by purpose, mirroring the layout the sibling `blue-data-user-source` and `blue-data-kb-source` repositories use for theirs.
+Runnable examples are grouped by backend, feature, integration, and usage scenario.
 
-Every `.output.txt` in this directory is the captured stdout of the script beside it. Every script here has one: the thirteen that need no credential were captured offline, and the four that reach a provider were captured from real runs against it.
+Each script has a matching `.output.txt` file containing captured standard output. Thirteen examples were captured offline; four were captured from provider-backed runs.
 
-Thirteen of the seventeen scripts run with no credential, no network and no configuration at all. The remaining four need a provider key, and all four are captured from real runs. That is not a trick of the examples: `estimate` contacts nothing by construction, and every other behaviour worth demonstrating (attribute alignment, type checking, limits, budgets, gaps, outcome precedence, planning modes, the registry round trip) can be driven by a scripted `llm_fn` or an injected client that the source treats exactly as it treats a provider. A script driven by a canned response says so in its own header comment, and the table at the end of this file says so too. None of them is dressed up as a provider demo.
+Thirteen of the seventeen scripts require no credential, network access, or configuration. They use a scripted `llm_fn` or an injected client to exercise prompt rendering, attribute alignment, type checking, limits, budgets, gaps, outcome precedence, planning modes, and the registry round trip. The remaining four scripts require a provider key. Each script identifies its execution mode in a header comment, and the table at the end of this file records the same distinction.
 
 ## Quick start
 
@@ -20,7 +20,7 @@ export OPENAI_API_KEY=<YOUR_PROVIDER_KEY>   # placeholder: your own key
 python3 examples/backends/default_client_demo.py
 ```
 
-The CLI is a separate package and a separate story: `blue-llmdb data query "..."` runs the same library from a shell. Its options are documented in `docs/cli.md`, not here.
+The CLI is a separate package. `blue-llmdb data query "..."` runs the same library from a shell; its options are documented in `docs/cli.md`.
 
 ---
 
@@ -30,7 +30,7 @@ This source has no storage backend. What varies underneath it is **which client 
 
 ### Minimal quickstart (`function_client_quickstart.py`)
 
-One fetch answered by a local function. Everything except the model runs for real: prompt rendering, JSON parsing, attribute alignment, type checking, result metadata. It closes on the one thing to understand about this path: `meta.accounting_known` is False, so a `cost` of `0.0` means "not measured", not "free".
+One fetch is answered by a local function while prompt rendering, JSON parsing, attribute alignment, type checking, and result metadata use the normal library path. `meta.accounting_known` is `False`, so a `cost` of `0.0` means "not measured", not "free".
 
 ```bash
 python3 examples/backends/function_client_quickstart.py
@@ -40,7 +40,7 @@ python3 examples/backends/function_client_quickstart.py
 
 ### An injected client the source can bound (`injected_client_demo.py`)
 
-The contrast with the quickstart. A client that declares its axes through `budget_capabilities()`, claims against the run's `Budget`, and appends a `Usage` gets a real model name, token counts, a settled cost and `accounting_known=True` — and a cost ceiling that actually binds. The same ceiling over an `llm_fn` is refused, with the library's own explanation of why a ceiling it cannot hold is worse than none.
+This example injects a client that declares its supported axes through `budget_capabilities()`, reserves against the run's `Budget`, and appends a `Usage`. The result includes the model name, token counts, settled cost, and `accounting_known=True`. The library refuses the same cost ceiling for an `llm_fn` because that wrapper cannot observe or enforce provider cost.
 
 ```bash
 python3 examples/backends/injected_client_demo.py
@@ -70,7 +70,7 @@ python3 examples/backends/cache_stores_demo.py
 
 ### Cache hit end to end (`file_cache_demo.py`)
 
-`llm.cache` with `llm.cache_dir`: two identical fetches, the second served from disk with no provider call, no tokens and no API cost. The cache lives inside the client, below the source, so the first call has to be real, which is the whole reason this one needs a credential and `cache_stores_demo.py` does not.
+`llm.cache` with `llm.cache_dir`: two identical fetches, with the second served from disk at no provider, token, or API cost. This cache is inside the client, so the first call reaches the provider and requires a credential. `cache_stores_demo.py` uses caller-supplied stores and remains offline.
 
 ```bash
 python3 examples/backends/file_cache_demo.py
@@ -82,11 +82,11 @@ python3 examples/backends/file_cache_demo.py
 
 ## feature-demos/: one feature per script
 
-Each script is a single-feature deep dive, driven by a scripted `llm_fn` or an injected client so the behaviour being shown is deterministic rather than whatever a model did that afternoon. All seven run offline.
+Each script covers one feature using a scripted `llm_fn` or an injected client, which makes the output reproducible. All seven run offline.
 
 ### Attributes and declared types (`attrs_and_types_demo.py`)
 
-Ten canned responses, one per thing that can happen to a requested attribute. The asymmetry is the part worth reading: a numeric string under a declared `integer` is converted, because that is what the caller asked for, while a number under a declared `string` is reported rather than stringified, because that is the thing the caller wanted to be told about. Also `unmapped_keys`, `key_collisions`, `unchecked_types`, and the record that answers none of the requested attributes and is dropped.
+Ten canned responses cover the main attribute outcomes. A numeric string under a declared `integer` is converted; a number under a declared `string` is retained and reported as a mismatch. The example also covers `unmapped_keys`, `key_collisions`, `unchecked_types`, and removal of a record that answers none of the requested attributes.
 
 ```bash
 python3 examples/feature-demos/attrs_and_types_demo.py
@@ -116,7 +116,7 @@ python3 examples/feature-demos/estimate_demo.py
 
 ### A budget across calls (`budget_demo.py`)
 
-One `Budget` handed to three fetches: each derives a child, spends from what the parent has left, and the third comes back empty with `stopped_by` naming the axis rather than raising. Shown on the row axis with an `llm_fn` and on the call and cost axes with a client that declares them. The cost refusal lands on the reservation, not on the settled price, which is the part that surprises people.
+One `Budget` is shared by three fetches. Each derives a child and spends from the parent's remaining allowance; the third returns empty with `stopped_by` naming the exhausted axis. The example uses an `llm_fn` for the row axis and a capability-declaring client for the call and cost axes. Cost admission uses the reserved upper bound, not the settled price.
 
 ```bash
 python3 examples/feature-demos/budget_demo.py
@@ -158,7 +158,7 @@ python3 examples/feature-demos/tool_surface_demo.py
 
 ## framework-demos/: agentic framework integrations
 
-Both use [LangGraph](https://github.com/langchain-ai/langgraph), following the two sibling repos' own precedent, and contrast a fixed pipeline against an agent choosing its own tools. Both are provider-backed.
+Both examples use [LangGraph](https://github.com/langchain-ai/langgraph) and are provider-backed. One implements a fixed pipeline; the other lets an agent select its own tools.
 
 ### Direct Python API (`langgraph_direct_demo.py`)
 
@@ -199,7 +199,7 @@ python3 examples/integration-demos/register_source_demo.py
 
 ### Estimate, decide, fetch, reconcile (`estimate_then_fetch_demo.py`)
 
-The hero script: size a request without contacting anything, refuse it against a ceiling the caller owns, resize it with an output allowance the answer actually needs, run it under a `Budget` carrying that ceiling, then reconcile the settled cost against the reservation. `estimate` and the run agree by construction (both ask the client the same question, `bound_for_attempt`), so a caller cannot be sized against one figure and enforced against another.
+This example estimates a request without provider contact, compares it with a caller-owned ceiling, reduces the output allowance, runs the request under a `Budget`, and reconciles the settled cost with the reservation. Both `estimate` and runtime reservation call `bound_for_attempt`, so they use the same bound.
 
 ```bash
 python3 examples/integration-demos/estimate_then_fetch_demo.py
@@ -209,15 +209,15 @@ python3 examples/integration-demos/estimate_then_fetch_demo.py
 
 ---
 
-## scenario-demos/: value proposition demos
+## scenario-demos/: end-to-end scenarios
 
 ### Knowing when an enumeration is short (`bounded_enumeration_demo.py`)
 
-**Problem:** a model asked to enumerate a set larger than its output allowance returns a valid, well-formed, short list, with no marker in it. A caller counting records cannot tell a complete answer from a truncated one, and an empty gap list is not a completeness claim.
+A model asked to enumerate a set larger than its output allowance may return a valid but incomplete list. Counting records does not distinguish a complete result from a truncated one, and an empty gap list does not establish completeness.
 
-**Solution:** declare an identifying column with `plan.key`, allow continuations, and read `gaps`. A run that exhausted the set finishes clean; a run that hit its cap while records were still arriving says `leaf_at_cap` and names the count it reached.
+The example declares an identifying column with `plan.key`, enables continuations, and reads `gaps`. A run that exhausts the set finishes without a gap; a run that reaches its cap while records are still arriving reports `leaf_at_cap` and the count reached.
 
-**Result:** 6 of 24 records with no diagnostic → 18 of 24 with a named gap → 24 of 24 clean, computed live from real merging and real continuation accounting. The model is scripted to return at most six items per ask, which is the behaviour being worked around.
+The three runs return 6 of 24 records without a diagnostic, 18 of 24 with a named gap, and 24 of 24 without a gap. The scripted model returns at most six items per request so the example exercises merging and continuation accounting.
 
 ```bash
 python3 examples/scenario-demos/bounded_enumeration_demo.py

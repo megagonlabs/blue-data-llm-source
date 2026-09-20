@@ -1,6 +1,6 @@
 # blue-data-llm-source
 
-The library. A language model presented as a data source.
+Python library for querying a language model through the `DataSource` interface and returning structured records with execution metadata.
 
 ## Install
 
@@ -14,7 +14,7 @@ The virtual environment is not optional for the type gate. `pyproject.toml` poin
 `pyright` at `.venv` in this directory, so running it without one reports every import
 as unresolved rather than reporting real typing errors.
 
-The core depends on `blue-data` and `tenacity`. `blue-data` supplies the `DataSource` base class this source inherits, and it pulls `pandas`, `numpy`, and `jsonpath-ng` along with it, which is the part worth knowing before you install. `litellm` and `diskcache` come with the `llm` extra and are imported lazily, so the package works and its tests run without them.
+The core depends on `blue-data` and `tenacity`. `blue-data` supplies the `DataSource` base class and also installs `pandas`, `numpy`, and `jsonpath-ng`. The `llm` extra adds `litellm` and `diskcache`; both are imported lazily, so the base package and its tests work without them.
 
 ## LlmSource
 
@@ -22,7 +22,7 @@ The core depends on `blue-data` and `tenacity`. `blue-data` supplies the `DataSo
 LlmSource(name="llm", properties=None, client=None)
 ```
 
-`LlmSource` inherits `blue_data.source.source.DataSource`, so it is a data source by type, not by resemblance. The base is a plain class, not an abstract one. That makes the base order load-bearing. Most of the base's methods return an empty result instead of raising, so one left unoverridden here answers nothing instead of failing. That is no longer true of all of them: the transaction methods raise `NotImplementedError` naming this source, and the orchestrator-tool methods carry real behaviour. This source overrides those three instead of inheriting them: two are narrowed to the tools it can answer, and `execute_query_nl_tools` is refused. Where a method does return empty, a registry walking the surface would see a source that works and returns nothing. So the class is declared with `DataSource` as its base, its own implementations come first, and a test asserts that the methods this source must answer resolve here and not to the base.
+`LlmSource` inherits `blue_data.source.source.DataSource` and implements the shared query and metadata surface. The base class provides default empty results for several methods, so a contract test verifies that every required method resolves to `LlmSource`. Transaction methods raise `NotImplementedError`; the supported orchestrator-tool methods are narrowed locally, and `execute_query_nl_tools` is refused.
 
 Inheriting the base class does not make the source reachable by protocol name. `DataRegistry.connect_source` returns the live registered instance while one is present, and reconstructs an equivalent source from the recorded class path once it is not. The route is to build the source yourself and hand the instance to `register_source`. That is enough: the registry records the class alongside `name` and `properties`, and rebuilds an `LlmSource` from that record, so a source registered this way survives a round trip through the registry.
 
@@ -52,7 +52,7 @@ itself retains its two original fields.
 estimate(query, attrs=None, context=None, properties=None, llm_fn=None) -> Estimate
 ```
 
-What one **flat** fetch of `query` could cost at most, answered without contacting anything. It reads no `plan.*` setting, so a request with parts or continuations can cost several times this figure. It builds the prompt this source would actually send and bounds it, so the figure belongs to the request you are asking about, not to an average of requests like it, and it bounds the whole fetch rather than one attempt. A fetch may retry, so `max_cost` is the per-attempt figure accumulated once per attempt, added the way the budget ledger adds it, not multiplied. Below six attempts the two are identical in binary floating point. From six upward they diverge, and the gap widens with the attempt count: about half of all per-attempt figures differ by one unit in the last place at six attempts, and nearly all of them differ by more at a hundred. Any of it is enough to refuse the final attempt of a request sized against its own estimate. The shipped default is three attempts, so this is latent until someone raises `limits.max_retries` past four. The estimate accumulates the way the thing it is checked against accumulates, so it cannot drift out from under a caller who does. Sizing a ceiling against the per-attempt figure means one transient failure consumes it and the retry is refused.
+Returns an upper cost bound for one **flat** fetch of `query` without contacting a provider. The method ignores `plan.*` settings, so a request with parts or continuations can cost several times this figure. It renders the actual prompt and bounds the entire fetch, including retries. `max_cost` is calculated by adding `max_cost_per_attempt` once per permitted attempt in the same order as the budget ledger. Repeated addition and multiplication can differ in binary floating point from six attempts onward; even a one-unit difference in the last place can cause the final attempt of a request sized to its estimate to be refused. The default is three attempts, so this matters only when `limits.max_retries` exceeds four. Use the whole-fetch `max_cost`, not the per-attempt figure, when setting a ceiling.
 
 `llm_fn` is accepted so the estimate is asked of whatever would actually answer, and a callable cannot price itself, so a request against one is reported unestimable. The same is true of an injected client that does not implement `bound_for_attempt`.
 
@@ -60,7 +60,7 @@ The returned `Estimate` carries `bounded`, `max_cost`, `max_cost_per_attempt`, `
 
 A planner sizing a fan-out uses it to decide how wide to go; an operator uses it to check a request against a ceiling before spending anything on it.
 
-A model this package cannot price returns `bounded=False` with `reason` saying what is missing, instead of raising, because "how much might this cost" is a reasonable question to ask about a model nobody here has a price for and the honest answer to it is that we cannot tell you. An empty request returns `bounded=True` with a `max_cost` of zero, since it never reaches a model.
+For a model without known rates, the method returns `bounded=False` and a `reason` that identifies the missing information. An empty request returns `bounded=True` with a `max_cost` of zero because it never reaches a model.
 
 ```python
 from blue_data_llm_source import LlmSource
@@ -163,15 +163,15 @@ class InjectedClient(Protocol):
     def bound_for_attempt(self, prompt: str, properties: dict[str, Any]) -> float: ...
 ```
 
-**Declaring `Capability.ESTIMATE` commits you to two things**, because `estimate` reports a bound on the whole fetch and reaches it by accumulating the per-attempt figure once per permitted attempt. First, `bound_for_attempt` returns a true upper bound on one provider attempt. Second, one call makes at most `budget.effective_retries() + 1` provider attempts, reading `budget` from the properties handed to it. A client with its own retry or fallback policy that ignores the allowance will spend past the published estimate, and a caller who sized a ceiling from that estimate then has an attempt refused. A client that cannot promise the second omits the capability, and `estimate` reports `bounded=False` with a reason, the honest answer rather than a figure the run can exceed.
+**Declaring `Capability.ESTIMATE` adds two requirements.** `bound_for_attempt` must return a true upper bound on one provider attempt, and one call must make no more than `budget.effective_retries() + 1` attempts using the `budget` passed in `properties`. A client whose retry or fallback policy ignores this allowance can exceed its published estimate and cause a later attempt to be refused. Such a client should omit `ESTIMATE`; the method then reports `bounded=False` with a reason.
 
 `bound_for_attempt` is what makes `estimate` and the run agree: the estimate and each
 reservation both call it, so the figure a caller sizes against and the figure a ceiling
 enforces cannot be computed two different ways. It returns the most one attempt at *prompt*
 could cost, and `estimate` accumulates it once per attempt a fetch permits. A client that
 cannot price itself simply omits it. `estimate` then returns `bounded=False` with a reason,
-which is the honest answer to a question it cannot answer, and a cost ceiling against that
-client is refused separately by `budget_capabilities`. `DefaultLlmClient` implements it from
+and a cost ceiling against that client is refused separately by `budget_capabilities`.
+`DefaultLlmClient` implements the method from
 the same call arguments the attempt itself uses.
 
 Both completion methods take the prompt first and the merged per-call properties second, and both return the model's text. `afetch` calls `acomplete`, and `fetch` wraps `afetch`, so the asynchronous form is the one every fetch reaches; `complete` is there for a caller driving the client directly.
@@ -230,7 +230,7 @@ source = LlmSource(
     client=MyClient(),
 )
 sized = source.estimate("the member states of the European Union", attrs=["country"])
-print(sized.bounded, sized.max_cost)  # True 0.006 — per-attempt, accumulated over the attempts
+print(sized.bounded, sized.max_cost)  # True 0.006 (accumulated over the attempts)
 
 result = source.fetch("the member states of the European Union", attrs=["country"])
 print(result.records)
@@ -262,7 +262,7 @@ Each distinct `llm.cache_dir` opens an on-disk backend holding file descriptors.
 
 `llm.stream=True` is accepted. It exists for compatibility and **it does not make anything faster.** A fetch parses one whole JSON document into records, so there is no partial result for a caller to receive: the chunks are read to the end, reassembled into a single response, and handed to the same path a non-streamed response takes. The same records come back, priced the same way, at the same time or slightly later. The reason to set it is that some provider configurations and proxies require or default to a stream, and until now those callers could not use this package at all.
 
-One thing does change, and it is worth knowing before you set it. A stream carries the provider's token counts only if the provider chooses to send them, and many do not. When none arrive the call cannot be priced: the reservation stays at the bound claimed for the attempt instead of settling at zero, the usage record reports `cost_known=False`, and the fetch reports `accounting_known=False`. That is the same treatment any call whose cost cannot be read already gets — an unreadable price is not a free call. A stream that does carry usage is priced exactly like a non-streamed one, and reports its accounting as known.
+Streaming changes accounting when the provider omits token counts, which many providers do. In that case the call cannot be priced: the reservation remains at its upper bound, the usage record reports `cost_known=False`, and the fetch reports `accounting_known=False`. The same rule applies whenever a call's cost cannot be read; missing accounting does not make the call free. A stream that includes usage is priced like a non-streamed call and reports known accounting.
 
 The reassembled response is not priced from a token count computed here. The provider library's assembler fills in a usage block from a local tokenizer when the stream sent none, and neither those counts nor a price derived from them is what was billed, so both are dropped, not reported as measurements.
 
@@ -309,7 +309,7 @@ So `stopped_by: max_seconds` is always truthful about which ceiling was crossed,
 
 This list is the only copy. Everywhere else in the documentation that mentions the time ceiling links here instead of restating it, so it cannot go stale in one place and not another.
 
-The key names are a closed set, and an unknown one raises `ConfigError` listing what is accepted, as do the near misses `limit.*` and a bare `limits`. Every value is checked as the ceiling is built: a wrong type, a `bool`, a negative number, or a non-finite number raises `ConfigError` naming the field. A `NaN` ceiling is the case worth stating, because it compares false against every spend and so reads as configured while enforcing nothing.
+The key names form a closed set. An unknown key, including `limit.*` or a bare `limits`, raises `ConfigError` and lists the accepted names. Values are also validated when the ceiling is built: a wrong type, `bool`, negative number, or non-finite number raises `ConfigError` naming the field. `NaN` is explicitly rejected because every spend comparison with it is false, leaving an apparently configured ceiling unenforced.
 
 ### The cost bound
 
@@ -317,7 +317,7 @@ The key names are a closed set, and an unknown one raises `ConfigError` listing 
 
 Where the bound cannot be established, `limits.max_cost` raises `ConfigError` rather than claiming an invented figure. That happens when the model has no published price, since a model this table has never heard of may cost more than anything in it, and when `llm.max_tokens` is not a finite positive number, since output with no cap can run until the provider stops it. `pricing.rates_for` returns `None` for an unlisted model and `pricing.can_bound` answers the question without raising. No bound is computed at all when no cost ceiling is configured, so a run bounded on calls or rows is never refused over an unfamiliar model.
 
-**Size a cost ceiling against the floor, which is the output allowance alone.** The prompt contributes little; `llm.max_tokens` at the model's output rate contributes the rest, whatever the answer turns out to be. With the shipped defaults of `gpt-4o` and `llm.max_tokens` of 4096 that floor is about $0.041, so `limits.max_cost` below it refuses every call before one is made. Lower `llm.max_tokens` to what the answers actually need and the floor falls with it; raising the ceiling to cover an allowance nothing uses buys nothing.
+**The minimum cost bound is the full output allowance.** The prompt contributes relatively little; `llm.max_tokens` at the model's output rate contributes the rest. With the default `gpt-4o` model and `llm.max_tokens=4096`, the minimum is about $0.041. A lower `limits.max_cost` refuses the call before provider contact. Reduce `llm.max_tokens` when the answer needs fewer tokens.
 
 `pricing.resolve_rates` accepts `llm.price_per_input_token` and `llm.price_per_output_token`, supplied together, for a model the table does not carry. Both are accepted `llm.*` overrides, consumed by the client and never forwarded to the provider, so an unlisted model can be given a cost ceiling by whoever knows what it costs. Supplying one commits you to both, and a value that is not a finite positive number is refused instead of being passed over in favour of the table, since an override that was meant and then ignored produces a bound lower than the one you asked for.
 
@@ -327,7 +327,7 @@ A ceiling binds only on an axis the answering client declares through `budget_ca
 
 The practical case is `llm_fn`. `FunctionClient` declares rows alone, so `limits.max_calls`, `limits.max_cost`, or `limits.max_seconds` on a run that supplies `llm_fn` is refused.
 
-For the same reason, **a result produced by an `llm_fn` sets `meta.accounting_known` to false**, and its `calls`, `cost` and token counts describe this library's own bookkeeping, not provider work. A callable that fans out to five providers and spends real money still reports one call and no cost, because none of that is visible from here. Reporting it as unknown is the honest answer; reporting `cost=0.0` as though it were measured is not. An earlier version settled such a call at a cost of zero, which made a cost ceiling appear to hold over a callable that might be spending anything, and counted one invocation as one provider call, which it is not: the callable may answer from memory, contact one provider, or fan out to several.
+For the same reason, **a result produced by an `llm_fn` sets `meta.accounting_known` to false**. Its `calls`, `cost`, and token counts describe only the library's visible bookkeeping. A callable may answer locally, contact one provider, or fan out to several; none of that work is visible to the wrapper. The result therefore reports unknown accounting instead of presenting `cost=0.0` as a measurement.
 
 ### Bounding one request
 
@@ -386,7 +386,7 @@ separately and merged on the way back. Nothing selects a shape for you.
 
 ### Rule-backed distribution search
 
-Distribution search is opt-in and is exposed only through direct Python calls in this release. It
+Distribution search is opt-in and is exposed only through direct Python calls. It
 requires `plan.mode="partitioned"`, explicit ordered `plan.keys`, and a nonempty list of declared
 finite-domain rules. Every rule's `ordered_primary_keys` must exactly match `plan.keys`; its
 `dimension` must be one of those keys; and at least one rule must apply at the root. Rule domains are
@@ -480,7 +480,7 @@ by reduction produce `filtered_to_empty`.
 
 `LlmSourceError` is the root. Under it: `ConfigError` for rejected configuration, `QueryError` for a malformed query, `TransportError` for provider failures and malformed provider responses, `ParseError` for a response that cannot be read as records, and `BudgetExceeded` when a limit would be crossed.
 
-Nothing else escapes `fetch`, `afetch` or `estimate`. Anything unexpected is wrapped in `LlmSourceError` with the original attached as `__cause__`, so `except LlmSourceError` is sufficient and the original type is still there for a maintainer. A `KeyboardInterrupt` or a cancellation is deliberately not caught. Those are not this library's to reclassify. The guarantee is enforced at the entry points rather than assembled from per-site discipline, which is what made it hold everywhere it was remembered and fail everywhere it was not.
+No other exception type escapes `fetch`, `afetch`, or `estimate`. Unexpected exceptions are wrapped in `LlmSourceError` with the original attached as `__cause__`, so callers can catch the library root while maintainers retain the original type. `KeyboardInterrupt` and cancellation are not caught. The three entry points enforce this boundary directly.
 
 `ConfigError` covers more than a bad key. A ceiling configured on an axis the resolved client does not declare raises one, as does an unknown or invalid `limits.*` value, and so does a `limits.max_cost` whose bound cannot be established because the model has no published price or `llm.max_tokens` is not a finite positive number. `QueryError` covers the same attribute requested twice. Two *distinct* names whose fuzzy forms coincide (`first name` and `first_name`, or two scripts a normaliser flattens together) are not refused: the fuzzy index simply drops the entry it cannot separate, so exact keys still match and a key that only matches fuzzily is reported in `meta.unmapped_keys` rather than assigned by guess.
 
@@ -505,9 +505,9 @@ Unit tests only. Every I/O boundary is doubled and no test touches the network. 
 
 `tests/unit/compat/test_contract.py` compares this source's method signatures against `blue_data.source.source.DataSource` and fails when they drift.
 
-`LlmSource` inherits that base class, so most divergence is already a type error. The contract test covers what inheritance does not: a signature that still type-checks because the base method is untyped, and a method that resolves to the base class instead of to this one. Most `DataSource` methods return an empty result, so one left unoverridden answers nothing instead of failing, which is the quietest way a source can be broken. Not all of them: six transaction methods are recorded in the test's `OUT_OF_SCOPE` map and refuse by name, and the three orchestrator-tool methods carry real behaviour, which is why this source overrides them locally rather than inheriting them.
+`LlmSource` inherits that base class, so most divergence is already a type error. The contract test also catches untyped signature drift and required methods that resolve to a default base implementation. Six transaction methods are recorded in the test's `OUT_OF_SCOPE` map and refuse by name; the three orchestrator-tool methods are overridden locally because they have source-specific behavior.
 
-It prints the path of the `blue_data` it compared against, and names that path in any failure. Check it before changing this source to match a signature: an installed copy can be older than a checkout, and confirming against a version nobody runs is worse than not checking at all.
+The test prints the path of the `blue_data` package it inspected and includes that path in failures. Run it after installing or upgrading `blue-data` so the comparison covers the package used by the current environment.
 
 ## Distribution
 

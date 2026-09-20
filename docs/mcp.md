@@ -1,12 +1,12 @@
 # MCP Server
 
-`blue-data-llm-mcp`: an MCP server over this library that registers as `blue-data-llm`, speaks stdio, and exposes five tools and no resources.
+`blue-data-llm-mcp` is a stdio MCP server over this library. It registers as `blue-data-llm` and exposes five tools and no resources.
 
-This page mirrors [`platform/llm-mcp/README.md`](../platform/llm-mcp/README.md), which is the source of truth for the tool surface. That README is pinned to the live server by `platform/llm-mcp/tests/unit`, which asserts the tool names, the advertised schemas, the declared enums and the JSON samples in it against what the shipped `tools/list` and `tools/call` handlers return. Where this page and that one disagree, that one is right.
+This page mirrors [`platform/llm-mcp/README.md`](../platform/llm-mcp/README.md), which owns the tool-surface contract and also covers package installation and development.
 
 ## Upgrading from the `llm_*` tools
 
-2.0.0 renames every tool, which is a breaking change and one of the three reasons for the major version. Versions before 2.0.0 exposed `llm_fetch`, `llm_estimate` and `llm_info`.
+Version 2.0.0 renames every tool. Earlier versions exposed `llm_fetch`, `llm_estimate`, and `llm_info`.
 
 | Before 2.0.0 | Now |
 |---|---|
@@ -22,11 +22,11 @@ The old names are removed rather than aliased. A client still calling one gets a
 ToolError: unknown tool 'llm_fetch'. Available tools: llmdb_query, llmdb_estimate, llmdb_list_models, llmdb_inspect_model, llmdb_inspect_metadata
 ```
 
-A client holds one flat tool namespace and this family ships a server per source, so a bare `query` or `list_models` would collide. Every name carries this server's own prefix, and the verb after the prefix is the verb the `blue-llmdb` CLI uses for the same operation.
+MCP clients use a flat tool namespace, so unprefixed names such as `query` or `list_models` can collide with tools from another data-source server. Each tool therefore uses the `llmdb_` prefix and the same operation name as the corresponding `blue-llmdb` command.
 
 ## Ceilings, before you connect this to a credential
 
-**A ceiling here is per call, and a call that sets none has none.** `llmdb_query` takes `limits.max_cost`, `limits.max_seconds`, and `limits.max_calls`, and `llmdb_estimate` says what a request could cost before it runs. But the server constructs its source with no properties, so nothing is configured out of band on the agent's behalf: an agent that omits the ceilings can spend whatever the configured provider charges. That is what to weigh before handing this transport a live credential. [Ceilings](#ceilings) below has the detail and the alternative.
+**Each ceiling applies to one call. A call that sets no ceiling is unbounded.** `llmdb_query` accepts `limits.max_cost`, `limits.max_seconds`, and `limits.max_calls`; `llmdb_estimate` calculates a cost bound before a query runs. The server constructs its source with no default properties, so omitted ceilings are not supplied elsewhere and the provider may charge without a per-call spending cap. Configure clients accordingly before exposing a provider credential. See [Ceilings](#ceilings) for details and alternatives.
 
 ## Tools
 
@@ -109,7 +109,7 @@ A call and its result:
 }
 ```
 
-`outcome` is always present and says why the result looks the way it does: `ok`, `empty_query`, `model_returned_none`, `filtered_to_empty`, `partial`, `stopped_by_limit`, or `truncated`. It is what tells an empty record list that the model found nothing apart from one a limit cut short.
+`outcome` is always present and explains the result: `ok`, `empty_query`, `model_returned_none`, `filtered_to_empty`, `partial`, `stopped_by_limit`, or `truncated`. Use it to distinguish a model-produced empty result from one caused by filtering, interruption, or a limit.
 
 Every field in that sample is always present, so a program branches on what it says rather than on whether the key arrived. `gaps` reports an observed failed or interrupted part, a ceiling, or discarded output; a valid empty answer alone does not create one. `stop_reasons` retains simultaneous limits in precedence order. `row_estimate` is the accepted non-flat bootstrap root hint or JSON `null`.
 
@@ -266,7 +266,7 @@ The `blue-llmdb` CLI spells the same settings as hyphenated flags, because a dot
 | `plan.planning_order` | `--plan-planning-order` |
 | `plan.expose_estimate` | `--plan-expose-estimate` / `--no-plan-expose-estimate` |
 
-`max_records` is the row axis of the same `Limits` object the ceilings live on: `fetch` assigns it to `Limits.max_rows`, overwriting whatever was configured there. There is one name for it on each surface, and no `limits.max_rows` argument here — the server refuses that spelling rather than accepting a second name for one knob.
+`max_records` maps to `Limits.max_rows` and overrides any configured value for that call. The MCP surface has no separate `limits.max_rows` argument; the server refuses that spelling to avoid two names for the same setting.
 
 ## What this server does not expose
 
@@ -276,7 +276,7 @@ The `blue-llmdb` CLI spells the same settings as hyphenated flags, because a dot
 | `model select` | The same CLI-local state. A server started per client session has nowhere to put a selection. |
 | The `llm.*` request settings (`model`, `max_tokens`, `temperature`, `timeout`, `max_parallel`, `cache`, `cache_dir`, `price_per_input_token`, `price_per_output_token`) | Deployment configuration on this transport, not per-call arguments. The server builds its source from the process configuration the client started it with, and a cost ceiling is claimed against that configured model. |
 | A `--format` equivalent | An MCP tool's wire format is fixed JSON by protocol. `--format table/json/nl/csv` is a CLI concern and is deliberately not mirrored here. |
-| MCP resources | This server is tools-only. The one candidate, the price table, is ten names with nothing to page or subscribe to, and every other read here is either a live provider call (which a client must not be able to trigger by prefetching context) or a single fact a tool already returns. |
+| MCP resources | This server is tools-only. The price table contains ten names with no paging or subscription behavior, and each other read is either a live provider call, which a client must not be able to trigger by prefetching context, or a fact already returned by a tool. |
 | The library's registry surface (`fetch_schema`, `fetch_databases`, `fetch_database_collections` and the rest) | They exist so a registry sync has a hierarchy to walk. `fetch_databases()` returns one synthetic name and `fetch_schema()` returns `{}`; there is nothing for an agent to read. |
 | The `DataSource` orchestrator-tool surface (`get_nl_tools`, `execute_nl_tool`, `execute_query_nl`) | That is how Blue's own orchestrator drives a source, and it is already a tool-dispatch layer. Putting it behind an MCP tool would nest one tool protocol inside another and give an agent two routes to the same fetch. `llmdb_query` is that fetch. |
 
@@ -288,7 +288,7 @@ Three axes bound what a call may spend: `limits.max_cost` in dollars, `limits.ma
 
 There is a floor a cost ceiling has to clear. The bound reserves the whole output allowance at the model's output rate, so a `limits.max_cost` below `max_cost_per_attempt` refuses every call before making one. Ask `llmdb_estimate` for that figure rather than guessing at it; lowering the allowance itself needs `llm.max_tokens`, which is a deployment setting and is not exposed here.
 
-A cost ceiling also needs a model the price table carries. Ask `llmdb_inspect_model` first: `cost_ceiling_supported: false` means `limits.max_cost` will refuse every call on this server, whatever value it is given.
+A cost ceiling also needs rates for the model, from the price table or from the `llm.price_per_input_token` and `llm.price_per_output_token` this deployment was configured with. Ask `llmdb_inspect_model` first: `cost_ceiling_supported: false` means `limits.max_cost` will refuse every call on this server, whatever value it is given.
 
 The ceilings are per call and nothing sets them for the agent. The server constructs its source with no properties, so a call that names no ceiling has none, and a ceiling one call sets does not carry to the next. A deployment that cannot leave that to the agent embeds the library and configures `limits.*` on the source it builds, or wraps this server in a process that does. The library's ceilings are described in [guide.md](guide.md) and stated in full in [`lib/COMPATIBILITY.md`](../lib/COMPATIBILITY.md).
 
@@ -355,11 +355,11 @@ This server reads no configuration file and no `BLUE_DATA_*` environment variabl
 
 `OPENAI_API_KEY` in the snippet above is the provider SDK's variable, not this package's. Nothing in the library or in this package reads it; the provider SDK reads it out of the process environment the client started the server with. No tool takes a credential as an argument and no tool returns one.
 
-The `blue-llmdb` CLI does have profiles, environment variables and a precedence chain, under `~/.blue-llmdb/`. This server deliberately does not read them. A profile is CLI-local state; a client in another session has no business reading it, and a profile supplying ceilings out of band would make the per-call guarantee above false. A deployment that wants configured ceilings embeds the library instead. The one thing both surfaces share is the property vocabulary, which is the mapping table above.
+The `blue-llmdb` CLI stores profiles and applies its own environment-variable precedence chain under `~/.blue-llmdb/`. The MCP server does not read that state because ceilings are explicit per-call inputs. A deployment that requires server-side default ceilings should embed the library. Both interfaces use the property names shown in the mapping table above.
 
 ## Where to go next
 
 - [cli.md](cli.md): the same operations from a shell, with profiles and four output formats.
 - [guide.md](guide.md): the Python library both adapters sit on.
 - [architecture.md](architecture.md): where this server sits, and what it does not hold.
-- [`platform/llm-mcp/README.md`](../platform/llm-mcp/README.md): the source of truth for this page.
+- [`platform/llm-mcp/README.md`](../platform/llm-mcp/README.md): package-level usage and development notes.

@@ -1,12 +1,12 @@
 # CLI
 
-The `blue-llmdb` command: twelve commands over four components that ask a language model a question and print the answer as records.
+`blue-llmdb` provides twelve commands across four components for configuration, model inspection, cost estimation, and record queries.
 
-This page mirrors [`platform/llm-cli/README.md`](../platform/llm-cli/README.md), which is the source of truth for the command surface. That README is pinned to the shipped CLI by `platform/llm-cli/tests/unit/test_readme.py`, which runs every command in it in the order it appears. Where this page and that one disagree, that one is right.
+This page mirrors [`platform/llm-cli/README.md`](../platform/llm-cli/README.md), which owns the command-surface contract and also covers package installation and development.
 
 ## Upgrading from `llm`
 
-2.0.0 replaces the `llm` command, which is a breaking change and the reason for the major version. `llm fetch` is now `blue-llmdb data query` and `llm info` is now `blue-llmdb metadata inspect`. The old entry point is removed, not aliased, so a script that calls it fails rather than quietly running something else. Everything else on this page is new: profiles and the precedence chain, the `model` and `metadata` components, `data estimate`, the four formats, and the error codes. [`CHANGELOG.md`](../CHANGELOG.md) carries the full list, including the two other breaking changes this release ships.
+Version 2.0.0 replaces the `llm` command. `llm fetch` is now `blue-llmdb data query`, and `llm info` is now `blue-llmdb metadata inspect`. The old entry point has no alias, so existing scripts must be updated. Version 2.0.0 also adds profiles, a configuration precedence chain, the `model` and `metadata` components, `data estimate`, four output formats, and coded errors. See [`CHANGELOG.md`](../CHANGELOG.md) for the complete migration notes.
 
 ## Install
 
@@ -38,7 +38,7 @@ blue-llmdb [--version] [-h|--help] [--profile NAME]
     └── inspect [--format]
 ```
 
-The shape is `blue-llmdb <component> <action> <parameters>`, which is the shape the Blue CLI family uses.
+Commands use the form `blue-llmdb <component> <action> <parameters>`.
 
 | Command | What it does | Contacts a provider |
 |---|---|---|
@@ -93,9 +93,9 @@ blue-llmdb metadata inspect --format json
 }
 ```
 
-## What this CLI leaves out, and why
+## Unsupported command groups
 
-The Blue CLI family's component and action vocabulary is wider than the four components above, and one behaviour the checklist asks after has nothing here to attach to. The rest is absent because this source has no store behind it, and the absences are listed here rather than left to be discovered.
+This source has no backing store, so several command groups used by storage-backed sources do not apply.
 
 | Not built | Why |
 |---|---|
@@ -106,19 +106,15 @@ The Blue CLI family's component and action vocabulary is wider than the four com
 | `data import` / `data export` | There is no stored dataset to move in or out. `--format json` or `--format csv` on `data query` writes the result to standard output, which is the export path. |
 | A batch command, and the partial-success rule that goes with one | No command here takes a list of inputs and reports an outcome per item, so there is no rule to define about some of several succeeding. `PARTIAL` is about one request that was interrupted after answering, which is a different claim. |
 
-Rather than ship four components that return `{}`, this CLI leaves them out and says so here.
+### Differences from other Blue data CLIs
 
-### Where this diverges from its siblings
-
-`blue-kb` and `blue-userdb` are stores, so they carry `database`, `schema`, `data search`, and import/export, and their profiles configure a data directory. This CLI's four components are the subset that means anything over a model. Three further differences go the other way, where this CLI has something the siblings do not.
+`blue-kb` and `blue-userdb` manage stored data, so they include `database`, `schema`, `data search`, and import/export commands. This CLI instead provides three capabilities specific to model-backed queries.
 
 | Divergence | What the siblings do | What this CLI does | Why |
 |---|---|---|---|
 | The `model` component | A model name is a profile parameter and a `--model` flag. `model` is not in the family's component vocabulary, and nothing lists or inspects one. | `model list`, `model inspect NAME`, `model select NAME`. | A cost ceiling on this source can only be bounded against a model whose published rates this package carries, and a caller has to be able to find out which those are before a query is refused for it. `model` is a noun coined here rather than one taken from the family list. |
 | Four output formats | `table` and `json`, with `nl` added on the query and answer commands. | `table`, `json`, `nl` and `csv`, on every command that returns a result. | `csv` exists because a record set with a declared schema is the shape a spreadsheet takes, which is not true of a graph or a session. Putting all four on every command that returns a result removes the question of which command has which. |
 | A coded error vocabulary | `Error: <message>` on standard error, exit `0`, `1` or `2`, with no error codes and no JSON error envelope. | `ERROR: <CODE> <message>`, nine codes over exit statuses 1 to 8, and an error object on standard output under `--format json`. | A run that reaches a provider fails in ways that need different responses: retry, fix the request, raise the ceiling, supply a credential. One exit status of `1` cannot tell a script which. See [Errors and exit codes](#errors-and-exit-codes). |
-
-The CLI Compliance Checklist permits a documented, justified deviation; an undocumented gap reads as an oversight, which is why these two tables exist.
 
 ## Configuration
 
@@ -169,7 +165,7 @@ blue-llmdb profile select default
 blue-llmdb profile remove staging --confirm
 ```
 
-`--confirm` skips the question. Without it, `profile remove` asks, and answering no changes nothing and exits 0. Declining a question you were asked is not a failure. Removing a profile deletes that section of the profiles file and nothing else: not the cache directory, not another profile, and not the selection unless it pointed at what you removed, in which case it moves to a profile that exists (`default` where that survives, otherwise the first one left), and the command says which. The last profile cannot be removed. The selection has to name a profile that is there, and a store with nothing in it has nothing to name.
+`--confirm` skips the prompt. Without it, answering no leaves the store unchanged and exits 0. Removing a profile deletes only that profile; it does not remove caches or other profiles. If the removed profile was selected, selection moves to `default` when available or to the first remaining profile, and the command reports the change. The last profile cannot be removed because selection must always name an existing profile.
 
 ### Parameters
 
@@ -195,7 +191,7 @@ blue-llmdb profile remove staging --confirm
 | `BLUE_DATA_LLM_SOURCE_MAX_RETRIES` | int | — | | `limits.max_retries` |
 | `BLUE_DATA_LLM_SOURCE_EFFORT` | str | `low` | | `plan.max_continuations` |
 
-A parameter name is also its environment variable name, so exporting `BLUE_DATA_LLM_MODEL` overrides the profile for one shell without editing anything. Exporting one *empty* is refused rather than read as unset. `BLUE_DATA_LLM_MODEL=''` is a tier with a value in it, and taking it as absent would hand the setting down to the profile without saying so. That is the one thing a precedence chain must not do. `unset BLUE_DATA_LLM_MODEL` is how you take a variable out of the chain. The store refuses a blank value for the same reason: it would be written, reported as set, and then skipped by every read.
+A parameter name is also its environment-variable name, so exporting `BLUE_DATA_LLM_MODEL` overrides the profile for one shell without editing it. An empty exported value is refused instead of treated as unset. `BLUE_DATA_LLM_MODEL=''` is still an explicit value; falling through to the profile would hide a configuration error. Use `unset BLUE_DATA_LLM_MODEL` to remove the environment tier. Profile storage also refuses blank values because they would otherwise be written but skipped during resolution.
 
 Nothing blocks on a parameter being unset. "Asked on a first run" means `blue-llmdb profile config` with no argument walks those two, and nothing more. A missing credential surfaces only when `data query` reaches the provider, as `ERROR: TRANSPORT`.
 
@@ -224,7 +220,7 @@ Nor does any command print a credential that reached it another way. An error li
 
 Two things are deliberately not masked. The rest of the `settings` envelope is not, because a cache directory is a path and a path carries enough entropy to read as a key shape, so masking it would report `***` for a directory you chose. Records are not, because they are model output, and a record value that happens to read like a token is the answer you asked for.
 
-A directly entered secret is stored base64-encoded behind an `enc:` prefix. **That is obfuscation, not encryption**: anyone who can read the file can decode it, and the file mode is the real protection. No command prints a secret value — not `profile inspect`, not `profile list`, not a log line, not an error message.
+A directly entered secret is stored as base64 behind an `enc:` prefix. **This is obfuscation, not encryption.** Anyone who can read the file can decode it; the file permissions provide the protection. Commands do not print secret values in profile output, logs, or error messages.
 
 ## data query
 
@@ -337,7 +333,7 @@ blue-llmdb data query "the member states of the European Union" \
 
 `--plan-depth` bounds recursion, `--plan-partitions` bounds children per node, and `--plan-target-rows` supplies the uncertain row-count threshold for descendant splits. `--plan-leaves` bounds the parts a split may run, grouping values past it several to a part. `--plan-partition-key` guides only the root proposal. `--plan-schema-mode` takes `preserve`, which keeps caller attributes, or `enrich`, which lets non-flat planning append inferred ones.
 
-The remaining standard controls are `--plan-keys` for ordered composite identity, `--plan-exact-rows` for a hard target when the plan has one leaf, `--plan-exclusion-bytes` for continuation-prompt size, `--plan-planning-order` for one of the five schedules, and `--plan-expose-estimate`/`--no-plan-expose-estimate` for extraction-prompt context. Together the CLI, MCP and Python surfaces share 14 controls. The rule-backed distribution controls and the optional planning receipt remain direct-Python-only in this release. The two locked schedules need a non-empty caller schema and ordered `--plan-keys`. A multi-leaf plan does not apply `--plan-exact-rows` and adds `exact_rows_not_leaf_bound` to the result's gaps.
+The remaining standard controls are `--plan-keys` for ordered composite identity, `--plan-exact-rows` for a hard target when the plan has one leaf, `--plan-exclusion-bytes` for continuation-prompt size, `--plan-planning-order` for one of the five schedules, and `--plan-expose-estimate`/`--no-plan-expose-estimate` for extraction-prompt context. The CLI, MCP, and Python APIs share these 14 controls. Rule-backed distribution controls and the optional planning receipt are available only through direct Python calls. The two locked schedules need a non-empty caller schema and ordered `--plan-keys`. A multi-leaf plan does not apply `--plan-exact-rows` and adds `exact_rows_not_leaf_bound` to the result's gaps.
 
 None of the `--plan-*` controls has a profile parameter, so none of them is in the precedence chain: each is read from the command line and nowhere else. A plan setting describes one ask, not a deployment, and a partition key or a row target left in a profile would apply itself to the next, unrelated query. `--effort` is the one planning-adjacent option that does read configuration, as `BLUE_DATA_LLM_SOURCE_EFFORT`, because a continuation allowance is an appetite for spending rather than a shape.
 
@@ -548,4 +544,4 @@ ERROR: TRANSPORT TransportError: litellm.AuthenticationError - Missing credentia
 - [quickstart.md](quickstart.md): one path through the CLI in under five minutes.
 - [mcp.md](mcp.md): the same operations as MCP tools, for an agent rather than a shell.
 - [guide.md](guide.md): the Python library the CLI is a thin adapter over.
-- [`platform/llm-cli/README.md`](../platform/llm-cli/README.md): the source of truth for this page.
+- [`platform/llm-cli/README.md`](../platform/llm-cli/README.md): package-level usage and development notes.

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Three packages are built from this repository, and **each is installed from a checkout**: none of the three is on PyPI or on an internal index. The routes below describe how they are intended to be distributed, which is not how they reach anyone today. `docs/installation.md`, `lib/README.md` and the interface READMEs are the current install instructions.
+This repository builds three packages. **All three are currently installed from a checkout** because none is available on PyPI or an internal package index. Current installation instructions are in `docs/installation.md`, `lib/README.md`, and the interface READMEs. This document also describes the intended distribution process.
 
 | Package | Contents | Entry point |
 |---------|----------|-------------|
@@ -10,13 +10,13 @@ Three packages are built from this repository, and **each is installed from a ch
 | `blue-data-llm-cli` | The `blue-llmdb` command | `blue-llmdb` |
 | `blue-data-llm-mcp` | The MCP server, speaking over stdio | `blue-data-llm-mcp` |
 
-Both interface packages depend on the library and add only their own framework, so a caller that wants records installs one package and a caller that wants a terminal installs two.
+Both interface packages depend on the library and add only their interface framework. Python callers install the library; command-line users install the library and CLI package; MCP clients install the library and MCP package.
 
-There is no Docker image. The library holds no state, opens no port, and starts no process of its own, and the MCP server speaks over stdio and is started by its client, not run as a service. A container image becomes worth building at the point an interface needs to be reachable over a network, which nothing here currently is.
+There is no Docker image. The library holds no state, opens no port, and starts no process. The MCP server uses stdio and is started by its client. No current interface requires a network-reachable service.
 
-The operational surface is correspondingly small. There is no backend to provision, no migration to run, and no data to back up. What an operator does manage is a provider credential, a spending ceiling, and whichever process embeds the library.
+Operations require no backend provisioning, data migration, or backup. An operator manages provider credentials, spending ceilings, and the process that embeds the library.
 
-The library does carry a dependency worth knowing about at provisioning time. `blue-data` supplies the `DataSource` base class the source inherits, and it brings `pandas`, `numpy`, and `jsonpath-ng` into any environment this package is installed into. It is internal rather than public-index, so it is installed from its checkout first.
+`blue-data` supplies the inherited `DataSource` base class and also installs `pandas`, `numpy`, and `jsonpath-ng`. Because `blue-data` is not on a public package index, install it from a checkout before this package.
 
 ---
 
@@ -30,7 +30,7 @@ The package follows [Semantic Versioning](https://semver.org/) (`MAJOR.MINOR.PAT
 
 A change to the prompt is treated as MINOR at least, because it changes what the source returns for an unchanged request, and a caller with its own recorded expectations needs the signal.
 
-Each of the three packages declares its version twice, as `version` in its `pyproject.toml` and as `__version__` in its top-level module, and the pairs are kept in step by hand. A test reads all six and fails when a package's two disagree, so a release cannot ship a package that reports one number to `pip` and another to `import`. A second test scans every shipped Markdown file for a quoted version output (the shape `blue-llmdb metadata inspect` and `llmdb_inspect_metadata` print) and fails when one names a release the library does not export, because those outputs are read as fact. Scanned, not listed: a listed set leaves stale whichever document nobody remembered. Deriving the declarations from one another is still the better fix and is not done.
+Each package declares its version in `pyproject.toml` and as `__version__` in its top-level module. A test compares all three pairs. Another test scans Markdown examples of `blue-llmdb metadata inspect` and `llmdb_inspect_metadata` and verifies that they match the exported library version. The declarations are still synchronized manually.
 
 ---
 
@@ -51,7 +51,7 @@ pip install 'blue-data-llm-source[all]'          # currently equivalent to [llm]
 
 There is no `blue-data` extra. It gated the compatibility adapter while the dependency was optional, and it is removed, not kept as a no-op.
 
-What an operator should know before provisioning is what `blue-data` brings with it: `pandas`, `numpy`, and `jsonpath-ng`. It is an internal package rather than a public-index one, so it is installed from its checkout before this package, the way the sibling source subrepos already are.
+`blue-data` also installs `pandas`, `numpy`, and `jsonpath-ng`. It is not available on a public package index, so install it from a checkout before installing this package.
 
 The base install is still usable without a provider. A caller that injects its own client, or passes an `llm_fn`, never needs the `llm` extra, and its process acquires no provider SDK.
 
@@ -90,7 +90,7 @@ Neither shipped store expires an entry. `MemoryCache` evicts least-recently-used
 
 ## 4. Configuration
 
-Configuration is by **properties**, passed to the constructor or per call, not by environment variables. This differs from the sibling sources deliberately: LlmSource is embedded in a caller's process rather than run as a service, and a source constructed twice in one process with two different budgets is a normal thing to want, which a process-wide environment cannot express.
+Library configuration uses **properties** passed to the constructor or an individual call, rather than process-wide environment variables. This allows two `LlmSource` instances in the same process to use different budgets.
 
 Per call is the part with operational weight. Every property below can be handed to a single request through `properties` on `fetch` or `optional_properties` on the query surface, where it is merged over the instance's for that request and not written back. One source can therefore serve a cheap speculative question and an expensive authorised one under different ceilings, without a second source and without a window in which the source is configured for the wrong one.
 
@@ -128,13 +128,13 @@ No property, environment variable, or log line produced by this package carries 
 
 ## 5. Spend Control
 
-The one operational risk this library carries is cost, so the controls are worth stating together.
+Provider cost is the primary operational risk. The following controls apply together.
 
 - Every run is bounded on four axes: row count, elapsed time, API cost, and provider call count. The time axis bounds admission and cooperative waiting, not the whole run; [what it bounds](../lib/README.md#what-the-time-ceiling-actually-bounds) lists the exclusions.
 - Call count, elapsed time, and cost are all claimed **before** the provider is contacted, under a lock, so a concurrent fan-out cannot cross a ceiling and report it afterwards.
 - A call's price is not known until it returns, so the cost claim is an upper bound, not an estimate: the prompt's length in UTF-8 bytes plus a framing allowance at the model's published input rate, plus the whole output allowance at its output rate. It rests on a byte-pair tokenizer consuming at least one byte of the encoded prompt per token it emits, so no tokenizer can exceed it. The bound is reconciled against the real cost when the call returns and the overshoot is released, so an over-claim costs headroom during the call and nothing after it.
 - Where a bound cannot be established the ceiling is **refused**, not approximated. A model with no published price and no caller-supplied price, or an `llm.max_tokens` that is not a finite positive number, makes a `limits.max_cost` raise a `ConfigError` at the first fetch. The operator wanted a ceiling and gets a refusal instead of a number that was invented.
-- The figure to size a ceiling against is the floor of that bound, which is the whole output allowance at the model's output rate and does not depend on the prompt at all. With the shipped defaults of `gpt-4o` and `llm.max_tokens` of 4096 that floor is about $0.041, so a `limits.max_cost` below it refuses every call before one is made. The lever is `llm.max_tokens`: halving it halves the floor. Raising the ceiling to accommodate an output allowance the answers never use buys nothing.
+- The minimum cost bound is the full output allowance at the model's output rate and is independent of the prompt. With the default `gpt-4o` model and `llm.max_tokens=4096`, the minimum is about $0.041. A lower `limits.max_cost` refuses the call before provider contact. Reducing `llm.max_tokens` reduces this minimum proportionally.
 - The claim is per provider attempt, so a retry sequence spends the call budget rather than escaping it, and each attempt rechecks the deadline before it runs. Retry depth narrows along the budget chain, so a fetch drawing on a caller-owned budget cannot make more attempts than that budget allows.
 - The timeout handed to the provider is capped at the time the run has left, so a call started just inside a deadline cannot run for its own full timeout past it. In the async path a deadline also cancels the wait itself, which is what holds when a provider ignores the timeout it was given.
 - A run stopped by limits returns a result whose `stop_reasons` names every observed axis and whose `stopped_by` retains the first. A row-only trim reports `outcome=truncated` and CLI exit 0. Another stop reports `stopped_by_limit` and exit 7 unless interrupted work also produced an answered part; that case reports `partial` and exit 8 while retaining the stop reasons.
@@ -212,4 +212,4 @@ Until that pipeline exists, the checks in **Verify** are run by hand from each p
 
 Step 5 is manual today, because no publication pipeline is configured. No package here has been uploaded to an index, so the step has not been exercised. Whenever it is automated, the credential belongs in the platform's secret store and must never appear in the repository or in a build log.
 
-The three packages are versioned together in this release. Independent versioning is the reason they are separate packages and remains available; it becomes worth using at the point one interface changes on a different cadence from the library.
+The three packages currently share one version. They can be versioned independently if an interface begins to change on a different cadence from the library.

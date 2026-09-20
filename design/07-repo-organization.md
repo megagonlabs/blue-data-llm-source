@@ -2,8 +2,7 @@
 
 ## Directory Tree
 
-This tree names the shipped packages and the files that define their main boundaries. It is a
-navigation map, not an exhaustive inventory of every test module.
+This tree lists the packages and the files that define their main boundaries. It is a navigation map rather than an exhaustive inventory of test modules.
 
 ```
 blue-data-llm-source/
@@ -126,7 +125,7 @@ blue-data-llm-source/
 │           ├── test_offline_guard.py       # the guard itself refuses a socket
 │           ├── test_offline_coverage.py    # the guard covers subprocess and database too
 │           ├── llm/                        # budget, pricing, and the client split by concern
-│           ├── cache/                      # both shipped stores against the protocol
+│           ├── cache/                      # both included stores against the protocol
 │           ├── prompts/                    # rendering and substitution safety
 │           ├── planning/                   # facts, schedules, plans, bounds, rule safety, receipts
 │           ├── execution/                  # leaf mapping, continuation, interruption
@@ -194,7 +193,7 @@ Two documents sit beside the code. `README.md` doubles as the API reference. `CO
 | `llm/client.py` | Model Boundary: `DefaultLlmClient` and `FunctionClient` |
 | `llm/budget.py` | Model Boundary: `Limits`, `Budget`, and `Reservation`, the four-axis enforcement |
 | `llm/pricing.py` | Model Boundary: the upper bound a cost reservation claims and `estimate` reports, or the refusal that replaces it |
-| `cache/memory.py`, `cache/file.py` | Model Boundary: the two shipped `CacheStore` implementations |
+| `cache/memory.py`, `cache/file.py` | Model Boundary: the two included `CacheStore` implementations |
 | `reduction/parsing.py` | Reduction: response text to record mappings |
 | `reduction/aligner.py` | Reduction: key-to-attribute mapping and reporting |
 | `reduction/verifier.py` | Reduction: type coercion, mismatch reporting, and deduplication |
@@ -205,9 +204,9 @@ Two documents sit beside the code. `README.md` doubles as the API reference. `CO
 
 ### One prompt module
 
-Every prompt the package sends lives in `prompts/`, not as a constant on the class that uses it. Prompts are the highest-churn text in a library of this kind, and holding two copies of one prompt in two modules is how they diverge in wording and in variable naming without anyone noticing. One home means a change to a prompt is visible as a change to one file, and the recorded responses that cover it move with it.
+Every prompt the package sends lives in `prompts/`, not as a constant on the class that uses it. Prompts are the highest-churn text in a library of this kind, and duplicate copies can diverge in wording and variable naming. Keeping one maintained copy makes prompt changes and their recorded responses visible together.
 
-### `compat/` is one-directional
+### Compatibility import direction
 
 The core imports nothing from `compat/`, and `compat/` imports the core. The direction mattered when the dependency was optional; it is kept because a module that exists only to preserve an older name should not be something the core depends on.
 
@@ -256,9 +255,9 @@ file. Modules with several distinct concerns get a directory. `planning/` covers
 plans, bounds, distribution search, and task transport; `execution/` covers leaf mapping and
 continuation; `llm/` splits client configuration, calls, caching, transport, accounting, and budget;
 `reduction/` covers parsing, salvage, alignment, verification, and coverage; and `cache/` exercises
-both shipped stores against the published protocol.
+both included stores against the published protocol.
 
-`test_packaging.py` is the odd one and earns its place. It scans the package for an import of `blue` or `blue_data_ops` and fails on either, because the dependency this package now takes is on the data layer and the line it must not cross is the orchestration layer above it. A rule that lives only in a document is a rule until someone adds an import.
+`test_packaging.py` checks a repository-wide dependency boundary rather than one module. It scans the package for an import of `blue` or `blue_data_ops` and fails on either, because this package depends on the data layer but not the orchestration layer above it.
 
 `llm/` also holds `test_pricing.py`, which covers the bound both the cost ceiling and `estimate` rest on. `lib/tests/cassettes/` holds four recorded provider responses and a receipt stating what the recording round cost. `test_cassette_fixtures.py` replays them through the real pipeline, so the specified worked examples are covered end to end with no network connection. `record_cassettes.py` sits beside the suite rather than in it, because it is the one thing here that makes real calls, and it is run by hand when a prompt change makes the recordings stale.
 

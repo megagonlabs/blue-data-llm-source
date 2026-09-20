@@ -1,8 +1,8 @@
 # API Reference
 
-Every public method signature, parameter, and return in `blue_data_llm_source`, as the code defines them.
+Reference for the public methods, parameters, and return types in `blue_data_llm_source`.
 
-This overlaps [`design/09-api-interface-spec.md`](../design/09-api-interface-spec.md), which is the contributor-facing specification and the source of truth for the interface contract. Where this page and that one disagree, the code decides and the design document is corrected.
+Contributor-oriented interface rationale is in [`design/09-api-interface-spec.md`](../design/09-api-interface-spec.md). If this page and that document disagree, the implementation decides and the design document must be corrected.
 
 Version 2.0.0. `blue_data_llm_source.__version__` carries it.
 
@@ -91,7 +91,7 @@ LlmSource(name: str = "llm", properties: dict[str, Any] | None = None, client: A
 | `properties` | `dict[str, Any] \| None` | `None` | Connection details and configuration. [Configuration](#configuration-properties) below |
 | `client` | `Any \| None` | `None` | A model client to use for every call. Any object with `complete` and `acomplete` |
 
-Extends `blue_data.source.source.DataSource`. Base-class order is load-bearing: `DataSource` is a plain class whose methods mostly return an empty result, so a method left unoverridden would answer nothing rather than fail.
+Extends `blue_data.source.source.DataSource`. Base-class order determines which implementations resolve: `DataSource` is a plain class whose methods mostly return an empty result, so a method left unoverridden would answer nothing rather than fail.
 
 | Attribute | Type | Meaning |
 |---|---|---|
@@ -140,7 +140,7 @@ Inherited from `DataSource` and overridden here.
 
 `optional_properties` carries the per-call ceiling, and `attrs`, `attr_names`, `context`, and `max_records` are lifted out of it as arguments. Everything else is merged into the property map.
 
-**Only `llm.*`, `limits.*`, and `plan.*` names are validated.** A key outside those three namespaces is accepted and unused. `execute_query` has no `llm_fn` parameter, so a key of that name placed in `optional_properties` is ignored and the request falls through to the provider-backed client. Inject at construction instead.
+`optional_properties` accepts the three closed namespaces `llm.*`, `limits.*`, and `plan.*`, plus the unnamespaced request fields the query surfaces consume. Any other key is refused with `ConfigError`. `execute_query` has no `llm_fn` parameter, so inject a custom client at construction instead.
 
 #### Op codes
 

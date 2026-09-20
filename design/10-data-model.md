@@ -80,7 +80,7 @@ that setting only omits the estimate from extraction prompts. Model cardinality 
 throughout planning and extraction. `plan.exact_rows` is a hard target only when the plan has one
 leaf. A multi-leaf plan does not apply it and reports `exact_rows_not_leaf_bound` in `meta.gaps`.
 
-Rule-backed distribution search is direct-Python-only in this release. It requires partitioned mode,
+Rule-backed distribution search is available only through direct Python calls. It requires partitioned mode,
 explicit ordered keys, declared finite-domain rules, and at least one rule applicable at the root.
 Invalid rules fail before provider contact. A planning receipt establishes internal agreement among
 the configured rule digests, planning facts, and plan; it does not establish authenticity, factual
@@ -138,8 +138,7 @@ Booleans are deliberately excluded from integer and float coercion. In Python a 
 
 These remain the only dataclass fields. A direct Python distribution-search result may expose an
 optional `planning_receipt` property. `to_dict()` adds a top-level receipt only when one exists;
-results without distribution search keep the two-key form. The CLI and MCP omit the receipt in this
-release.
+results without distribution search keep the two-key form. The CLI and MCP omit the receipt.
 
 ### `ExecMeta`
 
@@ -270,7 +269,7 @@ differ by a unit in the last place and that is enough to refuse the last attempt
 against the per-attempt figure instead means one transient failure consumes it and the retry is
 refused.
 
-`max_cost` is an upper bound, not a prediction, computed by the same code that bounds a reservation, so an estimate and the ceiling that enforces it are one figure. It reserves the whole output allowance at the model's output rate, so a typical call costs a fraction of it; being wrong high is the only safe direction, because a figure that can be exceeded is not a bound and a decision made against one is a decision made against a guess.
+`max_cost` is an upper bound, not a prediction. The estimate and the reservation use the same calculation. It prices the entire output allowance at the model's output rate, so the actual cost is usually lower; it must not underestimate the cost because the value is used to enforce a configured ceiling.
 
 An unbounded estimate is an answer rather than a failure, which is the same choice `Outcome` makes one level up. A caller asking what a request might cost is not yet asking for a ceiling, so a model this package has no price for produces `bounded` false carrying `reason`, and the caller can act on that. An empty request produces `bounded` true with a `max_cost` of zero, since it never reaches a model.
 
@@ -295,7 +294,7 @@ Not persisted. Scoped to a single fetch unless the caller supplies a budget of i
 
 Call count, elapsed time, and cost are all checked and claimed under one lock before a provider is contacted, so a concurrent fan-out cannot admit two calls that each saw room for one. Rows are admitted after parsing, because the count is not known until then.
 
-Cost is claimed against a genuine upper bound rather than an average-case estimate: a bound that is usually right is a ceiling that is occasionally crossed. The bound is reserved before the attempt and reconciled against the real figure afterwards, releasing the difference, and where no bound can be established the ceiling is refused, not claimed against a guess. That is what closes the two cases a settle-afterwards accounting leaves open: a cost that cannot be read leaves its reservation standing instead of becoming a free call, and ten concurrent leaves each commit a bound before spending, so they cannot each see room for one and collectively overshoot by ten calls' worth.
+Cost is claimed against an upper bound rather than an average-case estimate. The bound is reserved before the attempt and reconciled against the actual cost afterward, releasing the difference. If no bound can be established, the request is refused. This covers two cases that settlement alone does not: an unreadable provider cost leaves its reservation in place, and concurrent attempts cannot all spend against the same remaining budget.
 
 A derived child holds its own copy of every field above and spends from what its parent has left, so a claim recorded here is also recorded in every budget up the chain, and the effective ceiling on each axis is the smallest along it, retry depth included. The one field a child does not take from its parent is `stopped_by`, because it records what refused a particular attempt, and inheriting it would make a later affordable request report the earlier refusal as its own.
 

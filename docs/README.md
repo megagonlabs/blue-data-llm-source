@@ -1,6 +1,6 @@
 # Documentation
 
-Landing page for all documentation in `blue-data-llm-source`. What to read depends on what you are doing.
+Use this index to find installation, usage, interface, and design documentation for `blue-data-llm-source`.
 
 ## Start here
 
@@ -20,7 +20,7 @@ Landing page for all documentation in `blue-data-llm-source`. What to read depen
 | [api-reference.md](api-reference.md) | Look up an exact method signature, parameter, or return type |
 | [cli.md](cli.md) | Use the `blue-llmdb` command (every command, profiles and configuration, the four output formats, and the exit codes) |
 | [mcp.md](mcp.md) | Connect Claude or another MCP client to this source. Every tool, with the client config and what a per-call ceiling covers |
-| [api.md](api.md) | REST API — there is none, and this points at the three interfaces that do exist |
+| [api.md](api.md) | Understand why there is no REST API and choose among the three available interfaces |
 
 ## Building on it
 
@@ -29,8 +29,8 @@ Landing page for all documentation in `blue-data-llm-source`. What to read depen
 | [architecture.md](architecture.md) | Understand how the pieces fit together: the component diagram, the three data flows, and where the money is spent |
 | [extending.md](extending.md) | Supply your own model client, cache backend, price table, budget, or identity partition rules |
 
-## Something's out of date
+## Document maintenance
 
-These pages track the current behavior of the code, not the plan for it. If you find one that has drifted, that is a bug in the docs.
+These pages describe current behavior. Treat any discrepancy between the documentation and the implementation as a documentation defect.
 
-The source of truth is always the code itself, then [`lib/README.md`](../lib/README.md), [`lib/COMPATIBILITY.md`](../lib/COMPATIBILITY.md), [`platform/llm-cli/README.md`](../platform/llm-cli/README.md), and [`platform/llm-mcp/README.md`](../platform/llm-mcp/README.md). [cli.md](cli.md) and [mcp.md](mcp.md) are synced copies of the last two and say so in their own text; [api-reference.md](api-reference.md) and [architecture.md](architecture.md) name a design document as theirs, in their own text. Every other page here is written from the code and is its own source. Design rationale lives under [`design/`](../design/), written for contributors rather than users.
+The package READMEs own their respective public interfaces: [`lib/README.md`](../lib/README.md), [`lib/COMPATIBILITY.md`](../lib/COMPATIBILITY.md), [`platform/llm-cli/README.md`](../platform/llm-cli/README.md), and [`platform/llm-mcp/README.md`](../platform/llm-mcp/README.md). [cli.md](cli.md) and [mcp.md](mcp.md) mirror the two platform READMEs; the remaining pages summarize the current implementation for users. Contributor-oriented design rationale is under [`design/`](../design/).

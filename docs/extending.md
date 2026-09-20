@@ -1,6 +1,6 @@
 # Extending blue-data-llm-source
 
-The seams this library is built to have something plugged into, and what each one commits you to.
+This page describes the library's extension points and the contract required by each one.
 
 There is no plugin registry and no hook mechanism. Every extension point below is a protocol you satisfy structurally: an object with the right methods, handed in as an argument or a property. Nothing here performs an `isinstance` check against a concrete class.
 
@@ -20,7 +20,7 @@ Every example on this page runs as shown, offline.
 
 ## The injected client
 
-This is the main seam. A client is any object with two methods, and it becomes the model for every request through the source it was constructed with.
+An injected client is any object with the two methods below. It handles every model request made through the source that received it.
 
 ```python
 from typing import Any, Protocol
@@ -68,9 +68,9 @@ Everything else in `properties` is the merged property map for that call. Your c
 | `Capability.ROWS` | Always safe; the source counts records itself |
 | `Capability.ESTIMATE` | Implements `bound_for_attempt`, **and** makes at most `budget.effective_retries() + 1` provider attempts per call |
 
-Declare only what you can prove. Reporting a ceiling that is not holding anything is worse than declining to hold it, because the caller believes it.
+Declare only the capabilities the client enforces. Otherwise the caller may rely on a ceiling that has no effect.
 
-`Capability.ALL` is all five, so declaring it commits you to the two `ESTIMATE` promises as well. A client with its own retry or fallback policy that ignores the attempt allowance will spend past the estimate it published, and a caller who sized a ceiling from that estimate then has an attempt refused. A client that cannot promise it omits `ESTIMATE`, and `estimate` reports `bounded=False` with a reason, the honest answer rather than a figure the run can exceed.
+`Capability.ALL` includes all five capabilities and therefore includes both `ESTIMATE` requirements. A client whose retry or fallback policy ignores the attempt allowance can exceed its published estimate and cause a request sized to that estimate to refuse a later attempt. A client that cannot meet the requirements should omit `ESTIMATE`; `estimate` then reports `bounded=False` with a reason.
 
 ### Claiming and resolving
 
@@ -171,9 +171,9 @@ The callable may also be `async def`, or return a coroutine; the result is await
 
 Two things follow from what a wrapper around your function can prove. It declares `Capability.ROWS` alone, so `limits.max_calls`, `limits.max_cost`, and `limits.max_seconds` on a run supplying `llm_fn` are **refused**. And the result sets `meta.accounting_known` to `False`, so its `calls`, `cost`, and token counts describe this library's bookkeeping rather than provider work: a callable that fans out to five providers and spends real money still reports one call and no cost, because none of that is visible from here.
 
-Reporting it as unknown is the honest answer. If you need any of those three ceilings over your own model call, write the client above — the same work plus one method.
+The library therefore reports this accounting as unknown. To enforce call, cost, or time ceilings over your own model call, implement the client protocol above, including `budget_capabilities()`.
 
-`llm_fn` is a parameter of `fetch`, `afetch`, `estimate`, and `execute_query_nl`. It is **not** a property: a key named `llm_fn` in `properties` or in `execute_query`'s `optional_properties` is merged into the property map, never read, and the request then resolves the provider-backed client instead. `execute_query` has no `llm_fn` parameter at all, so inject at construction for that surface.
+`llm_fn` is a parameter of `fetch`, `afetch`, `estimate`, and `execute_query_nl`. It is **not** a property: a key named `llm_fn` in `properties` or in `execute_query`'s `optional_properties` raises `ConfigError` before a client is resolved because the property map is closed. `execute_query` has no `llm_fn` parameter at all, so inject at construction for that surface.
 
 ## Cache backends
 
@@ -210,15 +210,15 @@ The client that reaches a provider drives the store with `get` and `set` alone. 
 
 | Rule | Why |
 |---|---|
-| A read that fails is a miss, not an error | A cache that can fail a request it was meant to make cheaper is worse than no cache. Both shipped stores swallow their own read failures |
+| A read that fails is a miss, not an error | Cache failure must not fail the underlying request. Both included stores treat read failures as misses |
 | A write that fails is skipped, not raised | The same reasoning on the other side |
 | The key is a long serialised mapping | It covers the model, the prompt, and every forwarded parameter. It is not path-safe; `FileCache` hashes it before using it as a filename |
 | Keep `get` fast | `CacheStore` is synchronous, and a store that reaches a network sits outside the time ceiling entirely. This is listed in [what the time ceiling bounds](../lib/README.md#what-the-time-ceiling-actually-bounds) |
 | Values are JSON-shaped provider payloads | Whatever the client stored comes back to the client. Keep it serialisable if your store persists |
 
-The `cache_store` property takes precedence over the separate `llm.cache` switch, which opens a `diskcache` backend and does not use either shipped store. Treat the two paths as unconnected.
+The `cache_store` property takes precedence over the separate `llm.cache` switch. That switch opens a `diskcache` backend and does not use either included store; the two cache paths are independent.
 
-`MemoryCache` and `FileCache` are worth reading before writing a third: `cache/memory.py` is thirty lines of locked LRU, and `cache/file.py` shows the temp-file-and-rename write and the ownership check that keeps `clear()` from deleting JSON it did not write.
+Before implementing another cache, review `MemoryCache` and `FileCache`. `cache/memory.py` contains a small locked LRU implementation, while `cache/file.py` demonstrates atomic replacement and the ownership check that prevents `clear()` from deleting unrelated JSON files.
 
 **A cache backend cannot be wired through an `llm_fn`.** The client is what consults the cache, and `FunctionClient` does not. The example above accepts the store and never reads it. To cache your own model calls, consult the store inside the client you inject.
 
@@ -368,7 +368,7 @@ Each fetch calls `derive` on it, producing a child whose effective ceiling on ev
 
 The observation methods narrow along the chain, so what you read on a derived budget is what it can actually spend, not what it was nominally given. `configured_axes()` walks the chain the other way, reporting which axes carry a ceiling anywhere. That is what the capability refusal reads, which is why a ceiling on your budget alone is still checked against the client that answers.
 
-`check_deadline()` and `rows_exhausted()` are published for callers driving a budget directly; this release's own paths recheck the deadline inside `reserve` instead.
+`check_deadline()` and `rows_exhausted()` are available to callers that drive a budget directly. Library fetch paths recheck the deadline inside `reserve` instead.
 
 ## The stage parsers
 

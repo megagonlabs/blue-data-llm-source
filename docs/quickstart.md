@@ -1,6 +1,6 @@
 # Quick Start
 
-Records out of a language model, from a shell, in under five minutes. See [installation.md](installation.md) if you have not installed anything yet.
+This quick start uses the command line to inspect the installation, configure a provider, estimate cost, and query for records. See [installation.md](installation.md) if the packages are not installed yet.
 
 ```bash
 lib/scripts/install.sh
