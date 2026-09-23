@@ -1,11 +1,24 @@
 # Quick Start
 
-This quick start uses the command line to inspect the installation, configure a provider, estimate cost, and query for records. See [installation.md](installation.md) if the packages are not installed yet.
+This quick start uses the command line to inspect the installation, configure a provider, estimate cost, and query for records. Run the commands from the `blue-data-llm-source` checkout with `blue-data` beside it. See [installation.md](installation.md) for `venv` and other install paths.
+
+Create the environment once; Conda may ask for confirmation. If `blue-llmdb` already exists, skip this block and activate it below.
 
 ```bash
-lib/scripts/install.sh
-platform/llm-cli/scripts/install.sh
+ls -d ../blue-data/lib &&
+conda create --name blue-llmdb python=3.12 pip
 ```
+
+Paste the next block after Conda finishes. The chain stops if activation or an install fails.
+
+```bash
+conda activate blue-llmdb &&
+python -m pip install -e ../blue-data/lib &&
+python -m pip install -e "./lib[llm]" &&
+python -m pip install -e ./platform/llm-cli
+```
+
+If Conda cannot activate the environment, run `conda init zsh` (or `conda init bash`) once, open a new terminal, return to this checkout, and rerun the second block. If the packages are already installed, activate their environment and continue at step 1.
 
 ## 1. Check what you installed
 
@@ -170,8 +183,10 @@ See [guide.md](guide.md) for the library task by task, and [api-reference.md](ap
 
 ## Connecting an agent
 
+In the same environment, from the checkout root:
+
 ```bash
-platform/llm-mcp/scripts/install.sh
+python -m pip install -e ./platform/llm-mcp
 ```
 
 ```json
@@ -186,6 +201,8 @@ platform/llm-mcp/scripts/install.sh
 ```
 
 `<YOUR_PROVIDER_KEY>` is a placeholder. See [mcp.md](mcp.md) for the five tools and what a per-call ceiling does and does not cover.
+
+If the agent client starts outside the activated Conda shell, run `command -v blue-data-llm-mcp` in that environment and use the printed absolute path as its `command`.
 
 ---
 

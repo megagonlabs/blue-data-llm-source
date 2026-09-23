@@ -51,12 +51,26 @@ The library never reads the provider key; the provider SDK does. A missing or wr
 
 ## Quick start
 
-```bash
-# Install the library, then the command line. Both need the blue-data checkout
-# named under Requirements above to already be on disk.
-lib/scripts/install.sh
-platform/llm-cli/scripts/install.sh
+Run these commands from the `blue-data-llm-source` checkout with `blue-data` beside it. Create the environment once; Conda may ask for confirmation. If `blue-llmdb` already exists, skip this block and activate it below.
 
+```bash
+ls -d ../blue-data/lib &&
+conda create --name blue-llmdb python=3.12 pip
+```
+
+Paste the next block after Conda finishes. The chain stops if activation or an install fails.
+
+```bash
+conda activate blue-llmdb &&
+python -m pip install -e ../blue-data/lib &&
+python -m pip install -e "./lib[llm]" &&
+python -m pip install -e ./platform/llm-cli &&
+blue-llmdb metadata inspect
+```
+
+If Conda cannot activate the environment, run `conda init zsh` (or `conda init bash`) once, open a new terminal, return to this checkout, and rerun the second block. If the packages are already installed, activate their environment and start with `blue-llmdb metadata inspect`. [Installation](docs/installation.md) also covers `venv`, the install scripts, and the MCP package.
+
+```bash
 # Keep the key where the CLI can find it, out of shell history
 blue-llmdb profile config OPENAI_API_KEY
 

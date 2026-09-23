@@ -8,15 +8,26 @@ Thirteen of the seventeen scripts require no credential, network access, or conf
 
 ## Quick start
 
+Install `blue-data` and the library with its `llm` extra as shown in [Installation](../docs/installation.md), then activate that environment. Run every command below from the repository root.
+
 ```bash
-(cd lib && scripts/install.sh)
 python3 examples/backends/function_client_quickstart.py
 ```
 
-`scripts/install.sh` installs `blue-data` from its checkout and then this package with the `dev` and `llm` extras, so litellm and diskcache are already in place. Every command below is run from the repository root. The quickstart needs no credential; the four provider-backed scripts need one exported before they will do anything:
+The quickstart needs no credential. The four provider-backed scripts read `OPENAI_API_KEY` from the environment. If it is not already set, run this block first and enter the key at the prompt. The shell hides the value and keeps it out of history.
 
 ```bash
-export OPENAI_API_KEY=<YOUR_PROVIDER_KEY>   # placeholder: your own key
+if [ -z "${OPENAI_API_KEY:-}" ]; then
+    printf 'OpenAI API key: '
+    IFS= read -rs OPENAI_API_KEY
+    printf '\n'
+    export OPENAI_API_KEY
+fi
+```
+
+Then run the provider-backed example:
+
+```bash
 python3 examples/backends/default_client_demo.py
 ```
 

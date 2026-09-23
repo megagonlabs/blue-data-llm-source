@@ -28,6 +28,14 @@ The `mcp` pin is exact rather than a floor. The low-level server API that compon
 - A local checkout of the `blue-data` repository. It is not on a public package index, so it must be installed from source.
 - A provider credential in the environment for any request that reaches a model. The library never reads it; the provider SDK does. A request with an injected client or an `llm_fn` needs none.
 
+For the commands below, place the checkouts under one parent directory:
+
+```text
+workspace/
+├── blue-data/
+└── blue-data-llm-source/
+```
+
 Installing `blue-data` also installs `pandas`, `numpy`, and `jsonpath-ng`.
 
 ## Scripts
@@ -40,9 +48,33 @@ Each component has a `scripts/` directory with the same three scripts. The scrip
 | `build.sh` | `python -m build` into the component's `dist/`, producing a wheel and an sdist |
 | `publish.sh` | `twine upload dist/*` |
 
-`lib/scripts/install.sh` installs `blue-data` from a checkout first, then `lib` with the `dev` and `llm` extras. It looks for `blue-data` at `../../blue-data/lib` relative to the repository, and exits with a message naming the path when it is not there. Set `BLUE_DATA_PATH` to point it elsewhere.
+`lib/scripts/install.sh` installs `blue-data` from a checkout first, then `lib` with the `dev` and `llm` extras. It looks for `blue-data` at `../blue-data/lib` relative to the repository root, and exits with a message naming the path when it is not there. Set `BLUE_DATA_PATH` to point it elsewhere.
 
 Both platform `install.sh` scripts call `lib/scripts/install.sh` first and then install their own package with the `dev` extra. Running one of them is therefore enough to install everything that component needs.
+
+## Conda environment
+
+Run these commands from the `blue-data-llm-source` checkout. Create the environment once; Conda may ask for confirmation. If `blue-llmdb` already exists, skip this block and activate it below.
+
+```bash
+ls -d ../blue-data/lib &&
+conda create --name blue-llmdb python=3.12 pip
+```
+
+Paste the next block after Conda finishes. The chain stops if activation or an install fails. `blue-data` goes in first; the platform packages then resolve the installed library and its provider extra.
+
+```bash
+conda activate blue-llmdb &&
+python -m pip install -e ../blue-data/lib &&
+python -m pip install -e "./lib[llm]" &&
+python -m pip install -e ./platform/llm-cli &&
+python -m pip install -e ./platform/llm-mcp &&
+blue-llmdb metadata inspect
+```
+
+If Conda cannot activate the environment, run `conda init zsh` (or `conda init bash`) once, open a new terminal, return to this checkout, and rerun the second block. If the packages are already installed, activate their environment and start with `blue-llmdb metadata inspect`.
+
+When `blue-data` lives elsewhere, replace both `../blue-data/lib` paths with its `lib/` directory. The Conda environment works for running the packages and examples. The type gate uses the component-local `.venv` paths configured in `pyproject.toml`.
 
 ## Editable install
 
@@ -73,7 +105,7 @@ lib/scripts/install.sh
 python -c "import blue_data_llm_source; print(blue_data_llm_source.__version__)"
 ```
 
-The virtual environment is not optional if you intend to run the type gate. Each `pyproject.toml` points `pyright` at a `.venv` in that component's directory, and without one it reports every import as unresolved instead of reporting real typing errors.
+For the type gate, each `pyproject.toml` points `pyright` at a `.venv` in that component's directory. Without one it reports every import as unresolved instead of reporting real typing errors.
 
 ## Manual install
 
