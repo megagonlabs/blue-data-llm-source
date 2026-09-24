@@ -199,13 +199,9 @@ class TestValuesDecodeToWhatWasPlanned:
 class TestTheDegenerateDisjunction:
     """An enumeration that named nothing is not the same as no enumeration.
 
-    **A unit test of ``_filters``, not the contract probe.** These call ``build_plan``
-    directly, and an earlier version of this class was cited as the guard for the
-    consumer-visible behaviour — while the analysis parser was dropping an empty list before
-    the planner could ever receive one, so it proved a note fires for an input the public path
-    could not produce. The contract now has its own probe at the public entry point in
-    ``tests/unit/test_dropped_constraint.py``; what is left here is the narrower question of
-    what ``_filters`` does with a value it is handed.
+    These tests call ``build_plan`` directly and check ``_filters``. The public path,
+    including parser handling of empty lists, is covered in
+    ``tests/unit/test_dropped_constraint.py``.
     """
 
     def test_an_empty_disjunction_is_not_the_same_plan_as_no_constraint(self) -> None:

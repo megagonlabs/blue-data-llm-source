@@ -1,18 +1,16 @@
 """No string the model produced may become a line of the next prompt.
 
-Quoting one reported path and calling the class fixed is how this recurred. So the test is
-not "this value is escaped" but a differential over every slot a model-produced string can
-reach: the same prompt built from a benign payload and from one carrying a newline must
-have the same *shape*, because a quoted control character stays inside its value and an
-unquoted one becomes a peer of the surrounding instructions.
+The tests compare a benign payload and one carrying a newline across every slot a
+model-produced string can reach. Both prompts must have the same line shape: a quoted
+control character stays inside its value, while an unquoted one becomes a peer of the
+surrounding instructions.
 
 Line count is the oracle, and it is independent of the renderer: it does not know the
 quoting scheme, the separator, or the section order. Any encoding that keeps a value whole
 passes it, and any encoding that lets a value open a line fails it.
 
-The limit of the claim is worth stating, since a test suite is where an overclaim hides
-best. This establishes that model text cannot *structurally* become an instruction. It does
-not make model-generated text semantically inert, and no arrangement of quoting would.
+These tests establish structural separation of model text from prompt instructions.
+Quoted model text can still influence a model semantically.
 """
 
 from __future__ import annotations
@@ -204,13 +202,7 @@ class TestTheRewrittenAskIsModelOutputToo:
 
 
 class TestPromptTextIsBuiltInOnePlace:
-    """The structural half of the fix: a slot that does not exist cannot be missed.
-
-    Every path above was found by reading the code. That is how two of three were missed
-    the first time, so the method cannot stay "read it again more carefully". A prompt
-    section assembled outside the prompts module is a second place quoting has to be
-    remembered, and this fails while one exists.
-    """
+    """Check that prompt section headings are assembled in the prompts module."""
 
     def root(self) -> Path:
         # `__path__` rather than `__file__`, which a namespace package leaves unset and a

@@ -481,13 +481,10 @@ def _answering(text: str) -> Callable[[str], str]:
 
 
 def test_a_number_too_large_to_represent_is_refused_at_the_parser() -> None:
-    """Not reported as a type mismatch: it never becomes a record value at all.
+    """An overflowing numeric literal fails in the parser before type verification.
 
-    This case used to be parametrized into the mismatch test above, whose label said the
-    parser had already refused it. The parser had not — ``parse_constant`` sees only the
-    bare words ``NaN`` and ``Infinity``, and a literal that overflows in ``float()`` took a
-    different route into the record. The test passed on the verifier's finite check while
-    describing a parser guard that was not there.
+    ``parse_constant`` catches bare ``NaN`` and ``Infinity``; ``1e400`` reaches ``float()``
+    and needs a separate range check.
     """
     with pytest.raises(ParseError, match="out of range"):
         LlmSource().fetch(
@@ -1005,14 +1002,10 @@ def test_a_name_answered_in_a_different_unicode_form_still_maps() -> None:
 
 
 def test_an_accented_key_answers_the_same_way_in_either_unicode_form() -> None:
-    """The invariant behind the fix: the outcome cannot depend on an invisible spelling.
+    """An accented answer key does not match an unaccented requested name in either form.
 
-    Requesting an unaccented name used to match an accented answer when the model happened
-    to send the decomposed form — the combining mark was stripped as punctuation — and not
-    match when it sent the precomposed one. Same request, same rendered answer, two
-    different results. Both are now unmapped, and that is reported rather than guessed at:
-    an accent is contrastive in plenty of languages, so folding it away would merge names
-    the caller means to keep apart. Folding is recorded as a v1.1 question, not assumed here.
+    Stripping combining marks would merge accented and unaccented names that a caller may
+    intend to keep separate.
     """
     import unicodedata
 
@@ -1065,12 +1058,9 @@ def test_a_ceiling_too_large_to_be_a_float_is_refused_as_configuration() -> None
 
 
 def test_nothing_escapes_the_documented_error_hierarchy() -> None:
-    """The promise four documents make, enforced in one place instead of at every site.
+    """Public failures stay within ``LlmSourceError`` for CLI and MCP callers.
 
-    The CLI's exit-code table and the MCP server's error format are both built on it, and it
-    was previously maintained by per-site discipline with no chokepoint — so it failed at
-    every site someone missed. The per-site guards remain; this is what makes the promise
-    structural rather than a convention.
+    Per-site guards handle known failures; this test covers unexpected exceptions.
     """
     from blue_data_llm_source.types import LlmSourceError
 

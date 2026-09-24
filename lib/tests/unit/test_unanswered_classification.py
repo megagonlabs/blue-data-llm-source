@@ -1,19 +1,8 @@
-"""What a run reports when every part came back unanswered for different reasons.
+"""Classify runs in which every part is unanswered.
 
-Leaves execute concurrently and their order is the order the analysis enumerated values in,
-which is a model's output. So any rule that reads "the first exception" makes the public
-result depend on something nobody chose — and the two orderings of the same two leaves
-reported a budget stop one way and raised the other, with the budget-stop ordering carrying
-no gap at all.
-
-That last part is worth stating precisely, because it decides what the repair may be: the
-all-unanswered branch returns before ``reduce_leaves``, so its empty gap list is a path that
-never reaches gap construction rather than a gap computed and dropped. A repair that added a
-gap here would be adding one where gaps do not exist.
-
-The axis these range over is leaf order, and it is read off the code rather than chosen: the
-classification consumes a list whose order comes from a model, so order is an axis whether or
-not anyone thought of it. Every case below is stated over both orderings.
+Leaf order follows model-produced partition values. The order-invariance cases check both
+orderings so the public result is independent of that order. The all-unanswered path returns before
+``reduce_leaves`` and therefore has no computed gap list.
 """
 
 from __future__ import annotations
@@ -141,15 +130,8 @@ class TestAMixedRunKeepsBothFacts:
             fetch([FIRST, SECOND], {FIRST: FAILED, SECOND: REFUSED})
 
     def test_the_provider_s_own_exception_is_not_written_to(self) -> None:
-        # A first draft of this repair recorded the ceiling by setting an attribute on the
-        # raised exception, and this test is why it does not ship. The object belongs to the
-        # provider, not to this library: a client that raises one shared instance -- a module
-        # constant, a singleton -- would find it mutated by a run that had nothing to do with
-        # the next caller reading it.
-        #
-        # So the ceiling is lost in the mixed case, and that is published rather than fixed
-        # with a stateful trick. This pins the *absence* so a later repair cannot reintroduce
-        # the mutation quietly.
+        # The provider may reuse an exception instance. Do not attach ceiling state to it;
+        # another caller must receive the same object unchanged.
         shared = RuntimeError("provider failed")
         with pytest.raises(LlmSourceError):
             fetch([FIRST, SECOND], {FIRST: shared, SECOND: REFUSED})

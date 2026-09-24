@@ -1,15 +1,7 @@
-"""Claims about the shared base class, checked mechanically rather than by care.
+"""Check shipped claims about the shared ``DataSource`` base class.
 
-The same false claim was corrected four times, in a different file each time: prose asserting
-that every ``DataSource`` method returns an empty result, or that the registry cannot reach
-this source by name. Both were true once. Upstream moved, and each correction fixed the copies
-that were easy to find and missed the rest — a document, then a second document, then a
-docstring, then a test's own explanatory text.
-
-Correcting them one at a time is what failed. These are claims a reader acts on, so they are
-gated here: every shipped text file in the repository is scanned, and a phrasing that asserts
-a fact the runtime contradicts fails the suite. The point is not the wording but the claim,
-so each pattern is paired with the reason it is false and with the test that proves it.
+The scan covers text across the repository, including documentation outside ``lib``.
+Each rejected claim is paired with a runtime contract check.
 """
 
 from __future__ import annotations
@@ -19,9 +11,7 @@ from pathlib import Path
 
 import pytest
 
-# parents[4], not [3]: [3] is `lib/`, and the first version of this guard scanned only that.
-# A reintroduced claim in the repository's own README slipped past it, and so did its anchor
-# check, because every name it looked for also exists inside `lib/`.
+# parents[4] is the repository root; parents[3] would omit top-level documentation.
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
 # Directories that are not part of what ships: virtual environments, build output, tool

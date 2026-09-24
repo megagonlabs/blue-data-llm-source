@@ -4,13 +4,24 @@
 
 ## Install
 
+Run these commands from the `blue-data-llm-source` checkout with `blue-data` beside it. Create the environment once:
+
 ```bash
-scripts/install.sh
+ls -d ../blue-data/lib &&
+conda create --name blue-llmdb python=3.12 pip
 ```
 
-That installs `blue-data`, then the library from `../../lib`, then this package, all editable, plus the dev extras. It looks for `blue-data` beside this repository, at `../blue-data/lib` from the repository root; set `BLUE_DATA_PATH` to its `lib` directory if it is elsewhere.
+Then activate it and install in dependency order:
 
-`pip install blue-data-llm-cli` from a package index does not work: neither this package nor `blue-data`, a core dependency of the library underneath, is published to one. Install from a checkout as above.
+```bash
+conda activate blue-llmdb &&
+python -m pip install -e ../blue-data/lib &&
+python -m pip install -e "./lib[llm]" &&
+python -m pip install -e ./platform/llm-cli &&
+blue-llmdb --version
+```
+
+If the environment already exists, start at `conda activate blue-llmdb`. The install is editable. Neither this CLI package nor its `blue-data` dependency is available from the public package index, so install from the checkouts. You can also run `platform/llm-cli/scripts/install.sh` in an active environment; it installs the development extras and accepts `BLUE_DATA_PATH` for a non-sibling checkout. [Installation](../../docs/installation.md) covers `venv` and the component-local `.venv` used by Pyright.
 
 ## Commands
 

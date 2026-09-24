@@ -516,13 +516,10 @@ def test_two_threads_resolving_one_handle_cannot_take_another_handles_claim() ->
 
 
 def test_cleanup_does_not_replace_the_exception_it_is_cleaning_up() -> None:
-    """A finalizer must not become the losing resolver and raise over the real failure.
+    """Cleanup preserves the caller's failure if another thread settles the handle.
 
-    Reading `resolved`, dropping the lock, then releasing left a gap: another thread could
-    settle the same handle in between, and the cleanup's `RuntimeError` then replaced
-    whatever the block was already failing with. The hook below stands in for that thread,
-    settling at exactly the instant the old cleanup asked whether it needed to — which is
-    the only moment where the two versions differ.
+    The hook below settles the handle if cleanup checks its state outside the lock. The
+    original ``ValueError`` must still reach the caller.
     """
     budget = Budget(Limits(max_calls=2))
     real_holds = budget.holds
@@ -541,9 +538,6 @@ def test_cleanup_does_not_replace_the_exception_it_is_cleaning_up() -> None:
         with budget.attempt(0.1):
             raise ValueError("the caller's own failure")
 
-    # The point is which exception reaches the caller. Under the repaired cleanup the hook
-    # never runs at all, because nothing asks `resolved` before acting; under the old one it
-    # runs, settles, and the release that follows raises RuntimeError over the ValueError.
     with pytest.raises(ValueError, match="the caller's own failure"):
         exercise()
 

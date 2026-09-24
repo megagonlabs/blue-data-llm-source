@@ -182,11 +182,8 @@ class TestAnAttestedCeilingIsClaimed:
         # provider's word that generation stopped because the allowance ran out, so a run
         # holding that attestation is not one nothing cut short.
         #
-        # An earlier version of this test asserted the opposite, and it was wrong in the way
-        # this project keeps being wrong: I changed the code, rewrote the test to agree, and
-        # left `Usage.finish_reason`, `STOPPED_BY_OUTPUT` and the changelog all still saying
-        # that `length` is evidence the allowance fired. The published contract is the oracle
-        # here, not the implementation.
+        # A closed document with finish_reason="length" still reports the provider's
+        # output-limit signal; prefix recovery remains a separate observation.
         from blue_data_llm_source.execution.mapper import Answer
 
         run = self.run(Answer(WHOLE, finish_reason="length"))

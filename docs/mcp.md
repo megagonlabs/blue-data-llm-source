@@ -357,35 +357,46 @@ A missing or wrong provider credential arrives as `TransportError`, not `ConfigE
 
 ## Install and run
 
+From the `blue-data-llm-source` checkout, with `blue-data` beside it, create a Conda environment once:
+
 ```bash
-platform/llm-mcp/scripts/install.sh
-blue-data-llm-mcp
+ls -d ../blue-data/lib &&
+conda create --name blue-llmdb python=3.12 pip
 ```
 
-The client starts the server, which speaks MCP over stdio. This is the transport used by the whole family; the server opens no port. Configure a client as follows:
+Then activate it and install in dependency order:
+
+```bash
+conda activate blue-llmdb &&
+python -m pip install -e ../blue-data/lib &&
+python -m pip install -e "./lib[llm]" &&
+python -m pip install -e ./platform/llm-mcp &&
+command -v blue-data-llm-mcp
+```
+
+If the environment already exists, start at `conda activate blue-llmdb`. The last command prints the server's absolute path. Set that path as your MCP client's command:
 
 ```json
 {
   "mcpServers": {
     "blue-data-llm": {
-      "command": "blue-data-llm-mcp",
-      "env": {"OPENAI_API_KEY": "<YOUR_PROVIDER_KEY>"}
+      "command": "/absolute/path/from/command-v/blue-data-llm-mcp",
+      "env": {"BLUE_DATA_LLM_SOURCE_LIMIT_COST": "0.50"}
     }
   }
 }
 ```
 
-`<YOUR_PROVIDER_KEY>` above is a placeholder. Put the real value there, or leave the key out of the config file and let the client pass the variable through from its own environment.
+After setting the ceiling, pass `OPENAI_API_KEY` through the client's environment or secret settings. A desktop client may not inherit variables from your shell. The client starts the server over stdio; the server opens no port.
 
-With a model, an output allowance and a cost ceiling chosen for the deployment:
+To choose a model and output allowance, add those settings alongside the cost ceiling:
 
 ```json
 {
   "mcpServers": {
     "blue-data-llm": {
-      "command": "blue-data-llm-mcp",
+      "command": "/absolute/path/from/command-v/blue-data-llm-mcp",
       "env": {
-        "OPENAI_API_KEY": "<YOUR_PROVIDER_KEY>",
         "BLUE_DATA_LLM_MODEL": "gpt-6-sol",
         "BLUE_DATA_LLM_SOURCE_MAX_TOKENS": "8000",
         "BLUE_DATA_LLM_SOURCE_LIMIT_COST": "0.50"
@@ -395,7 +406,7 @@ With a model, an output allowance and a cost ceiling chosen for the deployment:
 }
 ```
 
-`python -m blue_data_llm_mcp.server` runs the same thing from a checkout. [installation.md](installation.md) covers every install route and the exact `mcp` pin this package carries.
+`python -m blue_data_llm_mcp.server` runs the same server from a checkout. [Installation](installation.md) covers other install routes and the exact `mcp` pin.
 
 ## Configuration
 
@@ -421,7 +432,7 @@ The server reads these variables on every call, not just at startup. An unset or
 
 The rate and allowance settings are not masked. Any MCP caller can work out `BLUE_DATA_LLM_SOURCE_PRICE_PER_INPUT_TOKEN`, `BLUE_DATA_LLM_SOURCE_PRICE_PER_OUTPUT_TOKEN` and `BLUE_DATA_LLM_SOURCE_MAX_TOKENS` from `max_output_tokens`, from two `llmdb_estimate` results, or from `meta.cost`. Do not put a confidential rate in them. The three `LIMIT` variables are operator ceilings: a call's `limits.*` argument applies only where it is lower, so an agent can tighten a ceiling for one call but not loosen it. No other `BLUE_DATA_*` variable is read: the planning settings stay per-call arguments, and a call's `plan.*` arguments apply to that call only.
 
-`OPENAI_API_KEY` in the snippets above is the provider SDK's variable, not this package's. Nothing in the library or in this package reads it; the provider SDK reads it out of the process environment the client started the server with. No tool takes a credential as an argument and no tool returns one.
+`OPENAI_API_KEY` belongs to the provider SDK. Nothing in the library or in this package reads it; the provider SDK reads it out of the process environment the client started the server with. No tool takes a credential as an argument and no tool returns one.
 
 The `blue-llmdb` CLI stores profiles and applies its own environment-variable precedence chain under `~/.blue-llmdb/`. The MCP server reads none of that state, only the variables above. Both interfaces use the property names shown in the mapping table above.
 

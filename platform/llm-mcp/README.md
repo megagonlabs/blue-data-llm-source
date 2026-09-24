@@ -327,35 +327,46 @@ Each tool returns a JSON object carrying the library return type it wraps, and n
 
 ## Install and run
 
+Run these commands from the `blue-data-llm-source` checkout with `blue-data` beside it. Create the environment once:
+
 ```bash
-scripts/install.sh              # from a checkout
-blue-data-llm-mcp
+ls -d ../blue-data/lib &&
+conda create --name blue-llmdb python=3.12 pip
 ```
 
-`pip install blue-data-llm-mcp` from a package index does not work: neither this package nor `blue-data`, a core dependency of the library underneath, is published to one. From a checkout, `scripts/install.sh` puts `blue-data` in place first. It looks for it beside this repository, at `../blue-data/lib` from the repository root; set `BLUE_DATA_PATH` to its `lib` directory if it is elsewhere.
+Then activate it and install in dependency order:
 
-The MCP client starts the server over stdio. The server opens no network port. Configure a client as follows:
+```bash
+conda activate blue-llmdb &&
+python -m pip install -e ../blue-data/lib &&
+python -m pip install -e "./lib[llm]" &&
+python -m pip install -e ./platform/llm-mcp &&
+command -v blue-data-llm-mcp
+```
+
+If the environment already exists, start at `conda activate blue-llmdb`. The last command prints the server's absolute path. Set it as your MCP client's command:
 
 ```json
 {
   "mcpServers": {
     "blue-data-llm": {
-      "command": "blue-data-llm-mcp",
-      "env": {"OPENAI_API_KEY": "..."}
+      "command": "/absolute/path/from/command-v/blue-data-llm-mcp",
+      "env": {"BLUE_DATA_LLM_SOURCE_LIMIT_COST": "0.50"}
     }
   }
 }
 ```
 
-With a model, an output allowance and a cost ceiling chosen for the deployment:
+After setting the ceiling, pass `OPENAI_API_KEY` through the client's environment or secret settings. A desktop client may not inherit variables from your shell. The client starts the server over stdio; the server opens no port.
+
+To choose a model, output allowance and cost ceiling, add these variables to the server environment:
 
 ```json
 {
   "mcpServers": {
     "blue-data-llm": {
-      "command": "blue-data-llm-mcp",
+      "command": "/absolute/path/from/command-v/blue-data-llm-mcp",
       "env": {
-        "OPENAI_API_KEY": "...",
         "BLUE_DATA_LLM_MODEL": "gpt-6-sol",
         "BLUE_DATA_LLM_SOURCE_MAX_TOKENS": "8000",
         "BLUE_DATA_LLM_SOURCE_LIMIT_COST": "0.50"
@@ -365,7 +376,7 @@ With a model, an output allowance and a cost ceiling chosen for the deployment:
 }
 ```
 
-`python -m blue_data_llm_mcp.server` runs the same thing from a checkout.
+`python -m blue_data_llm_mcp.server` runs the same server from a checkout. Neither this MCP package nor its `blue-data` dependency is available from the public package index, so install from the checkouts. You can also run `platform/llm-mcp/scripts/install.sh` in an active environment; it installs the development extras and accepts `BLUE_DATA_PATH` for a non-sibling checkout. [Installation](../../docs/installation.md) covers `venv` and the component-local `.venv` used by Pyright.
 
 ## Configuration
 
@@ -391,7 +402,7 @@ They are read on every call, not once at startup. A variable that is unset or bl
 
 The rate and allowance settings are not masked. Any MCP caller can work out `BLUE_DATA_LLM_SOURCE_PRICE_PER_INPUT_TOKEN`, `BLUE_DATA_LLM_SOURCE_PRICE_PER_OUTPUT_TOKEN` and `BLUE_DATA_LLM_SOURCE_MAX_TOKENS` from `max_output_tokens`, from two `llmdb_estimate` results, or from `meta.cost`. Do not put a confidential rate in them. The three `LIMIT` variables are operator ceilings: a call's `limits.*` argument applies only where it is lower, so an agent can tighten a ceiling for one call but not loosen it. No other `BLUE_DATA_*` variable is read: the planning settings stay per-call arguments, and a call's `plan.*` arguments apply to that call only.
 
-`OPENAI_API_KEY` in the snippets above belongs to the provider SDK. The SDK reads it from the server process environment; neither this package nor the library reads it directly, and no tool accepts a credential as an argument. Text about a call passes through `redact`, including errors, model names, requested attributes, rewritten queries, unchecked types, and unbounded-estimate reasons. A test examines every returned string and requires it to be redacted or explicitly exempted. Returned records are exempt because they are the query result; a token-shaped record value remains data.
+`OPENAI_API_KEY` belongs to the provider SDK. The SDK reads it from the server process environment; neither this package nor the library reads it directly, and no tool accepts a credential as an argument. Text about a call passes through `redact`, including errors, model names, requested attributes, rewritten queries, unchecked types, and unbounded-estimate reasons. A test examines every returned string and requires it to be redacted or explicitly exempted. Returned records are exempt because they are the query result; a token-shaped record value remains data.
 
 The `blue-llmdb` CLI stores profiles and applies its own environment-variable precedence chain under `~/.blue-llmdb/`. The MCP server reads none of that state, only the variables above. Both interfaces use the property names shown in the mapping table above.
 

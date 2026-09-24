@@ -496,13 +496,11 @@ def test_a_misspelled_limit_is_refused_even_for_an_empty_request() -> None:
 
 
 def test_a_reused_client_does_not_accumulate_semaphores_across_contended_loops() -> None:
-    """One client injected at construction is a supported shape, and it leaked per loop.
+    """A reused client prunes semaphores bound to earlier event loops.
 
-    Contention is the part that matters and the part the first version of this test missed.
-    A semaphore binds to its loop only once a caller actually waits on it, so a single fetch
-    per loop never binds anything and a weak-keyed map looks clean while doing nothing. With
-    two concurrent fetches and a parallelism of one, the wait is real, the semaphore holds
-    its loop, and a weak key can never fire.
+    A semaphore binds to its loop only once a caller waits on it. With two concurrent fetches
+    and a parallelism of one, the wait binds it. The semaphore then references its loop,
+    so a weak-keyed entry is never dropped.
 
     The map is bounded rather than empty: the loop that just closed is still present until
     the next call prunes it. Bounded is the property; zero is not achievable without the
@@ -713,13 +711,9 @@ def _axis_and_elapsed(source: LlmSource, question: str = "who?") -> tuple[str | 
     return axis, time.monotonic() - started
 
 
-# Each of the three waits on the answering path gets its own setup: a slow provider, a
-# transport failure that forces backoff, and a held call that makes a second one queue on the
-# semaphore. One slow provider reused for all of them, which is what the first version did,
-# proves only that a slow provider is cancelled — with no transport failure there is no
-# backoff, and with one fetch nothing ever queues. The tolerance is four times the ceiling
-# throughout, tight enough that the unbounded behaviour, which measured eight to twenty times
-# over, fails it. A fourth case covered rate spacing until that subsystem was withdrawn.
+# Exercise three distinct waits: a slow provider, retry backoff after transport failure,
+# and a second call queued on a semaphore. The tolerance is four times the ceiling, below
+# the eight-to-twenty-times overrun seen when a wait is unbounded.
 
 
 def test_a_deadline_cancels_a_provider_that_ignores_its_timeout() -> None:

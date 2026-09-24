@@ -10,11 +10,24 @@ Version 2.0.0 replaces the `llm` command. `llm fetch` is now `blue-llmdb data qu
 
 ## Install
 
+From the `blue-data-llm-source` checkout, with `blue-data` beside it, create a Conda environment once:
+
 ```bash
-platform/llm-cli/scripts/install.sh
+ls -d ../blue-data/lib &&
+conda create --name blue-llmdb python=3.12 pip
 ```
 
-That installs `blue-data` from a checkout, then the library from `lib/`, then the CLI, all editable. It looks for `blue-data` beside this repository, at `../blue-data/lib` from the repository root; set `BLUE_DATA_PATH` to its `lib` directory if it is elsewhere. [installation.md](installation.md) covers every route, the extras, and what each script does.
+Then activate it and install in dependency order:
+
+```bash
+conda activate blue-llmdb &&
+python -m pip install -e ../blue-data/lib &&
+python -m pip install -e "./lib[llm]" &&
+python -m pip install -e ./platform/llm-cli &&
+blue-llmdb --version
+```
+
+If the environment already exists, start at `conda activate blue-llmdb`. You can also run `platform/llm-cli/scripts/install.sh` in an active environment; it looks for `blue-data` at `../blue-data/lib` and accepts `BLUE_DATA_PATH` for another location. [Installation](installation.md) covers both routes and `venv`.
 
 ## Commands
 

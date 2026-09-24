@@ -198,9 +198,7 @@ class TestAFailureIsNotALimit:
 
 class TestTheOutcomeCarriesTheShortfallWithoutTheGapList:
     def test_the_gap_list_still_names_the_lost_part(self) -> None:
-        # `outcome` says the answer is incomplete; `gaps` says which part is missing. The
-        # repair moves the first claim into `outcome`, and must not take the second out of
-        # `gaps`.
+        # `outcome` marks an incomplete answer; `gaps` identifies the missing part.
         result = partitioned(OneLeafRaises())
         assert any("leaf_failed" in gap for gap in result.meta.gaps)
 
