@@ -8,7 +8,7 @@
 | Linting | `ruff` | `pyproject.toml` |
 | Type checking | `pyright` (strict) | `pyproject.toml` |
 
-Run all three checks before committing a change. They currently run manually because no CI platform is configured; [12-deployment-ops.md](12-deployment-ops.md) describes the proposed pipeline.
+Run all three checks before committing a change. They currently run manually because no CI platform is configured. The proposed pipeline is described in [12-deployment-ops.md](12-deployment-ops.md).
 
 ### `pyproject.toml` configuration
 
@@ -31,7 +31,7 @@ venv = ".venv"
 
 ## Type Hints
 
-Type hints are required on all public methods, public class attributes, and module-level constants. Private methods must also be annotated.
+Type hints are required on all public methods, public class attributes, module-level constants, and private methods.
 
 Use Python 3.10+ syntax throughout, with no imports from `typing` where newer syntax applies:
 
@@ -58,9 +58,9 @@ The library includes a `py.typed` marker file to declare inline type information
 
 ## Async
 
-I/O-bound methods are `async def`. Non-I/O work is synchronous, because making a pure function a coroutine buys nothing and costs the caller an `await`.
+I/O-bound methods use `async def`. Non-I/O work is synchronous; making a pure function a coroutine adds an unnecessary `await` for the caller.
 
-There is one stated exception, and it is the reason the rule reads this way rather than the way it reads for a source with an async base class. The data layer's source query surface is synchronous, so `execute_query` and `execute_query_nl` cannot be coroutines without breaking the contract they exist to match. They are therefore thin compatibility adapters that bridge to the async core, as is `fetch`, the synchronous wrapper over `afetch`. Those three contain no logic beyond argument extraction and the bridge.
+The data layer's source query surface is synchronous, so `execute_query` and `execute_query_nl` cannot be coroutines without breaking their contract. They are thin compatibility adapters to the async core, as is `fetch`, the synchronous wrapper over `afetch`. These methods contain no logic beyond argument extraction and the bridge.
 
 ```python
 # correct — async core, thin sync adapter
@@ -79,9 +79,9 @@ class LlmSource:
         # ... a second implementation of the same algorithm
 ```
 
-The bridge raises instead of guessing. Calling `fetch` from inside a running event loop raises `ConfigError` naming `afetch` as the method to use, because nesting an event loop is the kind of failure that surfaces far from its cause.
+Calling `fetch` from inside a running event loop raises `ConfigError` and names `afetch` as the method to use. This avoids a nested event loop failure that would otherwise surface far from its cause.
 
-Reduction and validation modules are synchronous functions. They perform no I/O and are pure, which is what lets each one be tested without a fixture.
+Reduction and validation modules use synchronous functions. They perform no I/O and are pure, so each can be tested without a fixture.
 
 ---
 
@@ -150,8 +150,8 @@ for a fan-out: by the time the total is read, the money is gone.
 
 Every axis is claimed before the provider is contacted, under one lock, so concurrent
 callers cannot race past a ceiling. Cost is claimed the only way an unknown price can be:
-an estimated upper bound is reserved before the attempt and reconciled against the real
-cost afterwards, releasing the difference.
+an estimated upper bound is reserved before the attempt, then resolved against the best
+accounting the client can verify.
 
 Reserving rather than settling is what makes the two hard cases work. A cost that cannot be
 read leaves its reservation standing, so an accounting failure is not a free call. And ten
@@ -191,7 +191,7 @@ The second form needs the additional contract text because `reserve` reads as on
 
 ## Comments
 
-Write a comment only when the *why* is non-obvious: a hidden constraint, a subtle invariant, or a workaround for specific external behaviour. Never describe what the code does, because a well-named identifier already does that.
+Write a comment only when the *why* is non-obvious, such as a hidden constraint, subtle invariant, or workaround for external behaviour. Do not describe what the code does; a well-named identifier already does that.
 
 ```python
 # correct — explains a non-obvious constraint
@@ -239,11 +239,11 @@ An exception that a caller may need to act on carries the data required to act. 
 
 - Usage accounting converts an unreadable token count to zero instead of failing a call that already succeeded. Accounting is total by contract.
 - Cost extraction from a provider response reports an unreadable cost as unknown rather than failing the call, and the reservation's estimate remains charged. Unknown is not zero: converting an accounting failure into a free call is how a ceiling comes to admit every remaining attempt while the running total stays where it started.
-- The client resolves its reservation on any failure before re-raising, and converts an unrecognised provider failure into a `TransportError` carrying the original. Both must cover every failure path, not an enumerated subset: a reservation left outstanding is headroom the budget will never grant again, and a provider exception the caller has never heard of is not a contract this library wants to pass through. A failure after the provider was contacted resolves at the estimate rather than releasing it, or every failed retry would be free.
+- The client resolves its reservation on any failure before re-raising and converts an unrecognised provider failure into a `TransportError` carrying the original. These rules cover every failure path: an outstanding reservation permanently removes headroom from the budget, and an unknown provider exception is not part of this library's contract. If the provider was contacted, a failure resolves at the estimate rather than releasing it; otherwise every failed retry would be free.
 - `FileCache` treats an entry it cannot read, write, or serialise as a miss and returns. A cache that can fail the request it was meant to make cheaper is worse than no cache. The catch names the error types, never catching broadly, and a partially written file is removed before the error leaves.
-- The client's cache *write* swallows anything the store raises. By the time it runs the provider has been contacted and billed, so losing that answer to a cache error is the one outcome worth ruling out. The read is deliberately not guarded: it happens before the provider is contacted, nothing is lost yet, and a caller whose store is broken should hear about it rather than silently pay full price for every request.
+- The client's cache *write* swallows errors raised by the store. By then, the provider has been contacted and billed, so a cache error should not discard the answer. The read is not guarded: it happens before provider contact, so nothing has been lost. A caller whose store is broken should hear about it rather than silently pay full price for every request.
 - Closing a cache backend swallows whatever close raises. A store that cannot shut down cleanly is not the caller's problem at that point.
-- `LlmSource` wraps anything unexpected escaping `fetch`, `afetch` or `estimate` in `LlmSourceError`, chaining the original. This is the one broad catch that exists to *enforce* the error rule rather than to bend it: the hierarchy is promised by four documents and was previously held together by per-site discipline, which failed at every site anyone missed. `BaseException` is deliberately not caught, so a cancellation or an interrupt still propagates.
+- `LlmSource` wraps unexpected exceptions from `fetch`, `afetch`, or `estimate` in `LlmSourceError` and chains the original. This broad catch enforces the promised error hierarchy, which was previously maintained by per-site handling and missed in some cases. `BaseException` is not caught, so cancellations and interrupts still propagate.
 - Deciding whether a client attests to an axis treats any failure as "does not attest". A client that raises when asked what it can be held to has not declared anything, and refusing the ceiling is the safe reading.
 
 Anywhere else, a broad catch is a defect.

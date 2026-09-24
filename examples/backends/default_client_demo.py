@@ -1,18 +1,17 @@
 """A provider-backed fetch through DefaultLlmClient, with real accounting.
 
-This is the one backend that spends money. ``DefaultLlmClient`` drives the provider
+This is the only backend that spends money. ``DefaultLlmClient`` drives the provider
 through litellm, declares every budget axis, and prices each attempt from the table in
-``llm/pricing.py``, so the result carries a real model name, the provider's token counts,
-a settled cost and ``accounting_known=True`` -- the fields the offline demos in this
-directory cannot produce.
+``llm/pricing.py``. The result carries the model name, provider token counts, settled
+cost, and ``accounting_known=True``. The offline demos cannot produce these values.
 
-It reads no credential itself. The provider SDK reads ``OPENAI_API_KEY`` from the
-environment, and a missing or wrong one arrives here as a ``TransportError`` mentioning
-credentials rather than as a configuration error.
+The library reads no credential itself. The provider SDK reads ``OPENAI_API_KEY`` from
+the environment. If the key is missing or invalid, the call raises a ``TransportError``
+that mentions credentials rather than a configuration error.
 
-``limits.max_cost`` is set to a figure above the floor the output allowance alone
-implies: ``llm.max_tokens`` at the model's output rate is most of the bound, so a ceiling
-under that floor refuses every call before one is made.
+``limits.max_cost`` is set above the floor implied by the output allowance alone.
+``llm.max_tokens`` at the model's output rate makes up most of the bound, so a lower
+ceiling refuses every call before it starts.
 
 Requires: OPENAI_API_KEY, and the provider extra (pip install 'blue-data-llm-source[llm]').
 

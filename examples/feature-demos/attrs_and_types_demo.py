@@ -1,14 +1,12 @@
 """Requested attributes, declared types, and what the source reports about the answer.
 
 ``attrs`` is either a list of names or a list of ``{"name": ..., "type": ...}`` dicts.
-A declared type converts what can be converted and reports what cannot. The direction is
-deliberately asymmetric: a numeric string under a declared ``integer`` becomes the number,
-because that is what the caller asked for, while a number under a declared ``string`` is
-reported in ``meta.type_mismatches`` rather than stringified, because a model answering a
-name field with a number is the thing the caller wanted to be told about. Nothing is
-dropped either way.
+A declared type converts compatible values and reports incompatible ones. For example, a
+numeric string declared as ``integer`` becomes a number. A number declared as ``string``
+is reported in ``meta.type_mismatches`` rather than converted to a string. Neither value
+is dropped. This flags a model response that supplies a number for a name field.
 
-Three more reports matter here, and all three exist so that nothing is dropped in silence:
+The source also reports three cases where data might otherwise be dropped silently:
 ``unmapped_keys`` for a returned key that matches no requested attribute,
 ``key_collisions`` for two returned keys that map to one attribute, and
 ``unchecked_types`` for a declared type this source does not know how to check.

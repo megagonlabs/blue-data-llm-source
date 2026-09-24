@@ -1,10 +1,10 @@
 # API Reference
 
-Reference for the public methods, parameters, and return types in `blue_data_llm_source`.
+Reference to the public methods, parameters, and return types in `blue_data_llm_source`.
 
 Contributor-oriented interface rationale is in [`design/09-api-interface-spec.md`](../design/09-api-interface-spec.md). If this page and that document disagree, the implementation decides and the design document must be corrected.
 
-Version 2.0.0. `blue_data_llm_source.__version__` carries it.
+Version 2.1.0. `blue_data_llm_source.__version__` carries it.
 
 The fenced blocks on this page are signatures rather than programs: each shows a declaration, not something to paste and run. Runnable examples live in [guide.md](guide.md), [features.md](features.md), and [extending.md](extending.md).
 
@@ -50,6 +50,7 @@ Fifty names, all importable from `blue_data_llm_source` directly.
 | `rates_for` | function | Published rates for a model, or `None` |
 | `priceable_models` | function | The model names the price table carries |
 | `can_bound` | function | Whether a cost ceiling could be claimed |
+| `published_defaults` | function | One model's request contract and extra rates from the model table, or `None` |
 | `meta_view` | function | `ExecMeta` as a JSON-ready dict |
 | `key_identity` | function | A complete ordered identity for a record |
 | `KeyTuple` | dataclass | That identity |
@@ -63,7 +64,7 @@ Fifty names, all importable from `blue_data_llm_source` directly.
 | `CardinalityEstimator` | class | Parser for the cardinality stage |
 | `CardinalityEstimate` | dataclass | Its result |
 | `redact` | function | Masks credential-shaped text before it is written out |
-| `__version__` | `str` | `"2.0.0"` |
+| `__version__` | `str` | `"2.1.0"` |
 
 ### `redact`
 
@@ -96,7 +97,7 @@ Extends `blue_data.source.source.DataSource`. Base-class order determines which 
 | Attribute | Type | Meaning |
 |---|---|---|
 | `name` | `str` | As constructed |
-| `properties` | `dict[str, Any]` | The merged property map, including a `connection` sub-dict |
+| `properties` | `dict[str, Any]` | The `connection` sub-dict and what the caller set. The package defaults are applied per call and are not stored here, so a source rebuilt from this map behaves like the original |
 | `protocol` | `str` (property) | Always `"llm"`. Not caller-settable |
 | `variant` | `str` (property) | `"openai"` by default. Set through `properties["connection"]["variant"]` |
 
@@ -108,6 +109,7 @@ fetch(query, attrs=None, context=None, max_records=None, properties=None,
 async afetch(query, attrs=None, context=None, max_records=None, properties=None,
              llm_fn=None, budget=None) -> FetchResult
 estimate(query, attrs=None, context=None, properties=None, llm_fn=None) -> Estimate
+max_tokens_for_model(model) -> object
 ```
 
 | Parameter | Type | Default | Meaning |
@@ -123,6 +125,8 @@ estimate(query, attrs=None, context=None, properties=None, llm_fn=None) -> Estim
 `afetch` is the real entry point; `fetch` wraps it with `asyncio.run`. Calling `fetch` from inside a running event loop raises `ConfigError` naming `afetch`.
 
 `estimate` takes no `max_records` and no `budget`, contacts nothing, and reads no `plan.*` setting.
+
+`max_tokens_for_model` returns an explicit `llm.max_tokens` setting when one exists; otherwise it returns the inspected model's default allowance from the model table: 25,000 for a reasoning model, 4,096 for any other. It contacts no provider.
 
 Resolution order for the client: `llm_fn` for this call, then the `client` given at construction, then a `DefaultLlmClient` built from the merged properties.
 
@@ -233,13 +237,14 @@ Set these through `properties={"connection": {"variant": "..."}}`; the sub-dict 
 
 ### `llm.*` properties
 
-Ten accepted names. An `llm.*` key outside the set raises `ConfigError` listing all ten.
+Eleven accepted names. An `llm.*` key outside the set raises `ConfigError` listing all eleven.
 
 | Key | Type | Default | Forwarded to provider | Meaning |
 |---|---|---|---|---|
-| `llm.model` | `str` | `"gpt-4o"` | yes | Model name |
-| `llm.temperature` | `float` | `0` | yes | Sampling temperature |
-| `llm.max_tokens` | `int` | `4096` | yes | Output allowance |
+| `llm.model` | `str` | `"gpt-6-luna"` | yes | Model name. An `openai/` prefix reads the same table entry |
+| `llm.reasoning_effort` | `str` | the model's default | yes | One of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, within the set the model accepts. [Supported models](../lib/README.md#supported-models) lists each model's set and default; GPT-6 Luna's default is `medium` |
+| `llm.temperature` | `float` | `0` for GPT-4.1 and GPT-4o, otherwise none | yes | Sampling temperature. Refused with an active reasoning effort, and at every effort on a model that never accepts it |
+| `llm.max_tokens` | `int` | `25000` | yes | Output allowance. 25,000 for a reasoning model, sent as `max_completion_tokens`; 4,096 for GPT-4.1, GPT-4o and a model the table does not carry, sent as `max_tokens` |
 | `llm.stream` | `bool` | `False` | yes | Read the chunks to the end and reassemble. Does not make a fetch faster; a stream carrying no usage cannot be priced |
 | `llm.timeout` | `float` | provider default | yes | Per-call timeout, capped at the time the budget has left. Checked as a finite positive number |
 | `llm.cache` | `bool` | off | no | Opens a `diskcache` response cache. Requires the `llm` extra |
@@ -262,7 +267,7 @@ Five accepted names, and an unknown one raises `ConfigError` listing them, as do
 | `limits.max_seconds` | `float \| None` | unlimited | `Capability.SECONDS` | Refuses an attempt once elapsed time reaches it and cancels a wait in flight |
 | `limits.max_cost` | `float \| None` | unlimited | `Capability.COST` | Refuses an attempt whose cost bound would cross it |
 | `limits.max_calls` | `int \| None` | unlimited | `Capability.CALLS` | Refuses an attempt past that many, counting every retry |
-| `limits.max_retries` | `int` | `2` | nothing | Retries per call; the client makes this many attempts plus one, narrowed to the smallest depth along the budget chain |
+| `limits.max_retries` | `int` | `2` | nothing | Retries per call, at most 9,999; the client makes this many attempts plus one, narrowed to the smallest depth along the budget chain |
 
 A configured ceiling on an axis the resolved client does not declare raises `ConfigError` at the first fetch. The axes weighed are every one carrying a ceiling anywhere in the budget chain, not only this request's own.
 
@@ -280,8 +285,8 @@ Eighteen accepted names. An unknown `plan.*` key raises `ConfigError`.
 | `plan.exact_rows` | `int` | none | Hard target when the plan has one leaf. A multi-leaf plan does not apply it and adds `exact_rows_not_leaf_bound` to `meta.gaps` |
 | `plan.partition_key` | `str` | none | Preferred root split dimension. Descendants may choose another and cannot repeat an ancestor's |
 | `plan.max_depth` | `int` | `2` | Deepest partition level. `0` disables subdivision while retaining the planning stages |
-| `plan.max_partitions` | `int` | `4` | Most children one proposal may create. Below `2` leaves the node unsplit |
-| `plan.max_leaves` | `int` | `24` | Most terminal slices. An expansion that cannot fit is rejected whole |
+| `plan.max_partitions` | `int` | `20` | Most children one proposal may create. Below `2` leaves the node unsplit |
+| `plan.max_leaves` | `int` | `100` | Most terminal slices. An expansion that cannot fit is rejected whole |
 | `plan.target_rows_per_leaf` | `int` | `50` | Row-count hint above which a descendant may split again. Not a completeness target |
 | `plan.max_continuations` | `int` | `0` | How many times a part may ask again for records it did not get. Bounds asks per part, not provider attempts |
 | `plan.max_excluded_keys` | `int` | `50` | Count cap for whole-key exclusions in a continuation prompt. Direct Python only |
@@ -364,7 +369,7 @@ Every field, in declaration order.
 | `prompt_tokens` | `int` | `0` | Summed from this call's usage entries |
 | `completion_tokens` | `int` | `0` | The same |
 | `cost` | `float` | `0.0` | Settled spend read from the budget |
-| `latency_seconds` | `float` | `0.0` | Wall-clock time for the fetch |
+| `latency_seconds` | `float` | `0.0` | Wall-clock time for the fetch. `meta_view`, and so the CLI and MCP JSON, publish it as `elapsed_seconds` |
 | `cache_hits` | `int` | `0` | Usage entries marked as cache hits |
 | `requested_attrs` | `list[str]` | `[]` | The attribute names asked for |
 | `row_estimate` | `int \| None` | `None` | Accepted non-flat planning hint for the root slice. `None` in flat mode or when none was accepted. Not a row count and not a completeness claim |
@@ -385,7 +390,7 @@ Every field, in declaration order.
 | `truncated_to` | `int \| None` | `None` | Where the row ceiling cut the result |
 | `stop_reasons` | `list[str]` | `[]` | Ordered distinct facts that limited extraction or discarded final output |
 | `stopped_by` | `str \| None` | `None` | The highest-precedence member of `stop_reasons` |
-| `accounting_known` | `bool` | `True` | Whether `calls`, `cost`, and the token counts describe provider work. `False` for an `llm_fn` answer |
+| `accounting_known` | `bool` | `True` | Whether `calls`, `cost`, and the token counts describe measured provider work. `False` for an `llm_fn` answer, when provider accounting is missing, or when a call under a cost ceiling was charged a usage bound or its reservation because the response does not prove every billed category; then cost is bookkeeping or a conservative bound rather than an exact bill |
 
 Stop-reason precedence, highest first: `max_seconds`, `max_cost`, `max_calls`, `provider_output_limit`, `response_incomplete`, `max_rows`, `plan.max_continuations`. Anything else follows in the order it was observed.
 
@@ -422,6 +427,7 @@ Stop-reason precedence, highest first: `max_seconds`, `max_cost`, `max_calls`, `
 | `max_output_tokens` | `int` | `0` | The output allowance the bound reserved |
 | `max_attempts` | `int` | `1` | Provider attempts the fetch permits |
 | `max_cost_per_attempt` | `float \| None` | `None` | The bound one attempt reserves |
+| `attempts_within_ceiling` | `int \| None` | `None` | With `limits.max_cost` set, how many of `max_attempts` fit under it, each at `max_cost_per_attempt`; `0` means the first attempt is refused. An empty request costs nothing, so all its attempts fit. `None` without a ceiling or a bound |
 
 Size a ceiling against `max_cost`. An empty request returns `bounded=True` with a `max_cost` of zero, since it never reaches a model.
 
@@ -432,7 +438,7 @@ Size a ceiling against `max_cost`. An empty request returns `bounded=True` with 
 | `model` | `str` | `""` | The model this call used |
 | `prompt_tokens` | `int` | `0` | As the provider reported |
 | `completion_tokens` | `int` | `0` | The same |
-| `cost` | `float` | `0.0` | What the provider charged, when it could be read |
+| `cost` | `float` | `0.0` | What the provider charged, when it could be read. Otherwise the usage bound or the reservation the call was charged, with `cost_known` false |
 | `latency_seconds` | `float` | `0.0` | Including a cache hit's own latency |
 | `cache_hit` | `bool` | `False` | Whether this answer came from a cache |
 | `finish_reason` | `str \| None` | `None` | Why the provider stopped, as it said it. `None` when it said nothing |
@@ -567,7 +573,7 @@ Limits(max_rows: int | None = None, max_seconds: float | None = None,
        max_retries: int = 2)
 ```
 
-`max_rows`, `max_calls`, and `max_retries` must be whole numbers and not `bool`. `max_seconds` and `max_cost` must be real and finite. None may be negative. A `NaN` ceiling is refused because it compares false against every spend and would read as configured while enforcing nothing.
+`max_rows`, `max_calls`, and `max_retries` must be whole numbers and not `bool`. `max_seconds` and `max_cost` must be real and finite. None may be negative, and `max_retries` may be at most 9,999, so one call makes at most 10,000 attempts. A `NaN` ceiling is refused because it compares false against every spend and would read as configured while enforcing nothing.
 
 ### `Budget`
 
@@ -666,12 +672,13 @@ One JSON file per entry, named `llmcache-<sha256 of key>.json`. The directory is
 | `rates_for` | `rates_for(model: str) -> tuple[float, float] \| None` | Published input and output price per token for a listed model or a dated variant of one, `None` otherwise |
 | `priceable_models` | `priceable_models() -> tuple[str, ...]` | The model names the table carries, sorted |
 | `can_bound` | `can_bound(model: str, max_tokens: object, properties: dict[str, object] \| None = None) -> bool` | Whether a cost ceiling could be claimed for these arguments |
+| `published_defaults` | `published_defaults(model: str) -> dict[str, object] \| None` | The model's table entry as `reasoning_efforts`, `default_reasoning_effort`, `temperature` (`always`, `effort_none_only` or `never`), `output_token_parameter`, `cached_input_price_per_token`, `cache_write_price_per_token` and `long_context_threshold_tokens`; `None` for a model the table does not carry. The first four are `None` for a price-only row. A caller's settings override these defaults for a call |
 
-A model name resolves only when it equals a listed name, or extends one with a hyphen followed by digits and hyphens alone. A longer name with letters after it is a different model, not a variant.
+A model name resolves only when it equals a listed name, or extends one with a hyphen followed by digits and hyphens alone, after an `openai/` prefix is removed. Where two listed names match, the longer wins, so `gpt-4o-2024-05-13` is priced by its own row and not as `gpt-4o`. A longer name with letters after it is a different model, not a variant. [Supported models](../lib/README.md#supported-models) lists every name with its prices.
 
 The price table itself is not exported. It is a mutable snapshot of time-sensitive list prices with no effective date and no freshness check, and publishing it would be a contract this package cannot keep across a price change. Supply `llm.price_per_input_token` and `llm.price_per_output_token` to bound a model it does not carry.
 
-The bound is the prompt's length in UTF-8 bytes plus a 64-token framing allowance at the input rate, plus the whole `llm.max_tokens` allowance at the output rate. Bytes rather than characters, because a byte-pair tokenizer consumes at least one byte per token and can emit more tokens than the prompt has characters.
+The bound is the prompt's length in UTF-8 bytes plus a 64-token framing allowance at the input rate, plus the whole `llm.max_tokens` allowance at the output rate. Bytes rather than characters, because a byte-pair tokenizer consumes at least one byte per token and can emit more tokens than the prompt has characters. On a table model priced at table rates, a prompt counted at 1,024 tokens or more is bounded at the cache-write rate where the model has one, a prompt above 272,000 tokens at the long-context rates where the model has them, and the whole figure carries the 10% regional uplift where it applies. [The cost bound](../lib/README.md#the-cost-bound) gives the settlement rule as well.
 
 ## `meta_view`
 
@@ -679,11 +686,11 @@ The bound is the prompt's length in UTF-8 bytes plus a 64-token framing allowanc
 meta_view(meta: ExecMeta, *, verbose: bool = False) -> dict[str, Any]
 ```
 
-The one serialization of `ExecMeta` every adapter publishes, so a run cannot describe itself two ways depending on which door the caller came through.
+The single serialization of `ExecMeta` published by every adapter, so a run has the same description across interfaces.
 
 | Tier | Keys |
 |---|---|
-| Always present | `outcome`, `model`, `calls`, `prompt_tokens`, `completion_tokens`, `cost` (rounded to 6 places), `elapsed_seconds` (rounded to 3), `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records`, `gaps`, `stop_reasons`, `requested_attrs` |
+| Always present | `outcome`, `model`, `calls`, `prompt_tokens`, `completion_tokens`, `cost` (rounded to 6 places), `elapsed_seconds` (`ExecMeta.latency_seconds`, rounded to 3), `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records`, `gaps`, `stop_reasons`, `requested_attrs` |
 | Present when populated | `normalization_collisions`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to`, `cache_hits`, and `accounting_known` in its false form only |
 | Verbose only | `unmapped_keys`, `remapped_keys`, `type_mismatches`, `key_collisions` |
 

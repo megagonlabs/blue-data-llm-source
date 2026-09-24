@@ -271,7 +271,7 @@ def test_the_plan_options_reach_the_call(runner: CliRunner, install_source: Any)
         "plan.keys": ["name"],
         "plan.exact_rows": 10,
         "plan.max_exclusion_bytes": 4096,
-        "llm.model": "gpt-4o",
+        "llm.model": "gpt-6-luna",
         "llm.cache_dir": source.properties["llm.cache_dir"],
     }
 
@@ -426,7 +426,7 @@ def test_csv_carries_the_same_columns_as_the_table(runner: CliRunner) -> None:
 def test_the_prose_answer_names_the_count_model_cost_and_stop(runner: CliRunner) -> None:
     result = runner.invoke(cli, ["data", "query", QUERY, "--format", "nl"])
     assert "2 records" in result.stdout
-    assert "gpt-4o" in result.stdout
+    assert "gpt-6-luna" in result.stdout
     assert "$0.0012" in result.stdout
     assert "Nothing stopped the run early." in result.stdout
 

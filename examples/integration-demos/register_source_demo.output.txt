@@ -14,7 +14,7 @@ the same call with a ceiling that binds only this call
 execute_query with an op dict, routed through the registry
   LLM.MODELS   [{'protocol': 'llm', 'variant': 'openai'}]
   LLM.FETCH    [{'name': 'Charles de Gaulle'}, {'name': 'Orly'}, {'name': "Nice Cote d'Azur"}]
-  LLM.ESTIMATE [{'bounded': False, 'max_cost': None, 'reason': 'this client does not report what an attempt will cost, so a bound cannot be given for it. Only a client that drives the provider itself knows the model and rates the call will use.', 'model': 'gpt-4o-mini', 'prompt_bytes': 766, 'max_output_tokens': 0, 'max_attempts': 3, 'max_cost_per_attempt': None}]
+  LLM.ESTIMATE [{'bounded': False, 'max_cost': None, 'reason': 'this client does not report what an attempt will cost, so a bound cannot be given for it. Only a client that drives the provider itself knows the model and rates the call will use.', 'model': 'gpt-4o-mini', 'prompt_bytes': 766, 'max_output_tokens': 0, 'max_attempts': 3, 'max_cost_per_attempt': None, 'attempts_within_ceiling': None}]
 
 drop the live instance and the registry rebuilds one from the recorded class
   same object  False

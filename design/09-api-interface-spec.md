@@ -1,14 +1,14 @@
 # LlmSource — API / Interface Spec
 
-The core library has three interfaces: the Python API, an MCP server, and a CLI. Each is a separate package installed from source. No REST API is implemented or scheduled. Interface packages translate arguments and results but contain no retrieval, planning, or budgeting logic. They preserve library error messages. Authentication and authorization belong to the deployment layer, and no interface reads or forwards a provider credential.
+The core library has three interfaces: the Python API, an MCP server, and a CLI. Each is a separate package installed from source. No REST API is implemented or scheduled. Interface packages translate arguments and results, but contain no retrieval, planning, or budgeting logic. They preserve library error messages. Authentication and authorization belong to the deployment layer. No interface reads or forwards a provider credential.
 
 ---
 
 ## 1. Python Library
 
-The canonical interface. Every other interface delegates to it. `LlmSource` inherits `blue_data.source.source.DataSource` and remains directly instantiable, since that base class has no abstract members. One method, `afetch`, is a coroutine and must be awaited; everything else, `estimate` included, is synchronous.
+The Python API is the canonical interface, and every other interface delegates to it. `LlmSource` inherits `blue_data.source.source.DataSource` and can be instantiated directly because that base class has no abstract members. `afetch` is a coroutine and must be awaited; all other methods, including `estimate`, are synchronous.
 
-The base order matters and is not cosmetic; `LlmSource`'s own implementations come first in the method resolution order, and a test asserts it for every method on the shared surface. See [The Source Base Class](04-detailed-architecture.md#the-source-base-class) for why. Inheriting the base class does not make the source constructible by protocol name: `DataRegistry.connect_source` returns the registered instance and rebuilds one from the recorded class path when the live entry is gone, so the integration route is `register_source` with a built instance and the registration is durable.
+The base-class order affects behavior: `LlmSource`'s implementations must come first in the method resolution order. A test checks this for every method on the shared surface. See [The Source Base Class](04-detailed-architecture.md#the-source-base-class) for details. Inheritance does not make the source constructible by protocol name. `DataRegistry.connect_source` returns the registered instance or rebuilds it from the recorded class path after the live entry is gone. The supported integration route is to build an instance and pass it to `register_source`; the registration is durable.
 
 ### Constructor
 
@@ -22,7 +22,7 @@ class LlmSource:
     ) -> None: ...
 ```
 
-`properties` is merged over the defaults, with the `connection` mapping merged key by key. `client` injects a model client used by every request from this instance; any object with `complete(prompt, properties)` and `acomplete(prompt, properties)` is accepted. A client that additionally implements `budget_capabilities() -> frozenset[str]` satisfies `types.BudgetAwareClient`, receives the run's budget under the `budget` property and a per-call `Usage` list under the `usage_sink` property on every call, and is expected to claim against the budget. Each configured ceiling on an axis the client did not declare is refused with a `ConfigError` naming that ceiling and the axes the client did declare.
+`properties` is merged over the defaults, with the `connection` mapping merged key by key. `client` injects the model client used by every request from this instance; any object with `complete(prompt, properties)` and `acomplete(prompt, properties)` is accepted. A client that also implements `budget_capabilities() -> frozenset[str]` satisfies `types.BudgetAwareClient`. It receives the run's budget under the `budget` property and a per-call `Usage` list under `usage_sink`, and is expected to claim against the budget. Each configured ceiling on an undeclared axis is refused with a `ConfigError` naming that ceiling and the axes the client declared.
 
 ### `LlmSource`
 
@@ -65,6 +65,7 @@ class LlmSource:
         properties: dict[str, Any] | None = None,
         llm_fn: Any = None,
     ) -> Estimate: ...
+    def max_tokens_for_model(self, model: str) -> object: ...
 
     # Source surface
     def execute_query(
@@ -209,11 +210,11 @@ When `execute_query` receives a mapping, its `op` key selects the operation.
 |----|------------------------|---------|
 | `LLM.FETCH` | `query`, `attrs` or `attr_names`, `context`, `max_records` | The record list |
 | `LLM.MODELS` | — | `[{"protocol": "llm", "variant": "openai"}]` |
-| `LLM.ESTIMATE` | `query`, `attrs`, `context` | `[{"bounded": true, "max_cost": 0.12933, "reason": null, "model": "gpt-4o", "prompt_bytes": 796, "max_output_tokens": 4096, "max_attempts": 3, "max_cost_per_attempt": 0.04311}]` |
+| `LLM.ESTIMATE` | `query`, `attrs`, `context` | `[{"bounded": true, "max_cost": 0.0415305, "reason": null, "model": "gpt-6-luna", "prompt_bytes": 786, "max_output_tokens": 25000, "max_attempts": 3, "max_cost_per_attempt": 0.0138435, "attempts_within_ceiling": null}]` |
 
-An unrecognised op raises `QueryError` listing the supported ones. A plain string is treated as the request itself and runs a fetch. `LLM.ESTIMATE` reaches `estimate` with `optional_properties` as its properties and contacts nothing; the one-record list is the shape this surface returns, and a caller wanting the `Estimate` object itself calls the method.
+An unrecognised op raises `QueryError` listing the supported operations. A plain string is treated as the request and runs a fetch. `LLM.ESTIMATE` calls `estimate` with `optional_properties` as its properties and contacts no provider. This surface returns a one-record list; callers that need the `Estimate` object can call the method directly.
 
-`optional_properties` is also where a ceiling goes on this surface. Keys the op recognises become arguments, and everything left is merged over the instance properties as per-call configuration, so a `limits.*` key there bounds this call and the next call through the same source is unbounded again.
+On this surface, `optional_properties` also carries ceilings. Recognized keys become arguments; the remaining keys are merged over the instance properties as per-call configuration. A `limits.*` key therefore bounds this call only, and the next call through the same source is unbounded again.
 
 ### Configuration properties
 
@@ -223,9 +224,10 @@ Properties may be set on the instance or per call, with per-call values winning.
 |-----|------|---------|-------------|
 | `connection.variant` | `str` | `openai` | Implementation within the `llm` family |
 | `connection.host`, `connection.port`, `connection.user`, `connection.password` | — | empty | Present for connection-shape compatibility; unused by this source |
-| `llm.model` | `str` | `gpt-4o` | Model name, forwarded to the provider |
-| `llm.temperature` | `float` | `0` | Forwarded to the provider |
-| `llm.max_tokens` | `int` | `4096` | Forwarded to the provider |
+| `llm.model` | `str` | `gpt-6-luna` | Model name, forwarded to the provider as written. An `openai/` prefix reads the same model-table entry, and a bare OpenAI name is sent with the provider named as `openai` |
+| `llm.reasoning_effort` | `str` | the model's default | One of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, within the set the model's table entry accepts; refused before any reservation otherwise. GPT-6 Luna's default is `medium` |
+| `llm.temperature` | `float` | `0` for GPT-4.1 and GPT-4o, otherwise none | Forwarded where the model accepts it: always for GPT-4.1 and GPT-4o, only at effort `none` for the GPT-6 Luna and Sol, GPT-5.6, 5.5 and 5.4 models, never for GPT-6 Astra, GPT-5 and the o-series |
+| `llm.max_tokens` | `int` | `25000` for a reasoning model, else `4096` | Forwarded through the model's output-token parameter: `max_completion_tokens` for a reasoning model, `max_tokens` for GPT-4.1, GPT-4o and a model the table does not carry |
 | `llm.stream` | `bool` | `False` | Forwarded to the provider. `True` is accepted for compatibility with provider configurations and proxies that require a stream; it does not make a fetch faster, and a stream the provider sends no usage with cannot be priced, so it reports `accounting_known=False`. See [streaming](../lib/README.md#streaming) |
 | `llm.timeout` | `float` | provider default | Per-call timeout, forwarded to the provider. When `limits.max_seconds` is set, the value actually sent is the smaller of this and the wall-clock time the run has left |
 | `llm.cache` | `bool` | off | Enables the `diskcache` response cache; requires the `llm` extra |
@@ -233,7 +235,7 @@ Properties may be set on the instance or per call, with per-call values winning.
 | `llm.max_parallel` | `int` | `8` | Concurrency bound per event loop |
 | `llm.rate_limit` | — | — | **Not supported.** Refused by name with `ConfigError`, because client-side call spacing has to reconcile with per-attempt budget admission and this library does not do it. Use `llm.max_parallel`, or throttle above the library |
 | `cache_store` | `CacheStore` | none | A cache with `get` and `set`, taking precedence over `llm.cache`. `MemoryCache` and `FileCache` ship for this slot, and any object with the two methods is accepted |
-| `limits.max_retries` | `int` | `2` | Retries on a transport failure; the client makes this many plus one attempt, narrowed to the smallest depth along the budget chain, and reserves budget for each |
+| `limits.max_retries` | `int` | `2` | Retries on a transport failure, at most 9,999; the client makes this many plus one attempt, narrowed to the smallest depth along the budget chain, and reserves budget for each |
 | `limits.max_rows` | `int` | unlimited | Row ceiling; overridden by a `max_records` argument. Enforced by the source itself, so it binds any client |
 | `limits.max_seconds` | `float` | unlimited | Time ceiling on admission and cooperative waits, not on work that never yields; requires a client declaring `Capability.SECONDS`. See [what it bounds](../lib/README.md#what-the-time-ceiling-actually-bounds) |
 | `limits.max_cost` | `float` | unlimited | API cost ceiling, claimed against a computed upper bound before each attempt; requires a client declaring `Capability.COST` |
@@ -242,10 +244,10 @@ Properties may be set on the instance or per call, with per-call values winning.
 | `usage_sink` | `list[Usage]` | set per call | Reserved. The source writes a fresh list here on every call and reads this call's token counts and model name from it alone |
 | `plan.mode` | `str` | `flat` | `flat`, `partitioned`, or `row_by_row` |
 | `plan.max_continuations` | `int` | `0` | Additional extraction asks permitted per leaf |
-| `plan.max_leaves` | `int` | `24` | Maximum number of terminal plan slices |
+| `plan.max_leaves` | `int` | `100` | Maximum number of terminal plan slices |
 | `plan.partition_key` | `str` | none | Preferred root partition dimension |
 | `plan.max_depth` | `int` | `2` | Maximum partition depth; zero disables subdivision |
-| `plan.max_partitions` | `int` | `4` | Maximum children in one accepted partition proposal |
+| `plan.max_partitions` | `int` | `20` | Maximum children in one accepted partition proposal |
 | `plan.target_rows_per_leaf` | `int` | `50` | Soft estimate threshold used to decide whether a descendant is eligible to split |
 | `plan.schema_mode` | `str` | `preserve` | `preserve` or `enrich` |
 | `plan.planning_order` | `str` | `planning.schema_first` | One of the five planning schedules described below |
@@ -272,7 +274,7 @@ must be one of them. Source rules use provenance `source_configuration`; per-cal
 malformed scopes, empty or duplicate domains, key mismatches, and unsupported provenance fail before
 provider contact. All three distribution-search properties are removed from the provider property map.
 
-`limits.max_cost` has one further requirement, since a ceiling needs a number to claim. The bound is the prompt's length in UTF-8 bytes plus a framing allowance at the model's published input rate, plus the whole `llm.max_tokens` allowance at its output rate, and it is refused with a `ConfigError` when the model has no published price and none was supplied, or when `llm.max_tokens` is not a finite positive number. The floor of that bound is the output allowance alone, which for the default `gpt-4o` and 4096 tokens is about $0.041, so a smaller ceiling refuses every call before one is made. `estimate` reports the same bound for a request in hand, which is how a caller sizes a ceiling against the request it is going to bound rather than against an example.
+`limits.max_cost` requires a calculable bound. The bound uses the prompt's UTF-8 byte length plus a framing allowance at the model's published input rate, and the full `llm.max_tokens` allowance at its output rate. For a model in the package's table, it also applies the listed cache-write price to prompts of at least 1,024 tokens, the long-context tier to prompts over 272,000 tokens, and the 10% regional uplift, where specified in the model entry. If the model has no published or caller-supplied price, or `llm.max_tokens` is not finite and positive, the source raises `ConfigError`. The output allowance alone sets the bound's floor. For the default `gpt-6-luna` and 25,000 tokens, that floor is about $0.01375 with the uplift, so a smaller ceiling refuses every call before provider contact. `estimate` reports the same bound for a request, allowing a caller to size a ceiling against that request.
 
 ### Result types
 
@@ -331,6 +333,7 @@ class ExecMeta:
     marginal_key_yields: list[int] = ...
     incomplete_key_records: int = 0
     normalization_collisions: list[dict[str, Any]] = ...
+    repaired_numbers: int = 0
     observed_keys: list[str] = ...
     unmapped_keys: list[str] = ...
     remapped_keys: dict[str, str] = ...
@@ -373,17 +376,17 @@ JSON scalar values. A `PlanningReceipt` serializes exactly `contract_version`,
 `planning-receipt-1`. The receipt checks agreement among those structures, not authenticity,
 factual truth, completeness, or quality.
 
-`cardinality_estimate` carries the accepted non-flat bootstrap estimate as `expected`, `lower`, `upper`, `row_unit`, `source`, `parse_status`, and `diagnostics`; `row_estimate` is its `expected` compatibility value. `primary_keys` lists the ordered identifying attributes used by execution and reduction. `observed_key_count` counts distinct complete keys in the final returned records, after reduction, deduplication, and row capping. `marginal_key_yields` gives the new normalized key identities from each extraction attempt in leaf order, or new exact records when no primary key exists. `incomplete_key_records` counts distinct per-leaf records missing at least one primary-key value. Each entry in `normalization_collisions` contains `primary_keys`, `kept`, and `collided` for two per-leaf key spellings that normalize to the same identity. The estimate and observed counts do not state that the result is complete.
+`cardinality_estimate` carries the accepted non-flat bootstrap estimate as `expected`, `lower`, `upper`, `row_unit`, `source`, `parse_status`, and `diagnostics`; `row_estimate` is its `expected` compatibility value. `primary_keys` lists the ordered identifying attributes used by execution and reduction. `observed_key_count` counts distinct complete keys in the final returned records, after reduction, deduplication, and row capping. `marginal_key_yields` gives the new normalized key identities from each extraction attempt in leaf order, or new exact records when no primary key exists. `incomplete_key_records` counts distinct per-leaf records missing at least one primary-key value. Each entry in `normalization_collisions` contains `primary_keys`, `kept`, and `collided` for two per-leaf key spellings that normalize to the same identity. `repaired_numbers` counts numbers written with thousands separators in an object value, such as `4,470`, that were read as `4470` after strict parsing failed. The estimate and observed counts do not state that the result is complete.
 
 `Exact` and `OneOf` are how a plan says what one part filters on. A part narrowed to a single value carries `Exact`; a part covering several alternatives carries `OneOf`. Values use the finite JSON scalar types: string, integer, finite number, and boolean. Null, non-finite numbers, and empty or whitespace-only strings are rejected. They are tagged, not held as an untagged scalar or list, because an absent-minded `join` can ask a different question: joined on `", "`, the alternatives `['A, B', 'C']` and `['A', 'B', 'C']` render identically, so a request about one region whose name contains a comma and a request about two regions become the same prompt, and the result says nothing about which was answered. With the tag, that mistake stops type-checking.
 
 A caller's own one-element list stays a `OneOf`. Writing a list of one says alternatives were expected, which is a different statement from naming a value outright, and collapsing it would discard the only signal that says so. A part the planner derived from a single value carries `Exact`, because there the count is the plan's own arithmetic and no alternative was dropped.
 
-The claim a split makes about its filters is exactly this: **each distinct enumerated alternative is encoded in exactly one part's disjunction.** Not that the enumeration is exhaustive, not that the alternatives are disjoint (values can denote overlapping categories and the enumeration itself comes from a model), and not that the model will honour the filter it was given.
+The claim a split makes about its filters is limited to this: **each distinct enumerated alternative is encoded in exactly one part's disjunction.** The claim does not establish that the enumeration is exhaustive, that alternatives are disjoint (values can denote overlapping categories and the enumeration itself comes from a model), or that the model will honor the filter it was given.
 
 `afetch` and `fetch` return a `FetchResult`, which supports `len()` and iteration over its records. `execute_query` and `execute_query_nl` return the record list alone, because the surface they match returns records.
 
-`estimate` returns an `Estimate`, and `LLM.ESTIMATE` returns the same fields as a one-record list. `max_cost` is an upper bound, not a prediction, computed by the same code that bounds a reservation, so an estimate and the ceiling that enforces it are one figure. `bounded` is `False` when no bound can be established, and `reason` then carries what is missing; that is a normal answer rather than an error, because a caller asking what a request might cost is entitled to hear that this package has no price for the model. `prompt_bytes` and `max_output_tokens` report what the bound was built from, and `model` is the one that will actually answer. An injected client's own configuration outranks this source's defaults. `max_cost` is the whole fetch: `max_cost_per_attempt` accumulated `max_attempts` times, the same way the ledger accumulates it, so a ceiling set to exactly `max_cost` admits every attempt the figure accounted for. Sizing against the per-attempt figure instead means one transient failure consumes the ceiling and the retry is refused. An empty request estimates at zero, since it never reaches a model. `Estimate` is exported from the package root.
+`estimate` returns an `Estimate`; `LLM.ESTIMATE` returns the same fields in a one-record list. `max_cost` is an upper bound calculated by the same code that bounds a reservation. The estimate and enforcing ceiling therefore use the same figure. When no bound can be established, `bounded` is `False` and `reason` explains what is missing. This is a normal result, not an error. `prompt_bytes` and `max_output_tokens` show the inputs to the bound, and `model` names the model that will answer. An injected client's configuration takes precedence over this source's defaults. `max_cost` covers the whole fetch: it is `max_cost_per_attempt` accumulated over `max_attempts`, as in the ledger. A ceiling equal to `max_cost` admits every attempt included in the estimate. A per-attempt ceiling may be exhausted by one transient failure, causing a retry to be refused. An empty request estimates at zero because it never reaches a model. `Estimate` is exported from the package root.
 
 ### Outcome
 
@@ -420,7 +423,7 @@ The field rides on `FetchResult`, so it is available through `fetch` and `afetch
 
 ### Key collisions
 
-`ExecMeta.key_collisions` lists the returned keys whose values were not used because another key had already answered the same requested attribute. The first key to arrive keeps the attribute, because letting the later one win would make the surviving value depend on the order the model emitted its keys in, and which spelling it meant is not knowable here. The ignored value is reported, not discarded, so a caller that can decide still has both.
+`ExecMeta.key_collisions` lists returned keys whose values were unused because another key had already answered the same requested attribute. The first key keeps the attribute. If the later key won, the result would depend on the order in which the model emitted its keys; the intended spelling cannot be determined here. The source reports the ignored value, so a caller can still decide between both values.
 
 | Key | Type | Description |
 |-----|------|-------------|
@@ -430,7 +433,7 @@ The field rides on `FetchResult`, so it is available through `fetch` and `afetch
 | `ignored_key` | `str` | The returned key whose value was not used |
 | `ignored_value` | any | The value that key carried |
 
-Two *requested* attributes whose fuzzy forms coincide are a different case and are not refused: the fuzzy index drops the entry it cannot separate, so exact keys still match and a key that matches only fuzzily is reported unmapped rather than assigned by guess. Only the same name requested twice raises `QueryError`.
+When two *requested* attributes have matching fuzzy forms, the fuzzy index drops the entry it cannot distinguish. Exact keys still match, while keys that match only fuzzily are reported as unmapped rather than assigned by guess. A request that repeats the same name raises `QueryError`.
 
 ### Exceptions
 
@@ -448,13 +451,14 @@ All inherit from `LlmSourceError`, defined in `types.py`.
 
 ### Supported helpers
 
-Six module-level functions are exported from the package root alongside the types, for adapters that need them without reaching into a private module.
+Seven module-level functions are exported from the package root alongside the types, for adapters that need them without reaching into a private module.
 
 | Name | Signature | Returns |
 |------|-----------|---------|
 | `rates_for` | `rates_for(model: str) -> tuple[float, float] \| None` | Published input and output price per token for a known model or a dated variant of one, `None` otherwise |
 | `can_bound` | `can_bound(model: str, max_tokens: object, properties: dict \| None = None) -> bool` | Whether a cost ceiling could be claimed for these arguments |
 | `priceable_models` | `priceable_models() -> tuple[str, ...]` | The model names the published table carries, sorted |
+| `published_defaults` | `published_defaults(model: str) -> dict[str, object] \| None` | The model's table entry: `reasoning_efforts`, `default_reasoning_effort`, `temperature`, `output_token_parameter`, `cached_input_price_per_token`, `cache_write_price_per_token`, `long_context_threshold_tokens`. `None` for a model the table does not carry. A caller's settings override these defaults for a call |
 | `meta_view` | `meta_view(meta: ExecMeta, *, verbose: bool = False) -> dict[str, Any]` | `ExecMeta` as a JSON-ready dict, under one field policy shared by every adapter |
 | `key_identity` | `key_identity(record: Mapping[str, Any], primary_keys: Sequence[str], attrs: Sequence[Attr]) -> KeyTuple \| None` | The record's complete ordered identity, or `None` when a key component is absent. `KeyTuple` is exported with it |
 | `redact` | `redact(text: str) -> str` | *text* with anything that could be a credential replaced by `***`. One rule for every surface that hands a caller text it did not write: an error message, a log line, a traceback, a request-side field of a run report. Not applied to records, which are the answer |
@@ -463,8 +467,8 @@ The price table itself stays internal. It is a mutable snapshot of time-sensitiv
 
 `meta_view` publishes three field tiers:
 
-- Always present: `outcome`, `model`, `calls`, `prompt_tokens`, `completion_tokens`, `cost`, `elapsed_seconds`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records`, `gaps`, `stop_reasons`, and `requested_attrs`.
-- Present when populated: `normalization_collisions`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to`, `cache_hits`, and `accounting_known` when false.
+- Always present: `outcome`, `model`, `calls`, `prompt_tokens`, `completion_tokens`, `cost`, `elapsed_seconds` (the `latency_seconds` field under the name the CLI and MCP JSON use), `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records`, `gaps`, `stop_reasons`, and `requested_attrs`.
+- Present when populated: `normalization_collisions`, `repaired_numbers`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to`, `cache_hits`, and `accounting_known` when false.
 - Verbose only: `unmapped_keys`, `remapped_keys`, `type_mismatches`, and `key_collisions`.
 
 `observed_keys` is omitted because it grows with the answer and `observed_key_count` carries the usable count. The MCP server requests the verbose view; the CLI exposes it through `--verbose`.
@@ -594,7 +598,7 @@ The server uses the low-level API because tool schemas are maintained explicitly
       },
       "plan.max_leaves": {
         "type": "integer",
-        "description": "The most parts a plan may hold; the term that bounds its worst cost. In partitioned mode, values past it run grouped several to a part rather than being dropped. In row_by_row, an entity list past it falls back to one unsplit ask.",
+        "description": "The most parts a plan may hold; the term that bounds its worst cost. In partitioned mode, values past it run grouped several to a part rather than being dropped. In row_by_row, an entity list past it falls back to one unsplit ask. Default: 100.",
         "minimum": 1
       },
       "plan.partition_key": {
@@ -609,7 +613,7 @@ The server uses the low-level API because tool schemas are maintained explicitly
       },
       "plan.max_partitions": {
         "type": "integer",
-        "description": "Most children proposed for one partition node. A value below two leaves the node unsplit. Default: 4.",
+        "description": "Most children proposed for one partition node. A value below two leaves the node unsplit. Default: 20.",
         "minimum": 0
       },
       "plan.target_rows_per_leaf": {
@@ -673,7 +677,7 @@ The server uses the low-level API because tool schemas are maintained explicitly
 
 The fourteen plan settings and the three ceilings are the library's own property names, unrenamed. They are passed through as the call's properties, which is the same route `optional_properties` takes on the query surface and `--limit-*` takes on the command line: merged over the source's properties for this call and not written back, so one agent's ceiling cannot bind the next call over the same server. A key this layer did not recognise would never reach the library's own limit validation, so a translated name would have been dropped in silence rather than refused.
 
-**Returns:** JSON text content, `{"records": [...], "meta": {...}}`. The meta object always carries `outcome`, accounting fields, `gaps`, `stop_reasons`, `requested_attrs`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, and `incomplete_key_records`. `normalization_collisions` appears when non-empty. The cardinality estimate is accepted non-flat bootstrap evidence or JSON `null`; neither it nor the observed-key fields is a completeness measure. `gaps` contains operational diagnostics and an empty list means only that none fired. `stop_reasons` is the ordered list of simultaneous extraction limits; `stopped_by`, when present, is its first member. `accounting_known` appears only when false, and format diagnostics, `truncated_to`, `record_origins`, and `asked` appear when applicable.
+**Returns:** JSON text content, `{"records": [...], "meta": {...}}`. The meta object always carries `outcome`, accounting fields, `gaps`, `stop_reasons`, `requested_attrs`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, and `incomplete_key_records`. `normalization_collisions` appears when non-empty, and `repaired_numbers` when non-zero. The cardinality estimate is accepted non-flat bootstrap evidence or JSON `null`; neither it nor the observed-key fields is a completeness measure. `gaps` contains operational diagnostics and an empty list means only that none fired. `stop_reasons` is the ordered list of simultaneous extraction limits; `stopped_by`, when present, is its first member. `accounting_known` appears only when false, and format diagnostics, `truncated_to`, `record_origins`, and `asked` appear when applicable.
 
 An empty result is not an error. A budget refusal before any extraction answer returns no records
 with `outcome` of `stopped_by_limit`; a later refusal after an extraction answered retains those
@@ -684,7 +688,7 @@ parsing a message.
 
 A ceiling reaches the ledger the same way one configured on a source does: claimed before the provider is contacted, so a call that would cross one is refused, not accounted for afterwards. `max_records` is not one of them and is not counted as one. It caps the rows in the result, not the spend, which is why it reports `truncated` rather than `stopped_by_limit`.
 
-The input schema is the whole of what this tool exposes, and the ceilings in it are per call. The server constructs its source with no properties, so a call that names no ceiling has none: nothing is configured out of band on the agent's behalf, by the client that launched the server or by anything else. A deployment that cannot leave the ceiling to the agent embeds the library instead, or wraps this server in a process that constructs the source itself.
+The input schema is the whole of what this tool exposes, and the ceilings in it are per call. The server builds a fresh source for each call from the `llm.*` settings in its environment (`BLUE_DATA_LLM_MODEL` for `llm.model`, and `BLUE_DATA_LLM_SOURCE_REASONING_EFFORT`, `_MAX_TOKENS`, `_TEMPERATURE`, `_TIMEOUT`, `_MAX_PARALLEL`, `_CACHE`, `_CACHE_DIR`, `_PRICE_PER_INPUT_TOKEN` and `_PRICE_PER_OUTPUT_TOKEN` for the matching keys), read on every call. An unset or blank variable leaves the library default; a malformed or refused value fails that call with a `ConfigError` naming the variable, never its value. The operator's ceilings come from `BLUE_DATA_LLM_SOURCE_LIMIT_COST`, `_LIMIT_CALLS` and `_LIMIT_SECONDS`, also read on every call, and are merged with the call's own `limits.*` arguments with the lower value winning, so a call can tighten an operator ceiling but never raise or remove it. Without an operator ceiling, a call that names none has none. No `plan.*` setting is read from the environment; a call's `plan.*` arguments apply to that call only.
 
 **On error:** a failed tool call whose text is the error kind followed by the library's message, for example `QueryError: attrs[0] is an empty attribute name`.
 
@@ -764,18 +768,19 @@ The input schema is the whole of what this tool exposes, and the ceilings in it 
 
 The request half of the schema is the same object `llmdb_query` declares, shared between the two so they cannot drift into pricing one request and running another. The ceilings are there because a call ceiling narrows the attempts a fetch may make and so narrows what a fetch can cost. `max_records` is absent: `estimate` takes no row cap, and advertising an input that cannot change the answer is how a caller comes to believe it asked for something it did not get.
 
-**Returns:** JSON text content carrying the `Estimate` fields, every one of them, set or not: `bounded`, `max_cost`, `max_cost_per_attempt`, `max_attempts`, `reason`, `model`, `prompt_bytes`, `max_output_tokens`.
+**Returns:** JSON text content carrying the `Estimate` fields, every one of them, set or not: `bounded`, `max_cost`, `max_cost_per_attempt`, `max_attempts`, `reason`, `model`, `prompt_bytes`, `max_output_tokens`, `attempts_within_ceiling`. The last is `null` when the call sets no cost ceiling.
 
 ```json
 {
   "bounded": true,
-  "max_cost": 0.1293675,
-  "max_cost_per_attempt": 0.0431225,
+  "max_cost": 0.04153545,
+  "max_cost_per_attempt": 0.01384515,
   "max_attempts": 3,
   "reason": null,
-  "model": "gpt-4o",
+  "model": "gpt-6-luna",
   "prompt_bytes": 801,
-  "max_output_tokens": 4096
+  "max_output_tokens": 25000,
+  "attempts_within_ceiling": null
 }
 ```
 
@@ -801,7 +806,7 @@ Neither cost is rounded, unlike the spend in a fetch's `meta`. That one is a mea
 }
 ```
 
-**Returns:** JSON text content, `{"models": [...]}`, the names only. They are pricing bases, not the whole set of boundable names: `rates_for` resolves a dated variant against the base it extends, so `gpt-4o-2024-08-06` is bindable and is not listed. The rates behind the names are a static snapshot of published list prices with no effective date, so the table is not published as a contract; a deployment that maintains its own rates supplies them per call instead.
+**Returns:** JSON text content, `{"models": [...]}`, the names only. They are pricing bases, not the whole set of boundable names: `rates_for` resolves a dated variant against the base it extends, so `gpt-4o-2024-08-06` is bindable and is not listed. The rates behind the names are a static snapshot of published list prices with no effective date, so the table is not published as a contract; a deployment that maintains its own rates supplies them through `BLUE_DATA_LLM_SOURCE_PRICE_PER_INPUT_TOKEN` and `BLUE_DATA_LLM_SOURCE_PRICE_PER_OUTPUT_TOKEN` instead.
 
 ---
 
@@ -810,7 +815,7 @@ Neither cost is rounded, unlike the spend in a fetch's `meta`. That one is a mea
 ```json
 {
   "name": "llmdb_inspect_model",
-  "description": "Report one model's published input and output rates, and whether a limits.max_cost ceiling can be bounded against it on this server. A model the price table does not carry is a successful answer with priceable false, not an error. Contacts no provider and costs nothing.",
+  "description": "Report one model's published input and output rates, and whether a limits.max_cost ceiling can be bounded against it on this server. published_defaults gives the model's published request contract (reasoning efforts, default effort, when temperature is accepted, output-token parameter), its cached-input and cache-write rates and its long-context threshold. These are the model's defaults, which this deployment's settings override. A model the price table does not carry is a successful answer with priceable false and null published_defaults, not an error. Contacts no provider and costs nothing.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -827,7 +832,7 @@ Neither cost is rounded, unlike the spend in a fetch's `meta`. That one is a mea
 }
 ```
 
-**Returns:** JSON text content carrying `model`, `priceable`, `price_per_input_token`, `price_per_output_token`, `max_output_tokens`, and `cost_ceiling_supported`.
+**Returns:** JSON text content carrying `model`, `priceable`, `price_per_input_token`, `price_per_output_token`, `max_output_tokens`, `cost_ceiling_supported`, and `published_defaults`.
 
 ```json
 {
@@ -836,11 +841,20 @@ Neither cost is rounded, unlike the spend in a fetch's `meta`. That one is a mea
   "price_per_input_token": 2.5e-06,
   "price_per_output_token": 1e-05,
   "max_output_tokens": 4096,
-  "cost_ceiling_supported": true
+  "cost_ceiling_supported": true,
+  "published_defaults": {
+    "reasoning_efforts": [],
+    "default_reasoning_effort": null,
+    "temperature": "always",
+    "output_token_parameter": "max_tokens",
+    "cached_input_price_per_token": 1.25e-06,
+    "cache_write_price_per_token": null,
+    "long_context_threshold_tokens": null
+  }
 }
 ```
 
-These tools let clients check pricing support before a query is refused under `limits.max_cost`. `cost_ceiling_supported` requires both usable rates and a finite output allowance, so it cannot be inferred from `priceable` alone. It is evaluated with the source properties used for a fetch. Caller-supplied rates can therefore make `cost_ceiling_supported` true while `priceable` remains false, because `priceable` describes only the packaged table. An unsupported model returns `priceable: false` as a successful inspection result.
+These tools let clients check pricing support before a query is refused under `limits.max_cost`. `cost_ceiling_supported` requires both usable rates and a finite output allowance, so it cannot be inferred from `priceable` alone. It is evaluated with the source properties used for a fetch. Caller-supplied rates can therefore make `cost_ceiling_supported` true while `priceable` remains false, because `priceable` describes only the packaged table. An unsupported model returns `priceable: false` and `published_defaults: null` as a successful inspection result. `published_defaults` is the model's entry in the package's table. A deployment setting such as `BLUE_DATA_LLM_SOURCE_REASONING_EFFORT` overrides the matching default.
 
 ---
 
@@ -860,13 +874,13 @@ These tools let clients check pricing support before a query is refused under `l
 }
 ```
 
-**Returns:** JSON text content, `{"protocol": "llm", "variant": "openai", "version": "2.0.0"}`.
+**Returns:** JSON text content, `{"protocol": "llm", "variant": "openai", "version": "2.1.0"}`.
 
 The MCP schema exposes the same 14 standard planning controls as the CLI. It intentionally omits the
 three distribution-search properties, and `llmdb_query` does not return the direct-Python planning
 receipt.
 
-Requesting an unknown tool returns `UnknownTool` and lists the available tools. No tool exposes a provider endpoint or credential. Inspection results report the protocol, variant, library version, output allowance, and whether a cost ceiling can be bounded; caller-supplied rates are used for that decision but are not returned.
+Requesting an unknown tool returns `UnknownTool` and lists the available tools. No tool exposes a provider endpoint or credential. Inspection results report the protocol, variant, library version, output allowance, the model's published defaults, and whether a cost ceiling can be bounded; caller-supplied rates are used for that decision but are not returned. `llmdb_inspect_metadata` reads no deployment setting, so it answers even while a malformed one fails the other tools that read them.
 
 Messages, model names, requested attributes, rewritten queries, unchecked types, and unbounded-estimate reasons pass through `redact`. A test examines every returned string and requires it to be redacted or explicitly exempted.
 
@@ -904,7 +918,7 @@ blue-llmdb [--version] [-h|--help] [--profile NAME]
 | `data query` | `LlmSource.fetch` |
 | `data estimate` | `LlmSource.estimate` |
 | `model list` | `priceable_models()` |
-| `model inspect` | `rates_for`, `can_bound` |
+| `model inspect` | `rates_for`, `can_bound`, `published_defaults` |
 | `model select` | CLI-local, plus `rates_for` for the unpriced warning |
 | `metadata inspect` | `LlmSource.fetch_metadata`, `__version__` |
 
@@ -963,6 +977,7 @@ blue-llmdb data query QUERY [--attr NAME[:TYPE]]... [--context TEXT] [--max-reco
 | `--model MODEL` | `llm.model` | Model to call |
 | `--max-tokens N` | `llm.max_tokens` | Output allowance for the call, and the lever on the cost floor |
 | `--temperature X` | `llm.temperature` | Sampling temperature |
+| `--reasoning-effort NAME` | `llm.reasoning_effort` | Model reasoning effort: `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`, within the set the model accepts |
 | `--timeout SECONDS` | `llm.timeout` | Seconds to wait for one call |
 | `--max-parallel N` | `llm.max_parallel` | Calls in flight at once |
 | `--cache` / `--no-cache` | `llm.cache` | Answer a repeated call from the on-disk cache |
@@ -978,7 +993,7 @@ blue-llmdb data query QUERY [--attr NAME[:TYPE]]... [--context TEXT] [--max-reco
 | `-v`, `--verbose` | — | Adds key alignment, type mismatch and collision details. Gaps and stop reasons are visible without it |
 | `-l`, `--log`, `--log-limit N` | — | Each step of the run on standard error, truncated, plus a traceback on failure |
 
-`llm.stream` has no option: streaming has no meaning for a command whose result is a parsed record set. Of the ten accepted `llm.*` keys, nine are reachable.
+`llm.stream` has no option: streaming has no meaning for a command whose result is a parsed record set. Of the eleven accepted `llm.*` keys, ten are reachable.
 
 **Example**
 
@@ -991,13 +1006,13 @@ $ blue-llmdb data query "the member states of the European Union" --attr country
 │ France  │ 1958           │
 │ Germany │ 1958           │
 └─────────┴────────────────┘
-2 records | model gpt-4o | 1 call | 46 tokens | row estimate unknown | $0.0012 | 0.31s
-settings: llm.cache_dir=~/.blue-llmdb/cache (default), llm.model=gpt-4o (default), plan.max_continuations=0 (default)
+2 records | model gpt-6-luna | 1 call | 46 tokens | row estimate unknown | $0.0000 | 0.31s
+settings: llm.cache_dir=~/.blue-llmdb/cache (default), llm.model=gpt-6-luna (default), plan.max_continuations=0 (default)
 ```
 
 Under `--format json` the same run prints one object with **three** keys, `records`, `meta` and `settings`. This replaces the two-key object v1.2.0 printed; the MCP tool result is unchanged and stays two-key.
 
-`meta` is `meta_view(result.meta, verbose=...)` and follows the three-tier policy in §1. It always carries `outcome`, the accounting fields, `gaps`, `stop_reasons`, `requested_attrs`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, and `incomplete_key_records`. `normalization_collisions`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to` and `cache_hits` appear when populated; `accounting_known` appears only when false. `--verbose` adds `unmapped_keys`, `remapped_keys`, `type_mismatches` and `key_collisions`. The table footer prints the point row estimate or `unknown`, and `stopped_by` is not gated on `--verbose`.
+`meta` is `meta_view(result.meta, verbose=...)` and follows the three-tier policy in §1. It always carries `outcome`, the accounting fields, `gaps`, `stop_reasons`, `requested_attrs`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, and `incomplete_key_records`. `normalization_collisions`, `repaired_numbers`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to` and `cache_hits` appear when populated; `accounting_known` appears only when false. `--verbose` adds `unmapped_keys`, `remapped_keys`, `type_mismatches` and `key_collisions`. The table footer prints the point row estimate or `unknown`, and `stopped_by` is not gated on `--verbose`.
 
 `settings` is the CLI's own envelope, with a fixed two-map schema:
 
@@ -1014,18 +1029,18 @@ blue-llmdb data estimate QUERY [--attr NAME[:TYPE]]... [--context TEXT]
                 [--model MODEL] [--max-tokens N] [--temperature X] [--timeout SECONDS]
                 [--price-in X] [--price-out X]
                 [--limit-cost AMOUNT] [--limit-seconds N] [--limit-calls N] [--max-retries N]
-                [--variant NAME] [--format table|json|nl|csv] [-v|--verbose] [-l|--log]
+                [--variant NAME] [--format table|json|nl|csv] [-l|--log]
 ```
 
 `LlmSource.estimate` prices one flat fetch and reads no `plan.*` setting, but it does resolve the full `Limits` and derives its attempt count from them, so the whole `--limit-*` family and `--max-retries` are accepted and move the published number. `--max-records`, `--effort` and every `--plan-*` option are refused as `ERROR: USAGE`, naming the flag and pointing at `data query`. Refusing is stricter than the library, which would accept and ignore them, and a setting accepted and ignored is what the library's closed key set exists to prevent.
 
 Any option that appears on both `data` commands has the same name, type, default and meaning on both.
 
-Under `--format json` the result is the eight `Estimate` fields plus the same `settings` envelope.
+Under `--format json` the result is the nine `Estimate` fields plus the same `settings` envelope.
 
 ### `blue-llmdb model`
 
-`model list` prints the names in the published price table, from `priceable_models()`. `model inspect NAME` prints its published rates, the output allowance the bound is judged against, and whether a cost ceiling could be claimed, from `rates_for` and `can_bound`; an unpriced model reports `null` rates instead of dropping the keys. `model select NAME` stores the name as the profile's `BLUE_DATA_LLM_MODEL`, so `--model` still overrides it for one request, and warns when the model has no published rate, naming `--price-in`/`--price-out` and the two profile parameters.
+`model list` prints the names in the published price table, from `priceable_models()`. `model inspect NAME` prints its published rates, the output allowance the bound is judged against, and whether a cost ceiling could be claimed, from `rates_for` and `can_bound`, and the model's table entry from `published_defaults`, one `published_defaults.*` row each in the table and CSV formats; an unpriced model reports `null` rates and `null` defaults instead of dropping the keys. The `nl` sentence names the floor a cost ceiling has to clear, with the regional uplift included where the model carries it. `model select NAME` stores the name as the profile's `BLUE_DATA_LLM_MODEL`, so `--model` still overrides it for one request, and warns when the model has no published rate, naming `--price-in`/`--price-out` and the two profile parameters.
 
 ### `blue-llmdb metadata inspect`
 
@@ -1065,6 +1080,6 @@ Errors reach the terminal as one line on standard error, `ERROR: <CODE> <descrip
 
 An absent provider credential is not code 4. The library never reads a credential, so a missing one is not a setting it can find missing; the provider SDK reports it as a call that failed, which becomes a `TransportError` and exits 5. The message names `blue-llmdb profile config OPENAI_API_KEY`.
 
-**JSON-mode errors have a boundary, and the boundary is the parse.** A Click parse failure happens before any command body runs, so the CLI does not yet know the requested format: those are `USAGE`, always plain text on standard error, always exit 2. Every error raised after the command body starts is, under `--format json`, additionally emitted on standard output as `{"error": {"code": ..., "message": ...}}`, with the same line on standard error. The root callback runs on the parser's side of that line, so what it refuses (an unknown `--profile`, an unreadable profiles file, a stored value that will not cast) it hands to the command body rather than reporting itself, and the body raises it as its first act with the format in hand. The single residue is `BLUE_DATA_CLI_FORMAT` holding a value that is not a format: that failure is the lookup that would have named the format, and absent a `--format` flag it reports as text. A machine consumer that wants structured errors for bad flags validates its own flags; a CLI cannot do it for them without reimplementing Click's parser.
+**JSON-mode errors depend on when parsing fails.** A Click parse failure occurs before the command body runs, so the CLI does not yet know the requested format. These failures use `USAGE`, plain text on standard error, and exit code 2. Under `--format json`, every error raised after the command body starts is also emitted on standard output as `{"error": {"code": ..., "message": ...}}`; the same line appears on standard error. The root callback runs before the command body, so it passes errors (an unknown `--profile`, an unreadable profiles file, or a stored value that will not cast) to the body. The body raises them as its first action, when it knows the format. The exception is an invalid value in `BLUE_DATA_CLI_FORMAT`: the lookup that would identify the format has failed, and without a `--format` flag the error is reported as text. A machine consumer that needs structured errors for bad flags must validate its own flags; the CLI cannot do so without reimplementing Click's parser.
 
 During a fetch, the CLI redirects interpreter-level writes through `sys.stdout` to standard error. This covers the known provider banners, so normal successful `--format json` output is one JSON object and handled failures leave standard output empty. Provider diagnostics and normalized errors remain on standard error. Direct writes to file descriptor 1 and writes made after fetch returns are outside the redirect.

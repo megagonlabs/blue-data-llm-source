@@ -62,7 +62,7 @@
 
 ### External Interfaces
 
-Interface adapters delegate to the core library and contain only interface-specific translation and presentation logic. Each adapter is a separately versioned package that depends on the library, so the library has no CLI or server dependency.
+Interface adapters delegate to the core library and contain only interface-specific translation and presentation logic. Each adapter is a separately versioned package that depends on the library, which has no CLI or server dependency.
 
 **Python Library.** Native Python API (`LlmSource` and its return types), distributed as `blue-data-llm-source` and installed from source. Every other interface wraps this API.
 
@@ -74,22 +74,22 @@ Interface adapters delegate to the core library and contain only interface-speci
 
 ### LlmSource
 
-`LlmSource` is the main public class. It inherits `blue_data.source.source.DataSource`, initializes connection properties, accepts an optional client, and delegates specialized work to the modules below.
+`LlmSource` is the main public class. It inherits `blue_data.source.source.DataSource`, initializes connection properties, accepts an optional client, and delegates specialized work to other modules.
 
 Base-class order affects behavior. `LlmSource` must resolve its own implementations before the default methods on `DataSource`, several of which return empty results. A test checks every method on the shared surface. [The Source Base Class](04-detailed-architecture.md#the-source-base-class) documents the details.
 
 - Presents three surfaces over the same core. The library surface is `afetch` (async) and `fetch` (a synchronous wrapper over it). The sizing surface is `estimate`, which contacts nothing. The source surface is `execute_query` and `execute_query_nl`, inherited from `DataSource` and overridden here, plus `translate_nl_to_native_query`, which is the identity because natural language is this source's native form.
 - Holds the connection properties that report `protocol` and `variant`. Protocol names the source family and is fixed at `llm`; variant names the implementation within it and defaults to `openai`.
 - Resolves which client answers a given request: a supplied `llm_fn` wins, then a client injected at construction, then the default client built from properties.
-- Assembles the run's `Limits` from the instance properties merged with whatever the call carried, so a ceiling handed to one request through `properties` or `optional_properties` binds that request and is not written back. It then produces the budget the run spends against: a fresh one when the caller supplied none, and otherwise a child derived from the caller's, so a request can never spend more than the caller has left. It hands that budget to the client under a per-call property rather than setting it on the client, because one client can serve several concurrent fetches and an attribute would let them overwrite each other's ceiling.
-- Answers `estimate` without contacting a provider. It resolves the client that would answer, because only that client knows what an attempt costs and it must declare `Capability.ESTIMATE` for a bound to be given at all, then builds the prompt the fetch path would send and bounds it through `pricing`. The figure describes the request being asked about. It bounds the whole of a `flat` fetch rather than one attempt: `max_cost` is `max_cost_per_attempt` accumulated over `max_attempts`, so a ceiling set to exactly `max_cost` admits every attempt the figure accounted for. It reads no `plan.*` setting and returns the same figures whatever one is passed, so a split request is not priced here.
+- Assembles the run's `Limits` from the instance properties and the call's properties. A ceiling supplied through `properties` or `optional_properties` applies only to that request. It creates a fresh budget unless the caller supplied one, in which case it derives a child that cannot spend more than the parent has left. The budget is passed to the client as a per-call property rather than stored on the client, since one client can serve concurrent fetches with different ceilings.
+- Answers `estimate` without contacting a provider. It resolves the client that would answer, since only that client can price an attempt and it must declare `Capability.ESTIMATE` to provide a bound. It then builds the prompt the fetch path would send and bounds it through `pricing`. The figure describes the request and covers a whole `flat` fetch: `max_cost` is `max_cost_per_attempt` accumulated over `max_attempts`, so a ceiling set to exactly `max_cost` admits every attempt included in the estimate. The method reads no `plan.*` setting, so it does not price a split request.
 - Refuses each configured ceiling whose axis the resolved client does not declare, and folds the run's accounting into the returned `ExecMeta`: entries and spend from the budget, which claimed them under a lock, and token counts and the model name from the per-call usage list it handed the client for this call alone.
 - Decides the outcome through one published ordered rule, `decide_outcome`, so a ceiling that fired is never contradicted by a result that reads as complete.
 - Answers the metadata calls a registry walks, over a synthesised one-database, one-collection, one-entity hierarchy, since a model has none of its own.
 
 ### Request Intake
 
-Request-intake modules validate caller arguments and render the text sent to a provider.
+Request-intake modules validate caller arguments and render provider prompts.
 
 **checks.** Argument validation. Rejects a request that is not a string and passes an empty one through as an empty ask, normalises attributes from either a list of names or a list of `{name, type}` mappings, normalises context from a string or a list of strings, and requires positive integers where a count is expected. Messages name the offending value and the accepted form, because an agent calling through a tool interface sees only the exception text.
 
@@ -117,7 +117,7 @@ distribution search and the receipt.
 
 ### Model Boundary
 
-The model boundary is the only layer that contacts a provider. It also allows the rest of the package to be tested offline.
+The model boundary is the only layer that contacts a provider, allowing the rest of the package to be tested offline.
 
 **LlmClientProtocol.** A structural protocol with two methods, `complete` and `acomplete`. Any object carrying them can be injected. Nothing in the package performs an `isinstance` check against a concrete client class.
 
@@ -137,7 +137,7 @@ The model boundary is the only layer that contacts a provider. It also allows th
 
 ### Reduction
 
-Turning a model's text into checked records. Each stage is a module of plain functions with no model call and no shared state, so each is testable on its own.
+This layer turns model text into checked records. Each stage is a module of plain functions with no model call or shared state, so each can be tested independently.
 
 **parsing.** Removes one surrounding code fence, parses JSON, and accepts a bare object or the supported single-key array wrappers. Ambiguous envelopes are resolved against requested attributes, and duplicate JSON keys are rejected at any depth. Invalid input raises a parse error carrying the raw text.
 
@@ -159,7 +159,7 @@ Turning a model's text into checked records. Each stage is a module of plain fun
 
 ### The Data Layer Dependency
 
-`blue-data>=0.1.0` and `tenacity>=9.0.0` are the whole runtime set. `blue-data` supplies the base class above and brings `pandas`, `numpy`, and `jsonpath-ng` along with it, which is what the install costs beyond this package's own code. `litellm` and `diskcache` remain optional and lazily imported.
+The runtime dependencies are `blue-data>=0.1.0` and `tenacity>=9.0.0`. `blue-data` supplies the base class and brings `pandas`, `numpy`, and `jsonpath-ng` into the installation. `litellm` and `diskcache` remain optional and are imported lazily.
 
 The line the dependency does not cross is the one above the data layer. Nothing here imports `blue` or `blue_data_ops`, and a test asserts it, because a data source that reaches into the runtime calling it can only be used inside that runtime. Depending on the layer this source belongs to is a different thing from depending on the orchestrator that queries it.
 

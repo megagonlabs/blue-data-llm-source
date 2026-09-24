@@ -1,6 +1,6 @@
 # Quick Start
 
-This quick start uses the command line to inspect the installation, configure a provider, estimate cost, and query for records. Run the commands from the `blue-data-llm-source` checkout with `blue-data` beside it. See [installation.md](installation.md) for `venv` and other install paths.
+Use the command line to inspect the installation, configure a provider, estimate cost, and query for records. Run these commands from the `blue-data-llm-source` checkout with `blue-data` beside it. See [installation.md](installation.md) for `venv` and other installation paths.
 
 Create the environment once; Conda may ask for confirmation. If `blue-llmdb` already exists, skip this block and activate it below.
 
@@ -32,7 +32,7 @@ blue-llmdb metadata inspect
 ┡━━━━━━━━━━╇━━━━━━━━┩
 │ protocol │ llm    │
 │ variant  │ openai │
-│ version  │ 2.0.0  │
+│ version  │ 2.1.0  │
 └──────────┴────────┘
 ```
 
@@ -46,18 +46,37 @@ blue-llmdb model list
 ┏━━━━━━━━━━━━━━━━━━━┓
 ┃ model             ┃
 ┡━━━━━━━━━━━━━━━━━━━┩
-│ claude-3-5-haiku  │
-│ claude-3-5-sonnet │
-│ claude-3-opus     │
 │ gpt-3.5-turbo     │
 │ gpt-4             │
 │ gpt-4-turbo       │
+│ gpt-4.1           │
+│ gpt-4.1-mini      │
+│ gpt-4.1-nano      │
 │ gpt-4o            │
+│ gpt-4o-2024-05-13 │
 │ gpt-4o-mini       │
+│ gpt-5             │
+│ gpt-5-mini        │
+│ gpt-5-nano        │
+│ gpt-5.4           │
+│ gpt-5.4-mini      │
+│ gpt-5.4-nano      │
+│ gpt-5.5           │
+│ gpt-5.6           │
+│ gpt-5.6-luna      │
+│ gpt-5.6-sol       │
+│ gpt-5.6-terra     │
+│ gpt-6-astra       │
+│ gpt-6-luna        │
+│ gpt-6-sol         │
 │ o1                │
+│ o3                │
 │ o3-mini           │
+│ o4-mini           │
 └───────────────────┘
 ```
+
+Each of these carries its own request contract and prices; [Supported models](../lib/README.md#supported-models) lists them.
 
 ## 3. Choose one
 
@@ -137,10 +156,10 @@ blue-llmdb data query "the member states of the European Union" \
 │ Sweden         │ 1995           │
 └────────────────┴────────────────┘
 27 records | model gpt-4o-2024-08-06 | 1 call | 638 tokens | row estimate unknown | $0.0051 | 5.06s
-settings: limits.max_cost=0.5 (flag), llm.cache_dir=~/.blue-llmdb/cache (default), llm.model=gpt-4o (default), plan.max_continuations=0 (default)
+settings: limits.max_cost=0.5 (flag), llm.cache_dir=~/.blue-llmdb/cache (default), llm.model=gpt-4o (profile:default), plan.max_continuations=0 (default)
 ```
 
-The settings footer names every value this run resolved and the tier it came from. `llm.cache_dir` is your own path; the rest is what you passed or what the package defaults to.
+The settings footer lists each resolved value and its source. `llm.cache_dir` is your own path; the other values came from your settings or the package defaults.
 
 ## 8. Take it somewhere else (needs `OPENAI_API_KEY`)
 
@@ -153,7 +172,7 @@ blue-llmdb data query "the member states of the European Union" --attr country -
 
 ## Using the library directly
 
-The command line is a thin adapter over the Python library. `llm_fn` is any `(prompt) -> str` callable, so the same request runs offline against a fixed answer; omit it to use the configured model and a real provider.
+The command line is a thin adapter over the Python library. `llm_fn` can be any `(prompt) -> str` callable, allowing the same request to run offline against a fixed answer. Omit it to use the configured model and a real provider.
 
 ```python
 from blue_data_llm_source import LlmSource

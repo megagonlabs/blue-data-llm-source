@@ -1,12 +1,11 @@
 """One Budget across a sequence of fetches, and what happens when it runs out.
 
-A ceiling in ``properties`` bounds one request. A ``Budget`` you build and hand to
-``fetch`` bounds the whole sequence: each fetch derives a child from it, spends against
-what the parent has left, and the effective ceiling on every axis is the smaller of the
-two. When the parent is spent, the next fetch comes back empty with ``stopped_by`` naming
-the axis, rather than raising.
+A ceiling in ``properties`` bounds one request. A ``Budget`` passed to ``fetch`` bounds
+the whole sequence. Each fetch derives a child budget, spends from the parent's remaining
+allowance, and uses the lower ceiling on each axis. When the parent is spent, the next
+fetch returns no records and ``stopped_by`` names the exhausted axis; it does not raise.
 
-Two clients answer here, because which axes bind depends on the client. The row axis is
+Two clients answer the requests because the axes a client can enforce vary. The row axis is
 the one an ``llm_fn`` can be held to; the call and cost axes need a client that declares
 them, so the second half uses a small budget-aware double. Neither contacts a provider.
 

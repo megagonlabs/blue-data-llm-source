@@ -37,7 +37,7 @@ The CLI is a separate package. `blue-llmdb data query "..."` runs the same libra
 
 ## backends/: the client axis and the cache axis
 
-This source has no storage backend. What varies underneath it is **which client answers** (a caller's `llm_fn`, an injected client, or the built-in `DefaultLlmClient` driving a provider) and **where responses are cached**. Start here when wiring the library into an application, because that choice decides which ceilings can bind and whether the accounting in a result means anything.
+This source has no storage backend. The two choices are **which client answers** (a caller's `llm_fn`, an injected client, or the built-in `DefaultLlmClient` driving a provider) and **where responses are cached**. Start here when wiring the library into an application: these choices determine which ceilings can bind and what the result's accounting means.
 
 ### Minimal quickstart (`function_client_quickstart.py`)
 
@@ -61,7 +61,7 @@ python3 examples/backends/injected_client_demo.py
 
 ### Provider-backed fetch (`default_client_demo.py`)
 
-`DefaultLlmClient` through litellm: real model, real token counts, real settled cost, reconciled against the estimate taken beforehand. The client is injected rather than left to the source to build, so `close()` releases the cache backends it opens. This library reads no credential itself. The provider SDK reads `OPENAI_API_KEY`, and a missing one arrives as a `TransportError` mentioning credentials.
+This example uses `DefaultLlmClient` through litellm and reports the model, token counts, and settled cost reconciled against the earlier estimate. The client is injected so `close()` releases the cache backends it opens. The library does not read credentials; the provider SDK reads `OPENAI_API_KEY`. If it is missing, the call raises a `TransportError` mentioning credentials.
 
 ```bash
 python3 examples/backends/default_client_demo.py
@@ -137,7 +137,7 @@ python3 examples/feature-demos/budget_demo.py
 
 ### Gaps and outcome precedence (`gaps_and_outcome_demo.py`)
 
-Every member of the `outcome` vocabulary produced on purpose, plus the gap diagnostics beside them. It ends on the precedence rule: a partly-answered plan outranks a cap that fired at the same moment, and the cap is still in `stop_reasons` rather than being lost to the promotion.
+The example deliberately produces every `outcome` value and shows the accompanying gap diagnostics. It also demonstrates the precedence rule: a partly answered plan outranks a cap that fires at the same moment, while the cap remains in `stop_reasons`.
 
 ```bash
 python3 examples/feature-demos/gaps_and_outcome_demo.py
@@ -147,7 +147,7 @@ python3 examples/feature-demos/gaps_and_outcome_demo.py
 
 ### Planning modes (`planning_modes_demo.py`)
 
-`flat`, flat with continuations, `partitioned`, and `row_by_row`, each with its call sequence printed so the cost of a shape is visible rather than described. The scripted planner recognises each planning prompt by its opening line and answers from a fixed script, so the same four sequences come back every run.
+The example prints the call sequence for `flat`, flat with continuations, `partitioned`, and `row_by_row`, making the cost of each shape visible. The scripted planner recognises each planning prompt by its opening line and uses a fixed response, so the same four sequences appear on every run.
 
 ```bash
 python3 examples/feature-demos/planning_modes_demo.py
@@ -173,7 +173,7 @@ Both examples use [LangGraph](https://github.com/langchain-ai/langgraph) and are
 
 ### Direct Python API (`langgraph_direct_demo.py`)
 
-The pipeline has two nodes. `retrieve` calls `LlmSource.fetch` under a `Budget` the graph owns, then `respond` composes a sentence. The point of the split is what crosses between the nodes: `meta.outcome` and `meta.gaps` travel with the records, and the writing node is told to say when the retrieval was short. An agent that reads only `records` cannot tell a complete answer from a truncated one.
+The pipeline has two nodes. `retrieve` calls `LlmSource.fetch` under a `Budget` owned by the graph, then `respond` composes a sentence. The records travel with `meta.outcome` and `meta.gaps`; the writing node is instructed to report when retrieval is incomplete. An agent that reads only `records` cannot distinguish a complete answer from a truncated one.
 
 ```bash
 pip install langgraph langchain-openai
@@ -184,7 +184,7 @@ python3 examples/framework-demos/langgraph_direct_demo.py
 
 ### MCP-based integration (`langgraph_mcp_demo.py`)
 
-No source-specific code on the LangGraph side: `langchain-mcp-adapters` launches `blue-data-llm-mcp` as a stdio subprocess, discovers its five tools, and a ReAct agent decides what to call. The system prompt makes the agent price a request with `llmdb_estimate` before running it, and pass its own ceilings, because the server constructs its source with no properties, so a call that sets no ceiling has none.
+No source-specific code on the LangGraph side: `langchain-mcp-adapters` launches `blue-data-llm-mcp` as a stdio subprocess, discovers its five tools, and a ReAct agent decides what to call. The system prompt makes the agent price a request with `llmdb_estimate` before running it, and pass its own ceilings. An operator can also set ceilings for every call through the server's environment, which a call can lower but never raise; without one, a call that sets no ceiling has none.
 
 ```bash
 pip install langgraph langchain-openai langchain-mcp-adapters
@@ -200,7 +200,7 @@ python3 examples/framework-demos/langgraph_mcp_demo.py
 
 ### Registering the source in the data layer (`register_source_demo.py`)
 
-`register_source` with a built instance, then `connect_source` returning it. Once the live instance is dropped, `connect_source` rebuilds an equivalent source from the recorded class path, which is what makes a registration durable rather than a reference. Then the shared surface: `execute_query_nl` with a string, `execute_query` with an `op` dict, and a `limits.*` ceiling in `optional_properties` binding one call.
+The example registers a built instance with `register_source`, then retrieves it with `connect_source`. After the live instance is dropped, `connect_source` rebuilds an equivalent source from the recorded class path, making the registration durable. It then exercises the shared interface: `execute_query_nl` with a string, `execute_query` with an `op` dict, and a `limits.*` ceiling in `optional_properties` that applies to one call.
 
 ```bash
 python3 examples/integration-demos/register_source_demo.py

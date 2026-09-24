@@ -1,6 +1,6 @@
 # Architecture
 
-This page traces a request through the system, identifies each component's responsibility, and shows where provider calls occur.
+This page traces a request through the system, describes each component's responsibility, and shows where provider calls occur.
 
 For contributor-oriented detail, see [`design/03-high-level-architecture.md`](../design/03-high-level-architecture.md) and [`design/04-detailed-architecture.md`](../design/04-detailed-architecture.md).
 
@@ -71,7 +71,7 @@ There is no REST interface, and none is scheduled. No package contains an HTTP a
 | Prompts | `prompts/` | Every prompt this package sends, in one module. Caller text is inserted as a value and never re-read as a template |
 | Planning | `planning/` | Builds analysis, schema, and cardinality facts for a non-flat request, then a bounded task tree |
 | Execution | `execution/` | Turns accepted plan leaves into versioned tasks and runs them concurrently under the shared budget |
-| Model boundary | `llm/` | `DefaultLlmClient`, `FunctionClient`, `Budget`, `Limits`, `Reservation`, and the cost bound in `pricing` |
+| Model boundary | `llm/` | `DefaultLlmClient`, `FunctionClient`, `Budget`, `Limits`, `Reservation`, the model table in `models`, and the cost bound in `pricing` |
 | Cache stores | `cache/` | `MemoryCache` and `FileCache`, both standard-library only |
 | Reduction | `reduction/` | Parses the response, aligns returned keys to requested attributes, coerces declared types, and removes duplicates |
 | Shared contracts | `types.py`, `views.py`, `_constants.py` | The dataclasses, protocols, exception hierarchy, outcome vocabulary, and the one serialization of `ExecMeta` every adapter publishes |
@@ -108,7 +108,7 @@ For a non-flat request the planning stages run first, under one of five closed s
 
 A planning stage that fails to parse does not fail the request. It falls back to what the caller declared, records a diagnostic in `meta.gaps`, and the run continues, so a decomposed request degrades to a flat one rather than raising.
 
-Planning is breadth-first and bounded on every axis at once: `plan.max_depth`, `plan.max_partitions`, `plan.max_leaves`, `plan.max_strategy_candidates`, and the shared budget. A plan that cannot fit the leaf cap is rejected whole rather than run as a prefix.
+Planning is breadth-first and bounded on all axes: `plan.max_depth`, `plan.max_partitions`, `plan.max_leaves`, `plan.max_strategy_candidates`, and the shared budget. A plan that cannot fit the leaf cap is rejected whole rather than run as a prefix.
 
 Ready leaves then run concurrently through the leaf driver, each asking the same client under the same budget. Each leaf may ask again for records it did not get, up to `plan.max_continuations`. Records from overlapping parts are merged on an identity built from `plan.keys`, and `meta.record_origins` records which parts produced each record.
 
@@ -116,7 +116,7 @@ Direct Python callers can additionally opt into rule-backed distribution search 
 
 ## Data flow: an estimate
 
-`estimate` answers what a flat fetch could cost, and contacts nothing.
+`estimate` bounds the cost of a flat fetch without contacting a provider.
 
 1. Properties are merged the way a fetch merges them, so the figure is priced against the configuration the run would actually use.
 2. An empty request returns a bounded estimate of zero, because it never reaches a model.
@@ -136,18 +136,18 @@ The budget has four optional axes. `None` means unlimited on that axis.
 |---|---|---|
 | `limits.max_calls` | Claimed before each provider attempt, retries included | The answering client |
 | `limits.max_seconds` | Checked at admission and bounds each cooperative wait | The answering client |
-| `limits.max_cost` | An upper bound is claimed before the attempt and reconciled against the real cost after | The answering client |
+| `limits.max_cost` | An upper bound is claimed before the attempt. A measured cost settles it; otherwise [the cost bound](../lib/README.md#the-cost-bound) sets the charge | The answering client |
 | `limits.max_rows` | Applied once the records are parsed, because that is when the count exists | `LlmSource` itself |
 
-Calls, time, and cost are claimed *before* the provider is contacted. Cost is unknown until a call returns, so the reservation uses an upper bound: the prompt's UTF-8 byte length plus a framing allowance at the model's input rate, plus the full output allowance at its output rate. If the bound cannot be established, the request is refused under a cost ceiling.
+Calls, time, and cost are claimed *before* the provider is contacted. Cost is unknown until a call returns, so the reservation uses an upper bound: the prompt's UTF-8 byte length plus a framing allowance at the model's input rate, plus the full output allowance at its output rate, raised for the cache-write, long-context and regional-processing charges the model's table entry records. If the bound cannot be established, the request is refused under a cost ceiling. [The cost bound](../lib/README.md#the-cost-bound) has the full rule, including how a call is settled once it returns.
 
-Claims are taken under one lock shared by a whole budget family, so a fan-out of concurrent leaves cannot collectively overshoot while each sees room for one more call. Each claim is a handle that resolves exactly once: settled against the real cost, kept at the bound when the cost cannot be read, or released for an attempt that never reached the provider.
+Claims use one lock shared by a budget family, so concurrent leaves cannot collectively overspend while each sees room for another call. Each claim resolves exactly once: it is settled at the charge [the cost bound](../lib/README.md#the-cost-bound) assigns, or released if the attempt never reached the provider.
 
-A caller-owned `Budget` accumulates across every call that receives it. Each fetch derives a child that spends from the parent's remaining allowance, so the effective ceiling on every axis is the smaller of the parent and child limits. A planner can therefore share one total across several fetches.
+A caller-owned `Budget` accumulates across every call that receives it. Each fetch derives a child that spends from the parent's remaining allowance, so the effective ceiling on each axis is the smaller of the parent and child limits. A planner can share one total across several fetches.
 
 Which ceilings bind depends on the client. A client declares its axes through `budget_capabilities()`, and a ceiling on an axis it does not declare is refused at the first fetch rather than reported as holding. The practical case is `llm_fn`: a wrapper around your callable can prove it invoked the callable once and nothing more, so it declares rows alone.
 
-The time axis covers admission and cooperative waits, but not work that never yields. `asyncio` cannot interrupt code that is not awaiting. See [what the time ceiling actually bounds](../lib/README.md#what-the-time-ceiling-actually-bounds) for the complete list of exclusions.
+The time axis covers admission and cooperative waits, but not work that never yields. `asyncio` cannot interrupt code that is not awaiting. See [what the time ceiling actually bounds](../lib/README.md#what-the-time-ceiling-actually-bounds) for the exclusions.
 
 ## The model boundary
 

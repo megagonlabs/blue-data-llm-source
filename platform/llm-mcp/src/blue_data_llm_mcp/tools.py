@@ -10,22 +10,30 @@ validation belongs to the library, whose messages are written to be read by a mo
 
 from __future__ import annotations
 
+import math
+import os
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, cast
 
 from blue_data_llm_source import (
+    ConfigError,
     Estimate,
+    Limits,
     LlmSource,
     LlmSourceError,
     can_bound,
     meta_view,
     priceable_models,
+    published_defaults,
     rates_for,
     redact,
 )
 from blue_data_llm_source import __version__ as library_version
+from blue_data_llm_source.llm.client import check_adapter_keys
+from blue_data_llm_source.redaction import MASK
 
 QUERY = "llmdb_query"
 ESTIMATE = "llmdb_estimate"
@@ -58,7 +66,7 @@ class ToolError(Exception):
     """
 
     def __init__(self, message: str, kind: str = "ToolError") -> None:
-        masked = redact(message)
+        masked = conceal(redact(message))
         super().__init__(masked)
         self.message = masked
         self.kind = kind
@@ -196,7 +204,8 @@ PLAN_PROPERTIES: dict[str, Any] = {
         "description": (
             "The most parts a plan may hold; the term that bounds its worst cost. In "
             "partitioned mode, values past it run grouped several to a part rather than "
-            "being dropped. In row_by_row, an entity list past it falls back to one unsplit ask."
+            "being dropped. In row_by_row, an entity list past it falls back to one unsplit "
+            "ask. Default: 100."
         ),
         "minimum": 1,
     },
@@ -217,7 +226,7 @@ PLAN_PROPERTIES: dict[str, Any] = {
         "type": "integer",
         "description": (
             "Most children proposed for one partition node. A value below two leaves the "
-            "node unsplit. Default: 4."
+            "node unsplit. Default: 20."
         ),
         "minimum": 0,
     },
@@ -382,9 +391,13 @@ TOOLS: tuple[ToolSpec, ...] = (
         name=INSPECT_MODEL,
         description=(
             "Report one model's published input and output rates, and whether a "
-            "limits.max_cost ceiling can be bounded against it on this server. A model the "
-            "price table does not carry is a successful answer with priceable false, not an "
-            "error. Contacts no provider and costs nothing."
+            "limits.max_cost ceiling can be bounded against it on this server. "
+            "published_defaults gives the model's published request contract (reasoning "
+            "efforts, default effort, when temperature is accepted, output-token parameter), "
+            "its cached-input and cache-write rates and its long-context threshold. These are "
+            "the model's defaults, which this deployment's settings override. A model the price "
+            "table does not carry is a successful answer with priceable false and null "
+            "published_defaults, not an error. Contacts no provider and costs nothing."
         ),
         input_schema=MODEL_INPUT_SCHEMA,
     ),
@@ -396,9 +409,177 @@ TOOLS: tuple[ToolSpec, ...] = (
 )
 
 
-def build_source() -> LlmSource:
-    """Construct the source a tool call runs against."""
-    return LlmSource()
+# The request settings a deployment gives this server, read from the process environment
+# under the names the CLI profile uses, so one deployment's settings mean the same thing on
+# both surfaces. Per-call arguments cannot set these: a model or a price is the operator's
+# choice, and a cost ceiling is claimed against it.
+_ENVIRONMENT_SETTINGS: tuple[tuple[str, str, str], ...] = (
+    ("BLUE_DATA_LLM_MODEL", "llm.model", "str"),
+    ("BLUE_DATA_LLM_SOURCE_REASONING_EFFORT", "llm.reasoning_effort", "str"),
+    ("BLUE_DATA_LLM_SOURCE_MAX_TOKENS", "llm.max_tokens", "int"),
+    ("BLUE_DATA_LLM_SOURCE_TEMPERATURE", "llm.temperature", "float"),
+    ("BLUE_DATA_LLM_SOURCE_TIMEOUT", "llm.timeout", "float"),
+    ("BLUE_DATA_LLM_SOURCE_MAX_PARALLEL", "llm.max_parallel", "int"),
+    ("BLUE_DATA_LLM_SOURCE_CACHE", "llm.cache", "bool"),
+    ("BLUE_DATA_LLM_SOURCE_CACHE_DIR", "llm.cache_dir", "directory"),
+    ("BLUE_DATA_LLM_SOURCE_PRICE_PER_INPUT_TOKEN", "llm.price_per_input_token", "float"),
+    ("BLUE_DATA_LLM_SOURCE_PRICE_PER_OUTPUT_TOKEN", "llm.price_per_output_token", "float"),
+)
+
+# Operator ceilings, under the CLI profile's names. Unlike the settings above they are not
+# the source's properties: they are merged with each call's own ceilings, the lower winning,
+# so an agent can tighten a ceiling for one call but never raise or remove it.
+_OPERATOR_LIMITS: tuple[tuple[str, str, str], ...] = (
+    ("BLUE_DATA_LLM_SOURCE_LIMIT_COST", "limits.max_cost", "float"),
+    ("BLUE_DATA_LLM_SOURCE_LIMIT_CALLS", "limits.max_calls", "int"),
+    ("BLUE_DATA_LLM_SOURCE_LIMIT_SECONDS", "limits.max_seconds", "float"),
+)
+
+_TRUE = {"1", "true", "yes", "on"}
+_FALSE = {"0", "false", "no", "off"}
+
+# What each setting must be, in words that never repeat the value. A deployment setting is
+# the operator's, it can hold anything, and an error returned to an MCP caller lands in a
+# transcript the operator does not control. Masking credential shapes is not enough there:
+# a private value need not look like a key.
+_RULES: dict[str, str] = {
+    "llm.model": "a model name the configured effort and temperature suit",
+    "llm.reasoning_effort": "a reasoning effort the configured model accepts",
+    "llm.max_tokens": "a whole number of at least 1",
+    "llm.temperature": "a finite number the configured model and effort accept",
+    "llm.timeout": "a finite positive number of seconds",
+    "llm.max_parallel": "a whole number of at least 1",
+    "llm.cache": "true or false",
+    "llm.cache_dir": "a directory path",
+    "llm.price_per_input_token": "a finite positive number, set together with the output price",
+    "llm.price_per_output_token": "a finite positive number, set together with the input price",
+    "limits.max_cost": "a finite number of dollars, zero or more",
+    "limits.max_calls": "a whole number of calls, zero or more",
+    "limits.max_seconds": "a finite number of seconds, zero or more",
+}
+_VARIABLES = {key: variable for variable, key, _ in (*_ENVIRONMENT_SETTINGS, *_OPERATOR_LIMITS)}
+# Checked together, because the library refuses them as a combination rather than alone.
+_CONTRACT_KEYS = ("llm.model", "llm.reasoning_effort", "llm.temperature")
+
+
+def _refused(keys: Sequence[str]) -> ToolError:
+    """An error naming the deployment variables behind *keys* and what each must be."""
+    parts = [f"{_VARIABLES[key]} must be {_RULES[key]}" for key in keys]
+    return ToolError(
+        "; ".join(parts) + ".",
+        kind=ConfigError.__name__,
+    )
+
+
+def _environment_value(key: str, text: str, kind: str) -> Any:
+    """*text* as its setting's type, or a ToolError naming the variable but not the value."""
+    if kind == "int":
+        try:
+            return int(text)
+        except ValueError:
+            raise _refused([key]) from None
+    if kind == "float":
+        try:
+            number = float(text)
+        except ValueError:
+            raise _refused([key]) from None
+        if key.startswith("llm.price_per_") and not (math.isfinite(number) and number > 0):
+            raise _refused([key])
+        return number
+    if kind == "bool":
+        if text.lower() in _TRUE:
+            return True
+        if text.lower() in _FALSE:
+            return False
+        raise _refused([key])
+    if kind == "directory":
+        return str(Path(text).expanduser())
+    return text
+
+
+def deployment_properties(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """The ``llm.*`` settings the process environment configures, typed and checked.
+
+    Read on every call rather than once at startup, so a malformed value is reported as the
+    failed call it causes instead of stopping the server, and a variable that is unset or
+    blank supplies nothing, leaving the library's default in place.
+
+    Checked here with the library's own rules rather than left for the call to refuse,
+    because the library's refusal quotes the value it refused, and here that value is the
+    operator's. The error names the variable and what it must be instead.
+    """
+    source = os.environ if environ is None else environ
+    properties: dict[str, Any] = {}
+    for variable, key, kind in _ENVIRONMENT_SETTINGS:
+        text = source.get(variable, "").strip()
+        if text:
+            properties[key] = _environment_value(key, text, kind)
+    try:
+        check_adapter_keys(properties)
+    except LlmSourceError as error:
+        named = [key for key in properties if f"'{key}'" in str(error)]
+        if not named or any(key in _CONTRACT_KEYS for key in named):
+            named = [*named, *(key for key in _CONTRACT_KEYS if key in properties)]
+        raise _refused(list(dict.fromkeys(named)) or list(properties)) from None
+    return properties
+
+
+def operator_limits(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """The ceilings the operator set for every call, typed and checked.
+
+    Read on every call, like the settings, so a malformed value fails the call it reaches
+    rather than the server, with an error naming the variable and not its value.
+    """
+    source = os.environ if environ is None else environ
+    ceilings: dict[str, Any] = {}
+    for variable, key, kind in _OPERATOR_LIMITS:
+        text = source.get(variable, "").strip()
+        if text:
+            ceilings[key] = _environment_value(key, text, kind)
+    try:
+        Limits(
+            max_cost=ceilings.get("limits.max_cost"),
+            max_calls=ceilings.get("limits.max_calls"),
+            max_seconds=ceilings.get("limits.max_seconds"),
+        )
+    except LlmSourceError as error:
+        named = [key for key in ceilings if key.split(".", 1)[1] in str(error)]
+        raise _refused(named or list(ceilings)) from None
+    return ceilings
+
+
+def _concealed(environ: Mapping[str, str] | None = None) -> list[str]:
+    """Configured text that must not come back to a caller, longest first.
+
+    A model name the package publishes is public, so a configured ``gpt-6-sol`` is reported
+    as itself. Any other configured model name, and the cache directory, are the operator's
+    and are masked wherever they would appear, in an error or in a result.
+    """
+    source = os.environ if environ is None else environ
+    values: set[str] = set()
+    model = source.get("BLUE_DATA_LLM_MODEL", "").strip()
+    if model and published_defaults(model) is None:
+        values.add(model)
+    cache_dir = source.get("BLUE_DATA_LLM_SOURCE_CACHE_DIR", "").strip()
+    if cache_dir:
+        values.update({cache_dir, str(Path(cache_dir).expanduser())})
+    return sorted(values, key=len, reverse=True)
+
+
+def conceal(text: str) -> str:
+    """*text* with every configured private value replaced by the mask."""
+    for value in _concealed():
+        text = text.replace(value, MASK)
+    return text
+
+
+def build_source(environ: Mapping[str, str] | None = None) -> LlmSource:
+    """Construct the source a tool call runs against, from the deployment's settings.
+
+    Each call gets a fresh source, so what one call merges over these settings, a ceiling
+    or a plan setting, is never seen by the next.
+    """
+    return LlmSource(properties=deployment_properties(environ) or None)
 
 
 def limit_properties(args: dict[str, Any]) -> dict[str, Any] | None:
@@ -408,8 +589,15 @@ def limit_properties(args: dict[str, Any]) -> dict[str, Any] | None:
     reaches the library exactly as it did before there was one to set. The library merges
     these over the source's own properties for this call and does not write them back, so
     one agent's ceiling cannot leak into the next call over the same server.
+
+    The operator's ceilings from the environment are merged in here, each call's own value
+    kept only where it is lower, so no call can raise or remove the operator's bound.
     """
     properties = {key: args[key] for key in LIMIT_KEYS + PLAN_KEYS if key in args}
+    # The operator's ceiling binds every call. A call's own ceiling can only tighten it.
+    for key, ceiling in operator_limits().items():
+        asked = properties.get(key)
+        properties[key] = ceiling if asked is None else min(asked, ceiling)
     return properties or None
 
 
@@ -438,7 +626,7 @@ async def llmdb_query_async(
         )
     except LlmSourceError as error:
         raise ToolError(str(error), kind=type(error).__name__) from error
-    return {"records": list(result.records), "meta": meta_view(result.meta, verbose=True)}
+    return _query_result(result)
 
 
 def llmdb_query(
@@ -458,7 +646,18 @@ def llmdb_query(
         )
     except LlmSourceError as error:
         raise ToolError(str(error), kind=type(error).__name__) from error
-    return {"records": list(result.records), "meta": meta_view(result.meta, verbose=True)}
+    return _query_result(result)
+
+
+def _query_result(result: Any) -> dict[str, Any]:
+    """Records and meta for a tool result, with a privately configured model name masked.
+
+    ``meta.model`` names the model that answered, and a provider commonly answers with the
+    name it was asked for, which here is the operator's setting.
+    """
+    meta = meta_view(result.meta, verbose=True)
+    meta["model"] = conceal(str(meta["model"]))
+    return {"records": list(result.records), "meta": meta}
 
 
 def estimate_summary(estimate: Estimate) -> dict[str, Any]:
@@ -479,10 +678,11 @@ def estimate_summary(estimate: Estimate) -> dict[str, Any]:
         "max_cost": estimate.max_cost,
         "max_cost_per_attempt": estimate.max_cost_per_attempt,
         "max_attempts": estimate.max_attempts,
-        "reason": redact(estimate.reason) if estimate.reason else estimate.reason,
-        "model": estimate.model,
+        "reason": conceal(redact(estimate.reason)) if estimate.reason else estimate.reason,
+        "model": conceal(estimate.model),
         "prompt_bytes": estimate.prompt_bytes,
         "max_output_tokens": estimate.max_output_tokens,
+        "attempts_within_ceiling": estimate.attempts_within_ceiling,
     }
 
 
@@ -539,7 +739,12 @@ def llmdb_inspect_model(
     # deployment: a cost bound needs a finite output allowance as well as rates, and a
     # source configured without one can price nothing however well known the model is.
     properties: dict[str, Any] = dict(target.properties)
-    allowance = properties.get("llm.max_tokens")
+    try:
+        allowance = target.max_tokens_for_model(name)
+    except LlmSourceError as error:
+        # A deployment setting the library refuses, reported as this call's failure the
+        # way the query and the estimate report it.
+        raise ToolError(str(error), kind=type(error).__name__) from error
     return {
         # The one field here that is the caller's own text on its way back out. The lookups
         # above read what arrived; what is published is masked.
@@ -556,14 +761,22 @@ def llmdb_inspect_model(
         # table's question instead, and reports no ceiling where the deployment supplied
         # the rates for one.
         "cost_ceiling_supported": can_bound(name, allowance, properties),
+        # What the table records for the model. The deployment's own settings override it.
+        # Null for a model the table does not carry.
+        "published_defaults": published_defaults(name),
     }
 
 
 def llmdb_inspect_metadata(
     arguments: dict[str, Any] | None = None, source: Any | None = None
 ) -> dict[str, Any]:
-    """Report the protocol, the variant, and the library version."""
-    target = source if source is not None else build_source()
+    """Report the protocol, the variant, and the library version.
+
+    None of these depends on the deployment's settings, so a plain source answers, and a
+    malformed setting that fails every other call still leaves this one able to report the
+    version.
+    """
+    target = source if source is not None else LlmSource()
     return {
         "protocol": target.protocol,
         "variant": target.variant,

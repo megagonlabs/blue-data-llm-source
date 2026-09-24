@@ -42,6 +42,51 @@ def test_a_known_model_uses_its_own_rates() -> None:
     assert dear > cheap
 
 
+def test_gpt_6_luna_uses_the_published_standard_rates() -> None:
+    assert pricing.rates_for("gpt-6-luna") == (0.10e-6, 0.50e-6)
+
+
+def test_gpt_6_luna_reservation_accounts_for_cache_writes() -> None:
+    output_cap = 100
+    prompt = "x" * 1_024
+    write_rate = 0.125 / 1_000_000
+    output_rate = 0.50 / 1_000_000
+    assert pricing.bound_cost(prompt, "gpt-6-luna", output_cap) == pytest.approx(
+        ((len(prompt) + pricing.FRAMING_TOKENS) * write_rate + output_cap * output_rate) * 1.10
+    )
+
+
+def test_gpt_6_luna_cache_threshold_includes_chat_framing() -> None:
+    output_cap = 1
+    standard_prompt = "x" * (1_024 - pricing.FRAMING_TOKENS - 1)
+    cacheable_prompt = standard_prompt + "x"
+    standard_rate = 0.10 / 1_000_000
+    write_rate = 0.125 / 1_000_000
+    output_rate = 0.50 / 1_000_000
+
+    assert pricing.bound_cost(standard_prompt, "gpt-6-luna", output_cap) == pytest.approx(
+        (1_023 * standard_rate + output_cap * output_rate) * 1.10
+    )
+    assert pricing.bound_cost(cacheable_prompt, "gpt-6-luna", output_cap) == pytest.approx(
+        (1_024 * write_rate + output_cap * output_rate) * 1.10
+    )
+
+
+def test_gpt_6_luna_long_context_tier_cannot_be_underpriced() -> None:
+    output_cap = 100
+    below = "x" * (272_000 - pricing.FRAMING_TOKENS)
+    above = below + "x"
+    base_out = pricing.PRICES["gpt-6-luna"][1]
+    cache_write = 0.125 / 1_000_000
+
+    assert pricing.bound_cost(below, "gpt-6-luna", output_cap) == pytest.approx(
+        (272_000 * cache_write + output_cap * base_out) * 1.10
+    )
+    assert pricing.bound_cost(above, "gpt-6-luna", output_cap) == pytest.approx(
+        (272_001 * cache_write * 2 + output_cap * base_out * 1.5) * 1.10
+    )
+
+
 def test_a_dated_variant_resolves_to_its_family() -> None:
     assert pricing.rates_for("gpt-4o-mini-2024-07-18") == pricing.PRICES["gpt-4o-mini"]
 

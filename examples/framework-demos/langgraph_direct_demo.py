@@ -1,17 +1,17 @@
 """LangGraph over the direct Python API: a bounded retrieval node feeding a writing node.
 
-Two nodes. ``retrieve`` calls ``LlmSource.fetch`` under a ``Budget`` the graph owns, so
-every ask the pipeline makes draws from one ceiling rather than each node having its own.
+The pipeline has two nodes. ``retrieve`` calls ``LlmSource.fetch`` under a ``Budget`` owned
+by the graph, so every ask draws from the same ceiling.
 ``respond`` is an ordinary LLM call that turns the records into a sentence for the caller.
 
-The point of the split is what crosses between them. ``retrieve`` hands on the records
+The split preserves the metadata passed between the nodes. ``retrieve`` passes the records
 *and* ``meta.outcome`` and ``meta.gaps``, and ``respond`` is told to say so when the
 retrieval was short. An agent that reads only ``records`` cannot tell a complete answer
-from a truncated one, which is the failure this library's result metadata exists to
-prevent -- and which no amount of prompting downstream can recover.
+from a truncated one. The library's result metadata lets the writing node distinguish
+these cases; downstream prompting cannot recover that information if it is omitted.
 
-Contrast with ``langgraph_mcp_demo.py``, where the agent chooses its own tools and call
-order over the MCP server. Here the pipeline is fixed and only the wording is the model's.
+In ``langgraph_mcp_demo.py``, the agent chooses its tools and call order through the MCP
+server. Here the pipeline is fixed, and the model only chooses the wording.
 
 Requires: OPENAI_API_KEY, and the provider extra.
 

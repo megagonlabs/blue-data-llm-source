@@ -6,11 +6,11 @@
 
 ## LlmSource
 
-Entry point for everything the package does. It inherits `blue_data.source.source.DataSource` and remains instantiable on its own, since that base class has no abstract members either. It holds connection properties, resolves a model client per request, and delegates rendering, parsing, alignment, and verification to the modules below.
+This class is the package entry point. It inherits `blue_data.source.source.DataSource` and can be instantiated directly because the base class has no abstract members. It holds connection properties, resolves a model client for each request, and delegates rendering, parsing, alignment, and verification to other modules.
 
-A contract test checks that every shared method resolves to `LlmSource`. This protects the required base-class order; reversing it would select the empty `DataSource` implementations. [The Source Base Class](04-detailed-architecture.md#the-source-base-class) describes the affected methods.
+A contract test checks that every shared method resolves to `LlmSource`. This protects the required base-class order; reversing it would select the empty `DataSource` implementations. See [The Source Base Class](04-detailed-architecture.md#the-source-base-class) for the affected methods.
 
-Inheriting the base class is not the same as being constructible by protocol name. `DataRegistry.connect_source` returns the registered instance, or rebuilds one from the recorded class path when the live entry is gone; `DataRegistry.register_source` takes a built instance and reads only `name` and `properties`, which is the route that works.
+Inheriting the base class does not make the source constructible by protocol name. `DataRegistry.connect_source` returns the registered instance or rebuilds one from the recorded class path when the live entry is gone. `DataRegistry.register_source` takes a built instance and reads only `name` and `properties`.
 
 ### `LlmSource` constructor
 
@@ -22,9 +22,9 @@ LlmSource(
 )
 ```
 
-`properties` is merged over the defaults. A `"connection"` mapping is merged key by key, not replaced, so a caller can set `variant` without restating host, port, user, and password. `protocol` is reset to `llm` after every merge, because it names the source family and is not caller-settable.
+`properties` holds the `connection` mapping and caller-supplied values. The package's defaults (`llm.model`, `llm.stream`, and the model's effort and allowance) are applied when call properties are resolved, beneath an injected client's configuration. They are not stored here, because a source rebuilt from `properties` treats every key as caller-supplied. A `"connection"` mapping is merged key by key, allowing a caller to set `variant` without restating host, port, user, and password. After each merge, `protocol` is reset to `llm` because it names the source family and is not caller-settable.
 
-`client` injects a model client for every request made by this instance. Any object with `complete(prompt, properties)` and `acomplete(prompt, properties)` is accepted; nothing checks its class. A client that also implements `budget_capabilities()` is handed the run's budget under the `budget` property on every call and is held to the axes that method names. Every configured ceiling whose axis the client did not declare is refused with a `ConfigError` listing the ceilings by name, because a limit this source cannot hold is worse than no limit: the caller believes it.
+`client` injects a model client for every request made by this instance. Any object with `complete(prompt, properties)` and `acomplete(prompt, properties)` is accepted; its class is not checked. A client that also implements `budget_capabilities()` receives the run's budget under the `budget` property on every call and is held to the axes that method names. Every configured ceiling on an undeclared axis is refused with a `ConfigError` listing the ceiling, so callers are not led to believe an unenforced limit applies.
 
 ### Example
 
@@ -80,6 +80,9 @@ source.execute_query(
 
 # What the request would cost, before running it
 sized = source.estimate("commercial airports in France", attrs=["name"])
+
+# The allowance an inspected model would use
+allowance = source.max_tokens_for_model("gpt-4o")
 ```
 
 ### Properties
@@ -176,13 +179,13 @@ The most one **flat** fetch of `query` could cost, without contacting the provid
 4. Bound that prompt through `pricing.bound_cost`. A `ConfigError` becomes an `Estimate` with `bounded` false carrying the error's text as `reason`, rather than propagating.
 5. Accumulate the per-attempt bound once per permitted attempt, in the same order as the ledger, and return an `Estimate` carrying `bounded`, `max_cost`, `max_cost_per_attempt`, `max_attempts`, `model`, `prompt_bytes`, and `max_output_tokens`. Repeated addition is used because multiplication can differ from the ledger by one unit in the last place, enough to refuse the final accounted attempt at an exact ceiling.
 
-The method renders the actual prompt rather than using an average request. It also calls `bound_cost` with the same arguments used by runtime reservation, so estimation and enforcement use the same value.
+The method renders the actual prompt rather than using an average request. It calls `bound_cost` with the same arguments as runtime reservation, so estimation and enforcement use the same value.
 
-For an unpriceable model, `estimate` returns `bounded=False` with a reason instead of propagating the `ConfigError` raised by `bound_cost`. This lets callers inspect why no estimate is available without treating the query as a failed operation.
+For an unpriceable model, `estimate` returns `bounded=False` with a reason instead of propagating the `ConfigError` from `bound_cost`. Callers can inspect why no estimate is available without treating the query as a failed operation.
 
 ### `LlmSource` source surface
 
-These override the methods `DataSource` declares, so an instance answers on the same surface every other source in the layer answers on, and a signature that drifts from upstream is a type error here, not a runtime failure in someone else's integration.
+These methods override those declared by `DataSource`, so an instance exposes the same query surface as other sources in the layer. A signature that drifts from upstream becomes a type error here rather than a runtime failure in an integrator's code.
 
 #### `execute_query(query, database=None, collection=None, optional_properties=None)`
 
@@ -323,6 +326,7 @@ class ExecMeta:
     marginal_key_yields: list[int] = ...
     incomplete_key_records: int = 0
     normalization_collisions: list[dict[str, Any]] = ...
+    repaired_numbers: int = 0
     observed_keys: list[str] = ...
     unmapped_keys: list[str] = ...
     remapped_keys: dict[str, str] = ...
@@ -339,7 +343,7 @@ class ExecMeta:
 
 What happened during a fetch, alongside the records. `observed_keys` lists every key the model produced, `remapped_keys` maps a returned key to the requested attribute it was matched to, and `unmapped_keys` lists keys with no match. `type_mismatches` lists the values that would not coerce to their declared types. `key_collisions` lists returned keys whose values were not used because another key had already answered the same attribute. `stop_reasons` is always present and retains every observed stop fact; `stopped_by` is its first member. `gaps` is always present and carries supported operational diagnostics, not a completeness result. `requested_attrs` remains the caller declaration.
 
-`cardinality_estimate` is the accepted non-flat bootstrap estimate with `expected`, `lower`, `upper`, `row_unit`, `source`, `parse_status`, and `diagnostics`; `None` means flat mode or that planning did not produce the structure. `row_estimate` is its `expected` value for compatibility. Both are planning evidence, not measured row counts or completeness measures. `primary_keys` is the ordered set of identifying attributes used for execution and reduction. `observed_key_count` counts distinct complete keys in the final returned records, after reduction, deduplication, and the row cap. `marginal_key_yields` records the new normalized key identities from each extraction attempt in leaf order; without primary keys it counts new exact records. `incomplete_key_records` counts distinct per-leaf records missing at least one primary-key value. `normalization_collisions` reports per-leaf key spellings that compare equal after declared-type-aware normalization, with `primary_keys`, `kept`, and `collided` in each entry. These observations do not establish that all keys or rows were found.
+`cardinality_estimate` is the accepted non-flat bootstrap estimate with `expected`, `lower`, `upper`, `row_unit`, `source`, `parse_status`, and `diagnostics`; `None` means flat mode or that planning did not produce the structure. `row_estimate` is its `expected` value for compatibility. Both are planning evidence, not measured row counts or completeness measures. `primary_keys` is the ordered set of identifying attributes used for execution and reduction. `observed_key_count` counts distinct complete keys in the final returned records, after reduction, deduplication, and the row cap. `marginal_key_yields` records the new normalized key identities from each extraction attempt in leaf order; without primary keys it counts new exact records. `incomplete_key_records` counts distinct per-leaf records missing at least one primary-key value. `normalization_collisions` reports per-leaf key spellings that compare equal after declared-type-aware normalization, with `primary_keys`, `kept`, and `collided` in each entry. `repaired_numbers` counts numbers the model wrote with thousands separators in an object value, such as `4,470`, that were read as `4470`; such a response is not valid JSON and is read only after that one repair. These observations do not establish that all keys or rows were found.
 
 `record_origins` runs parallel to records, and `asked` carries a restated query when one ran.
 
@@ -580,7 +584,7 @@ Both return the model's message content as a string. The asynchronous form addit
 4. On a miss, enter the retry loop.
 5. For each attempt, cap the provider timeout at the time the budget has left, bound those call arguments through `pricing.bound_cost`, and reserve one attempt and that bound against the budget, which is also where the time limit is rechecked. Then call the provider.
 6. On failure, resolve the reservation with `keep_unpriced` and re-raise: the provider was contacted, so the bound remains charged and is not released. A transport failure is retried, and the next attempt reserves again, so a retry sequence cannot outrun the call ceiling.
-7. On success, settle the reservation against the real cost, which releases whatever the bound overshot by, then store the payload in the cache, record usage, and extract the message content. A cost the provider's accounting will not yield resolves the reservation at the bound instead, and that figure is what the call reports as its cost.
+7. On success, settle the reservation against verified provider cost, which releases whatever the bound overshot by, then store the payload in the cache, record usage, and extract the message content. When the response cannot prove the charge, including a calculator zero for a call that reached the provider, [the cost bound](../lib/README.md#the-cost-bound) sets it and the result reports its accounting as unknown.
 
 The bound is computed only when it will be enforced. `remaining_cost()` returning `None` means no cost ceiling is configured anywhere up the budget chain, and in that case the reservation is made at zero and `pricing` is never consulted, so a run with no cost ceiling is never refused because this package has never heard of its model.
 
@@ -590,7 +594,7 @@ Everything after the provider entry point is invoked sits inside one guard, incl
 
 **Accepted `llm.*` overrides**
 
-`model`, `temperature`, `max_tokens`, `stream`, `timeout`, `cache`, `cache_dir`, `max_parallel`, `price_per_input_token`, `price_per_output_token`. The set is closed and an unknown name raises `ConfigError` listing the accepted ones. The last five are consumed locally and never forwarded, the two price keys among them, which is what lets a caller bound a model `pricing.PRICES` does not carry. Transport-shaped names are stripped after every merge. That strip is unreachable in practice because the closed key set refuses those names first. The strip provides a second line of defense; the closed set is the primary defense.
+`model`, `reasoning_effort`, `temperature`, `max_tokens`, `stream`, `timeout`, `cache`, `cache_dir`, `max_parallel`, `price_per_input_token`, `price_per_output_token`. The set is closed and an unknown name raises `ConfigError` listing the accepted ones. The last five are consumed locally and never forwarded, the two price keys among them, which is what lets a caller bound a model `pricing.PRICES` does not carry. Transport-shaped names are stripped after every merge. That strip is unreachable in practice because the closed key set refuses those names first. The strip provides a second line of defense; the closed set is the primary defense.
 
 **Streaming**
 
@@ -687,7 +691,7 @@ Cost is claimed against an upper bound rather than an average-case estimate. If 
 
 The headroom methods, `effective_retries`, and `derive` all narrow along the parent chain, so the effective ceiling on every axis is the smallest value from this budget up to the root. A child with no limits of its own is bounded entirely by its parent, which is what a fan-out leaf should be; without it a planner could hand ten leaves a full budget each. A derived child also measures elapsed time from its parent's start, so a caller's time ceiling covers the whole unit of work and does not restart with each fetch.
 
-What a child does not inherit is `stopped_by`. A parent that refused an earlier request carries the axis that refused it, and a child copying that field would report an earlier refusal as its own, so a later affordable request under the same caller-owned budget would come back reading `stopped_by_limit` with records in it. The child starts with the field unset and fills it from what happens to the child.
+The child does not inherit `stopped_by`. A parent may carry the axis that refused an earlier request. If a child copied that field, a later affordable request under the same caller-owned budget would report the earlier refusal as its own and return records with `stopped_by_limit`. The child starts with the field unset and fills it from its own execution.
 
 `note_exhausted` reports only a ceiling something has actually crossed. Spending the last allowed call refuses nothing, and reporting it would make an ordinary run under an exact limit look truncated; the same reasoning applies to spending exactly the cost ceiling, which is why that comparison is strict.
 
@@ -710,7 +714,7 @@ budget is refused rather than silently resolved somewhere else.
 | `estimate` | What was claimed |
 | `resolved` | Whether the claim has already been resolved |
 
-It is a handle rather than a bare number so that the claim resolves exactly once, and resolving it twice raises. A free-standing counter decrement carries no evidence that the attempt it undoes never happened, which is how a retry escape gets rebuilt by whoever calls it next. `release` is correct only before the provider entry point is invoked; once it is, the attempt counts whatever it returns, or every failed retry is free.
+The reservation is a handle that resolves the claim exactly once; resolving it twice raises. A free-standing counter decrement cannot establish that the attempt being undone never happened, which could allow a retry to escape accounting. `release` is valid only before invoking the provider. After that point, the attempt counts regardless of its result, or failed retries would be free.
 
 ### `pricing`
 
@@ -719,23 +723,23 @@ A genuine upper bound on what one call can cost, or a refusal to guess, in `llm/
 | Member | Value | Description |
 |--------|-------|-------------|
 | `FRAMING_TOKENS` | `64` | Chat framing the provider adds around the prompt: role labels, separators, and per-message overhead. Generous, because it is added to a bound rather than to an estimate |
-| `PRICES` | `dict[str, tuple[float, float]]` | Published input and output list prices per token, keyed by model name and matched exactly, or by stripping a trailing dated or regional suffix made only of digits and hyphens, so a dated or regional variant resolves to its family |
+| `PRICES` | `dict[str, tuple[float, float]]` | Published input and output list prices per token, derived from the model table in `llm/models.py`, keyed by model name and matched exactly, or by stripping a trailing dated or regional suffix made only of digits and hyphens, so a dated or regional variant resolves to its family. An `openai/` prefix is removed first, and the longest matching name wins |
 | `rates_for(model)` | `tuple[float, float] \| None` | The listed rates, or `None` for a model the table does not carry |
 | `resolve_rates(model, properties=None)` | `tuple[float, float]` | Caller-supplied rates when either price key is present, the listed rates when neither is, and `ConfigError` when nothing usable is available. Presence decides that an override was meant, not validity, so one half alone, or a value that will not read as a finite positive number, is refused instead of falling back to a table the caller has already said is wrong for this model |
-| `bound_cost(prompt, model, max_tokens, properties=None)` | `float` | `len(prompt.encode("utf-8")) + FRAMING_TOKENS` at the input rate plus the whole `max_tokens` allowance at the output rate, or `ConfigError` when that figure cannot be established |
+| `bound_cost(prompt, model, max_tokens, properties=None)` | `float` | `len(prompt.encode("utf-8")) + FRAMING_TOKENS` at the input rate plus the whole `max_tokens` allowance at the output rate, or `ConfigError` when that figure cannot be established. For a table model, the input rate rises by the cache-write rate's ratio from 1,024 prompt tokens where the model has one, the long-context multipliers apply above 272,000 prompt tokens, and the whole figure carries the regional uplift where the model's entry has it. Supplied rates for a table model get the same modifiers and never yield less than the table's bound; for a model outside the table they are used as given and must cover every billed tier |
 | `can_bound(model, max_tokens, properties=None)` | `bool` | Whether a cost ceiling could be claimed for these arguments |
 
 The bound rests on one property: tokens never outnumber the bytes of the encoded prompt. A byte-pair tokenizer merges byte sequences, so every token it emits consumes at least one byte, and `len(prompt.encode("utf-8"))` bounds the prompt's token count for any tokenizer, present or future. Characters do not carry that property although they read as though they do, because a tokenizer splits a character whose encoding it has no merge for: a composed emoji of seven code points can cost eleven tokens, and a 1,400-character sequence has been measured at 2,200. The byte count is loose, since English runs three to four bytes per token, and it is loose in the only safe direction.
 
-Two things must be known before a bound exists at all, and neither can be assumed. A model absent from the table may be priced above everything in it, so `rates_for` returns `None` rather than the dearest entry, and a request with no finite positive output cap can produce output until the provider stops it. Where either is missing `bound_cost` raises `ConfigError` naming what is missing and what to do about it, and the caller is refused the cost ceiling instead of holding one built on a guess. A caller who knows what an unlisted model costs supplies `llm.price_per_input_token` and `llm.price_per_output_token`, which must be given together because a bound needs both halves.
+Two values are required to calculate a bound: model rates and a finite positive output cap. A model absent from the table may cost more than any listed model, so `rates_for` returns `None` instead of selecting the highest listed rate. Without a finite positive output cap, a request could produce output until the provider stops it. If either value is missing, `bound_cost` raises `ConfigError` naming the missing value and how to provide it; the caller's cost ceiling is refused rather than based on a guess. A caller who knows the rates for an unlisted model supplies both `llm.price_per_input_token` and `llm.price_per_output_token`.
 
-The minimum cost bound is the full `max_tokens` allowance at the model's output rate, independent of the prompt. With the default `gpt-4o` model and `llm.max_tokens=4096`, it is about $0.041. A lower `limits.max_cost` refuses the call before provider contact. Reducing `llm.max_tokens` lowers the bound proportionally.
+The minimum cost bound is the full `max_tokens` allowance at the model's output rate, independent of the prompt. With the default `gpt-6-luna` model and `llm.max_tokens=25000`, it is about $0.01375 with the regional uplift. A lower `limits.max_cost` refuses the call before provider contact. Reducing `llm.max_tokens` lowers the bound proportionally.
 
-`PRICES` is public list-price data and goes stale in the safe direction, since providers cut prices far more often than they raise them. It is a file to update rather than a mechanism to redesign.
+`PRICES` is public list-price data and usually goes stale in the safe direction, since providers cut prices far more often than they raise them. GPT-5.6 Sol is the known exception: its rate is a promotion through at least 2026-11-21, and the rows for it and the `gpt-5.6` alias need raising when it ends. It is a file to update rather than a mechanism to redesign.
 
 The two price keys are available through the normal client path as well as through `pricing` itself. `DefaultLlmClient` accepts `llm.price_per_input_token` and `llm.price_per_output_token` as local `llm.*` overrides and does not forward them. `LlmSource.estimate` reads the same merged properties, allowing callers to estimate or cap an unlisted model when they supply its rates.
 
-`bound_cost` is also what `LlmSource.estimate` reports, which is the point of publishing the module rather than burying it in the client. A caller can ask for the figure that will bound its request before it makes the request, and get the same number.
+`LlmSource.estimate` also reports the result of `bound_cost`. Publishing this helper lets callers get the same bound that will apply to their request before making it.
 
 ---
 
@@ -823,7 +827,7 @@ class Alignment:
 
 With no requested attributes the records pass through unchanged, `observed_keys` is populated, and `matched` carries each record's own keys.
 
-`collisions` holds the returned keys that reached an attribute another key had already answered, which is what two spellings of one name produce. The first answer is kept and the second is reported with `record_index`, `attribute`, `kept_key`, `ignored_key`, and `ignored_value`, and it becomes `ExecMeta.key_collisions`. Overwriting made the surviving value depend on the order the model happened to emit its keys, and which of two spellings it meant is not knowable here, so the choice is reported, not resolved. Two occurrences of the *identical* name never reach this stage, because parsing rejects the object instead: `First Name` beside `first_name` leaves two distinguishable keys to report, while one key repeated leaves nothing to tell the values apart by. Two *requested* attributes whose fuzzy forms coincide are a different case and are not refused: the fuzzy index drops the entry it cannot separate, so exact keys still match and a key that matches only fuzzily is reported unmapped rather than assigned by guess. Only the same name requested twice raises `QueryError`.
+`collisions` holds returned keys that matched an attribute already answered by another key. The first value is kept; the second is reported with `record_index`, `attribute`, `kept_key`, `ignored_key`, and `ignored_value`, and becomes `ExecMeta.key_collisions`. Keeping the first value avoids making the result depend on the order in which the model emitted the keys. The intended spelling cannot be determined, so the source reports the collision without resolving it. Parsing rejects repeated identical names before this stage. For example, `First Name` and `first_name` are distinguishable keys that can be reported, while a repeated key provides no way to distinguish its values. Two requested attributes with matching fuzzy forms are handled differently: the fuzzy index omits the ambiguous entry, so exact keys still match and keys with only a fuzzy match are reported as unmapped. Only a request that repeats the same name raises `QueryError`.
 
 `matched` records, positionally, which requested attributes each record actually answered. Alignment fills a missing attribute with `None` and a JSON null is also `None`, so the value alone cannot tell "not answered" from "answered null"; presence is recorded where it is known, not inferred later from a value that cannot carry it.
 
@@ -844,11 +848,11 @@ class TypeMismatch:
     value: str
 ```
 
-One value that did not match its declared type, carried in the second return value as a mapping through `as_dict()` and surfaced as `ExecMeta.type_mismatches`. `value` is the repr of what arrived, before coercion was attempted. A value that will not coerce is kept as it came back rather than dropped, because discarding a row over a formatting difference loses real data; keeping it silently would tell the caller the records are typed when one of them is not, so every failure is reported. A request with no typed attributes skips the pass and reports no mismatches.
+Each mismatch is returned as a mapping through `as_dict()` and surfaced as `ExecMeta.type_mismatches`. `value` is the repr of the value before coercion. A value that will not coerce is kept rather than dropped, because discarding a row over a formatting difference loses data. Every failure is reported so callers know the records are not all of the declared types. A request with no typed attributes skips the pass and reports no mismatches.
 
 ### `reduction.identity`
 
-One declared-type-aware rule for what makes two records the same record, shared by continuation exclusion, reduction, and identity-rule validation. Holding it in one module is the point: a continuation that excluded a key under one spelling while reduction merged under another would ask the model again for rows it already had.
+This module defines one declared-type-aware rule for record identity, shared by continuation exclusion, reduction, and identity-rule validation. Keeping the rule in one module prevents continuation and reduction from using different key spellings and asking the model again for records it already returned.
 
 | Member | Returns | Description |
 |--------|---------|-------------|
@@ -862,7 +866,7 @@ One declared-type-aware rule for what makes two records the same record, shared 
 
 ### `reduction.coverage`
 
-One record set out of many leaves, and an account of what it covers. `reduce_leaves(plan, schema, results)` merges what the leaves returned into the single list a caller receives and returns a `Coverage` beside it, carrying the per-leaf outcomes, the gaps, and `record_origins`. Those become `meta.gaps` and `meta.record_origins`, and `Coverage.run_outcome` is where the run's outcome is decided in precedence order. A merged list shows none of what fell out between the leaves and the caller (rows a ceiling cut off, a leaf that never ran, two leaves returning the same record with different values in one field), so it is reported alongside the rows rather than left to be inferred from them.
+This module combines records from multiple leaves and reports what the result covers. `reduce_leaves(plan, schema, results)` merges leaf records into the returned list and provides a `Coverage` object with per-leaf outcomes, gaps, and `record_origins`. These become `meta.gaps` and `meta.record_origins`; `Coverage.run_outcome` determines the run's outcome by precedence. The merged list does not show what was lost between the leaves and the caller, such as rows removed by a ceiling, leaves that never ran, or duplicate records with differing field values. The `Coverage` object reports these details alongside the rows.
 
 The account is produced for every run, a one-leaf run included, because one leaf still executes inside a bounded loop and can stop at its cap, which is exactly the shape where rows with no account read as a complete answer. Merging here runs only against a column `planning.schema` identified, since merging on a guessed column collapses distinct records into one and returns the result as clean; where no key was identified this stage merges nothing and says so in a note. Two merge facts do become gaps here: a key that two leaves spell differently and that normalizes to one identity, and a record that lacked a key component and was kept unmerged. The key-level counts a caller reads as `meta.observed_key_count`, `meta.marginal_key_yields`, `meta.incomplete_key_records` and `meta.normalization_collisions` are not from here: the continuation loop in `execution/mapper.py` observes them a leaf at a time and the facade sums them. None of it is a completeness measure.
 
@@ -900,4 +904,4 @@ Declared in `_constants.py`.
 | `BUDGET_PROPERTY` | `"budget"` | The property key a fetch hands its budget down under |
 | `USAGE_SINK_PROPERTY` | `"usage_sink"` | The property key a fetch hands down a list for this call's `Usage` entries |
 
-No environment variable is named here, read, or logged. The model is selected through the `llm.model` property, and the client's default is `gpt-4o`.
+No environment variable is named here, read, or logged. The model is selected through the `llm.model` property, and the client's default is `gpt-6-luna` with medium reasoning.

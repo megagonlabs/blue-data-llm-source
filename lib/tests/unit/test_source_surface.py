@@ -13,7 +13,7 @@ from blue_data.source.source import DataSource  # pyright: ignore[reportMissingT
 from blue_data_llm_source import Budget, Capability, Limits, LlmSource
 from blue_data_llm_source import _constants as C
 from blue_data_llm_source.types import ConfigError, LlmSourceError, ParseError, QueryError
-from tests.doubles import ScriptedClient
+from tests.doubles import LitellmStub, ScriptedClient, chat_payload
 
 ONE_RECORD = '[{"name": "Ada", "age": 36}]'
 TWO_RECORDS = '[{"name": "Ada"}, {"name": "Grace"}]'
@@ -81,7 +81,10 @@ def test_a_dict_query_without_an_op_is_rejected() -> None:
 
 def test_optional_properties_reach_the_client() -> None:
     client = ScriptedClient([ONE_RECORD])
-    LlmSource(client=client).execute_query("who?", optional_properties={"llm.temperature": 0.0})
+    LlmSource(client=client).execute_query(
+        "who?",
+        optional_properties={"llm.reasoning_effort": "none", "llm.temperature": 0.0},
+    )
     assert client.seen_properties[0] is not None
     assert client.seen_properties[0]["llm.temperature"] == 0.0
 
@@ -99,10 +102,10 @@ def _estimate(spec: dict[str, Any], **options: Any) -> dict[str, Any]:
 
 
 def test_an_estimate_op_reads_the_request_the_way_a_fetch_op_does() -> None:
-    """The figure has to describe the request that would actually be sent.
+    """The estimate must use the same request arguments as the fetch.
 
-    Attributes and context both change the prompt, so an estimate that read them from the
-    spec alone priced something other than the fetch of the same arguments.
+    Attributes and context change the prompt, so omitting either would price a different
+    request.
     """
     plain = _estimate({"op": C.OP_ESTIMATE, "query": "who?"})
     from_spec = _estimate({"op": C.OP_ESTIMATE, "query": "who?", "attrs": ["name", "age"]})
@@ -119,7 +122,7 @@ def test_an_estimate_op_reads_the_request_the_way_a_fetch_op_does() -> None:
 
 
 def test_an_estimate_op_gives_optional_properties_the_precedence_a_fetch_op_gives_them() -> None:
-    """Same precedence on both ops, or the same call prices one request and sends another."""
+    """Both ops apply optional properties with the same precedence."""
     both = _estimate(
         {"op": C.OP_ESTIMATE, "query": "who?", "attrs": ["name"]}, attrs=["name", "age"]
     )
@@ -209,6 +212,81 @@ def test_variant_defaults_to_openai() -> None:
     assert LlmSource().variant == C.DEFAULT_VARIANT
 
 
+def test_provider_defaults_are_gpt_6_luna_without_sampling_temperature() -> None:
+    client = ScriptedClient([ONE_RECORD])
+    source = LlmSource(client=client)
+    source.fetch("who?")
+    sent = client.seen_properties[0]
+    assert sent is not None
+    assert sent["llm.model"] == "gpt-6-luna"
+    assert sent["llm.reasoning_effort"] == "medium"
+    assert sent["llm.max_tokens"] == 25_000
+    assert "llm.temperature" not in sent
+
+
+def test_no_package_default_is_published_as_a_setting() -> None:
+    """A rebuild reads this map back as caller settings, so no package default is in it."""
+    properties = LlmSource().properties
+    assert set(properties) == {"connection"}
+    assert "llm.model" not in properties
+    assert "llm.stream" not in properties
+    assert "llm.reasoning_effort" not in properties
+    assert "llm.max_tokens" not in properties
+    assert "llm.temperature" not in properties
+
+
+def test_selecting_gpt_4o_restores_its_legacy_defaults() -> None:
+    client = ScriptedClient([ONE_RECORD])
+    LlmSource(properties={"llm.model": "gpt-4o"}, client=client).fetch("who?")
+    assert client.seen_properties[0] is not None
+    assert client.seen_properties[0]["llm.model"] == "gpt-4o"
+    assert client.seen_properties[0]["llm.max_tokens"] == 4_096
+    assert "llm.reasoning_effort" not in client.seen_properties[0]
+
+
+def test_dated_gpt_6_luna_uses_its_profile_defaults() -> None:
+    client = ScriptedClient([ONE_RECORD])
+    LlmSource(properties={"llm.model": "gpt-6-luna-2026-09-22"}, client=client).fetch("who?")
+    assert client.seen_properties[0] is not None
+    assert client.seen_properties[0]["llm.reasoning_effort"] == "medium"
+    assert client.seen_properties[0]["llm.max_tokens"] == 25_000
+
+
+def test_model_output_allowance_follows_the_model_profile() -> None:
+    source = LlmSource()
+    assert source.max_tokens_for_model("gpt-4o") == 4_096
+    assert source.max_tokens_for_model("gpt-6-luna-2026-09-22") == 25_000
+
+
+def test_explicit_output_allowance_applies_to_every_model() -> None:
+    source = LlmSource(properties={"llm.max_tokens": 8_192})
+    assert source.max_tokens_for_model("gpt-4o") == 8_192
+    assert source.max_tokens_for_model("gpt-6-luna") == 8_192
+
+
+def test_selecting_gpt_4o_keeps_an_explicit_output_allowance() -> None:
+    client = ScriptedClient([ONE_RECORD])
+    source = LlmSource(properties={"llm.model": "gpt-4o", "llm.max_tokens": 8_192}, client=client)
+    source.fetch("who?")
+    assert client.seen_properties[0] is not None
+    assert client.seen_properties[0]["llm.max_tokens"] == 8_192
+
+
+@pytest.mark.parametrize("effort", ["minimal", "extreme", 1, True])
+def test_invalid_reasoning_effort_is_refused(effort: object) -> None:
+    with pytest.raises(ConfigError, match="reasoning"):
+        LlmSource(properties={"llm.reasoning_effort": effort}).fetch(
+            "who?", llm_fn=_answering(ONE_RECORD)
+        )
+
+
+def test_gpt_4o_refuses_reasoning_effort() -> None:
+    with pytest.raises(ConfigError, match="gpt-4o"):
+        LlmSource(properties={"llm.model": "gpt-4o", "llm.reasoning_effort": "medium"}).fetch(
+            "who?", llm_fn=_answering(ONE_RECORD)
+        )
+
+
 def test_variant_can_be_set_by_caller_properties() -> None:
     source = LlmSource(properties={"connection": {"variant": "anthropic"}})
     assert source.variant == "anthropic"
@@ -281,13 +359,13 @@ def test_connect_and_disconnect_hold_no_state() -> None:
 
 # ----------------------------------------------- what a caller gets for a wrong client --
 def test_a_client_missing_the_methods_is_refused_with_the_contract() -> None:
-    """A raw AttributeError says what broke; this says what to implement."""
+    """The error should name the client contract instead of exposing an AttributeError."""
     with pytest.raises(ConfigError, match=r"complete\(prompt, properties\)"):
         LlmSource(client=object()).fetch("who?")
 
 
 def test_a_client_whose_signature_cannot_take_properties_is_refused() -> None:
-    """properties carries the run's budget and usage sink, so omitting it cannot be bounded."""
+    """The client must accept properties to receive the run's budget and usage sink."""
 
     class Narrow:
         def complete(self, prompt: str) -> str:
@@ -305,7 +383,7 @@ def test_a_client_whose_signature_cannot_take_properties_is_refused() -> None:
     ["keyword_only", "keyword_catchall"],
 )
 def test_a_signature_that_cannot_take_properties_positionally_is_refused(shape: str) -> None:
-    """Counting parameters accepted these; the source cannot call either of them.
+    """The source must be able to pass properties as the second positional argument.
 
     `acomplete(prompt, *, properties=None)` and `acomplete(prompt, **kwargs)` both have two
     parameters and neither can receive the second argument positionally, so both reached the
@@ -332,7 +410,7 @@ def test_a_signature_that_cannot_take_properties_positionally_is_refused(shape: 
 
 
 def test_a_client_taking_kwargs_is_accepted() -> None:
-    """A permissive signature satisfies the contract; the check must not over-reach."""
+    """A client with a permissive signature satisfies the contract."""
 
     class Flexible:
         def __init__(self) -> None:
@@ -351,7 +429,7 @@ def test_a_client_taking_kwargs_is_accepted() -> None:
 
 
 def test_an_unknown_adapter_key_is_refused_on_every_client_path() -> None:
-    """The closed set lived in the built-in client, so every other path skipped it."""
+    """Validate adapter keys on every client path, not only in the built-in client."""
 
     def stub(prompt: str) -> str:
         return "[]"
@@ -364,7 +442,7 @@ def test_an_unknown_adapter_key_is_refused_on_every_client_path() -> None:
 
 
 def test_a_callable_reports_its_accounting_as_unknown() -> None:
-    """The library says it cannot know a callable's provider work, then must not invent it.
+    """Do not infer provider usage for a caller-supplied callable.
 
     A callable may answer from memory, call one provider, or fan out to several. Publishing
     `calls=1` and `cost=0.0` for it looked measured and was not: a callable making five real
@@ -386,7 +464,7 @@ def test_a_callable_reports_its_accounting_as_unknown() -> None:
 
 
 def test_the_default_client_reports_its_accounting_as_known() -> None:
-    """The flag must distinguish, not simply always disclaim."""
+    """The flag should report known accounting for the default client."""
     from tests.doubles import ScriptedClient
 
     source = LlmSource(client=ScriptedClient(['[{"country": "France"}]']))
@@ -520,9 +598,9 @@ def test_an_adapter_override_outside_its_range_is_refused(key: str, value: objec
         {"llm.max_tokens": 1},
         {"llm.max_tokens": 4096},
         {"llm.max_tokens": None},
-        {"llm.temperature": 0},
-        {"llm.temperature": 2.0},
-        {"llm.temperature": -0.5},
+        {"llm.reasoning_effort": "none", "llm.temperature": 0},
+        {"llm.reasoning_effort": "none", "llm.temperature": 2.0},
+        {"llm.reasoning_effort": "none", "llm.temperature": -0.5},
         {"llm.timeout": 30},
         {"llm.timeout": 0.5},
     ],
@@ -1394,3 +1472,135 @@ def test_a_source_rebuilt_by_the_registry_still_answers() -> None:
         llm_fn=answer,
         optional_properties={"attrs": ["name"]},
     )
+
+
+# ------------------------------------------------- defaults across a rebuild --
+def _rebuilt(source: LlmSource) -> LlmSource:
+    """*source* recorded by the data registry and rebuilt from that record."""
+    from blue_data.registry.data_registry import (  # pyright: ignore[reportMissingTypeStubs]
+        DataRegistry,
+    )
+
+    registry = DataRegistry()  # pyright: ignore[reportUnknownVariableType]
+    registry.register_source(source)
+    del registry.sources[source.name]  # pyright: ignore[reportUnknownMemberType]
+    return cast("LlmSource", registry.connect_source(source.name))
+
+
+def _requests(
+    stub_install: Callable[[LitellmStub], LitellmStub],
+    source: LlmSource,
+    properties: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """What the default client sends the provider for one fetch, less the prompt."""
+    stub = stub_install(LitellmStub(chat_payload(ONE_RECORD)))
+    source.fetch("who?", properties=properties)
+    assert len(stub.calls) == 1
+    return {k: v for k, v in stub.calls[0].items() if k not in {"messages", "timeout"}}
+
+
+@pytest.mark.parametrize(
+    "configured",
+    [
+        {},
+        {"llm.model": "gpt-4o-mini", "llm.max_tokens": 512},
+        {"llm.model": "gpt-4o-mini"},
+        {"llm.model": "gpt-4o"},
+        {"llm.model": "gpt-6-luna"},
+        {"llm.model": "gpt-6-sol"},
+        {"llm.model": "gpt-6-sol", "llm.reasoning_effort": "high"},
+        {"llm.model": "gpt-5.4", "llm.reasoning_effort": "medium"},
+        {"llm.model": "gpt-4o", "llm.max_tokens": 25_000},
+        {"llm.model": "house-model"},
+    ],
+    ids=lambda configured: ",".join(f"{k}={v}" for k, v in configured.items()) or "defaults",
+)
+def test_a_source_rebuilt_from_its_record_sends_the_same_request(
+    litellm_stub: Callable[[LitellmStub], LitellmStub], configured: dict[str, Any]
+) -> None:
+    """The registry records `properties` and rebuilds from them as caller settings.
+
+    The default model's effort and allowance were stored there, so the rebuilt source sent
+    them as deliberate choices: `gpt-4o-mini` was refused for a reasoning effort nobody set,
+    and a `gpt-4o` source rebuilt without an allowance asked for the reasoning allowance.
+    A setting the caller did make, even one equal to a default, has to survive.
+    """
+    original = _requests(litellm_stub, LlmSource(properties=dict(configured)))
+    rebuilt = _requests(litellm_stub, _rebuilt(LlmSource(properties=dict(configured))))
+    assert rebuilt == original
+
+
+@pytest.mark.parametrize("model", ["gpt-4o", "gpt-4o-mini", "gpt-5.4", "house-model"])
+def test_a_default_source_takes_another_models_defaults_when_the_model_changes(
+    litellm_stub: Callable[[LitellmStub], LitellmStub], model: str
+) -> None:
+    fresh = _requests(litellm_stub, LlmSource(properties={"llm.model": model}))
+
+    per_call = _requests(litellm_stub, LlmSource(), {"llm.model": model})
+    after_rebuild = _requests(litellm_stub, _rebuilt(LlmSource()), {"llm.model": model})
+    reassigned = LlmSource()
+    reassigned.properties["llm.model"] = model
+    set_directly = _requests(litellm_stub, reassigned)
+
+    assert per_call == fresh
+    assert after_rebuild == fresh
+    assert set_directly == fresh
+
+
+def test_the_rebuilt_record_does_not_carry_the_model_dependent_defaults() -> None:
+    rebuilt = _rebuilt(LlmSource(properties={"llm.model": "gpt-4o-mini", "llm.max_tokens": 512}))
+    assert rebuilt.properties["llm.model"] == "gpt-4o-mini"
+    assert rebuilt.properties["llm.max_tokens"] == 512
+    assert "llm.reasoning_effort" not in rebuilt.properties
+    assert rebuilt.max_tokens_for_model("gpt-6-luna") == 512
+
+
+def _from_properties(source: LlmSource, client: ScriptedClient) -> LlmSource:
+    return LlmSource(properties=dict(source.properties), client=client)
+
+
+def _through_the_registry(source: LlmSource, client: ScriptedClient) -> LlmSource:
+    return LlmSource(properties=dict(_rebuilt(source).properties), client=client)
+
+
+@pytest.mark.parametrize(
+    "rebuild", [_from_properties, _through_the_registry], ids=["from-properties", "registry"]
+)
+def test_a_rebuilt_source_still_defers_to_its_injected_clients_configuration(
+    rebuild: Callable[[LlmSource, ScriptedClient], LlmSource],
+) -> None:
+    """The default model and stream flag outranked the client's own once read back."""
+    configured = ScriptedClient([ONE_RECORD, ONE_RECORD])
+    configured.properties = {"llm.model": "gpt-6-sol", "llm.stream": True}  # type: ignore[attr-defined]
+
+    LlmSource(client=configured).fetch("who?")
+    rebuild(LlmSource(client=configured), configured).fetch("who?")
+
+    fresh, rebuilt = configured.seen_properties
+    assert fresh is not None
+    assert rebuilt is not None
+    for key in ("llm.model", "llm.stream", "llm.reasoning_effort", "llm.max_tokens"):
+        assert rebuilt[key] == fresh[key], key
+    assert rebuilt["llm.model"] == "gpt-6-sol"
+    assert rebuilt["llm.stream"] is True
+
+
+# ------------------------------------------------- a repaired answer says so --
+def test_grouped_numbers_are_read_and_the_repair_is_reported() -> None:
+    from blue_data_llm_source import meta_view
+
+    answer = '[{"parish": "Alpha", "population": 4,470}, {"parish": "Beta", "population": 12}]'
+    result = LlmSource(client=ScriptedClient([answer])).fetch(
+        "parishes", attrs=["parish", "population"]
+    )
+    assert [record["population"] for record in result.records] == [4470, 12]
+    assert result.meta.repaired_numbers == 1
+    assert meta_view(result.meta)["repaired_numbers"] == 1
+
+
+def test_a_clean_answer_reports_no_repair() -> None:
+    from blue_data_llm_source import meta_view
+
+    result = LlmSource(client=ScriptedClient([ONE_RECORD])).fetch("who?")
+    assert result.meta.repaired_numbers == 0
+    assert "repaired_numbers" not in meta_view(result.meta)

@@ -1,21 +1,19 @@
-"""One serialization of :class:`ExecMeta`, for every adapter that publishes it.
+"""Provide one serialization of :class:`ExecMeta` for every adapter.
 
-The CLI and the MCP server each carried their own ``meta_summary``. The two gated
-different fields, so one run described itself two ways depending on which door the caller
-came through: the CLI dropped ``truncated_to`` and ``cache_hits`` altogether, and the MCP
-server dropped ``cache_hits`` and published four alignment diagnostics that the CLI keeps
-behind ``--verbose``. Neither list was wrong. There were two of them, and a field added to
-``ExecMeta`` reached whichever adapter somebody remembered.
+The CLI and MCP server previously had separate ``meta_summary`` implementations with
+different fields. The CLI omitted ``truncated_to`` and ``cache_hits``; the MCP server
+omitted ``cache_hits`` and always published four alignment diagnostics that the CLI exposed
+only with ``--verbose``. A field added to ``ExecMeta`` could also be missed by one adapter.
 
-Three tiers, and which tier a field sits in is a decision about who needs it.
+Fields are grouped into three tiers according to when consumers need them.
 
-*Always present.* The accounting and the result facts. A consumer branches on what these
-say rather than on whether they are there, so an empty list is published as an empty list:
+*Always present.* Accounting and result facts. Consumers branch on their values, so an empty
+list is published as an empty list:
 ``gaps: []`` says nothing was observed to be missing, which is a weaker claim than complete
 and the only one this package is allowed to make.
 
-*Present when populated.* Facts that exist only because something happened — a truncation,
-a cache hit, a question the model rewrote. An absent key means the thing did not happen.
+*Present when populated.* Facts that exist only when something happens: a truncation, a
+cache hit, or a question rewritten by the model. An absent key means the event did not happen.
 ``accounting_known`` belongs here in its false form only, so an ordinary result is
 unchanged and an unmeasured zero is never mistaken for a measured one.
 
@@ -25,24 +23,22 @@ names the model invented and values it returned — so a caller asks for them.
 ``observed_keys`` is in no tier. It holds one entry per key the run saw, so it grows with
 the answer, and ``observed_key_count`` already carries the fact a consumer acts on.
 
-What is masked on the way out follows one line, and ``redaction`` holds it: text this
-package narrates *about* a call leaves through ``redact``; the answer itself does not. The
+The ``redaction`` module defines what is masked on the way out: text this package narrates
+*about* a call passes through ``redact``; the answer itself does not. The
 model name, the rewritten ask, the attributes the caller asked for and an uncheckable
 declared type are narration. The records are the answer, and the key-level diagnostics
 index them — ``primary_keys``, ``unmapped_keys``, ``remapped_keys``, ``type_mismatches``
 and ``key_collisions`` name keys the model returned, so a name masked there would describe
 a record that no longer contains it.
 
-``requested_attrs`` is the one field with a claim on both sides, and it is masked. It does
-index the records, but it is also the caller's own text handed straight back, which is the
-class ``unchecked_types`` is masked for. The cost of masking it is a diagnostic that
-disagrees with a record key, and only where a caller named an attribute after a key
-literal; the cost of not masking it is a credential pasted into an argument and handed back
-into a transcript that outlives the call.
+``requested_attrs`` could be treated as either narration or answer data, so it is masked.
+It indexes records, but it is also caller text returned as-is, like ``unchecked_types``.
+Masking it can make a diagnostic disagree with a record key when an attribute is named after
+a key literal. Leaving it unmasked could return a credential pasted into an argument in a
+transcript that outlives the call.
 
-Which side a new field falls on is not left to whoever adds it: a test walks what this
-view produces and requires every string in it to be masked or to carry a written reason
-for not being.
+When a field is added, a test checks that every string in this view is masked or has a
+documented reason to remain unmasked.
 """
 
 from __future__ import annotations
@@ -81,15 +77,16 @@ def meta_view(meta: ExecMeta, *, verbose: bool = False) -> dict[str, Any]:
     }
     if meta.normalization_collisions:
         view["normalization_collisions"] = list(meta.normalization_collisions)
-    # An uncheckable declared type is a fact about the request rather than about the
-    # answer, and reporting it once is the whole reason the field exists: a misspelled type
-    # otherwise checks nothing in silence.
+    # Include only when the parser changed the model's text.
+    if meta.repaired_numbers:
+        view["repaired_numbers"] = meta.repaired_numbers
+    # Report an uncheckable declared type once. A misspelled type would otherwise check
+    # nothing without notice.
     if meta.unchecked_types:
         view["unchecked_types"] = [redact(name) for name in meta.unchecked_types]
     if meta.record_origins:
         view["record_origins"] = [list(entry) for entry in meta.record_origins]
-    # Only when a model changed the question. A caller reading a short answer needs to know
-    # which question it is short of, and that is not always the one they typed.
+    # Include the rewritten question so callers can see which question a short answer covers.
     if meta.asked is not None:
         view["asked"] = redact(meta.asked)
     if meta.stopped_by:

@@ -1,21 +1,20 @@
 """Registering the source in the data layer, then querying it like any other source.
 
-``LlmSource`` inherits ``blue_data.source.source.DataSource``, but inheriting the base
-class does not make it reachable by protocol name. The route is to build the instance
-yourself and hand it to ``DataRegistry.register_source``. The registry records the class
-path alongside ``name`` and ``properties``, so ``connect_source`` returns the live
-instance while one is present and rebuilds an equivalent source from that record once it
-is gone -- which is what makes a registration durable rather than a reference.
+``LlmSource`` inherits ``blue_data.source.source.DataSource``, but the base class alone
+does not register it under a protocol name. Build the instance and pass it to
+``DataRegistry.register_source``. The registry records the class path, ``name``, and
+``properties``. While the live instance exists, ``connect_source`` returns it; after it is
+dropped, the registry rebuilds an equivalent source from the recorded information.
 
 From there the source answers through the shared surface: ``execute_query_nl`` for a
 natural-language string, ``execute_query`` for a dict carrying an ``op``. Both take a
 ``limits.*`` ceiling in ``optional_properties``, merged over the instance's properties for
 that call only.
 
-For every other source in the layer ``llm_fn`` translates natural language into a native
-dialect. This source has no other dialect, so ``translate_nl_to_native_query`` is the
-identity and ``llm_fn`` is used as the model client instead. The op surface has no
-``llm_fn`` parameter, so the client is injected at construction here; neither path
+For other sources in this layer, ``llm_fn`` translates natural language into a native
+dialect. This source has no other dialect, so ``translate_nl_to_native_query`` returns its
+input unchanged and ``llm_fn`` serves as the model client. The ``op`` interface has no
+``llm_fn`` parameter, so this example injects the client at construction. Neither path
 contacts a provider.
 
 Run from the repository root:

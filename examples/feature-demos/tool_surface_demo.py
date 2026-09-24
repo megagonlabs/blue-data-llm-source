@@ -1,15 +1,15 @@
 """The orchestrator tool surface: four tools served, four withheld, one refused outright.
 
-``DataSource`` offers a tool-calling interface for an orchestrating model -- the source
+``DataSource`` offers a tool-calling interface for an orchestrating model: the source
 advertises tools, the caller invokes them one at a time. That tool set describes a
 relational source, and only four of its eight tools mean anything for a model behind a
 virtual database, so this source advertises those four and nothing else. The definitions
 are the base class's own, filtered by name rather than rewritten, so an advertised schema
 cannot drift from the dispatcher that reads it.
 
-``execute_query_nl_tools`` -- the tool-driven loop -- is refused. It drives up to ten
-provider calls that this source's ceilings do not govern, so serving it would put an
-unbounded spend path behind a method this package never chose to offer.
+``execute_query_nl_tools``, the tool-driven loop, is refused. It drives up to ten
+provider calls that this source's ceilings do not govern. Serving it would expose an
+unbounded spend path through a method this package does not offer.
 
 The client here is a local double returning a canned response, so the ``execute_query``
 tool answers without a provider.

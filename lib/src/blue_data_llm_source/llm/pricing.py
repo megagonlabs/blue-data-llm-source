@@ -29,41 +29,30 @@ Prices are published list prices, in USD per token, and are a snapshot. They go 
 safe direction — providers cut prices far more often than they raise them — but a caller
 running a model this table does not know is refused rather than bounded against a guess.
 Supply ``llm.price_per_input_token`` and ``llm.price_per_output_token`` to bound a model the
-table does not carry.
+table does not carry. Those rates are used as given, so they must already cover every tier
+the model can be billed at. For a model the table does carry, supplied rates are read as its
+base rates: the table's cache-write, long-context and regional charges still apply, and the
+result is never below the table's own bound.
 """
 
 from __future__ import annotations
 
 import math
-import re
 
+from blue_data_llm_source.llm import models
 from blue_data_llm_source.types import ConfigError
 
 # Chat framing the provider adds around the prompt: role labels, separators, and the
 # per-message overhead. Generous, because it is added to a bound and not to an estimate.
 FRAMING_TOKENS = 64
 
-# USD per token, (input, output), from published list prices. Matched exactly, or against a
-# recognised version suffix. An open prefix match let ``gpt-4o-miniature-premium`` inherit
-# ``gpt-4o-mini``'s rates and ``o1-pro`` inherit ``o1``'s, both of which under-price: a
-# longer name is a different model, not a variant of the one whose name it starts with.
+# USD per token, (input, output), for every model the table carries. Derived from the one
+# model table so the rates a ceiling is bounded against and the request contract cannot drift.
 PRICES: dict[str, tuple[float, float]] = {
-    "gpt-4o-mini": (0.15 / 1_000_000, 0.60 / 1_000_000),
-    "gpt-4o": (2.50 / 1_000_000, 10.00 / 1_000_000),
-    "gpt-4-turbo": (10.00 / 1_000_000, 30.00 / 1_000_000),
-    "gpt-4": (30.00 / 1_000_000, 60.00 / 1_000_000),
-    "gpt-3.5-turbo": (0.50 / 1_000_000, 1.50 / 1_000_000),
-    "o1": (15.00 / 1_000_000, 60.00 / 1_000_000),
-    "o3-mini": (1.10 / 1_000_000, 4.40 / 1_000_000),
-    "claude-3-5-haiku": (0.80 / 1_000_000, 4.00 / 1_000_000),
-    "claude-3-5-sonnet": (3.00 / 1_000_000, 15.00 / 1_000_000),
-    "claude-3-opus": (15.00 / 1_000_000, 75.00 / 1_000_000),
+    name: (entry.input, entry.output) for name, entry in models.MODELS.items()
 }
 
-
-# A dated or regional variant of a listed model: the exact name, then a hyphen, then only
-# digits and hyphens. Anything with letters after the name is a different model.
-_VERSION_SUFFIX = re.compile(r"^-[\d-]+$")
+_MIN_CACHEABLE_INPUT_TOKENS = 1_024
 
 
 def rates_for(model: str) -> tuple[float, float] | None:
@@ -73,13 +62,8 @@ def rates_for(model: str) -> tuple[float, float] | None:
     caller-supplied rates worth having; guessing from a prefix is how a dearer model gets
     priced as a cheaper one whose name it happens to extend.
     """
-    name = (model or "").lower()
-    if name in PRICES:
-        return PRICES[name]
-    for known, rates in PRICES.items():
-        if name.startswith(known) and _VERSION_SUFFIX.match(name[len(known) :]):
-            return rates
-    return None
+    base = models.base_name(model)
+    return PRICES[base] if base is not None else None
 
 
 def priceable_models() -> tuple[str, ...]:
@@ -160,8 +144,42 @@ def bound_cost(
     input_rate, output_rate = resolve_rates(model, properties)
     # Bytes, not characters: a byte-pair tokenizer consumes at least one byte per token, and
     # can emit more tokens than the prompt has characters when it has no merge for them.
-    prompt_tokens = len(prompt.encode("utf-8")) + FRAMING_TOKENS
-    return prompt_tokens * input_rate + output_cap * output_rate
+    prompt_bytes = len(prompt.encode("utf-8"))
+    prompt_tokens = prompt_bytes + FRAMING_TOKENS
+    entry = models.entry_for(model)
+    if entry is None:
+        # Rates the caller supplied for a model the table does not carry are used as given.
+        # Nothing here knows that model's cache, tier or regional charges, so the rates have
+        # to cover every tier it can be billed at already.
+        return prompt_tokens * input_rate + output_cap * output_rate
+    # Supplied rates for a known model are taken as its base rates. The table's cache-write
+    # ratio, long-context tier and regional uplift still apply to them, and they can raise
+    # the bound but never lower it below the table's own: a base rate alone omits charges
+    # the model is known to carry.
+    return max(
+        _entry_bound(entry, entry.input, entry.output, prompt_tokens, output_cap),
+        _entry_bound(entry, input_rate, output_rate, prompt_tokens, output_cap),
+    )
+
+
+def _entry_bound(
+    entry: models.ModelEntry,
+    input_rate: float,
+    output_rate: float,
+    prompt_tokens: int,
+    output_cap: float,
+) -> float:
+    """One call's bound at these base rates, with *entry*'s billing modifiers applied."""
+    # The response does not say how much of the prompt was written to cache, so any prompt
+    # long enough to be cached is bounded as if all of it was, at the write rate's ratio to
+    # the input rate.
+    if prompt_tokens >= _MIN_CACHEABLE_INPUT_TOKENS and entry.cache_write is not None:
+        input_rate *= max(1.0, entry.cache_write / entry.input)
+    tier = entry.long_context
+    if tier is not None and prompt_tokens > tier.threshold:
+        input_rate *= tier.input_multiplier
+        output_rate *= tier.output_multiplier
+    return (prompt_tokens * input_rate + output_cap * output_rate) * entry.regional_uplift
 
 
 def can_bound(model: str, max_tokens: object, properties: dict[str, object] | None = None) -> bool:

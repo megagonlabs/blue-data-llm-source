@@ -1,6 +1,6 @@
 # LlmSource — Software Stack
 
-Three packages are built from this repository, none of them on a package index: the library, an MCP server, and a CLI. Each is independently versioned and depends on the library, so the library itself carries no server or CLI dependency.
+This repository builds three packages that are not available on a package index: the library, an MCP server, and a CLI. Each is independently versioned. The two interface packages depend on the library, which has no server or CLI dependency.
 
 ---
 
@@ -18,9 +18,9 @@ Three packages are built from this repository, none of them on a package index: 
 
 ## Dependency Posture
 
-The library declares one dependency on the data layer and none on anything above it. `blue-data` supplies the `DataSource` base class this source inherits, as every source in the layer does. Nothing here imports the Blue orchestration platform or the operator library: depending on the data layer is not depending on the runtime that calls it. No infrastructure requirement is introduced either way: no server, no broker, no database.
+The library depends on the data layer and nothing above it. `blue-data` supplies the `DataSource` base class inherited by every source in the layer. The package does not import the Blue orchestration platform or the operator library. It also requires no server, broker, or database.
 
-`blue-data` brings `pandas`, `numpy`, and `jsonpath-ng` with it, which is the layer's cost of entry rather than this package's choice, and it is not published to a public index. Install it from its checkout before installing this package, the way the other source subrepos do.
+`blue-data` also installs `pandas`, `numpy`, and `jsonpath-ng`; these are dependencies of the data layer, not choices made by this package. Since `blue-data` is not published to a public index, install it from its checkout before installing this package, as with the other source subrepositories.
 
 | Layer | Status |
 |-------|--------|
@@ -30,9 +30,9 @@ The library declares one dependency on the data layer and none on anything above
 | Provider SDK | Optional extra, imported lazily inside the default client |
 | Cache backend | Two stores ship on the standard library; `diskcache` from the `llm` extra backs the `llm.cache` switch, and a caller may supply any store satisfying the protocol |
 
-An earlier version of this package declared no dependency at all and matched the source query surface by shape. Inheritance replaced that, because the two positions fail differently: under shape matching an upstream signature change is discovered by whoever integrates against it, and under inheritance it is a type error at the boundary that owns it. For a package whose value rests on a configured limit actually holding, that trade is worth an install.
+An earlier version declared no dependency and matched the source query surface by shape. Inheritance replaced that approach. With shape matching, an upstream signature change is discovered by an integrator; with inheritance, it becomes a type error at the owning boundary. For a package whose configured limits must hold, this trade-off justifies the additional dependency.
 
-The consequence for a caller is that `pip install blue-data-llm-source` brings in two runtime packages and their own dependencies, where it used to bring one. The test suite still runs with no provider SDK installed and no network access.
+As a result, `pip install blue-data-llm-source` brings in two runtime packages and their dependencies instead of one. The test suite still runs without a provider SDK or network access.
 
 ---
 
@@ -64,14 +64,15 @@ There is no `blue-data` extra. It existed to gate the compatibility adapter whil
 | Concern | Choice |
 |---------|--------|
 | Provider transport | `litellm` |
-| Default model | `gpt-4o` |
+| Default model | `gpt-6-luna`, medium reasoning |
+| Known models | One table in `llm/models.py`: each model's request contract and published rates |
 | Protocol | `llm` |
 | Variant | `openai` |
 | Credential handling | None. The library receives a client or a callable and never reads a key |
 
-`litellm` is imported inside the call that uses it rather than at module import, so the package installs, imports, and runs its tests with no provider SDK present. It is a transport shim, not a framework: the client builds its own call arguments, owns its own retry, cache, concurrency, and accounting, and does not adopt a provider-agnostic abstraction layer over the request itself.
+`litellm` is imported inside the call that uses it, so the package installs, imports, and runs tests without the provider SDK. It is a transport shim. The client builds its own call arguments and manages retry, caching, concurrency, and accounting without adding a provider-agnostic abstraction over the request.
 
-Two pieces of it are used as more than transport, and both are places where writing our own would mean keeping a second copy of somebody else's contract. `completion_cost` reads what a call was billed. `stream_chunk_builder` rebuilds one response from the chunks of a streamed call, which is what lets `llm.stream=True` be supported without a separate downstream path. Neither is trusted blindly: an unreadable cost is reported as unknown rather than as zero, and the assembler's habit of filling in token counts from a local tokenizer is worked around instead of being repeated as accounting. `04-detailed-architecture.md` has the detail.
+The client also uses two `litellm` functions beyond transport, avoiding the need to maintain copies of their contracts. `completion_cost` reads what a call was billed. `stream_chunk_builder` rebuilds a response from streamed chunks, allowing `llm.stream=True` without a separate downstream path. Neither function is trusted blindly. An unreadable cost, including a calculator result of zero for a call that reached the provider, is reported as unknown. The client also works around the assembler's practice of filling in token counts with a local tokenizer rather than using those counts for accounting. See `04-detailed-architecture.md` for details.
 
 One behaviour of that dependency reaches the process boundary and is worth recording. On some
 failure paths `litellm` writes coloured banners to standard output rather than standard error. The
@@ -89,9 +90,11 @@ The model boundary is a structural protocol with two methods:
 
 Any object carrying both can be injected. Two implementations ship: `DefaultLlmClient`, which calls a provider, and `FunctionClient`, which wraps a plain `(prompt: str) -> str` callable.
 
-A second protocol, `BudgetAwareClient`, adds one method to those two: `budget_capabilities() -> frozenset[str]`, returning axis names from `types.Capability`. It is how a client says which ceilings its provider calls can be held to, and each configured ceiling on an axis it does not name is refused for that run, counting every ceiling in the budget chain, not only the ones this request set; the row ceiling needs nothing from the client, since the source counts the records itself. `DefaultLlmClient` declares all four axes, and `FunctionClient` declares rows alone, because it cannot know what a caller's function is billed, how to stop it, or how many provider calls one invocation of it becomes. The run hands its budget to the client as a per-call property rather than setting it on the client, because one client can serve several concurrent fetches, and it hands down a per-call list under `usage_sink` for the same reason. One name in that set, `estimate`, is not a ceiling: it declares that the client can price an attempt in advance, which `LlmSource.estimate` requires before it will give a figure. `DefaultLlmClient` declares all five.
+The `BudgetAwareClient` protocol adds `budget_capabilities() -> frozenset[str]` to the two completion methods. It returns axis names from `types.Capability` and declares which provider-call ceilings the client can enforce. The source refuses each configured ceiling on an undeclared axis, including ceilings inherited through the budget chain. The row ceiling does not depend on the client because the source counts records itself. `DefaultLlmClient` declares all four axes. `FunctionClient` declares only rows because it cannot know what a caller's function costs, how to stop it, or how many provider calls one invocation makes. The run passes the budget to the client as a per-call property so one client can serve concurrent fetches without sharing their ceilings. It also passes a per-call list under `usage_sink` for the same reason. `estimate` is not a ceiling; it declares that the client can price an attempt in advance, which `LlmSource.estimate` requires before returning a figure. `DefaultLlmClient` declares all five capabilities.
 
-**Configuration.** The provider credential is read by the provider SDK from its own environment variable and never by this package. The model is selected through the `llm.model` property, and the package names no environment variable of its own.
+LiteLLM's bundled price map lags new models, so the client does not rely on it to route or to price. A bare OpenAI model name is sent with the provider named, and the cost bound is built from the package's own table. The calculator's figure is a settlement input only.
+
+**Configuration.** The provider credential is read by the provider SDK from its own environment variable and never by this package. The model is selected through the `llm.model` property, and the library names no environment variable of its own. The CLI and the MCP server read `BLUE_DATA_LLM_MODEL` and the `BLUE_DATA_LLM_SOURCE_*` settings and pass them down as properties.
 
 ---
 
@@ -124,7 +127,8 @@ The `llm.cache` switch is separate from both stores and opens `diskcache`. That 
 | Server | Low-level server over stdio |
 | Tools | `llmdb_query`, `llmdb_estimate`, `llmdb_list_models`, `llmdb_inspect_model`, `llmdb_inspect_metadata` |
 | Entry point | `blue-data-llm-mcp` |
-| Dependencies | `blue-data-llm-source[llm]>=2.0.0`, `mcp==1.27.2` |
+| Configuration | `BLUE_DATA_LLM_MODEL` and nine `BLUE_DATA_LLM_SOURCE_*` request settings from the process environment, read on every call, plus three operator ceilings (`_LIMIT_COST`, `_LIMIT_CALLS`, `_LIMIT_SECONDS`) that a call can lower but not raise |
+| Dependencies | `blue-data-llm-source[llm]>=2.1.0`, `mcp==1.27.2` |
 
 The low-level server is used rather than the decorator-derived one because the tool schemas are written by hand. Deriving a schema from a handler signature would put the tool contract in a Python signature instead of in the JSON a client actually sees, and that JSON is the contract an agent reads.
 
@@ -141,7 +145,7 @@ The `mcp` import is confined to the transport module. Tool definitions and argum
 | Commands | 12, over the `profile`, `data`, `model` and `metadata` components |
 | Entry point | `blue-llmdb` |
 | Configuration | Profiles under `~/.blue-llmdb`, a local stand-in for `blue_data.utils.config` until that module ships |
-| Dependencies | `blue-data-llm-source[llm]>=2.0.0`, `click>=8.0`, `rich>=13.0` |
+| Dependencies | `blue-data-llm-source[llm]>=2.1.0`, `click>=8.0`, `rich>=13.0` |
 
 Click commands are synchronous and call the library's synchronous wrapper. Rich markup is disabled on output, because a record value containing square brackets is data rather than a style tag.
 

@@ -126,11 +126,8 @@ def fill(template: str, **slots: Slot) -> str:
     caller happened to type.
     """
     for name, slot in slots.items():
-        # Belt and braces, deliberately. The annotation catches a caller that type-checks;
-        # this catches one that does not, and the whole point of the type is that "was this
-        # encoded" stops depending on anyone remembering. A checker calling the test
-        # redundant is agreeing that the static half works, not that the runtime half is
-        # unnecessary.
+        # Keep the runtime check even with the annotation: callers may not run a type
+        # checker, and both checks enforce that values were encoded.
         if not isinstance(slot, Slot):  # pyright: ignore[reportUnnecessaryIsInstance]
             raise TypeError(
                 f"prompt field {name!r} must be a Slot saying how it is written, "
@@ -139,12 +136,10 @@ def fill(template: str, **slots: Slot) -> str:
     return template.format_map({name: slot.text for name, slot in slots.items()})
 
 
-# Every code point Python counts as ending a line. Taken
-# from `str.splitlines` rather than listed by hand, because the differential oracle counts
-# lines with `splitlines` and a shorter list here would mean the encoder and the test disagree
-# about what a line is. Naming `\n` and `\r` and stopping there is exactly that disagreement:
-# U+2028 survives `json.dumps(ensure_ascii=False)` intact, and `splitlines` treats it as a
-# break, so model text could open its own line while passing every guard.
+# Every code point Python treats as a line break, taken from `str.splitlines` so the encoder
+# and differential oracle use the same definition. Listing only `\n` and `\r` would miss
+# U+2028, which survives `json.dumps(ensure_ascii=False)` but is treated as a line break by
+# `splitlines`. Model text could then open a new line while passing the guards.
 LINE_BREAKS: Final = tuple(
     sorted({c for c in map(chr, range(0x110000)) if len(f"a{c}b".splitlines()) > 1})
 )

@@ -194,5 +194,6 @@ def test_truncation_keeps_the_limit() -> None:
 def test_the_library_default_output_allowance_is_read_rather_than_copied() -> None:
     """A second copy of the library's number is a second thing to get wrong."""
     from blue_data_llm_source import LlmSource
+    from blue_data_llm_source.llm import DEFAULT_MODEL
 
-    assert config.default_max_tokens() == LlmSource().properties["llm.max_tokens"]
+    assert config.default_max_tokens() == LlmSource().max_tokens_for_model(DEFAULT_MODEL)

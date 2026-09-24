@@ -1,6 +1,6 @@
 # Installation
 
-This page covers the supported installation paths for the library, CLI, and MCP server.
+This page describes supported installation paths for the library, CLI, and MCP server.
 
 ## Components
 
@@ -16,9 +16,9 @@ blue-data-llm-source/
 
 | Package | Directory | Version | Depends on |
 |---|---|---|---|
-| `blue-data-llm-source` | `lib/` | 2.0.0 | `blue-data>=0.1.0`, `tenacity>=9.0.0` |
-| `blue-data-llm-cli` | `platform/llm-cli/` | 2.0.0 | `blue-data-llm-source[llm]>=2.0.0`, `click>=8.0`, `rich>=13.0` |
-| `blue-data-llm-mcp` | `platform/llm-mcp/` | 2.0.0 | `blue-data-llm-source[llm]>=2.0.0`, `mcp==1.27.2` |
+| `blue-data-llm-source` | `lib/` | 2.1.0 | `blue-data>=0.1.0`, `tenacity>=9.0.0` |
+| `blue-data-llm-cli` | `platform/llm-cli/` | 2.1.0 | `blue-data-llm-source[llm]>=2.1.0`, `click>=8.0`, `rich>=13.0` |
+| `blue-data-llm-mcp` | `platform/llm-mcp/` | 2.1.0 | `blue-data-llm-source[llm]>=2.1.0`, `mcp==1.27.2` |
 
 The `mcp` pin is exact rather than a floor. The low-level server API that component is built on was removed in `mcp` 2.0, so a floor would resolve to a release where the server cannot import.
 
@@ -40,7 +40,7 @@ Installing `blue-data` also installs `pandas`, `numpy`, and `jsonpath-ng`.
 
 ## Scripts
 
-Each component has a `scripts/` directory with the same three scripts. The scripts resolve paths from their own locations and can be run from any working directory.
+Each component has a `scripts/` directory containing the same three scripts. They resolve paths from their own locations and can run from any working directory.
 
 | Script | What it does |
 |---|---|
@@ -80,7 +80,7 @@ When `blue-data` lives elsewhere, replace both `../blue-data/lib` paths with its
 
 Satisfy [Requirements](#requirements) first. Both routes below assume a `blue-data` checkout is already on disk, and `lib/scripts/install.sh` exits with a message rather than guessing when it cannot find one.
 
-Every route below needs network access. Only `blue-data` comes from the local checkout; all other dependencies are resolved from a package index. These are editable installs, so Python imports each package from its working tree instead of a copy under `site-packages`. Once the CLI component is installed, `blue-llmdb --version` prints the installed version.
+Every route below needs network access. Only `blue-data` comes from the local checkout; all other dependencies are resolved from a package index. These editable installs make Python import each package from its working tree rather than from a copy under `site-packages`. After installing the CLI component, `blue-llmdb --version` prints the installed version.
 
 The whole repository, in dependency order:
 
@@ -105,8 +105,6 @@ lib/scripts/install.sh
 python -c "import blue_data_llm_source; print(blue_data_llm_source.__version__)"
 ```
 
-For the type gate, each `pyproject.toml` points `pyright` at a `.venv` in that component's directory. Without one it reports every import as unresolved instead of reporting real typing errors.
-
 ## Manual install
 
 The same thing without the scripts, one package at a time:
@@ -126,7 +124,7 @@ This is the route to take when `blue-data` is already installed, or when you wan
 
 | Extra | Packages | Required for |
 |---|---|---|
-| `llm` | `litellm>=1.95.0,<2`, `diskcache>=5.6,<6` | Reaching a provider through the built-in client, and the `llm.cache` on-disk response cache |
+| `llm` | `litellm>=1.102.0,<2`, `diskcache>=5.6,<6` | Reaching a provider through the built-in client, and the `llm.cache` on-disk response cache |
 | `all` | the same two | An alias for `llm` |
 | `dev` | `pytest`, `pytest-asyncio`, `pytest-cov`, `ruff`, `pyright`, `build`, `twine` | Running the tests and the lint, type, build, and publish gates |
 
@@ -134,7 +132,7 @@ This is the route to take when `blue-data` is already installed, or when you wan
 pip install -e "lib[llm]"
 ```
 
-Both `llm` packages are imported lazily, inside the call that needs them, so the library installs and its whole test suite runs with neither present. A request that would reach a provider without them raises `ConfigError` naming the extra.
+Both `llm` packages are imported lazily inside the call that needs them. The library can therefore be installed and its full test suite run without either package. A request that would reach a provider without them raises `ConfigError` naming the extra.
 
 ### `blue-data-llm-cli` and `blue-data-llm-mcp`
 
@@ -170,6 +168,8 @@ Run these commands from the repository root. Each command enters one component i
 
 Unit tests only. Every I/O boundary is doubled and no test touches the network or needs a credential. Coverage is not collected by default and no threshold is enforced; pass `--cov=src` to measure it.
 
+For the type check, each `pyproject.toml` points `pyright` at a `.venv` in that component's directory. Create one there before installing that component; without it pyright reports every import as unresolved instead of real typing errors.
+
 `lib/tests/unit/compat/test_contract.py` compares this source's method signatures with the installed `blue_data.source.source.DataSource` and prints the inspected package path. Run it after installing or upgrading `blue-data` so the comparison covers the package used by the current environment.
 
 ## Environment variables
@@ -178,7 +178,7 @@ The library runtime defines no environment variables of its own. The install scr
 
 | Variable | Read by | Purpose |
 |---|---|---|
-| `BLUE_DATA_PATH` | `lib/scripts/install.sh` | Where to find the `blue-data` checkout's `lib` directory. Defaults to `../../blue-data/lib` |
+| `BLUE_DATA_PATH` | `lib/scripts/install.sh` | Where to find the `blue-data` checkout's `lib` directory. Defaults to `../blue-data/lib` from the repository root, a `blue-data` checkout beside this one |
 | The provider's API key variable | The provider SDK, at call time | Authenticates a request that reaches a model. Which name applies depends on the model you configure |
 
 Because the library never reads a credential, it cannot report one missing. An absent or wrong key arrives as a failed provider call, which reaches you as a `TransportError`. Read a `TransportError` that mentions credentials as "the key is absent or wrong" rather than as a network fault.

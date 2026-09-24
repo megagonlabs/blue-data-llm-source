@@ -241,7 +241,11 @@ print(sized.bounded, round(sized.max_cost, 6), sized.model)
 
 Presence decides that you meant to override, not validity: supplying one key commits you to both, and a value that is not a finite positive number raises `ConfigError` instead of falling back to the table. Falling back would accept an explicit instruction and then ignore it, which against a stale table produces a bound below the one you asked for.
 
+Rates for a model the table does not carry are used as given, so they must already cover every tier it can be billed at: cache writes, a long-context tier, regional processing. Rates supplied for a model the table does carry are read as its base rates. The table's cache-write ratio, long-context tier and regional uplift still apply to them, and the bound never falls below the table's own, so supplying a model's published base rates cannot drop a charge it is known to carry.
+
 Both keys are consumed locally and never forwarded to the provider.
+
+Under a cost ceiling, a call priced at your rates keeps its whole reservation, or the provider's reported figure where that is higher, and reports its accounting as unknown, because nothing in the response proves the charge against rates this package did not publish.
 
 `rates_for(model)` returns `None` for a model the table does not carry, `priceable_models()` lists the ones it does, and `can_bound(model, max_tokens, properties)` answers whether a ceiling could be claimed (without raising), so you can check before configuring one.
 

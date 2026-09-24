@@ -33,6 +33,7 @@ ALWAYS = {
 
 WHEN_POPULATED = {
     "normalization_collisions",
+    "repaired_numbers",
     "unchecked_types",
     "record_origins",
     "asked",
@@ -65,6 +66,7 @@ def populated() -> ExecMeta:
         marginal_key_yields=[7, 2],
         incomplete_key_records=1,
         normalization_collisions=[{"kept": "France"}],
+        repaired_numbers=2,
         observed_keys=["France", "Germany"],
         unmapped_keys=["capital"],
         remapped_keys={"Country": "country"},

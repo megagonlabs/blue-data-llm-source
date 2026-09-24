@@ -1,20 +1,20 @@
 """A ReAct agent over the real MCP server, choosing its own tools and its own order.
 
-No source-specific code on the LangGraph side. ``langchain-mcp-adapters`` launches
+The LangGraph code does not depend on the source implementation. ``langchain-mcp-adapters`` launches
 ``blue-data-llm-mcp`` as a stdio subprocess, discovers the five tools it advertises --
 ``llmdb_query``, ``llmdb_estimate``, ``llmdb_list_models``, ``llmdb_inspect_model`` and
 ``llmdb_inspect_metadata`` -- and hands them to a ``create_react_agent``
 agent, which decides what to call and when.
 
-The interesting instruction below is the one telling the agent to price a request before
-running it. ``llmdb_estimate`` contacts no provider, so an agent can size a question for
-free and refuse it, which is the whole reason that tool is on the server beside the fetch.
+The system prompt tells the agent to estimate a request before running it.
+``llmdb_estimate`` contacts no provider, so the agent can estimate the cost before deciding
+whether to proceed.
 
-**A ceiling here is per call, and a call that sets none has none.** The server constructs
-its source with no properties, so nothing is configured out of band on the agent's behalf:
-an agent that omits ``limits.max_cost`` can spend whatever the provider charges. That is
-what to weigh before handing this transport a live credential, and why the system prompt
-here states the ceilings as a rule rather than hoping for them.
+**Set an operator ceiling before providing a live credential.** The server reads
+``BLUE_DATA_LLM_SOURCE_LIMIT_COST``, ``_LIMIT_CALLS`` and ``_LIMIT_SECONDS`` from its
+environment as ceilings for every call; an agent's ``limits.*`` can lower them but never
+raise them. Without an operator ceiling, an agent that omits ``limits.max_cost`` can spend
+whatever the provider charges. The system prompt also asks the agent to pass its own.
 
 Requires: OPENAI_API_KEY, the provider extra, and the MCP package installed so the
 ``blue-data-llm-mcp`` console script is on PATH.

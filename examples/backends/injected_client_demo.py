@@ -1,16 +1,14 @@
 """The second client axis: an injected client the source can actually bound.
 
-An ``llm_fn`` is opaque. A client is not: implement ``complete``/``acomplete``, declare
-which ceilings you can be held to through ``budget_capabilities()``, claim against the
+An ``llm_fn`` is opaque to the source. An injected client can declare its capabilities:
+implement ``complete``/``acomplete``, declare which ceilings it supports through ``budget_capabilities()``, claim against the
 run's ``Budget`` on every provider attempt, and append a ``Usage`` to the per-call
-``usage_sink``. The source then reports a real model name, real token counts, a settled
-cost, and ``accounting_known=True`` -- and a cost or call ceiling binds instead of being
-refused.
+``usage_sink``. The source can then report a model name, token counts, settled cost, and
+``accounting_known=True``. Cost and call ceilings can bind rather than being refused.
 
 ``LedgerClient`` below is a local double, not a provider. It returns a canned response
-and settles an invented price, so the numbers are this script's, not a vendor's. What is
-real is the accounting path they travel: the same reservation, settlement and usage sink
-``DefaultLlmClient`` uses.
+and settles an invented price, so the numbers are specific to this script. The accounting
+path is the same one ``DefaultLlmClient`` uses for reservation, settlement, and usage.
 
 Run from the repository root:
     python3 examples/backends/injected_client_demo.py

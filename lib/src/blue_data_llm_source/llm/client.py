@@ -33,7 +33,7 @@ from tenacity.stop import stop_base
 from tenacity.wait import wait_base
 
 from blue_data_llm_source import _constants as C
-from blue_data_llm_source.llm import pricing
+from blue_data_llm_source.llm import models, pricing
 from blue_data_llm_source.llm.budget import Budget
 from blue_data_llm_source.types import (
     BudgetExceeded,
@@ -48,6 +48,7 @@ from blue_data_llm_source.types import (
 # configs that did not describe what ran.
 _ACCEPTED = {
     "model",
+    "reasoning_effort",
     "temperature",
     "max_tokens",
     "stream",
@@ -77,6 +78,142 @@ _DEFERRED = {
 }
 # Stripped after every merge so an override cannot smuggle transport fields through.
 _RESERVED = {"api", "service_url", "variant", "protocol"}
+
+
+DEFAULT_MODEL = "gpt-6-luna"
+DEFAULT_REASONING_EFFORT = "medium"
+REASONING_EFFORTS = frozenset(models.EFFORT_ORDER)
+
+
+def default_max_tokens_for(model: object) -> int:
+    """Return the model's default output allowance, or the legacy allowance."""
+    contract = models.contract_for(model)
+    return contract.default_max_tokens if contract is not None else models.LEGACY_OUTPUT_ALLOWANCE
+
+
+def default_reasoning_effort_for(model: object) -> str | None:
+    """Return the model's default reasoning effort, when it has one."""
+    contract = models.contract_for(model)
+    return contract.default_reasoning_effort if contract is not None else None
+
+
+def _must_retain_cost_bound(model: object, bound: float, properties: dict[str, Any]) -> bool:
+    """Whether response accounting is insufficient to release a hard-cost reservation.
+
+    The provider library's calculator prices a response from its own map. That figure can
+    release a reservation only when the package's table knows the model and nothing the
+    response leaves out can change the bill. A model the table does not carry, or one priced
+    at the caller's rates, may be priced differently or not at all by the calculator. A cache
+    write or the long-context tier changes the charge, and neither is proven by a standard
+    response. Nor is the regional-processing uplift, which the calculator does not apply. In
+    those cases the calculator can still show that the call cost more than the
+    bound, so the higher figure wins, but it cannot lower the charge below the reservation.
+    Only :func:`_usage_bound` can, and only for a table model priced at the table's rates.
+    """
+    if bound <= 0:
+        return False
+    if (
+        properties.get("llm.price_per_input_token") is not None
+        or properties.get("llm.price_per_output_token") is not None
+    ):
+        return True
+    entry = models.entry_for(model)
+    return (
+        entry is None
+        or entry.cache_write is not None
+        or entry.long_context is not None
+        or entry.regional_uplift != 1.0
+    )
+
+
+# Served tiers billed at no more than the standard rates in the table. Fast mode reports
+# `priority`, and `auto` or a missing tier does not say which rates applied.
+_STANDARD_OR_CHEAPER_TIERS = frozenset({"default", "flex"})
+
+
+def _count(value: Any) -> int | None:
+    """A non-negative integer token count, or None."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _usage_bound(
+    model: object, payload: dict[str, Any], properties: dict[str, Any]
+) -> float | None:
+    """An upper bound on one call's charge from its reported usage, or None.
+
+    Used where the calculator's figure cannot release a reservation: a call it could not
+    price, or one whose billed categories it cannot prove. Without it such a call is charged
+    its whole reservation, which at a reasoning model's output allowance is many times the
+    real cost and lets a ceiling admit only a handful of calls. The figure is built only
+    where each input to it is proven:
+
+    - the rates are this package's own row, so not for an unknown model or caller rates;
+    - the model that answered resolves to the same row as the one requested;
+    - the served tier is one billed at or below standard rates;
+    - the usage reports whole token counts, including the cached share of the prompt.
+
+    Each part is then priced at the highest rate it could have been billed at. Every
+    uncached prompt token is priced as a cache write where the model has that charge,
+    because the write count is not promised. The long-context rates apply to every call
+    on a model that has the tier, because no field says which tier was billed and hidden
+    tokens can cross the threshold. The regional uplift applies wherever the model is
+    subject to it.
+    """
+    if (
+        properties.get("llm.price_per_input_token") is not None
+        or properties.get("llm.price_per_output_token") is not None
+    ):
+        return None
+    entry = models.entry_for(model)
+    answered = payload.get("model")
+    # Compared by value, so an alias answered by the model it routes to still qualifies:
+    # the two carry the same rates.
+    if entry is None or not isinstance(answered, str) or models.entry_for(answered) != entry:
+        return None
+    if payload.get("service_tier") not in _STANDARD_OR_CHEAPER_TIERS:
+        return None
+    raw: Any = payload.get("usage")
+    usage = cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
+    details_raw: Any = usage.get("prompt_tokens_details")
+    details = cast("dict[str, Any]", details_raw) if isinstance(details_raw, dict) else {}
+    prompt = _count(usage.get("prompt_tokens"))
+    completion = _count(usage.get("completion_tokens"))
+    cached = _count(details.get("cached_tokens"))
+    if prompt is None or completion is None or cached is None or cached > prompt:
+        return None
+    # Counts that cannot describe a contacted call are not an account of one. Every request
+    # sends a prompt, and a text answer cannot cost zero output tokens; taken at face value,
+    # all-zero counts price a billed call at nothing and release its reservation.
+    if prompt == 0 or (completion == 0 and _answered_text(payload)):
+        return None
+    tier = entry.long_context
+    input_factor = tier.input_multiplier if tier is not None else 1.0
+    output_factor = tier.output_multiplier if tier is not None else 1.0
+    uncached_rate = max(entry.input, entry.cache_write or 0.0)
+    cached_rate = entry.cached_input if entry.cached_input is not None else entry.input
+    figure = entry.regional_uplift * (
+        (prompt - cached) * uncached_rate * input_factor
+        + cached * cached_rate * input_factor
+        + completion * entry.output * output_factor
+    )
+    return figure if math.isfinite(figure) else None
+
+
+def _retained_cost(
+    model: object,
+    payload: dict[str, Any],
+    properties: dict[str, Any],
+    reservation: float,
+    reported: float,
+) -> float:
+    """The charge for a retained call, never below the calculator's own figure.
+
+    That is the usage bound where one can be built, and the whole reservation otherwise.
+    """
+    usage_bound = _usage_bound(model, payload, properties)
+    return max(reservation if usage_bound is None else usage_bound, reported)
 
 
 def accepted_adapter_keys() -> frozenset[str]:
@@ -141,6 +278,12 @@ def check_adapter_keys(properties: dict[str, Any]) -> None:
         # family, one for another — so a numeric bound here would refuse a value the
         # provider accepts, which is worse than the silence it replaces.
         raise ConfigError(f"'llm.temperature' must be a finite number, got {temperature!r}")
+    effort = properties.get("llm.reasoning_effort")
+    if effort is not None and (not isinstance(effort, str) or effort not in REASONING_EFFORTS):
+        raise ConfigError(
+            f"'llm.reasoning_effort' must be one of {sorted(REASONING_EFFORTS)}, got {effort!r}"
+        )
+    _check_contract(model or DEFAULT_MODEL, effort, temperature, quoted=True)
     timeout = properties.get("llm.timeout")
     if timeout is not None and _positive_finite_number(timeout) is None:
         raise ConfigError(
@@ -160,7 +303,29 @@ def check_adapter_keys(properties: dict[str, Any]) -> None:
         )
 
 
-DEFAULT_MODEL = "gpt-4o"
+def _check_contract(model: str, effort: Any, temperature: Any, *, quoted: bool = False) -> None:
+    """Refuse an effort or a temperature the model's published contract rules out.
+
+    Run before anything is reserved, so a request the provider would reject costs nothing.
+    A model the table does not carry is checked only for the one rule every reasoning model
+    shares, and otherwise left to the provider.
+    """
+    effort_key, temperature_key = (
+        ("'llm.reasoning_effort'", "'llm.temperature'")
+        if quoted
+        else ("llm.reasoning_effort", "llm.temperature")
+    )
+    contract = models.contract_for(model)
+    if contract is not None:
+        if effort is not None and effort not in contract.reasoning_efforts:
+            if not contract.reasoning_efforts:
+                raise ConfigError(f"{model} does not support {effort_key}")
+            raise ConfigError(f"{model} does not support reasoning effort {effort!r}")
+        if temperature is not None and contract.temperature == models.TEMPERATURE_NEVER:
+            raise ConfigError(f"{model} does not accept {temperature_key} at any reasoning effort")
+        effort = effort or contract.default_reasoning_effort
+    if effort not in {None, "none"} and temperature is not None:
+        raise ConfigError(f"{temperature_key} is not supported when {effort_key} is not 'none'")
 
 
 class _Provider(Protocol):
@@ -177,6 +342,14 @@ class _Provider(Protocol):
     async def acompletion(self, **kwargs: Any) -> Any: ...
 
     def stream_chunk_builder(self, chunks: list[Any]) -> Any: ...
+
+    def get_supported_openai_params(
+        self, *, model: str, custom_llm_provider: str | None = None
+    ) -> list[str] | None: ...
+
+    def get_llm_provider(
+        self, model: str, custom_llm_provider: str | None = None
+    ) -> tuple[str, str, str | None, str | None]: ...
 
 
 class _StopAtDeadline(stop_base):
@@ -436,11 +609,84 @@ class DefaultLlmClient:
 
         for reserved in _RESERVED:
             kwargs.pop(reserved, None)
+        for optional in ("reasoning_effort", "temperature"):
+            if kwargs.get(optional) is None:
+                kwargs.pop(optional, None)
 
         kwargs.setdefault("model", properties.get("llm.model") or DEFAULT_MODEL)
         if not kwargs.get("model"):
             raise ConfigError("no model configured (set llm.model)")
+        model = str(kwargs["model"])
+        contract = models.contract_for(model)
+        # Checked against the caller's own settings, before any default is filled in, so a
+        # temperature the caller set is refused by name rather than by the provider.
+        _check_contract(model, kwargs.get("reasoning_effort"), kwargs.get("temperature"))
+        if contract is not None:
+            if contract.reasoning_efforts:
+                kwargs["reasoning_effort"] = (
+                    kwargs.get("reasoning_effort") or contract.default_reasoning_effort
+                )
+            if contract.default_temperature is not None and "temperature" not in kwargs:
+                kwargs["temperature"] = contract.default_temperature
+            if (
+                contract.output_token_parameter == "max_completion_tokens"
+                and "max_tokens" in kwargs
+            ):
+                kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
+        # A name without a contract keeps `max_tokens`, which the provider library translates
+        # for a model it knows to need `max_completion_tokens`. Asserting the newer parameter
+        # for a model nobody has described here would be a guess about its contract.
+        if models.pins_openai(model):
+            kwargs["custom_llm_provider"] = "openai"
         return kwargs
+
+    @staticmethod
+    def _check_provider_compatibility(provider: _Provider, kwargs: dict[str, Any]) -> None:
+        """Fail locally when LiteLLM cannot route or shape the request for this model.
+
+        Runs after the import and before the attempt is claimed, so either refusal is
+        uncharged. Only the two failures named here are converted. Anything the provider
+        library raises inside the attempt is charged as it always was, because nothing
+        there proves the request never left the process.
+        """
+        model = str(kwargs.get("model", ""))
+        provider_name = cast("str | None", kwargs.get("custom_llm_provider"))
+        try:
+            provider.get_llm_provider(model=model, custom_llm_provider=provider_name)
+        except Exception as error:
+            # Only the missing-provider failure is converted. Anything else is met again
+            # inside the attempt and reported the way every other adapter error is.
+            if "LLM Provider NOT provided" in str(error):
+                # An OpenAI name is the one case where the provider is known; for any other
+                # family, suggesting `openai/` would send the call to the wrong provider.
+                remedy = (
+                    f"Name the provider in the model, as in 'openai/{model}'"
+                    if models.openai_family(model)
+                    else "Name the provider LiteLLM should route it to, as in 'provider/model'"
+                )
+                raise ConfigError(
+                    f"the installed LiteLLM cannot tell which provider serves {model!r}. {remedy}"
+                ) from error
+        contract = models.contract_for(model)
+        if contract is None or not contract.reasoning_efforts:
+            return
+        lookup = models.lookup_name(model)
+        try:
+            supported = provider.get_supported_openai_params(
+                model=lookup, custom_llm_provider="openai"
+            )
+        except Exception as error:
+            raise ConfigError(
+                f"the installed LiteLLM does not recognise {lookup}. Install a "
+                "LiteLLM release whose OpenAI adapter supports reasoning_effort and "
+                "max_completion_tokens for this model"
+            ) from error
+        missing = {"reasoning_effort", "max_completion_tokens"} - set(supported or ())
+        if missing:
+            raise ConfigError(
+                f"the installed LiteLLM cannot call {lookup}: its OpenAI adapter "
+                f"does not support {', '.join(sorted(missing))} for this model"
+            )
 
     def _with_deadline(
         self, kwargs: dict[str, Any], budget: Budget | None = None
@@ -694,9 +940,8 @@ class DefaultLlmClient:
     def _bound(kwargs: dict[str, Any], properties: dict[str, Any]) -> float:
         messages = cast("list[dict[str, Any]]", kwargs.get("messages") or [])
         text = "".join(str(m.get("content", "")) for m in messages)
-        return pricing.bound_cost(
-            text, str(kwargs.get("model", "")), kwargs.get("max_tokens"), properties
-        )
+        allowance = kwargs.get("max_completion_tokens", kwargs.get("max_tokens"))
+        return pricing.bound_cost(text, str(kwargs.get("model", "")), allowance, properties)
 
     def _estimate(
         self, kwargs: dict[str, Any], budget: Budget, properties: dict[str, Any]
@@ -739,6 +984,7 @@ class DefaultLlmClient:
                 bound = self._estimate(self._with_deadline(kwargs, effective), effective, merged)
                 effective.check_admissible(bound)
                 provider = self._import_provider()
+                self._check_provider_compatibility(provider, kwargs)
                 # Re-derived after the import rather than before it. Importing can
                 # consume part of the deadline without exhausting it, and the earlier
                 # figure then sent the provider a timeout longer than the run had left:
@@ -769,9 +1015,20 @@ class DefaultLlmClient:
                         reservation.keep_unpriced()
                         raise
                     if cost is None:
-                        # Priced by its reservation. An unreadable cost is not a free call.
+                        # An unreadable cost is not a free call. Where the usage bounds it,
+                        # that bound is the charge; otherwise the reservation is.
+                        usage_bound = _usage_bound(kwargs.get("model"), payload, merged)
+                        if usage_bound is not None:
+                            reservation.settle(usage_bound)
+                            return payload, usage_bound, False
                         reservation.keep_unpriced()
                         return payload, reservation.estimate, False
+                    if _must_retain_cost_bound(kwargs.get("model"), bound, merged):
+                        conservative_cost = _retained_cost(
+                            kwargs.get("model"), payload, merged, reservation.estimate, cost
+                        )
+                        reservation.settle(conservative_cost)
+                        return payload, conservative_cost, False
                     reservation.settle(cost)
                     return payload, cost, True
         raise TransportError("retry policy exhausted without a result", code="no_result")
@@ -791,6 +1048,7 @@ class DefaultLlmClient:
                 bound = self._estimate(self._with_deadline(kwargs, effective), effective, merged)
                 effective.check_admissible(bound)
                 provider = self._import_provider()
+                self._check_provider_compatibility(provider, kwargs)
                 # Re-derived after the import rather than before it. Importing can
                 # consume part of the deadline without exhausting it, and the earlier
                 # figure then sent the provider a timeout longer than the run had left:
@@ -817,8 +1075,18 @@ class DefaultLlmClient:
                         reservation.keep_unpriced()
                         raise
                     if cost is None:
+                        usage_bound = _usage_bound(kwargs.get("model"), payload, merged)
+                        if usage_bound is not None:
+                            reservation.settle(usage_bound)
+                            return payload, usage_bound, False
                         reservation.keep_unpriced()
                         return payload, reservation.estimate, False
+                    if _must_retain_cost_bound(kwargs.get("model"), bound, merged):
+                        conservative_cost = _retained_cost(
+                            kwargs.get("model"), payload, merged, reservation.estimate, cost
+                        )
+                        reservation.settle(conservative_cost)
+                        return payload, conservative_cost, False
                     reservation.settle(cost)
                     return payload, cost, True
         raise TransportError("retry policy exhausted without a result", code="no_result")
@@ -967,7 +1235,28 @@ def _materialize(response: Any, usage_reported: bool = True) -> tuple[dict[str, 
         # stands at its bound and the result reports its accounting as unknown. Pricing the
         # filled-in block instead would settle a figure nobody was charged.
         return {key: value for key, value in payload.items() if key != "usage"}, None
-    return payload, _cost_of(response)
+    cost = _cost_of(response)
+    if cost == 0.0:
+        # The calculator answers zero for a model its price map does not carry, and for a
+        # response whose usage block is missing or all zero. A contacted call is never free:
+        # every request sends a prompt, so a zero here is not an account of the call whatever
+        # the usage says. Read as a price, it releases every reservation under a ceiling while
+        # the running total stays where it started. A cache hit never reaches this point.
+        return payload, None
+    return payload, cost
+
+
+def _answered_text(payload: dict[str, Any]) -> bool:
+    """Whether the first choice carries non-empty text, which no provider bills at zero."""
+    choices: Any = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return False
+    first: Any = cast("list[Any]", choices)[0]
+    message: Any = cast("dict[str, Any]", first).get("message") if isinstance(first, dict) else None
+    content: Any = (
+        cast("dict[str, Any]", message).get("content") if isinstance(message, dict) else None
+    )
+    return isinstance(content, str) and content != ""
 
 
 def _cost_of(response: Any) -> float | None:

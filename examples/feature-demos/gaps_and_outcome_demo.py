@@ -1,17 +1,16 @@
 """meta.outcome, meta.stop_reasons and meta.gaps: the fields to read before the records.
 
-An empty list of records is a valid answer, so the interesting question is never "how
-many rows" but "why does this look the way it does". ``outcome`` answers it from a closed
+An empty list of records is a valid answer, so the key question is why the result looks
+the way it does. ``outcome`` answers it from a closed
 vocabulary, ``stop_reasons`` lists every extraction limit that fired, ``stopped_by`` is
 the first of them for a caller that wants one, and ``gaps`` carries operational
 diagnostics that may explain missing rows.
 
-``gaps`` is always present and an empty list means only that no supported diagnostic
-fired. It is not a completeness guarantee: a model that simply answered with fewer records
+``gaps`` is always present. An empty list means only that no supported diagnostic
+fired; it does not guarantee completeness. A model that answers with fewer records
 than exist produces no gap, because nothing in such a response says it is short.
 
-Every response below is scripted, so each outcome is produced on purpose rather than
-waited for. No provider is contacted.
+Every response below is scripted, so each outcome is reproducible. No provider is contacted.
 
 Run from the repository root:
     python3 examples/feature-demos/gaps_and_outcome_demo.py

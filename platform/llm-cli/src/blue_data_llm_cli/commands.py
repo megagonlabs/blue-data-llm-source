@@ -23,8 +23,9 @@ in ``config``; what a result looks like in each format is in ``formats``.
 from __future__ import annotations
 
 import contextlib
+import math
 import sys
-from typing import Any
+from typing import Any, cast
 
 import click
 from blue_data_llm_source import (
@@ -34,21 +35,23 @@ from blue_data_llm_source import (
     can_bound,
     meta_view,
     priceable_models,
+    published_defaults,
     rates_for,
     redact,
 )
 from blue_data_llm_source import __version__ as library_version
+from blue_data_llm_source.llm.client import default_max_tokens_for
+from blue_data_llm_source.llm.models import entry_for
 from blue_data_llm_source.planning import MODES, PLANNING_ORDERS, SCHEMA_MODES
 
 from blue_data_llm_cli import config, formats
 from blue_data_llm_cli.configstore import ConfigResolver
 from blue_data_llm_cli.profile import profile_group, profile_store, resolver_for
 
-# The three closed sets a plan option chooses from, imported rather than written down.
-# Every one of them is refused by name in the library, and a copy here is a copy that can
-# drift: while `--plan-mode` was a bare string it reached the library and came back as
-# `ERROR: CONFIG`, exit 4, while its two sibling choices were refused by the parser as
-# `ERROR: USAGE`, exit 2 -- two answers to the same question, one flag apart.
+# Import the three closed sets used by plan options to avoid duplicating values that could
+# drift from the library. The library refuses each value by name. When `--plan-mode` was a
+# bare string, it reached the library and returned `ERROR: CONFIG`, exit 4, while its two
+# sibling options were refused by the parser as `ERROR: USAGE`, exit 2.
 
 
 # ------------------------------------------------------------------ #
@@ -103,9 +106,7 @@ def cli(ctx: click.Context, profile_name: str | None) -> None:
             )
 
         # A named profile that does not exist is refused rather than run as an empty one.
-        # The whole point of putting a ceiling in a profile is that it applies, and a
-        # misspelled name would silently drop it — which is the one failure this package
-        # exists to prevent, arriving through the configuration door.
+        # A misspelled profile name could silently omit a configured ceiling.
         if profile_name and not store.exists(profile_name):
             raise config.CliError(
                 config.PROFILE,
@@ -113,9 +114,8 @@ def cli(ctx: click.Context, profile_name: str | None) -> None:
                 f"see them, or `{config.PROGRAM} profile add {profile_name}` to make it.",
             )
 
-        # Apply the profile before anything else runs: resolved values are written into the
-        # environment, which is where the provider SDK reads its configuration from and the
-        # only way a profile can reach it at all.
+        # Apply the profile before other commands run. Resolved values go into the
+        # environment, where the provider SDK reads its configuration.
         resolver = resolver_for(home, profile_name)
         # Undone when the command finishes, and registered before the export rather than
         # after it: an export that fails halfway has still written part of what it resolved.
@@ -148,13 +148,16 @@ _REQUEST_OPTIONS = [
         "attr",
         multiple=True,
         metavar="NAME[:TYPE]",
-        help="Requested output attribute. Repeat for more. Types: int, float, bool, date.",
+        help=(
+            "Requested output attribute. Repeat for more. Checked types: int, integer, float, "
+            "number, bool, boolean, date, str, string, text."
+        ),
     ),
     click.option("--context", default=None, help="Extra text that clarifies the query."),
     click.option(
         "--model",
         default=None,
-        help="Model to call, e.g. gpt-4o. Default: the profile's BLUE_DATA_LLM_MODEL.",
+        help="Model to call, e.g. gpt-6-luna or gpt-4o. Default: the profile's model.",
     ),
     click.option(
         "--max-tokens",
@@ -166,6 +169,12 @@ _REQUEST_OPTIONS = [
         # The output allowance dominates the cost bound, so a cost ceiling below its floor
         # refuses every call before making one.
         help="Output allowance per call. Lower it to lower the floor a cost ceiling must clear.",
+    ),
+    click.option(
+        "--reasoning-effort",
+        type=click.Choice(["none", "minimal", "low", "medium", "high", "xhigh", "max"]),
+        default=None,
+        help="Model reasoning effort. GPT-6 Luna defaults to medium; GPT-4o rejects it.",
     ),
     click.option("--temperature", type=float, default=None, help="Sampling temperature."),
     click.option("--timeout", type=float, default=None, help="Seconds to wait for one call."),
@@ -186,13 +195,6 @@ _REQUEST_OPTIONS = [
     click.option("--limit-calls", type=int, default=None, help="Refuse more than this many calls."),
     click.option("--max-retries", type=int, default=None, help="Retries allowed per ask."),
     click.option("--variant", default=None, help="Source variant within the llm protocol."),
-    click.option(
-        "--verbose",
-        "-v",
-        is_flag=True,
-        default=False,
-        help="Show key alignment, type mismatches and collisions.",
-    ),
     click.option(
         "--log",
         "-l",
@@ -258,7 +260,10 @@ _PLAN_OPTIONS = [
         "--plan-leaves",
         type=int,
         default=None,
-        help="Most parts a split may run. Values past it are grouped, several to a part.",
+        help=(
+            "Most parts a split may run. Values past it are grouped, several to a part. "
+            "Default: 100."
+        ),
     ),
     click.option(
         "--plan-partition-key",
@@ -272,7 +277,7 @@ _PLAN_OPTIONS = [
         "--plan-partitions",
         type=int,
         default=None,
-        help="Most children proposed for one partition node. Default: 4.",
+        help="Most children proposed for one partition node. Default: 20.",
     ),
     click.option(
         "--plan-target-rows",
@@ -342,6 +347,15 @@ def data_group() -> None:
 
 @data_group.command("query")
 @click.argument("query")
+# Query only. `estimate` reads no response, so there is nothing for it to show verbosely,
+# and a flag accepted there and ignored is the kind of setting this CLI refuses.
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    default=False,
+    help="Show key alignment, type mismatches and collisions.",
+)
 @click.option(
     "--max-records",
     type=click.IntRange(min=1),
@@ -379,6 +393,7 @@ def data_query(
     max_records: int | None,
     model: str | None,
     max_tokens: int | None,
+    reasoning_effort: str | None,
     temperature: float | None,
     timeout: float | None,
     max_parallel: int | None,
@@ -438,6 +453,7 @@ def data_query(
             settings,
             model=model,
             max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
             temperature=temperature,
             timeout=timeout,
             max_parallel=max_parallel,
@@ -538,6 +554,7 @@ def data_estimate(
     context: str | None,
     model: str | None,
     max_tokens: int | None,
+    reasoning_effort: str | None,
     temperature: float | None,
     timeout: float | None,
     price_in: float | None,
@@ -548,7 +565,6 @@ def data_estimate(
     max_retries: int | None,
     variant: str | None,
     output_format: str | None,
-    verbose: bool,
     log: bool,
     log_limit: int | None,
 ) -> None:
@@ -574,6 +590,7 @@ def data_estimate(
             settings,
             model=model,
             max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
             temperature=temperature,
             timeout=timeout,
             price_in=price_in,
@@ -606,18 +623,17 @@ def data_estimate(
             "model": estimate.model,
             "prompt_bytes": estimate.prompt_bytes,
             "max_output_tokens": estimate.max_output_tokens,
+            "attempts_within_ceiling": estimate.attempts_within_ceiling,
         }
         notes = [settings.footer()]
-        if verbose:
-            notes.append(
-                f"attempts: {published['max_attempts']} "
-                f"(from limits.max_calls and limits.max_retries) | "
-                f"per attempt: {published['max_cost_per_attempt']}"
-            )
+        ceiling = properties.get("limits.max_cost")
+        fit = _ceiling_sentence(published, ceiling)
+        if fit:
+            notes.append(fit)
         rendered = formats.key_value(
             published,
             payload={**published, "settings": settings.envelope()},
-            sentences=_estimate_sentences(published, settings),
+            sentences=_estimate_sentences(published, settings, ceiling),
             notes=tuple(notes),
         )
     formats.render(rendered, fmt)
@@ -666,8 +682,8 @@ def model_inspect(obj: dict[str, Any], name: str, output_format: str | None) -> 
         fmt = published.resolve(resolver)
         configured = resolver.get("BLUE_DATA_LLM_SOURCE_MAX_TOKENS")
         # `is None`, not a truth test: a configured 0 is a number, and silently replacing it
-        # with the library default while honouring -5 is two answers to one question.
-        allowance = config.default_max_tokens() if configured is None else int(configured)
+        # with the library default while honoring -5 would treat configured numbers inconsistently.
+        allowance = default_max_tokens_for(name) if configured is None else int(configured)
         rates = rates_for(name)
         published = {
             "model": name,
@@ -675,9 +691,14 @@ def model_inspect(obj: dict[str, Any], name: str, output_format: str | None) -> 
             "output_price_per_token": rates[1] if rates else None,
             "max_tokens": allowance,
             "can_bound": can_bound(name, allowance),
+            # The model's published contract and rates. The profile's own settings override
+            # them for a query.
+            "published_defaults": published_defaults(name),
         }
         rendered = formats.key_value(
-            published, sentences=(_model_sentence(name, rates, allowance),)
+            _flattened(published),
+            payload=published,
+            sentences=(_model_sentence(name, rates, allowance),),
         )
     formats.render(rendered, fmt)
 
@@ -755,6 +776,7 @@ def _adapter_properties(
     *,
     model: str | None,
     max_tokens: int | None,
+    reasoning_effort: str | None,
     temperature: float | None,
     timeout: float | None,
     price_in: float | None,
@@ -771,6 +793,11 @@ def _adapter_properties(
     pairs = (
         ("llm.model", model, "BLUE_DATA_LLM_MODEL"),
         ("llm.max_tokens", max_tokens, "BLUE_DATA_LLM_SOURCE_MAX_TOKENS"),
+        (
+            "llm.reasoning_effort",
+            reasoning_effort,
+            "BLUE_DATA_LLM_SOURCE_REASONING_EFFORT",
+        ),
         ("llm.temperature", temperature, "BLUE_DATA_LLM_SOURCE_TEMPERATURE"),
         ("llm.timeout", timeout, "BLUE_DATA_LLM_SOURCE_TIMEOUT"),
         ("llm.max_parallel", max_parallel, "BLUE_DATA_LLM_SOURCE_MAX_PARALLEL"),
@@ -946,6 +973,24 @@ def _stop_reasons(meta: ExecMeta) -> list[str]:
     return meta.stop_reasons or ([meta.stopped_by] if meta.stopped_by else [])
 
 
+_COST_REMEDY = (
+    "No call fit under the cost ceiling: one attempt's bound is above it. "
+    "Lower --max-tokens, which sets most of that bound, or raise --limit-cost."
+)
+
+
+def _refused_before_any_call(meta: ExecMeta) -> bool:
+    """Whether the cost ceiling refused the run before a single call was made."""
+    return meta.calls == 0 and "max_cost" in _stop_reasons(meta)
+
+
+def _stop_line(reason: str, meta: ExecMeta) -> str:
+    """The stop axis, and for a run the cost ceiling refused outright, what to change."""
+    if reason == "max_cost" and _refused_before_any_call(meta):
+        return f"{reason}. {_COST_REMEDY}"
+    return reason
+
+
 # The same fact `nl` states in a sentence, for the outcomes that are a reason. `ok` has no
 # entry: it is the default `ExecMeta` carries and asserts nothing the row count does not
 # already show, so it prints no line, the way an empty gap list and an empty stop list do.
@@ -973,7 +1018,7 @@ def _query_notes(
     # Before the verbose block and outside it: a gap is why the row count is what it is, not
     # a diagnostic about how it was produced.
     notes.extend(f"gap: {gap}" for gap in meta.gaps)
-    notes.extend(f"stopped by: {reason}" for reason in _stop_reasons(meta))
+    notes.extend(f"stopped by: {_stop_line(reason, meta)}" for reason in _stop_reasons(meta))
     if verbose:
         notes.extend(_verbose_lines(meta))
     notes.append(settings.footer())
@@ -996,20 +1041,75 @@ def _query_sentences(
     sentences.append(
         f"The run was stopped by {', '.join(stops)}." if stops else "Nothing stopped the run early."
     )
+    if _refused_before_any_call(meta):
+        sentences.append(_COST_REMEDY)
     sentences.append(settings.ceilings())
     return tuple(sentences)
 
 
-def _estimate_sentences(published: dict[str, Any], settings: config.Settings) -> tuple[str, ...]:
+def _estimate_sentences(
+    published: dict[str, Any], settings: config.Settings, ceiling: object = None
+) -> tuple[str, ...]:
     if not published["bounded"]:
         reason = str(published["reason"] or "no reason was given").rstrip(".")
         return (f"This request cannot be bounded: {reason}.", settings.ceilings())
+    fit = _ceiling_sentence(published, ceiling)
     return (
         f"One flat fetch of this request costs at most ${published['max_cost']:.4f} against "
         f"{published['model']}, across {published['max_attempts']} attempt(s).",
+        *((fit,) if fit else ()),
         "A split request costs that figure once per call it makes.",
         settings.ceilings(),
     )
+
+
+def _ceiling_sentence(published: dict[str, Any], ceiling: object) -> str | None:
+    """Whether the cost ceiling admits the attempts this estimate covers, and if not, why."""
+    fits = published.get("attempts_within_ceiling")
+    if fits is None or not isinstance(ceiling, (int, float)):
+        return None
+    if fits == 0 and published["max_attempts"] > 0:
+        needed, limit = _distinct_amounts(float(published["max_cost_per_attempt"]), float(ceiling))
+        return (
+            f"The first attempt needs ${needed}, above the ${limit} ceiling; lower "
+            f"--max-tokens or raise the ceiling."
+        )
+    return f"At this ceiling {fits} of {published['max_attempts']} attempts fit."
+
+
+def _distinct_amounts(first: float, second: float) -> tuple[str, str]:
+    """Two dollar amounts written with as many digits as it takes to tell them apart.
+
+    Four fixed decimals printed a $0.000041 bound against a $0 ceiling as $0.0000 against
+    $0.0000, which reads as a refusal for no reason.
+    """
+
+    def written(amount: float, digits: int) -> str:
+        if amount == 0:
+            return "0"
+        places = max(4, digits - 1 - math.floor(math.log10(abs(amount))))
+        text = f"{amount:.{places}f}"
+        return text.rstrip("0").rstrip(".") if "." in text else text
+
+    for digits in range(3, 18):
+        pair = written(first, digits), written(second, digits)
+        if pair[0] != pair[1]:
+            return pair
+    return repr(first), repr(second)
+
+
+def _flattened(values: dict[str, Any]) -> dict[str, Any]:
+    """One row per value for the table formats, with a nested mapping spelled as dotted keys."""
+    rows: dict[str, Any] = {}
+    for key, value in values.items():
+        if isinstance(value, dict):
+            for inner, item in cast("dict[str, Any]", value).items():
+                rows[f"{key}.{inner}"] = (
+                    ", ".join(cast("list[str]", item)) if isinstance(item, list) else item
+                )
+        else:
+            rows[key] = value
+    return rows
 
 
 def _model_sentence(name: str, rates: tuple[float, float] | None, allowance: int) -> str:
@@ -1018,7 +1118,9 @@ def _model_sentence(name: str, rates: tuple[float, float] | None, allowance: int
             f"{name} has no published price here, so a cost ceiling needs --price-in and "
             f"--price-out."
         )
-    floor = rates[1] * allowance
+    entry = entry_for(name)
+    # The bound carries the regional uplift for the models subject to it, so the floor does.
+    floor = rates[1] * allowance * (entry.regional_uplift if entry is not None else 1.0)
     return (
         f"{name} is priced at {rates[0]:.10g} per input token and {rates[1]:.10g} per output "
         f"token, so a cost ceiling has to clear about ${floor:.4f} at {allowance} output tokens."

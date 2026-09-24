@@ -64,6 +64,10 @@ class LeafOutcome:
     unserved: bool = False
     """Whether budget admission denied requested execution work."""
 
+    stop_detail: str | None = None
+    """What the ceiling that stopped this leaf said, when one did: the figure it refused and
+    the setting that lowers it. None when nothing a caller set stopped the leaf."""
+
     at_cap: bool = False
     """True when the continuation cap ended the leaf after a response that was still adding
     records it had not returned before.
@@ -479,7 +483,11 @@ def _gaps_for(
                 # output limit reach here too, and neither is a ceiling the caller set, so
                 # naming one sent them looking through their budget for a key they never
                 # crossed. The codes reported next say which of the three it was.
-                detail=f"leaf {leaf_id} stopped before it finished",
+                detail=(
+                    f"leaf {leaf_id} stopped before it finished: {outcome.stop_detail}"
+                    if outcome.stop_detail
+                    else f"leaf {leaf_id} stopped before it finished"
+                ),
             )
         )
 

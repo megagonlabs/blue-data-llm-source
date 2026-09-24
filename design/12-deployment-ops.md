@@ -2,7 +2,7 @@
 
 ## Overview
 
-This repository builds three packages. **All three are currently installed from a checkout** because none is available on PyPI or an internal package index. Current installation instructions are in `docs/installation.md`, `lib/README.md`, and the interface READMEs. This document also describes the intended distribution process.
+This repository builds three packages. **All three are currently installed from a checkout** because none is available on PyPI or an internal package index. Current installation instructions are in `docs/installation.md`, `lib/README.md`, and the interface READMEs. This document also describes the planned distribution process.
 
 | Package | Contents | Entry point |
 |---------|----------|-------------|
@@ -10,11 +10,11 @@ This repository builds three packages. **All three are currently installed from 
 | `blue-data-llm-cli` | The `blue-llmdb` command | `blue-llmdb` |
 | `blue-data-llm-mcp` | The MCP server, speaking over stdio | `blue-data-llm-mcp` |
 
-Both interface packages depend on the library and add only their interface framework. Python callers install the library; command-line users install the library and CLI package; MCP clients install the library and MCP package.
+Both interface packages depend on the library and add only their interface framework. Python callers install the library, command-line users install the library and CLI package, and MCP clients install the library and MCP package.
 
 There is no Docker image. The library holds no state, opens no port, and starts no process. The MCP server uses stdio and is started by its client. No current interface requires a network-reachable service.
 
-Operations require no backend provisioning, data migration, or backup. An operator manages provider credentials, spending ceilings, and the process that embeds the library.
+Operations require no backend provisioning, data migration, or backups. Operators manage provider credentials, spending ceilings, and the process that embeds the library.
 
 `blue-data` supplies the inherited `DataSource` base class and also installs `pandas`, `numpy`, and `jsonpath-ng`. Because `blue-data` is not on a public package index, install it from a checkout before this package.
 
@@ -28,7 +28,7 @@ The package follows [Semantic Versioning](https://semver.org/) (`MAJOR.MINOR.PAT
 - **MINOR**: backwards-compatible new features
 - **MAJOR**: breaking changes to the Python library API, to the source query surface, or to the result contract
 
-A change to the prompt is treated as MINOR at least, because it changes what the source returns for an unchanged request, and a caller with its own recorded expectations needs the signal.
+A prompt change is treated as at least MINOR because it can change the source's response to an unchanged request. Callers with recorded expectations need to know about the change.
 
 Each package declares its version in `pyproject.toml` and as `__version__` in its top-level module. A test compares all three pairs. Another test scans Markdown examples of `blue-llmdb metadata inspect` and `llmdb_inspect_metadata` and verifies that they match the exported library version. The declarations are still synchronized manually.
 
@@ -38,9 +38,7 @@ Each package declares its version in `pyproject.toml` and as `__version__` in it
 
 `blue-data-llm-source` exposes the Python library. Its runtime dependencies are `blue-data>=0.1.0`, which supplies the `DataSource` base class the source inherits, and `tenacity>=9.0.0`. The provider transport and the `diskcache` backend are extras.
 
-Every command below assumes `blue-data` is already resolvable, which means an internal index.
-From a checkout it is not, and `lib/scripts/install.sh` puts it in place first; the two
-interface installers route through that one.
+The commands below describe the planned index route. Today neither these packages nor `blue-data` is on an index, so install from a checkout: `lib/scripts/install.sh` puts `blue-data` in place first, and the two interface installers route through that one.
 
 ```
 pip install blue-data-llm-source                 # library; brings blue-data and tenacity
@@ -82,7 +80,7 @@ An MCP client is pointed at the server the usual way, by naming the console entr
 
 None. LlmSource does not bundle, require, or manage a database, a cache server, or a message broker, and it will not start.
 
-The optional response cache is the only thing resembling storage, and it is local. Enabling `llm.cache` writes a `diskcache` cache to a directory on the local filesystem, defaulting to `.llm_cache` for a caller embedding the library and to `cache` under the CLI home for `blue-llmdb`, which an operator should place on a writable path with a retention policy of its choosing. The library also ships two stores that need nothing beyond the standard library, `MemoryCache` in process and `FileCache` as one JSON file per entry under a directory; both are passed through the `cache_store` property, and `FileCache` has the same operational shape as the `llm.cache` directory. A caller wanting a shared cache supplies its own store through the same property. The library does not depend on any particular backend and does not open a connection on the caller's behalf.
+The optional response cache is the only form of storage, and it is local. Enabling `llm.cache` writes a `diskcache` cache to a local directory. The default is `.llm_cache` for a caller embedding the library and `cache` under the CLI home for `blue-llmdb`; operators should place it on a writable path and set a retention policy. The library also ships two stores that use only the standard library: `MemoryCache`, which operates in process, and `FileCache`, which writes one JSON file per entry in a directory. Both are passed through the `cache_store` property. `FileCache` has the same operational shape as the `llm.cache` directory. A caller that wants a shared cache supplies its own store through the same property. The library does not depend on a particular backend or open a connection on the caller's behalf.
 
 Neither shipped store expires an entry. `MemoryCache` evicts least-recently-used entries past its ceiling, and `FileCache` grows until something clears it, so a long-lived deployment should treat the cache directory as it would any other unmanaged local cache.
 
@@ -90,22 +88,22 @@ Neither shipped store expires an entry. `MemoryCache` evicts least-recently-used
 
 ## 4. Configuration
 
-Library configuration uses **properties** passed to the constructor or an individual call, rather than process-wide environment variables. This allows two `LlmSource` instances in the same process to use different budgets.
+Library configuration uses **properties** passed to the constructor or an individual call, not process-wide environment variables. This allows two `LlmSource` instances in the same process to use different budgets.
 
-Per call is the part with operational weight. Every property below can be handed to a single request through `properties` on `fetch` or `optional_properties` on the query surface, where it is merged over the instance's for that request and not written back. One source can therefore serve a cheap speculative question and an expensive authorised one under different ceilings, without a second source and without a window in which the source is configured for the wrong one.
+Per-call configuration has operational significance. Each property below can be passed to one request through `properties` on `fetch` or `optional_properties` on the query surface. It is merged over the instance properties for that request and is not written back. One source can therefore serve a cheap speculative question and an expensive authorised one under different ceilings, without a second source or a period in which the source has the wrong configuration.
 
 The full property table is in [09-api-interface-spec.md](09-api-interface-spec.md). The operationally significant ones:
 
 | Property | Operational meaning |
 |----------|--------------------|
-| `llm.model` | Which model answers, and therefore what a call costs |
+| `llm.model` | Which model answers, and therefore what a call costs. The model's entry in the package's table fixes its request shape and the rates its bound is built from |
 | `llm.max_parallel` | Concurrency bound per event loop; the main lever against provider rate limiting |
 | `llm.rate_limit` | Not supported. Refused by name with `ConfigError`. Use `llm.max_parallel`, or throttle above the library |
 | `llm.stream` | Set it when the provider configuration or proxy in front of you requires a stream. It buys nothing else: a fetch has no answer until the last chunk lands, and a stream the provider sends no token counts with cannot be priced, so the run reports `accounting_known` false and its cost ceiling is enforced against the reserved bound |
 | `llm.cache`, `llm.cache_dir` | Local response cache and where it is written |
 | `llm.max_tokens` | The output allowance, and therefore the floor of every cost claim and of every estimate; the main lever on whether a cost ceiling binds or refuses |
 | `llm.price_per_input_token`, `llm.price_per_output_token` | Rates for a model the shipped price table does not carry; both required together, and consumed locally rather than forwarded |
-| `limits.max_cost` | Spending ceiling per run. An upper bound on what an attempt can cost is claimed before it runs, so an attempt that would cross the ceiling is refused, not reported afterwards, and the bound is reconciled against the real price once the call returns |
+| `limits.max_cost` | Spending ceiling per run. An upper bound is claimed before an attempt, so one that would cross the ceiling is refused. A measured cost settles the claim; otherwise [the cost bound](../lib/README.md#the-cost-bound) sets the charge |
 | `limits.max_calls`, `limits.max_seconds`, `limits.max_rows` | The other three run ceilings |
 
 All five `limits.*` keys are also the ones to hand in per request. A ceiling set on the source is the deployment's default, and a ceiling passed with a request is that request's own.
@@ -116,13 +114,13 @@ All five `limits.*` keys are also the ones to hand in per request. A ceiling set
 |----------|---------|----------|-------------|
 | Provider credential variable | The provider SDK, never this package | Yes, when the default client reaches a provider | The library does not read, store, log, or forward it |
 
-That is the whole list *for the library*. The package names no environment variable of its own and reads none. The model is selected through the `llm.model` property, and the CLI exposes it as `--model`.
+That is the whole list *for the library*. The library names no environment variable of its own and reads none. The model is selected through the `llm.model` property, and the CLI exposes it as `--model`.
 
-**Which layer owns configuration.** The library is embedded in a caller's process, so a process-wide environment cannot express what it needs: two sources in one process under two different budgets is a normal thing to want, and the environment has one value per name. Properties can say that; environment variables cannot. An adapter is in the opposite position. `blue-llmdb` is one short-lived process per invocation with one user behind it, and a person who has to retype a model name and four ceilings on every command has a configuration problem the library cannot solve for them. So the CLI reads a documented `BLUE_DATA_*` set, resolves it against its own profiles, and passes the result down as properties, which leaves the library's rule intact rather than bending it. The full parameter list and the precedence chain are in [09-api-interface-spec.md](09-api-interface-spec.md); the MCP server reads no environment variable, because its caller passes arguments per tool call.
+**Which layer owns configuration.** The library is embedded in a caller's process, where process-wide environment variables cannot express different budgets for two sources; each variable name has only one value. Properties can set different values for each source. An adapter has different needs. `blue-llmdb` is a short-lived process per invocation, with one user, and requiring a person to retype a model name and four ceilings for every command would create a configuration problem the library cannot solve. The CLI therefore reads a documented `BLUE_DATA_*` set, resolves it against its own profiles, and passes the result as properties. This preserves the library's configuration rule. The full parameter list and precedence chain are in [09-api-interface-spec.md](09-api-interface-spec.md). Whoever starts the MCP server configures it, so it reads the same names from its environment on every call, the ten `llm.*` settings (`BLUE_DATA_LLM_MODEL` and nine `BLUE_DATA_LLM_SOURCE_*` variables) and the three operator ceilings (`BLUE_DATA_LLM_SOURCE_LIMIT_COST`, `_LIMIT_CALLS` and `_LIMIT_SECONDS`). A caller may pass a lower ceiling per tool call but cannot raise or remove an operator ceiling; plan settings come only from the call. A malformed value fails that call as a masked `ConfigError` rather than stopping the server.
 
-Because the credential belongs to the provider SDK, an absent one is not a configuration error this package can detect. It surfaces as a failed call: a `TransportError` from the library, and exit code 5 from the CLI, not the `ConfigError` and exit code 4 that cover the configuration this package does check. An operator diagnosing a fresh deployment should read code 5 with a credentials message as "the key is missing or wrong" rather than as a transport fault.
+The credential belongs to the provider SDK, so this package cannot detect when it is absent as a configuration error. The call fails with a library `TransportError` and CLI exit code 5. Configuration errors that this package detects use `ConfigError` and exit code 4. When diagnosing a fresh deployment, an operator should interpret code 5 with a credentials message as "the key is missing or wrong" rather than as a transport fault.
 
-No property, environment variable, or log line produced by this package carries a credential value. The last of those holds because both interface packages mask rather than because they have nothing to mask: an error message, a log line, a traceback and the request-side fields of a run report all leave through the library's `redact`, which masks both a value held in the environment under a credential's name and text written in a key's shape. A provider SDK's exception is the text that makes this necessary. Records are not masked; they are the answer.
+No property, environment variable, or log line produced by this package carries a credential value. Both interface packages apply masking: error messages, log lines, tracebacks, and request-side fields in run reports pass through the library's `redact`. It masks values held in the environment under a credential's name and text that matches a key's shape. Provider SDK exceptions make this necessary. Records are not masked because they are the answer.
 
 ---
 
@@ -132,32 +130,32 @@ Provider cost is the primary operational risk. The following controls apply toge
 
 - Every run is bounded on four axes: row count, elapsed time, API cost, and provider call count. The time axis bounds admission and cooperative waiting, not the whole run; [what it bounds](../lib/README.md#what-the-time-ceiling-actually-bounds) lists the exclusions.
 - Call count, elapsed time, and cost are all claimed **before** the provider is contacted, under a lock, so a concurrent fan-out cannot cross a ceiling and report it afterwards.
-- A call's price is not known until it returns, so the cost claim is an upper bound, not an estimate: the prompt's length in UTF-8 bytes plus a framing allowance at the model's published input rate, plus the whole output allowance at its output rate. It rests on a byte-pair tokenizer consuming at least one byte of the encoded prompt per token it emits, so no tokenizer can exceed it. The bound is reconciled against the real cost when the call returns and the overshoot is released, so an over-claim costs headroom during the call and nothing after it.
-- Where a bound cannot be established the ceiling is **refused**, not approximated. A model with no published price and no caller-supplied price, or an `llm.max_tokens` that is not a finite positive number, makes a `limits.max_cost` raise a `ConfigError` at the first fetch. The operator wanted a ceiling and gets a refusal instead of a number that was invented.
-- The minimum cost bound is the full output allowance at the model's output rate and is independent of the prompt. With the default `gpt-4o` model and `llm.max_tokens=4096`, the minimum is about $0.041. A lower `limits.max_cost` refuses the call before provider contact. Reducing `llm.max_tokens` reduces this minimum proportionally.
+- A call's price is unknown until it returns, so the cost claim is an upper bound rather than an estimate. It uses the prompt's length in UTF-8 bytes plus a framing allowance at the model's published input rate, and the full output allowance at its output rate. The bound assumes a byte-pair tokenizer consumes at least one byte of the encoded prompt per token, so no tokenizer can exceed it. A measured cost settles the claim and releases any overshoot; when the response cannot prove the charge, [the cost bound](../lib/README.md#the-cost-bound) sets it and the result reports its accounting as unknown.
+- If a bound cannot be established, the ceiling is **refused** rather than approximated. A model without a published or caller-supplied price, or an `llm.max_tokens` value that is not a finite positive number, causes `limits.max_cost` to raise a `ConfigError` on the first fetch. The operator receives a refusal rather than an invented bound.
+- The minimum cost bound is the full output allowance at the model's output rate and is independent of the prompt. With the default `gpt-6-luna` model and `llm.max_tokens=25000`, the minimum is about $0.01375, including OpenAI's 10% regional-processing uplift. A lower `limits.max_cost` refuses the call before provider contact. Reducing `llm.max_tokens` reduces this minimum proportionally.
 - The claim is per provider attempt, so a retry sequence spends the call budget rather than escaping it, and each attempt rechecks the deadline before it runs. Retry depth narrows along the budget chain, so a fetch drawing on a caller-owned budget cannot make more attempts than that budget allows.
 - The timeout handed to the provider is capped at the time the run has left, so a call started just inside a deadline cannot run for its own full timeout past it. In the async path a deadline also cancels the wait itself, which is what holds when a provider ignores the timeout it was given.
 - A run stopped by limits returns a result whose `stop_reasons` names every observed axis and whose `stopped_by` retains the first. A row-only trim reports `outcome=truncated` and CLI exit 0. Another stop reports `stopped_by_limit` and exit 7 unless interrupted work also produced an answered part; that case reports `partial` and exit 8 while retaining the stop reasons.
 - A cache hit consumes no provider call, no tokens and no cost, the attempt included. It is not free on every axis: rows it returns count against the row cap, and elapsed-time admission still applies.
-- Everything that can fail locally happens before the reservation, so such a failure is uncharged. The order is admit, import, claim: the bound is checked against the budget without taking anything, so a request the ceiling refuses never reaches the network, and the claim itself is the last step before the provider is entered. Claiming before the import instead made the claim visible to a sibling sharing the budget, which was then refused on an allowance the final ledger said was free. Everything after it, including reading the response, sits inside one guard that resolves the claim, so a malformed response cannot leave headroom outstanding while the retry takes more. A call that reached the provider and failed keeps its claim at the bound, because a ceiling that counts only successes does not bound spend: a failing provider is still a provider being paid to fail.
-- A ceiling holds only on an axis the answering client declares through `budget_capabilities()`. The default client declares all four. A callable passed as `llm_fn` declares rows alone, because nothing here can know what that callable is billed, how to stop it, or how many provider calls one invocation of it becomes, so a call, cost, or time ceiling over one is refused. Each configured ceiling on an undeclared axis raises a `ConfigError` at the first fetch instead of being silently reported, so a deployment that injects its own client learns at the boundary rather than from a bill. `limits.max_rows` is unaffected, since the source counts the records itself.
+- Local operations that can fail happen before reservation, so their failures are uncharged. The order is admit, import, claim: the bound is checked against the budget without reserving anything, so a refused request never reaches the network. The claim is made immediately before entering the provider. Claiming before the import exposed the claim to a sibling sharing the budget, which could then be refused even though the final ledger showed the allowance as free. Everything after the claim, including reading the response, runs inside one guard that resolves it. This prevents a malformed response from leaving headroom reserved while a retry proceeds. A call that reached the provider and failed retains its claim at the bound, because a ceiling that counts only successful calls would not bound spend on failed calls.
+- A ceiling applies only to an axis the answering client declares through `budget_capabilities()`. The default client declares all four. A callable passed as `llm_fn` declares rows alone: the source cannot know its cost, stop it, or determine how many provider calls it makes. A call, cost, or time ceiling over that callable is therefore refused. Each configured ceiling on an undeclared axis raises a `ConfigError` on the first fetch, so a deployment that injects its own client learns at the boundary rather than from a bill. `limits.max_rows` is unaffected because the source counts the records itself.
 - `LlmSource.estimate` reports the same bound for a request before it runs, and reaching it costs nothing and contacts nothing. That is the tool for sizing a ceiling against real traffic rather than against the worked example in this document, and for a service that wants to refuse an oversized request itself instead of leaving it to the budget.
 
-An operator embedding the library in a service sets a floor at construction and tightens it per request. `limits.max_cost` and `limits.max_calls` on the source apply to every fetch it makes; the same keys in `properties` on `fetch`, or in `optional_properties` on `execute_query` and `execute_query_nl`, apply to the one request they arrive with and are not written back, which is what makes a per-request ceiling safe to use routinely rather than exceptionally. A request whose tolerance differs from the default carries its own number, and the request after it is back to the default.
+An operator embedding the library in a service sets default ceilings at construction and tightens them per request. `limits.max_cost` and `limits.max_calls` on the source apply to every fetch. The same keys in `properties` on `fetch`, or in `optional_properties` on `execute_query` and `execute_query_nl`, apply only to the request that carries them and are not written back. A request with a different tolerance carries its own value; the next request uses the default again.
 
 Size `limits.max_cost` above the floor described above and set `llm.max_tokens` to what the answers actually need, since those two numbers are the ones that decide whether the ceiling is a bound or a blanket refusal. `estimate` is how to pick them against real requests rather than against the worked example here.
 
-A service that wants one ceiling over a sequence of requests, not a bound on each, constructs a `Budget` and passes it to each `fetch` as `budget=`; each fetch derives a child from it and can never spend more than the parent has left. That is a different question from the one above and answers it differently, so reach for it when the total is what matters. Deployments that fan out over many requests should also set `llm.max_parallel`, since the budget bounds spend but does not bound the rate at which it is spent. `llm.max_parallel` caps how many calls are in flight at once, which is the lever this version offers; anything finer belongs above this library, where the whole request sequence is visible rather than one call at a time.
+A service that wants one ceiling across a sequence of requests constructs a `Budget` and passes it to each `fetch` as `budget=`. Each fetch derives a child and cannot spend more than the parent has left. Use this when the total matters rather than the limit on each individual request. Deployments that fan out across many requests should also set `llm.max_parallel`. The budget limits total spend, while `llm.max_parallel` caps the number of calls in flight. Finer-grained control belongs above this library, where the full request sequence is visible.
 
-Over MCP the ceiling is the caller's to set. The `llmdb_query` schema carries `limits.max_cost`, `limits.max_seconds`, and `limits.max_calls`, and `llmdb_estimate` sizes a request before it runs, both reaching the same code described above. What the server does not do is set them: it constructs its source with no properties, so a call that names no ceiling has none. An operator who cannot leave that to the agent wraps the server in a process that constructs the source itself.
+Over MCP, the operator and the caller both set ceilings. `BLUE_DATA_LLM_SOURCE_LIMIT_COST`, `_LIMIT_CALLS` and `_LIMIT_SECONDS` in the server's environment bound every call; the `llmdb_query` schema carries `limits.max_cost`, `limits.max_seconds`, and `limits.max_calls`, and the lower of the operator's and the call's value applies, so an agent can tighten a ceiling but never raise or remove it. `llmdb_estimate` sizes a request against the ceiling that applies before it runs. Both use the same code described above. Without an operator ceiling, a call that sets none is unbounded.
 
 ---
 
 ## 6. Observability
 
-The library emits no logs, no metrics, and no traces. It has no logging configuration, no OpenTelemetry dependency, and no metrics endpoint, and adding one to a library that runs inside someone else's process is a decision for the process, not for the library.
+The library emits no logs, metrics, or traces. It has no logging configuration, OpenTelemetry dependency, or metrics endpoint. Adding observability to a library that runs inside someone else's process is a decision for that process.
 
-What it does instead is return the accounting. Every `FetchResult` carries an `ExecMeta` describing the run:
+Instead, the library returns accounting data. Every `FetchResult` carries an `ExecMeta` describing the run:
 
 | Field | Operational use |
 |-------|-----------------|
@@ -170,7 +168,7 @@ What it does instead is return the accounting. Every `FetchResult` carries an `E
 | `type_mismatches` | Which values did not fit the type the caller declared |
 | `key_collisions` | Which values were dropped because two returned keys answered the same attribute |
 
-The last three rows are the ones worth alerting on. A rising rate of unmapped keys, type mismatches, or collisions for an unchanged request is the earliest visible sign that a model update has changed what the source returns, and it is visible before anyone notices a column full of nulls.
+The last three rows are useful for alerts. For an unchanged request, rising rates of unmapped keys, type mismatches, or collisions can show that a model update changed the source's output before a column fills with nulls.
 
 `outcome` is the field to group an empty-result rate by. An empty result is a normal answer here, and the vocabulary distinguishes an empty ask from a model that returned nothing, a result that reduction filtered away, and a run a ceiling stopped, which are four different operational problems.
 
@@ -196,7 +194,7 @@ whichever platform is chosen implements the same ones.
 | **Build** | Every push to the default branch | Build the wheel and sdist for each of the three packages |
 | **Publish** | Git tag matching `v*.*.*` | Publish all three to PyPI, library first |
 
-**Verify** is intended to pass before any merge, and it runs with no credential and no network. Each package's suite runs from its own directory against its own configuration. **Compatibility** used to be separated because it needed an extra the library did not otherwise require; `blue-data` is now a core dependency, so the separation is kept for the remaining reason, which is that its failure means an upstream contract moved rather than that this package broke. **Publish** would be gated on a semver tag pushed by a maintainer, and the library publishes first because the other two depend on it.
+**Verify** is intended to pass before any merge and runs without credentials or network access. Each package's suite runs from its own directory against its own configuration. **Compatibility** was separated because it required an extra dependency. `blue-data` is now a core dependency, but the separation remains because a failure indicates that an upstream contract changed. **Publish** would be gated on a semver tag pushed by a maintainer. The library publishes first because the other two packages depend on it.
 
 Until that pipeline exists, the checks in **Verify** are run by hand from each package directory.
 

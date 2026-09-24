@@ -1,20 +1,18 @@
-"""One notion of a credential, for every surface that hands a caller text it did not write.
+"""Use one credential definition for every surface that returns external text to a caller.
 
-Both adapters print text that came from somewhere else: a provider SDK's exception message,
-a traceback under ``--log``, a log line, an argument quoted back in a refusal. A provider
-SDK is free to put a request header or a fragment of a key into an exception message, and
-neither adapter can know in advance which one will. Two surfaces with the same exposure, so
-one rule, here, beside the other thing both adapters share.
+Both adapters print text from elsewhere: provider SDK exception messages, tracebacks under
+``--log``, log lines, and arguments quoted in refusals. An SDK may include a request header
+or part of a key in an exception message, and the adapters cannot predict which message will.
 
 **Where this applies.** Text this package writes *about* a call: an error message, a log
 line, a traceback, and the request-side fields of a run report.
 
-**Where it deliberately does not.** The records a fetch returns, and the ``meta`` fields
+**Where it does not apply.** The records a fetch returns, and the ``meta`` fields
 that describe them. This source returns arbitrary model output *as data*: a record value
 that happens to look like a token is the answer, and masking it would be this package
 corrupting the thing it was asked to fetch. The key-level diagnostics name keys that appear
 in those records, so masking one there would publish a diagnostic that no longer matches the
-record it is about. The line is whether the text is being narrated or returned.
+record. The distinction is whether the text is narration or returned data.
 
 **What counts as a credential** is settled four ways, strongest first. An exact value the
 environment holds under a name that says credential catches key material of any shape,
@@ -47,11 +45,10 @@ _SECRET_VARIABLE = re.compile(
 )
 """Which environment variable holds key material, read off the name.
 
-The CLI settles the same question by declaration — a profile parameter whose cast is
-``secret`` — and cannot be asked from here: its copy of the configuration engine exists to
-be deleted when the family's shared one ships, so the library must not import it. The name
-rule is the same judgment reached from the outside, and a CLI test holds the two answers
-together by asserting every parameter it declares secret is one this rule recognises.
+The CLI identifies secrets by declaration, using profile parameters whose cast is
+``secret``. The library cannot use that configuration engine because its copy will be
+replaced by a shared one, so it must not import it. Instead, this module uses the variable
+name. A CLI test checks that every parameter declared secret is recognised by this rule.
 
 Bare ``KEY`` is left out. ``plan.key`` names a record column, and a column name treated as
 key material would mask an ordinary word everywhere it appeared.
@@ -90,9 +87,8 @@ _STAMPED = re.compile(
 )
 """Key literals a provider stamps with its own prefix.
 
-A floor rather than a census: the shipped adapter can reach any provider the SDK supports,
-and a prefix nobody has written down here is what the environment rule and the opaque run
-below are for.
+This list is not exhaustive: the adapter can reach any provider supported by the SDK. The
+environment rule and opaque-run check also catch prefixes not listed here.
 """
 
 _OPAQUE_RUN = re.compile(r"[A-Za-z0-9_-]{28,}")
@@ -120,10 +116,9 @@ def _is_key_material(run: str) -> bool:
 def _environment_secrets() -> list[str]:
     """Every value the environment holds under a name that says credential, longest first.
 
-    Read on each call rather than cached at import: the CLI writes a profile's resolved
-    values into the environment while it runs, and a snapshot taken earlier would not hold
-    the key the run is actually using. Longest first, so a value that is a substring of
-    another does not cut it in half and leave the tail behind.
+    Read values on each call because the CLI writes resolved profile values into the
+    environment while it runs; an import-time snapshot could miss the active key. Sort
+    longest first so a shorter value does not mask only part of a longer one.
     """
     found = [
         value

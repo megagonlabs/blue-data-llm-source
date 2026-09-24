@@ -27,7 +27,7 @@ The default path uses one prompt and one completion, with up to `limits.max_retr
 
 ## Scenario 2: The caller does not know the shape of the answer
 
-An agent asks a question without supplying an attribute list, because it does not yet know what the answer looks like. LlmSource passes the request through with no attribute specification, and the model chooses its own keys. Nothing is aligned, because there is nothing to align to, and the records come back as the model shaped them. What the caller gets in return is the list of keys that actually appeared, so it can decide what to do next rather than guess.
+An agent asks a question without supplying an attribute list because it does not yet know what the answer looks like. LlmSource passes the request through without an attribute specification, and the model chooses its own keys. The source does not align the records; it returns them with the model's keys and reports the keys that appeared so the caller can decide what to do next.
 
 **Example:**
 
@@ -45,7 +45,7 @@ infer a schema when the caller supplies none and report the accepted root `row_e
 
 ## Scenario 3: Context disambiguates an attribute name
 
-A caller asks for records with an attribute named `name`, which is ambiguous in the question being asked. The `context` parameter exists for exactly this. It is not general background prose; its documented use is to say what an attribute name means, and it is rendered into the prompt as its own section.
+A caller asks for records with an attribute named `name`, which is ambiguous in the question. The `context` parameter clarifies what an attribute name means and is rendered into the prompt as its own section.
 
 **Example:**
 
@@ -64,7 +64,7 @@ Attributes may be given as plain names or as `{"name": ..., "type": ...}` pairs.
 
 ## Scenario 4: The caller wants a bounded number of records
 
-A caller wants three records rather than everything the model would volunteer. There are two ways to say so and they do different things. Expressing the count inside the request influences what the model returns. Passing `max_records` caps what the source will hand back, is enforced as a hard limit, and reports itself when it truncates.
+A caller wants three records rather than everything the model would return. Including the count in the request influences the model's response. Passing `max_records` sets a hard cap on the returned records, and the source reports when it truncates them.
 
 **Example:**
 
@@ -105,7 +105,7 @@ source.execute_query({"op": "LLM.MODELS"})
 source.execute_query(
     {"op": "LLM.ESTIMATE", "query": "the member states of the European Union"}
 )
-# → [{"bounded": True, "max_cost": …, "model": "gpt-4o", ...}]
+# → [{"bounded": True, "max_cost": …, "model": "gpt-6-luna", ...}]
 ```
 
 Its connection properties report protocol `llm` and variant `openai`, following the same scheme under which the relational sources report `sql`/`postgres` and `sql`/`mysql`. `execute_query` also accepts a plain string, which is treated as the request itself, and an unrecognised op raises `QueryError` listing the three above.
@@ -118,7 +118,7 @@ A contract test verifies that required shared-surface methods resolve to `LlmSou
 
 ## Scenario 6: The caller already has a model wired up
 
-A caller reaching the source through `execute_query_nl` passes an `llm_fn`. For every other source that callable exists to translate natural language into a native dialect, SQL or Cypher or a document filter, before the translated query is executed. This source has no other dialect, because natural language is its native form, so there is nothing to translate into and the translation step is the identity.
+A caller reaching the source through `execute_query_nl` passes an `llm_fn`. Other sources use this callable to translate natural language into a native dialect, such as SQL, Cypher, or a document filter, before executing the translated query. This source has no other dialect, so translation is the identity.
 
 That leaves a callable typed `(prompt: str) -> str`, which is the shape of a model call. LlmSource therefore uses a supplied `llm_fn` as the model client for that request, falling back to its configured client when none is passed.
 
@@ -132,7 +132,7 @@ records = source.execute_query_nl(
 )
 ```
 
-A caller that already holds a configured model reuses it and pays nothing extra. A caller that does not is unaffected, because the configured client answers as before.
+A caller with a configured model reuses it. Otherwise, the configured client answers as before.
 
 The wrapper can enforce only the row limit because it cannot observe the callable's provider calls, cost, or deadline behavior. A run that supplies `llm_fn` therefore refuses `limits.max_calls`, `limits.max_cost`, and `limits.max_seconds`, while `limits.max_rows` remains available. To enforce other axes, inject a client that declares them and reserves against the supplied budget.
 
@@ -140,7 +140,7 @@ The wrapper can enforce only the row limit because it cannot observe the callabl
 
 ## Scenario 7: A caller caps what a request may spend
 
-An exploratory planner is willing to spend a few cents and five seconds on a speculative request, and wants a definite answer if it cannot. Limits are configured as properties. Every axis is claimed before the provider is contacted, so a run that would cross one is refused rather than reported after the money is gone. A call's price is not known until it returns, so cost is claimed against an upper bound: the most the attempt could cost is reserved before it runs and reconciled against the real figure afterwards, which releases the difference.
+An exploratory planner sets limits of a few cents and five seconds for a speculative request, and wants a definite answer if the request cannot stay within them. Limits are configured as properties. Each axis is claimed before provider contact, so a run that would cross a limit is refused in advance. Because a call's price is unknown until it returns, cost is claimed against an upper bound. Verified accounting can release the difference; missing or category-incomplete accounting retains at least the bound.
 
 **Example:**
 
@@ -160,7 +160,7 @@ result = source.fetch(
 
 The four axes are row count, elapsed time, API cost, and call count. Rows are capped after the records are in hand, because that is when the count is known. Time, calls, and cost are reserved before each provider attempt, under a lock, so neither a fan-out nor a retry sequence can race past a ceiling. A cache hit consumes no provider call, no tokens and no cost. Rows it returns still count against the row cap, and elapsed-time admission still applies, so a hit under a spent deadline is refused. The time axis bounds admission and cooperative waiting, not the whole run; [what it bounds](../lib/README.md#what-the-time-ceiling-actually-bounds) lists the exclusions.
 
-The cost calculation uses the prompt's UTF-8 byte length and the full `llm.max_tokens` allowance to produce an upper bound. With the default `gpt-4o` model and 4096 output tokens, its minimum is about $0.041. A `limits.max_cost` of 0.10 admits the example request, while 0.01 refuses it before provider contact. Reduce `llm.max_tokens` when the answer needs fewer tokens.
+The cost calculation uses the prompt's UTF-8 byte length and the full `llm.max_tokens` allowance to produce an upper bound. With the default `gpt-6-luna` model and 25,000 output tokens, its minimum is about $0.01375, OpenAI's 10% regional-processing uplift included. A `limits.max_cost` of 0.10 admits the example request, while 0.01 refuses it before provider contact. Reduce `llm.max_tokens` when the answer needs fewer tokens.
 
 The source refuses a cost ceiling when it cannot establish a bound, including when model rates are unavailable or `llm.max_tokens` is not a finite positive number. Callers can supply both token rates for an unlisted model. See [Pricing helpers](../docs/api-reference.md#pricing-helpers) for the name-matching and validation rules.
 
@@ -198,7 +198,7 @@ second = source.fetch(
 
 ## Scenario 8: An operator sizes a request before running it
 
-A planner or an operator has a request in hand and a ceiling to respect, and wants to know what the request could cost before spending anything on it. `estimate` answers from the prompt this source would actually send, so the figure belongs to the request being asked about, not to an average of requests like it. It contacts nothing. It describes a `flat` fetch and reads no `plan.*` setting, so an operator sizing a split request has to work its parts out by hand.
+A planner or operator can use `estimate` to learn the possible cost of a request before running it. It estimates from the prompt the source would send, rather than from an average request, and contacts no provider. It describes a `flat` fetch and reads no `plan.*` setting, so an operator sizing a split request must estimate its parts separately.
 
 The estimate is an upper bound rather than a prediction: it reserves the full output allowance and bounds the prompt by its encoded length. Runtime reservation uses the same calculation, so a request estimated within a ceiling is evaluated against that same bound when it runs.
 
@@ -235,7 +235,7 @@ source.execute_query(
 
 ## Scenario 9: A tool-using agent reaches the source over MCP
 
-An agent in another framework has the MCP server configured. It sees five tools: `llmdb_query`, which fetches records for a request, `llmdb_estimate`, which bounds what one such fetch could cost without making it, provided it is not split, `llmdb_list_models` and `llmdb_inspect_model`, which say which models carry a published price and whether a cost ceiling can be bounded against one, and `llmdb_inspect_metadata`, which reports the protocol, the variant, and the library version. Each name carries the server's own prefix, so an agent holding two Blue Data servers at once has no collision to resolve. Each carries a JSON input schema, and the agent calls them the way it calls any other tool. Argument validation is the library's, which matters here in particular: an agent supplies arguments programmatically and sees only the exception text as its tool result, so every rejection names the offending value and the accepted form and is passed through unreworded.
+An agent in another framework with the MCP server configured sees five tools: `llmdb_query` fetches records; `llmdb_estimate` bounds the cost of an unsplit fetch without running it; `llmdb_list_models` and `llmdb_inspect_model` report which models have a published price and whether a cost ceiling can be calculated; and `llmdb_inspect_metadata` reports the protocol, variant, and library version. Each tool name has the server's prefix, avoiding collisions when an agent uses two Blue Data servers. Each tool also has a JSON input schema. The library validates arguments and passes rejection messages through unchanged. Because agents supply arguments programmatically and see only the exception text, each rejection names the offending value and accepted form.
 
 **Example:**
 
@@ -251,11 +251,11 @@ An agent in another framework has the MCP server configured. It sees five tools:
   "records": [{"country": "France", "accession_year": 1958}],
   "meta": {
     "outcome": "ok",
-    "model": "gpt-4o",
+    "model": "gpt-6-luna",
     "calls": 1,
     "prompt_tokens": 12,
     "completion_tokens": 34,
-    "cost": 0.0012,
+    "cost": 0.000031,
     "elapsed_seconds": 0.31,
     "row_estimate": null,
     "cardinality_estimate": null,
@@ -266,12 +266,15 @@ An agent in another framework has the MCP server configured. It sees five tools:
     "gaps": [],
     "stop_reasons": [],
     "requested_attrs": ["country", "accession_year"],
-    "record_origins": [["0.0"]]
+    "record_origins": [["0.0"]],
+    "accounting_known": false
   }
 }
 ```
 
-The ceiling is the agent's to set. `llmdb_query` takes `limits.max_cost`, `limits.max_seconds`, and `limits.max_calls`, and the server configures none of them itself, so a request that names no ceiling has none — an agent that has to stay inside one asks `llmdb_estimate` first and sets it.
+`cost` here is a usage bound rather than a measurement, which is what `accounting_known: false` says. Under a ceiling, a GPT-6 Luna response does not prove its cache-write and long-context charges, so the call is charged the most its reported usage could have been billed.
+
+An agent sets a ceiling on its own call with `limits.max_cost`, `limits.max_seconds`, and `limits.max_calls`. The operator can also set ceilings for every call through `BLUE_DATA_LLM_SOURCE_LIMIT_COST`, `BLUE_DATA_LLM_SOURCE_LIMIT_CALLS` and `BLUE_DATA_LLM_SOURCE_LIMIT_SECONDS`, and a call's own ceiling applies only where it is lower. A request with neither has no ceiling. An agent that has to stay inside one asks `llmdb_estimate` first and sets it.
 
 `outcome` is on every result. An empty record list is not an error here, so an agent reads that field to tell an empty request from a model that returned nothing, a result reduction filtered away, and a run a ceiling stopped.
 
@@ -296,8 +299,8 @@ blue-llmdb data query "the member states of the European Union" --attr country -
 │ France  │ 1958           │
 │ Germany │ 1958           │
 └─────────┴────────────────┘
-2 records | model gpt-4o | 1 call | 46 tokens | row estimate unknown | $0.0012 | 0.31s
-settings: llm.cache_dir=~/.blue-llmdb/cache (default), llm.model=gpt-4o (default), plan.max_continuations=0 (default)
+2 records | model gpt-6-luna | 1 call | 46 tokens | row estimate unknown | $0.0000 | 0.31s
+settings: llm.cache_dir=~/.blue-llmdb/cache (default), llm.model=gpt-6-luna (default), plan.max_continuations=0 (default)
 ```
 
 Plain table output includes gaps and every stop reason. `--verbose` adds alignment, type, and collision details. Under `--format json` the run prints one object with three keys: `records`, `meta` and the same `settings` envelope the second footer prints. `meta` always includes `gaps`, `stop_reasons`, `requested_attrs` and the planning observations; `stopped_by` is the first stop reason when one exists.

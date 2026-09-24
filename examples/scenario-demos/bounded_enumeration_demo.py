@@ -1,20 +1,18 @@
 """When the answer is longer than one completion, and nothing in the answer says so.
 
-**Problem.** A model asked to enumerate a set larger than its output allowance returns a
-valid, well-formed, *short* list. There is no marker in it. A caller counting records sees
-twenty-something rows and no error, and has no way to tell a complete answer from a
-truncated one -- which is why ``meta.gaps`` being empty on a flat run is not a
-completeness claim and this library does not pretend it is.
+**Problem.** A model asked to enumerate a set larger than its output allowance returns
+a valid but incomplete list with no marker that it is short. A caller counting records
+sees twenty-something rows and no error, and cannot tell whether the answer is complete.
+Therefore, an empty ``meta.gaps`` list on a flat run does not guarantee completeness.
 
 **Solution.** Declare an identifying column with ``plan.key`` so repeated asks can be
 merged, allow continuations with ``plan.max_continuations``, and then read ``gaps``. A run
-that exhausted the set finishes with no diagnostic. A run that hit its cap while records
-were still arriving says ``leaf_at_cap`` and names the number it reached, so "we have all
-of them" and "we ran out of asks" are different answers rather than the same one.
+that exhausts the set finishes with no diagnostic. A run that reaches its cap while
+records are still arriving reports ``leaf_at_cap`` and the number reached. This
+distinguishes an exhausted set from one that needs more asks.
 
-The model here is scripted: it holds a 24-item list and will return at most six items per
-ask, which is the behaviour being worked around. No provider is contacted, so the counts
-below are arithmetic over real library behaviour rather than a model's mood on the day.
+The model is scripted with a 24-item list and returns at most six items per ask. No
+provider is contacted; the counts below show the library's behavior with these responses.
 
 Run from the repository root:
     python3 examples/scenario-demos/bounded_enumeration_demo.py

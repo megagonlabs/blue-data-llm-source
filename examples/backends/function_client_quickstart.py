@@ -1,13 +1,13 @@
 """Quickstart: one fetch, answered by a local function instead of a provider.
 
 ``llm_fn`` is a ``(prompt) -> str`` callable the source uses as its model client for
-that call. Everything else runs for real -- prompt rendering, JSON parsing, attribute
-alignment, type checking, result metadata -- so the shortest useful example of this
-library needs no credential and no network.
+that call. The remaining steps use the normal library path: prompt rendering, JSON
+parsing, attribute alignment, type checking, and result metadata. This is the shortest
+useful example of the library and needs no credential or network access.
 
-The response below is canned, which is also why ``meta.accounting_known`` comes back
-False: a callable may answer from memory, call one provider, or fan out to five, and
-none of that is visible from inside the source.
+The response below is canned, so ``meta.accounting_known`` is ``False``. A callable may
+answer from memory, call one provider, or make several provider calls; the source cannot
+observe which occurred.
 
 Run from the repository root:
     python3 examples/backends/function_client_quickstart.py

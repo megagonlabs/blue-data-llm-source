@@ -27,9 +27,8 @@ def execution_settings(
     exact_rows: int | None = None,
 ) -> dict[str, Any]:
     """Return the task settings that may cross the executor boundary."""
-    return {
+    settings = {
         "model": properties.get("llm.model"),
-        "temperature": properties.get("llm.temperature"),
         "max_output_tokens": properties.get("llm.max_tokens"),
         "max_retries": budget.effective_retries(),
         "max_continuations": limits.max_continuations,
@@ -39,6 +38,13 @@ def execution_settings(
         "exact_rows": exact_rows,
         "expose_estimate": properties.get("plan.expose_estimate", True),
     }
+    reasoning_effort = properties.get("llm.reasoning_effort")
+    if reasoning_effort is not None:
+        settings["reasoning_effort"] = reasoning_effort
+    temperature = properties.get("llm.temperature")
+    if temperature is not None:
+        settings["temperature"] = temperature
+    return settings
 
 
 def _task_limits(settings: Mapping[str, Any]) -> PlanLimits:

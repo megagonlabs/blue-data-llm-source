@@ -8,15 +8,9 @@
 scripts/install.sh
 ```
 
-That installs `blue-data`, then the library from `../../lib`, then this package, all editable, plus the dev extras. Set `BLUE_DATA_PATH` if `blue-data` does not sit alongside this repository.
+That installs `blue-data`, then the library from `../../lib`, then this package, all editable, plus the dev extras. It looks for `blue-data` beside this repository, at `../blue-data/lib` from the repository root; set `BLUE_DATA_PATH` to its `lib` directory if it is elsewhere.
 
-`pip install blue-data-llm-cli` works only where `blue-data` is resolvable, which means an internal index: it is a core dependency of the library underneath and is not on the public one.
-
-Both packages point `pyright` at a `.venv` in their own directory. Create and activate one before installing, or the type check reports every import as unresolved:
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-```
+`pip install blue-data-llm-cli` from a package index does not work: neither this package nor `blue-data`, a core dependency of the library underneath, is published to one. Install from a checkout as above.
 
 ## Commands
 
@@ -64,7 +58,7 @@ Prints the protocol, the variant, and the version of the library underneath:
 ┡━━━━━━━━━━╇━━━━━━━━┩
 │ protocol │ llm    │
 │ variant  │ openai │
-│ version  │ 2.0.0  │
+│ version  │ 2.1.0  │
 └──────────┴────────┘
 ```
 
@@ -78,7 +72,7 @@ blue-llmdb metadata inspect --format json
 {
   "protocol": "llm",
   "variant": "openai",
-  "version": "2.0.0"
+  "version": "2.1.0"
 }
 ```
 
@@ -96,7 +90,7 @@ blue-llmdb profile list
 blue-llmdb profile config BLUE_DATA_LLM_MODEL gpt-4o
 ```
 
-`profile config` has three forms. With no argument it walks the parameters a first run is asked for; with a parameter name it prompts for that one; with a name and a value it sets it outright. A profile named with `--profile` that does not exist yet is created by the write that needs it, so a refused parameter or a value that will not store leaves nothing behind.
+`profile config` has three forms: with no argument, it prompts for the parameters requested on a first run; with a parameter name, it prompts for that parameter; with a name and value, it sets the value directly. If the profile named by `--profile` does not exist, the write creates it. A refused parameter or value leaves no profile behind.
 
 ```bash
 blue-llmdb profile config
@@ -106,7 +100,7 @@ blue-llmdb profile config
 blue-llmdb profile config OPENAI_API_KEY
 ```
 
-`profile inspect` shows every parameter, its value, and which tier supplied it: `environment`, `profile:<name>`, `default`, or `unset`. It cannot report `flag`, because a command option never reaches the resolver. It is applied on top of whatever the resolver returned.
+`profile inspect` shows every parameter, its value, and the tier that supplied it: `environment`, `profile:<name>`, `default`, or `unset`. It cannot report `flag`: command options do not reach the resolver and are applied on top of its result.
 
 ```bash
 blue-llmdb profile inspect
@@ -141,11 +135,12 @@ blue-llmdb profile remove staging --confirm
 | Parameter | Cast | Default | Asked on a first run | Reaches |
 |---|---|---|---|---|
 | `OPENAI_API_KEY` | secret | — | yes | the provider SDK, through the environment |
-| `BLUE_DATA_LLM_MODEL` | str | `gpt-4o` | yes | `llm.model` |
+| `BLUE_DATA_LLM_MODEL` | str | `gpt-6-luna` | yes | `llm.model` |
 | `BLUE_DATA_CLI_FORMAT` | str | `table` | | the default for `--format` |
 | `BLUE_DATA_CLI_LOG_LIMIT` | int | `80` | | the default for `--log-limit` |
 | `BLUE_DATA_LLM_SOURCE_MAX_RECORDS` | int | — | | the default for `--max-records` |
 | `BLUE_DATA_LLM_SOURCE_MAX_TOKENS` | int | — | | `llm.max_tokens` |
+| `BLUE_DATA_LLM_SOURCE_REASONING_EFFORT` | str | — | | `llm.reasoning_effort` |
 | `BLUE_DATA_LLM_SOURCE_TEMPERATURE` | float | — | | `llm.temperature` |
 | `BLUE_DATA_LLM_SOURCE_TIMEOUT` | float | — | | `llm.timeout` |
 | `BLUE_DATA_LLM_SOURCE_MAX_PARALLEL` | int | — | | `llm.max_parallel` |
@@ -164,7 +159,7 @@ A parameter name is also its environment-variable name, so exporting `BLUE_DATA_
 
 Nothing blocks on a parameter being unset. "Asked on a first run" means `blue-llmdb profile config` with no argument walks those two, and nothing more. `profile`, `model`, `metadata` and `data estimate` contact no provider and run against an empty profile. A missing credential surfaces only when `data query` reaches the provider, as `ERROR: TRANSPORT`.
 
-Two settings come from the environment, not from a profile. `BLUE_DATA_LLM_SOURCE_HOME` moves the CLI home, because it is the directory the profiles are read from; exported empty it is refused, since an empty path is the working directory and the store would follow you around. `BLUE_DATA_PROFILE` picks the profile, and the root `--profile` overrides it. Either one naming a profile that does not exist is refused rather than run as an empty one: the point of putting a ceiling in a profile is that it applies, and a misspelled name would drop it without saying so.
+Two settings come from the environment rather than a profile. `BLUE_DATA_LLM_SOURCE_HOME` moves the CLI home, where profiles are stored. An empty value is refused because an empty path resolves to the working directory. `BLUE_DATA_PROFILE` selects the profile, and the root `--profile` option overrides it. If either names a nonexistent profile, the CLI refuses to run with an empty profile; otherwise, a misspelled name could silently omit a configured ceiling.
 
 ### Storage and secrets
 
@@ -175,13 +170,13 @@ Two settings come from the environment, not from a profile. `BLUE_DATA_LLM_SOURC
 └── cache/                the default llm.cache_dir
 ```
 
-Every write goes to a temporary file in the same directory and is moved into place, so an interrupted run cannot leave a profiles file the next run refuses to parse. A complete write cannot either: a value holding a line break is refused, because the file is line-oriented and one pasted from a CRLF file would be read back as a separate setting. A path inside the home that is a symlink out of it is refused rather than followed. A path found with wider permissions is reported once; the directory is left as you set it, and a file goes back to 0600 on the next write.
+Every write first goes to a temporary file in the same directory, then moves into place. An interrupted write therefore cannot leave a profiles file that the next run cannot parse. Values containing line breaks are refused because the file is line-oriented; otherwise, a value pasted from a CRLF file could be read as a separate setting. A symlink from inside the home to a path outside it is refused. A home directory at 0755 is reported once and left as it is. A home that group or others can write to is refused, and so is a settings file that group or others can read or write: every command then exits 4 with `ERROR: PROFILE` naming the path and the mode it needs, until you fix it with `chmod 700` on the directory or `chmod 600` on the file. The CLI never changes an existing mode.
 
 A secret is never accepted as a value on the command line, where it would land in shell history. `blue-llmdb profile config OPENAI_API_KEY` prompts with the input hidden. Enter `$MY_KEY` at that prompt to store a reference to an environment variable instead of the secret itself; `profile inspect` then shows `$MY_KEY (set)` or `$MY_KEY (unset)`, so you can see what to export.
 
 A directly entered secret is stored as base64 behind an `enc:` prefix. **This is obfuscation, not encryption.** Anyone who can read the file can decode it; the file permissions provide the protection. Commands do not print secret values in profile output, logs, or error messages.
 
-The last two are not the store's doing. An error message and a `--log` line carry text this CLI did not write: a library message quoting what you typed, and a provider SDK's exception, which is free to include a request header or a fragment of a key. Every error line, every JSON error object, every log line and the traceback `--log` prints go through the library's `redact`, which replaces a value the environment holds under a credential's name, and anything written in a credential's shape, with `***`. So does the model name a run reports, on every format (the table footer, the `nl` sentence and `meta.model`) and the `llm.model` entry in the `settings` envelope, because a deployment that pastes a credential into that setting gets it echoed back in the most visible line the CLI prints. A model name that is only a model name is unchanged. The rest of the `settings` envelope is not masked: a cache directory is a path, and a path is high-entropy enough that masking it would report `***` for a directory you chose. Records do not: they are model output, and a record value that happens to read like a token is the answer you asked for.
+The store does not control the text in error messages or `--log` output. These may include library messages quoting user input or provider SDK exceptions containing request headers or part of a key. The library's `redact` function processes every error line, JSON error object, log line, and traceback printed by `--log`. It replaces environment values stored under credential names, and strings matching credential patterns, with `***`. It also processes the reported model name in every format (the table footer, the `nl` sentence, and `meta.model`) and the `llm.model` entry in the `settings` envelope. This prevents a credential pasted into that setting from appearing in CLI output; ordinary model names remain unchanged. Other fields in the `settings` envelope are not masked. For example, cache directories are paths, and masking them would hide the directory the user selected. Records are also not masked because they are model output; a record value that resembles a token remains part of the requested answer.
 
 ## data query
 
@@ -203,8 +198,8 @@ blue-llmdb data query "the member states of the European Union" \
 │ France  │ 1958           │
 │ Germany │ 1958           │
 └─────────┴────────────────┘
-2 records | model gpt-4o | 1 call | 46 tokens | row estimate unknown | $0.0012 | 0.31s
-settings: llm.model=gpt-4o (default), plan.max_continuations=0 (default)
+2 records | model gpt-6-luna | 1 call | 46 tokens | row estimate unknown | $0.0000 | 0.31s
+settings: llm.model=gpt-6-luna (default), plan.max_continuations=0 (default)
 ```
 
 `--context` adds text that clarifies the ask, usually what an attribute name means:
@@ -228,7 +223,7 @@ blue-llmdb data query "the member states of the European Union" \
 
 ### Model and adapter options
 
-`--model`, `--max-tokens`, `--temperature`, `--timeout`, `--max-parallel`, `--cache`/`--no-cache`, `--cache-dir`, `--price-in` and `--price-out` set the library's `llm.*` settings of the same meaning, and `--variant` sets the source variant within the `llm` protocol. Each has a profile parameter, so a value you use every time belongs in the profile and a value you use once belongs on the command line.
+`--model`, `--max-tokens`, `--reasoning-effort`, `--temperature`, `--timeout`, `--max-parallel`, `--cache`/`--no-cache`, `--cache-dir`, `--price-in` and `--price-out` set the library's `llm.*` settings of the same meaning, and `--variant` sets the source variant within the `llm` protocol. Each has a profile parameter, so a value you use every time belongs in the profile and a value you use once belongs on the command line. Each model the package knows has its own reasoning efforts, default effort and temperature rule, listed under [Supported models](../../lib/README.md#supported-models). GPT-6 Luna defaults to medium reasoning and accepts `--temperature` only with `--reasoning-effort none`; GPT-4o sends temperature 0 and accepts no reasoning effort. A combination the model rules out is refused before anything is spent.
 
 ```bash
 blue-llmdb data query "the member states of the European Union" \
@@ -241,14 +236,14 @@ blue-llmdb data query "the member states of the European Union" \
 
 A ceiling applies to one request. A profile supplies the default for each request. Every run prints which ceilings applied and where each came from, so neither fact has to be inferred.
 
-`--limit-cost` is claimed against an upper bound on what the call can cost rather than an estimate of what it is likely to cost, and that bound is reconciled against the real figure once the call returns. See [The cost bound](../../lib/README.md#the-cost-bound) for how it is calculated and how to size one. A request refused this way prints no records and exits 7, with `outcome: stopped_by_limit` and `stopped by: max_cost` under the table.
+`--limit-cost` is claimed against an upper bound on what the call can cost rather than an estimate of what it is likely to cost. The bound is reconciled once the call returns: a measured cost settles it, and [the cost bound](../../lib/README.md#the-cost-bound) sets the charge when the response cannot prove it. That section also says how the bound is calculated and how to size one, and [what `cost` means](../../lib/README.md#what-cost-means) says how to read the figure a run reports. A request refused this way prints no records and exits 7, with `outcome: stopped_by_limit` and `stopped by: max_cost` under the table.
 
 ```bash
 blue-llmdb data query "the member states of the European Union" \
     --model gpt-4o --limit-cost 0.50 --limit-seconds 30 --limit-calls 2 --max-retries 1
 ```
 
-`--limit-cost 0.50` is above the floor for that model, which is what makes the command above work. The floor is the whole output allowance at the model's output rate and does not depend on the prompt: for `gpt-4o` with the library's default of 4096 output tokens it is about $0.041, so `--limit-cost 0.01` would refuse every call before making one. Ask for a smaller answer with `--max-tokens` rather than raising the ceiling, since the output allowance is what the floor is made of. A model this package carries no published price for is refused a cost ceiling outright, with a `ConfigError` naming what is missing and exit code 4, instead of being bounded against a guessed rate. `blue-llmdb model list` is the list of models it does carry.
+`--limit-cost 0.50` is above the floor for that model, which is what makes the command above work. The floor is the whole output allowance at the model's output rate and does not depend on the prompt: GPT-4o's default allowance is 4,096 output tokens, for a floor of about $0.041, so `--limit-cost 0.01` would refuse every call before making one. The GPT-6 Luna default is 25,000 tokens, for a floor of about $0.0138 once OpenAI's 10% regional-processing uplift is added. Ask for a smaller answer with `--max-tokens` rather than raising the ceiling, since the output allowance is what the floor is made of. A model this package carries no published price for is refused a cost ceiling outright, with a `ConfigError` naming what is missing and exit code 4, instead of being bounded against a guessed rate. `blue-llmdb model list` is the list of models it does carry.
 
 ### Decomposition
 
@@ -312,11 +307,13 @@ Every option that appears on both `data query` and `data estimate` has the same 
 blue-llmdb model list
 ```
 
-The models this package carries a published price for. Any model name the provider accepts can be used; these are the ones a cost ceiling can be bounded against without supplying rates of your own.
+The models this package carries a published price for. Any model name the provider accepts can be used; these are the ones a cost ceiling can be bounded against without supplying rates of your own. [Supported models](../../lib/README.md#supported-models) gives each one's reasoning efforts and prices.
 
 ```bash
 blue-llmdb model inspect gpt-4o
 ```
+
+The `published_defaults.*` rows are the model's entry in the package's table: the reasoning efforts it accepts and its default, when it accepts a temperature (`always`, `effort_none_only` or `never`), the output-token parameter, the cached-input and cache-write rates, and the long-context threshold. They describe the model; a profile setting or a flag overrides them for a query. The `nl` format adds a sentence naming the floor a cost ceiling has to clear, with the regional uplift included where it applies.
 
 ```bash
 blue-llmdb model select gpt-4o
@@ -423,6 +420,12 @@ ERROR: TRANSPORT TransportError: litellm.AuthenticationError - Missing credentia
 ```bash
 python3 -m pytest tests/unit -q
 python3 -m ruff format --check . && python3 -m ruff check .
+```
+
+For the type check, create a `.venv` in this directory before installing. `pyproject.toml` points `pyright` at it, and without one pyright reports every import as unresolved instead of real typing errors:
+
+```bash
+python -m venv .venv && source .venv/bin/activate
 ```
 
 Every `blue-llmdb` command shown above is run by `tests/unit/test_readme.py`, in the order it appears, against a fake model client and a throwaway CLI home. A command that stops working here fails the suite.

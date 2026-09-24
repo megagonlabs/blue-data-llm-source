@@ -11,7 +11,8 @@ from blue_data_llm_source._constants import (
 )
 from blue_data_llm_source.cache import FileCache, MemoryCache
 from blue_data_llm_source.llm.budget import Budget, Limits, Reservation
-from blue_data_llm_source.llm.client import DefaultLlmClient, FunctionClient
+from blue_data_llm_source.llm.client import REASONING_EFFORTS, DefaultLlmClient, FunctionClient
+from blue_data_llm_source.llm.models import published_defaults
 from blue_data_llm_source.llm.pricing import can_bound, priceable_models, rates_for
 from blue_data_llm_source.planning.analysis import DataTask, QueryAnalysisResult, QueryAnalyzer
 from blue_data_llm_source.planning.cardinality import CardinalityEstimate, CardinalityEstimator
@@ -45,7 +46,7 @@ from blue_data_llm_source.types import (
 )
 from blue_data_llm_source.views import meta_view
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 __all__ = [
     "Attr",
@@ -86,6 +87,7 @@ __all__ = [
     "QueryAnalysisResult",
     "QueryAnalyzer",
     "QueryError",
+    "REASONING_EFFORTS",
     "Reservation",
     "SchemaDefinition",
     "SchemaGenerator",
@@ -95,6 +97,7 @@ __all__ = [
     "key_identity",
     "meta_view",
     "priceable_models",
+    "published_defaults",
     "redact",
     "rates_for",
     "__version__",

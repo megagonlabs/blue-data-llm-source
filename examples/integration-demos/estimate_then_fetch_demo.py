@@ -1,6 +1,6 @@
-"""The hero script: size a request, decide, run it, reconcile what it actually cost.
+"""Estimate a request, decide whether to run it, then reconcile its actual cost.
 
-This is the sequence an operator runs at the boundary of a spending decision.
+This example shows the sequence an operator can use when deciding whether to spend.
 
 1. ``estimate`` bounds the request without contacting anything.
 2. The bound is checked against a ceiling the caller owns. Too big, and nothing is spent.

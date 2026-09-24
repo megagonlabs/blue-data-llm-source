@@ -2,7 +2,7 @@
 
 This guide covers the main library tasks: asking a question, shaping the answer, setting cost bounds, splitting a large request, and evaluating the result metadata.
 
-Every example here runs as shown. Most supply an `llm_fn`, a plain `(prompt) -> str` callable used as the model for that call, so they execute offline and for free. The two examples that would reach a provider say so in a line above the block.
+Every example runs as shown. Most supply an `llm_fn`, a plain `(prompt) -> str` callable used as the model for that call, so they run offline and at no cost. The two examples that reach a provider are identified above their code blocks.
 
 ## Setup
 
@@ -39,7 +39,7 @@ print(result.meta.outcome)
 
 ## Asking for typed attributes
 
-Declare a type and the value is coerced where the coercion is unambiguous. A value that will not coerce is kept as it arrived and reported, because dropping a record over a formatting mismatch loses data you asked for.
+Declare a type and the value is coerced when the conversion is unambiguous. A value that cannot be converted is kept as received and reported; dropping a record over a formatting mismatch would lose requested data.
 
 ```python
 from blue_data_llm_source import LlmSource
@@ -61,7 +61,7 @@ print(result.records)
 print(result.meta.type_mismatches)
 ```
 
-`int`, `integer`, `float`, `number`, `bool`, `boolean`, and `date` are the names this library checks. Any other name is still sent to the model as an instruction (which is legitimate) and is reported once in `meta.unchecked_types`, so a misspelled type cannot look like a check that is happening.
+`int`, `integer`, `float`, `number`, `bool`, `boolean`, `date`, `str`, `string`, and `text` are the names this library checks. Any other name is still sent to the model as an instruction and is reported once in `meta.unchecked_types`, so a misspelled type is not mistaken for an active check.
 
 Only a genuine thousands grouping is stripped from a number, so a decimal comma is not silently turned into a hundredfold error.
 
@@ -90,9 +90,9 @@ print(result.meta.remapped_keys, result.meta.unmapped_keys)
 print(meta_view(result.meta, verbose=True)["unmapped_keys"])
 ```
 
-`Name` reached `name` because the match ignores case, and that remapping is reported. `IATA` reached nothing (`iata` and `iatacode` are different normalised forms), so it is reported unmapped rather than assigned by guess.
+`Name` matched `name` because matching ignores case, and the remapping is reported. `IATA` matched nothing (`iata` and `iatacode` are different normalised forms), so it is reported as unmapped rather than assigned by guesswork.
 
-`meta_view` is the single JSON-ready serialization every adapter publishes. Use it instead of writing your own, or two consumers of the same run will describe it differently.
+`meta_view` is the JSON-ready serialization published by every adapter. Use it instead of writing your own to keep the result description consistent across consumers.
 
 **`gaps` being empty means no supported diagnostic fired.** It is not a completeness claim. Nothing in a short answer says it is short, so this library does not pretend to detect one.
 
@@ -123,7 +123,7 @@ Four axes exist. Which of them bind depends on the client that answers. See [Whi
 | `limits.max_seconds` | Refuses an attempt once elapsed time reaches it, and cancels a wait in flight |
 | `limits.max_cost` | Refuses an attempt whose cost bound would cross it |
 | `limits.max_calls` | Refuses an attempt past that many, counting every retry |
-| `limits.max_retries` | Retries per call; the client makes this many attempts plus one |
+| `limits.max_retries` | Retries per call, at most 9,999; the client makes this many attempts plus one |
 
 The names are a closed set. `limits.max_cst` raises `ConfigError` listing what is accepted, and so does `limit.max_rows` or a bare `limits`. Every value is checked as the ceiling is built: a wrong type, a `bool`, a negative number, or a `NaN` is refused rather than accepted while enforcing nothing.
 
@@ -165,7 +165,7 @@ print(sized.max_attempts, round(sized.max_cost_per_attempt, 6))
 
 `max_cost` bounds the whole fetch, not one try: it is the per-attempt figure accumulated once per attempt the fetch is permitted, added the way the budget ledger adds it. Size a ceiling against `max_cost`, not against `max_cost_per_attempt`, or one transient failure consumes the ceiling and the retry is refused.
 
-**The minimum cost bound is the full output allowance.** The prompt contributes relatively little; `llm.max_tokens` at the model's output rate contributes the rest. With the default `gpt-4o` model and 4096 output tokens, the minimum is about $0.041. A lower `limits.max_cost` refuses the call before provider contact. Reduce `llm.max_tokens` when the answer needs fewer tokens.
+**The minimum cost bound is the full output allowance.** The prompt contributes relatively little; `llm.max_tokens` at the model's output rate, with OpenAI's 10% regional-processing uplift where it applies, contributes the rest. With the default `gpt-6-luna` model and 25,000 output tokens, the minimum is about $0.01375. A lower `limits.max_cost` refuses the call before provider contact. Reduce `llm.max_tokens` when the answer needs fewer tokens.
 
 An unpriced model is answered, not raised on:
 
@@ -178,7 +178,7 @@ unpriced = LlmSource().estimate("anything", properties={"llm.model": "a-model-no
 print(unpriced.bounded, unpriced.reason)
 ```
 
-Supply `llm.price_per_input_token` and `llm.price_per_output_token` together to bound a model the table does not carry. The table is a static snapshot of published list prices with no effective date and no freshness check, so treat `limits.max_cost` as a control against known rates rather than as a hard billing stop.
+Supply `llm.price_per_input_token` and `llm.price_per_output_token` together to bound a model the table does not carry; they are used as given, so they must cover every tier the model can be billed at. Rates supplied for a model the table carries keep its cache-write, long-context and regional charges and never lower its bound. The table is a static snapshot of published list prices with no effective date and no freshness check, so treat `limits.max_cost` as a control against known rates rather than as a hard billing stop. [The cost bound](../lib/README.md#the-cost-bound) says how a call is charged once it returns, and the [known limitations](../lib/README.md#supported-models) say where the table falls short.
 
 `estimate` reads no `plan.*` setting. It describes a flat fetch; a decomposed request costs this figure times the calls it makes.
 
@@ -198,11 +198,14 @@ print(len(result), result.meta.model, result.meta.calls, result.meta.cost)
 
 | Key | Meaning |
 |---|---|
-| `llm.model` | Model name. Defaults to `gpt-4o` |
-| `llm.temperature`, `llm.max_tokens`, `llm.stream`, `llm.timeout` | Forwarded to the provider |
+| `llm.model` | Model name. Defaults to `gpt-6-luna` |
+| `llm.reasoning_effort` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`, within the set the model accepts; GPT-6 Luna defaults to `medium` |
+| `llm.temperature`, `llm.max_tokens`, `llm.stream`, `llm.timeout` | Forwarded with model-specific argument names |
 | `llm.cache`, `llm.cache_dir` | Enable and locate the on-disk response cache |
 | `llm.max_parallel` | Concurrency bound per event loop, default 8 |
 | `llm.price_per_input_token`, `llm.price_per_output_token` | Rates for a model the price table does not carry |
+
+[Supported models](../lib/README.md#supported-models) lists the models the package knows, the reasoning efforts and default each takes, when each accepts a temperature, and its prices. A setting the model rules out raises `ConfigError` before anything is spent.
 
 The last four are consumed here and never sent to the provider. `llm.rate_limit` is refused by name with a `ConfigError`: client-side call spacing has to reconcile with per-attempt budget admission, and this library does not do it. Cap concurrency with `llm.max_parallel`, or throttle above this library where the whole request sequence is visible.
 
@@ -289,8 +292,8 @@ The settings worth knowing first:
 | `plan.keys` | empty | Ordered fields that jointly identify one record, when one attribute is not enough |
 | `plan.partition_key` | none | Preferred root split dimension. Descendants may choose another and cannot repeat an ancestor's |
 | `plan.max_depth` | `2` | Deepest partition level. `0` keeps the planning stages and disables subdivision |
-| `plan.max_partitions` | `4` | Most children one proposal may create |
-| `plan.max_leaves` | `24` | Most terminal slices. A plan that cannot fit is rejected whole, not run as a prefix |
+| `plan.max_partitions` | `20` | Most children one proposal may create |
+| `plan.max_leaves` | `100` | Most terminal slices. A plan that cannot fit is rejected whole, not run as a prefix |
 | `plan.planning_order` | `planning.schema_first` | Which fact schedule runs, and how many calls it may make |
 
 The full set is in [api-reference.md](api-reference.md#plan-properties).
@@ -502,7 +505,7 @@ Results are model-generated. This library verifies shape, never truth.
 5. **`meta.accounting_known`.** Whether the cost figure is a measurement.
 6. **`None` values.** A requested attribute the model omitted and an explicit JSON `null` both arrive as `None`, and the result does not distinguish them. An empty `type_mismatches` means "nothing present failed its type", not "every field is populated". Check for `None` yourself when a field is required.
 
-`meta.row_estimate` is a model-generated planning hint, not an expected row count and not a recall measure. It is `None` in `flat` mode and whenever no estimate was accepted.
+`meta.row_estimate` is a model-generated planning hint, not an expected row count or a recall measure. It is `None` in `flat` mode and whenever no estimate was accepted.
 
 ## Next steps
 

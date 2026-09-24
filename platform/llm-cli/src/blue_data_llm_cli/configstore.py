@@ -35,13 +35,13 @@ directory, is flushed and fsynced, and is moved into place with ``os.replace``: 
 write must never leave a profiles file a later run cannot parse. A complete write must not
 either, which is why a value holding a line break is refused rather than stored — the
 profiles file is line-oriented, and configparser escapes a newline on the way out but not a
-carriage return, so one pasted from a CRLF file came back as a second setting. A path inside
-the CLI home that is a symlink out of it is refused rather than followed.
+carriage return, so one pasted from a CRLF file came back as a second setting. Profile paths
+must be regular files; symlinks and device-like entries are refused.
 
-An existing path whose mode is wider than the above is reported once. The directory is then
-left exactly as found; a file is rewritten at 0600 by the next write, because the write goes
-through a fresh temporary file and installs its mode with it. Both are said in the warning,
-because narrowing a file the user widened on purpose is a surprise worth naming.
+An existing 0755 home is reported once and left alone. A group- or world-writable home is
+refused because another account could replace a settings file. A settings file readable or
+writable by group or other is refused because it may hold a provider credential or execution
+ceiling. The error names the required ``chmod`` repair; the CLI does not change existing modes.
 """
 
 from __future__ import annotations
@@ -53,6 +53,7 @@ import contextlib
 import io
 import json
 import os
+import stat
 import sys
 import tempfile
 from collections.abc import Generator, Iterable, Iterator, Mapping
@@ -245,7 +246,7 @@ def base_spec() -> Spec:
             ),
             Parameter(
                 "BLUE_DATA_LLM_MODEL",
-                default="gpt-4o",
+                default="gpt-6-luna",
                 required=True,
                 prompt="Model to call",
             ),
@@ -337,6 +338,69 @@ def display(raw: str) -> str:
 _reported_modes: set[str] = set()
 
 
+def _validate_mode(
+    path: Path,
+    status: os.stat_result,
+    forbidden: int,
+    repair: int,
+    reason: str,
+    *,
+    directory: bool = False,
+) -> None:
+    kind_ok = stat.S_ISDIR(status.st_mode) if directory else stat.S_ISREG(status.st_mode)
+    expected = "a directory" if directory else "a regular file"
+    if not kind_ok:
+        raise ProfileError(f"refusing to use {os.fspath(path)!r}: it is not {expected}")
+    effective_uid = os.geteuid() if hasattr(os, "geteuid") else None
+    if effective_uid is not None and status.st_uid != effective_uid:
+        raise ProfileError(
+            f"refusing to use {os.fspath(path)!r}: it is owned by uid {status.st_uid}, "
+            f"not the current uid {effective_uid}"
+        )
+    mode = stat.S_IMODE(status.st_mode)
+    if mode & forbidden:
+        raise ProfileError(
+            f"refusing to use {os.fspath(path)!r}: mode {mode:04o} {reason}. "
+            f"Set that path to mode {repair:04o} with chmod and try again."
+        )
+
+
+def _refuse_mode(
+    path: Path,
+    forbidden: int,
+    repair: int,
+    reason: str,
+    *,
+    directory: bool = False,
+) -> None:
+    """Refuse an unsafe type, owner, or permission mode."""
+    try:
+        status = path.lstat()
+    except OSError as error:
+        raise ProfileError(f"cannot inspect {path}: {error.strerror or error}") from None
+    _validate_mode(path, status, forbidden, repair, reason, directory=directory)
+
+
+def _read_private_text(path: Path) -> str:
+    """Validate the opened settings file before reading it."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        _validate_mode(
+            path,
+            os.fstat(descriptor),
+            0o066,
+            _FILE_MODE,
+            "lets another local account read or replace stored settings",
+        )
+        with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+            descriptor = -1
+            return stream.read()
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 def _report_wide_mode(path: Path, intended: int, rewritten: bool = False) -> None:
     """Say once that a path is more readable than this CLI would have made it.
 
@@ -374,19 +438,6 @@ def _readable(path: Path, doing: str) -> Generator[None, None, None]:
         yield
     except OSError as error:
         raise ProfileError(f"cannot {doing} {path}: {error.strerror or error}") from None
-
-
-def _refuse_escaping_symlink(path: Path, home: Path) -> None:
-    if not path.is_symlink():
-        return
-    target = path.resolve()
-    root = home.resolve()
-    if target != root and root not in target.parents:
-        raise ProfileError(
-            f"{path} is a symlink to {target}, outside {root}. Refusing to follow it: the "
-            f"files here are kept at mode 0600 because they can hold a credential, and a "
-            f"link out of the home is a write this CLI cannot make that promise about."
-        )
 
 
 def _write_atomic(path: Path, text: str) -> None:
@@ -441,8 +492,12 @@ class ProfileStore:
         Keyed on the profiles file, so a profile removed on purpose is not resurrected by
         the next command.
         """
-        if self.profiles_path.exists():
+        self._check_home()
+        if os.path.lexists(self.profiles_path):
+            self._check_file(self.profiles_path)
             return
+        if os.path.lexists(self.selection_path):
+            self._check_file(self.selection_path)
         self._ensure_home()
         self.add(DEFAULT_PROFILE)
         self.select(DEFAULT_PROFILE)
@@ -461,13 +516,14 @@ class ProfileStore:
         return dict(ini.items(name))
 
     def selected(self) -> str:
+        self._check_home()
         path = self.selection_path
-        if not path.exists():
+        if not os.path.lexists(path):
             return DEFAULT_PROFILE
-        _refuse_escaping_symlink(path, self.home)
+        self._check_file(path)
         _report_wide_mode(path, _FILE_MODE, rewritten=True)
         with _readable(path, "read"):
-            return path.read_text(encoding="utf-8").strip() or DEFAULT_PROFILE
+            return _read_private_text(path).strip() or DEFAULT_PROFILE
 
     # -- writing --
     def add(self, name: str) -> None:
@@ -502,9 +558,10 @@ class ProfileStore:
                 f"exists. Add another profile first, or delete the profiles file to start "
                 f"over."
             )
+        selected = self.selected()
         ini.remove_section(name)
         self._write(ini)
-        if self.selection_path.exists() and self.selected() == name:
+        if selected == name:
             self._write_selection(DEFAULT_PROFILE if DEFAULT_PROFILE in remaining else remaining[0])
 
     def select(self, name: str) -> None:
@@ -566,10 +623,31 @@ class ProfileStore:
             if name != DEFAULT_PROFILE:
                 raise ProfileError(f"profile name {name!r} is reserved; use 'default'")
 
+    def _check_home(self) -> None:
+        home = self.home
+        if not os.path.lexists(home):
+            return
+        _refuse_mode(
+            home,
+            0o022,
+            _DIR_MODE,
+            "lets another local account replace profile files",
+            directory=True,
+        )
+        _report_wide_mode(home, _DIR_MODE)
+
+    def _check_file(self, path: Path) -> None:
+        _refuse_mode(
+            path,
+            0o066,
+            _FILE_MODE,
+            "lets another local account read or replace stored settings",
+        )
+
     def _ensure_home(self) -> None:
         home = self.home
-        if home.exists():
-            _report_wide_mode(home, _DIR_MODE)
+        if os.path.lexists(home):
+            self._check_home()
             return
         with _readable(home, "create"):
             home.mkdir(parents=True, exist_ok=True)
@@ -578,13 +656,14 @@ class ProfileStore:
 
     def _read(self) -> _Ini:
         ini = _Ini()
+        self._check_home()
         path = self.profiles_path
-        if not path.exists():
+        if not os.path.lexists(path):
             return ini
-        _refuse_escaping_symlink(path, self.home)
+        self._check_file(path)
         _report_wide_mode(path, _FILE_MODE, rewritten=True)
         with _readable(path, "read"):
-            body = path.read_text(encoding="utf-8")
+            body = _read_private_text(path)
         try:
             ini.read_string(body, source=str(path))
         except (configparser.Error, UnicodeDecodeError) as error:
@@ -593,14 +672,16 @@ class ProfileStore:
 
     def _write(self, ini: _Ini) -> None:
         self._ensure_home()
-        _refuse_escaping_symlink(self.profiles_path, self.home)
+        if os.path.lexists(self.profiles_path):
+            self._check_file(self.profiles_path)
         buffer = io.StringIO()
         ini.write(buffer)
         _write_atomic(self.profiles_path, buffer.getvalue())
 
     def _write_selection(self, name: str) -> None:
         self._ensure_home()
-        _refuse_escaping_symlink(self.selection_path, self.home)
+        if os.path.lexists(self.selection_path):
+            self._check_file(self.selection_path)
         _write_atomic(self.selection_path, name)
 
 

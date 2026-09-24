@@ -1,6 +1,6 @@
 """plan.mode: one ask, a split ask, an ask per entity -- and continuations within a part.
 
-One model call answers a request by default. ``plan.mode`` chooses a different shape:
+One model call answers a request by default. ``plan.mode`` selects a different structure:
 ``partitioned`` splits the ask by a key the planning stage found, ``row_by_row`` asks once
 per entity it enumerated. Nothing picks a shape for you, and ``flat`` makes no planning
 call at all.
@@ -9,9 +9,9 @@ call at all.
 again for records it did not get. It needs ``plan.key``, because without an identifying
 column the parts cannot be merged and continuation is disabled with a gap saying so.
 
-The planners below are scripted -- each recognises a planning prompt by its opening line
-and answers from a fixed script -- so the call sequence is deterministic and no provider
-is contacted. ``plan.planning_order`` is set to ``planning.combined`` for the two
+The planners below use fixed scripts and recognise planning prompts by their opening
+lines, so their call sequences are deterministic and no provider is contacted.
+``plan.planning_order`` is set to ``planning.combined`` for the two
 non-flat modes, the single-call bootstrap schedule; the shipped default asks for the same
 facts across several calls.
 

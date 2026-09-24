@@ -1,12 +1,12 @@
-"""The two cache stores, exercised directly: MemoryCache and FileCache.
+"""This example exercises both cache stores directly: MemoryCache and FileCache.
 
 ``DefaultLlmClient`` drives a cache through two methods, ``get(key)`` and ``set(key,
 value)``, which is all the ``CacheStore`` protocol declares. This script drives the
-library's own two stores through that same pair, so what it shows is the storage
-behaviour a cached fetch depends on -- bounded eviction, persistence across processes,
-and a ``clear()`` that will not delete a file it did not write.
+library's own two stores through that same pair. It demonstrates the behavior a cached
+fetch depends on: bounded eviction, persistence across processes, and a ``clear()`` that
+will not delete a file it did not write.
 
-No provider is involved, because none is needed to answer questions about a store.
+No provider is involved; it is not needed to demonstrate the stores.
 ``backends/file_cache_demo.py`` is the end-to-end version, where a second identical
 fetch is served from disk; that one needs a credential for its first call.
 

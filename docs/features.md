@@ -1,8 +1,8 @@
 # Features
 
-This page gives a short, runnable example for each major library feature.
+This page provides a short, runnable example of each major library feature.
 
-Every example runs offline by supplying an `llm_fn`, a plain `(prompt) -> str` callable used as the model for that call. Omit `llm_fn` to use a configured provider. Review [the provider settings](guide.md#choosing-a-model-and-provider-settings) first because provider calls may incur charges.
+Every example runs offline when supplied with an `llm_fn`, a plain `(prompt) -> str` callable used as the model for that call. Omit `llm_fn` to use a configured provider. Review [the provider settings](guide.md#choosing-a-model-and-provider-settings) first; provider calls may incur charges.
 
 ## Structured records from a model's own knowledge
 
@@ -23,7 +23,7 @@ print(result.records)
 
 ## Attribute shaping with declared types
 
-Ask for named attributes, optionally typed. Values are coerced where the coercion is unambiguous; a value that will not coerce is kept and reported rather than dropped.
+Ask for named attributes and, optionally, their types. Values are coerced when the conversion is unambiguous; values that cannot be converted are kept and reported.
 
 ```python
 from blue_data_llm_source import LlmSource
@@ -38,7 +38,7 @@ print(result.records)
 # [{'country': 'Croatia', 'accession_year': 2013}]
 ```
 
-`int`, `integer`, `float`, `number`, `bool`, `boolean`, and `date` are checked. Any other declared name is passed to the model as an instruction and reported once in `meta.unchecked_types`, so a misspelled type cannot check nothing in silence.
+`int`, `integer`, `float`, `number`, `bool`, `boolean`, `date`, `str`, `string`, and `text` are checked. Any other declared name is passed to the model as an instruction and reported once in `meta.unchecked_types`, so a misspelled type cannot check nothing in silence.
 
 ## Diagnostics on every result
 
@@ -133,11 +133,27 @@ A model this package carries no price for comes back `bounded=False` with a `rea
 from blue_data_llm_source import LlmSource, priceable_models, rates_for
 
 print(len(priceable_models()), rates_for("gpt-4o"))
-# 10 (2.5e-06, 1e-05)
+# 27 (2.5e-06, 1e-05)
 unpriced = LlmSource().estimate("anything", properties={"llm.model": "a-model-nobody-here-prices"})
 print(unpriced.bounded, unpriced.max_cost)
 # False None
 ```
+
+## Per-model request settings
+
+One table records, for each model it knows, the reasoning efforts the model accepts and its default, when it accepts a temperature, which output-token parameter it takes, and its prices. A request is built from that entry, and a setting the entry rules out is refused before anything is reserved. `published_defaults` reads an entry without contacting anything.
+
+```python
+from blue_data_llm_source import published_defaults, rates_for
+
+sol = published_defaults("gpt-6-sol")
+print(sol["reasoning_efforts"], sol["default_reasoning_effort"], sol["temperature"])
+# ['none', 'low', 'medium', 'high', 'xhigh', 'max'] medium effort_none_only
+print(rates_for("openai/gpt-6-sol"))
+# (2e-06, 1e-05)
+```
+
+[Supported models](../lib/README.md#supported-models) lists every model with its efforts and prices, and the limits of what the table models.
 
 ## An injectable model client
 
@@ -188,7 +204,7 @@ print(disk.get("a"), disk.get("nothing-was-stored-here"))
 disk.clear()
 ```
 
-`MemoryCache` evicts least-recently-used entries past its bound. `FileCache` writes one JSON file per entry, names each file by the SHA-256 of its key, and its `clear` removes only entries it wrote. Pointing it at a directory that already holds JSON cannot delete that JSON.
+`MemoryCache` evicts least-recently-used entries when it reaches its bound. `FileCache` writes one JSON file per entry, using the SHA-256 of its key as the filename. Its `clear` method removes only files it wrote, so it cannot delete other JSON files in the directory.
 
 ## Decomposing a large request
 
@@ -234,7 +250,7 @@ print(result.meta.calls, result.meta.record_origins)
 # 6 [['0.0'], ['0.0'], ['0.1']]
 ```
 
-The scripted answers above stand in for a real model at each planning stage. Eighteen `plan.*` settings bound the shape; they are listed in [api-reference.md](api-reference.md#plan-properties).
+The scripted answers above stand in for a real model at each planning stage. The shape is bounded by eighteen `plan.*` settings, listed in [api-reference.md](api-reference.md#plan-properties).
 
 ## Attribution across a split
 
@@ -314,7 +330,7 @@ print(source.execute_nl_tool("list_databases", {}))
 
 ## One serialization of the result metadata
 
-`meta_view` is the single JSON-ready view of `ExecMeta` that every adapter publishes, so a run cannot describe itself two ways depending on which door the caller came through.
+`meta_view` is the JSON-ready view of `ExecMeta` published by every adapter, so a run has the same description across interfaces.
 
 ```python
 from blue_data_llm_source import LlmSource, meta_view

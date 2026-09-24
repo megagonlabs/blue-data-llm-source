@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from blue_data_llm_source.reduction.parsing import parse_records, strip_fence
+from blue_data_llm_source.reduction.parsing import (
+    parse_records,
+    read_records,
+    salvage_read,
+    strip_fence,
+)
 from blue_data_llm_source.types import ParseError
 
 
@@ -165,3 +172,93 @@ def test_an_envelope_key_with_siblings_is_a_record_not_a_wrapper() -> None:
 
     # The sole-key wrapper still unwraps, which is what the shape exists for.
     assert parse_records('{"items": [{"name": "Ada"}]}') == [{"name": "Ada"}]
+
+
+# ------------------------------------------------ thousands separators in values --
+
+
+@pytest.mark.parametrize(
+    ("text", "expected", "repaired"),
+    [
+        ('[{"n": 4,470, "m": "x"}]', [{"n": 4470, "m": "x"}], 1),
+        ('[{"area": 1,024.56}]', [{"area": 1024.56}], 1),
+        ('[{"delta": -12,345,678}]', [{"delta": -12345678}], 1),
+        (
+            '[{"a": 1,000, "b": 2,500.5, "c": 3}, {"a": 999,999}]',
+            [{"a": 1000, "b": 2500.5, "c": 3}, {"a": 999999}],
+            3,
+        ),
+        ('[{"last": 7,000}]', [{"last": 7000}], 1),
+        ('[{"outer": {"inner": 1,234, "z": 1}}]', [{"outer": {"inner": 1234, "z": 1}}], 1),
+        ('{"n" :  4,470 , "k": 1}', [{"n": 4470, "k": 1}], 1),
+        ('[{"n": 4,470}\n]', [{"n": 4470}], 1),
+    ],
+    ids=[
+        "int",
+        "decimal",
+        "negative-several-groups",
+        "several-per-object",
+        "last-before-brace",
+        "nested",
+        "whitespace",
+        "before-array-close",
+    ],
+)
+def test_grouped_numbers_in_values_are_read(
+    text: str, expected: list[dict[str, object]], repaired: int
+) -> None:
+    assert read_records(text) == (expected, repaired)
+    assert parse_records(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ('[{"note": "1,234 people", "n": 1}]', [{"note": "1,234 people", "n": 1}]),
+        ('[{"1,234": "key", "v": 2}]', [{"1,234": "key", "v": 2}]),
+        ('[{"list": [1,234]}]', [{"list": [1, 234]}]),
+        ('[{"quoted": "a \\": 1,234"}]', [{"quoted": 'a ": 1,234'}]),
+    ],
+    ids=["string-value", "key", "array", "escaped-quote-in-string"],
+)
+def test_valid_json_is_read_as_it_stands(text: str, expected: list[dict[str, object]]) -> None:
+    assert read_records(text) == (expected, 0)
+
+
+def test_a_grouped_number_beside_a_string_that_looks_like_one_repairs_only_the_value() -> None:
+    text = '[{"note": "x: 1,234,", "n": 5,000}]'
+    assert read_records(text) == ([{"note": "x: 1,234,", "n": 5000}], 1)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '[{"a": 12,34}]',
+        '[{"a": 1,2345}]',
+        '[{"a": 1,234 garbage}]',
+        '[{"a": 1,234, "b": }]',
+        '[{"a": 1,234, "a": 2}]',
+        '[{"a": 1,234, "b": 1e999}]',
+    ],
+    ids=[
+        "bad-grouping",
+        "long-group",
+        "garbage-after",
+        "still-invalid-after-repair",
+        "duplicate-key-after-repair",
+        "overflow-after-repair",
+    ],
+)
+def test_a_response_the_repair_cannot_make_valid_raises_the_original_error(text: str) -> None:
+    """The error describes what the model wrote, not the text after an attempted repair."""
+    with pytest.raises(ValueError) as strict:
+        json.loads(text)
+    with pytest.raises(ParseError) as caught:
+        parse_records(text)
+    assert caught.value.raw == text
+    assert str(strict.value) in caught.value.message
+
+
+def test_a_truncated_response_with_grouped_numbers_is_salvaged_and_counted() -> None:
+    text = '[{"n": 1,000}, {"n": 2,000}, {"n": 3,0'
+    assert salvage_read(text) == ([{"n": 1000}, {"n": 2000}], 2)

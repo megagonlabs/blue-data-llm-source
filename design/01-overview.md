@@ -30,4 +30,4 @@ Inheritance does not add protocol-name construction. Callers build an `LlmSource
 
 ## Design Philosophy
 
-A model may return a plausible but incomplete answer without signaling failure. LlmSource therefore emphasizes observable boundaries: requested types are checked, returned keys are mapped or reported, every provider attempt is reserved against a budget, and each result includes execution and schema diagnostics. These checks establish whether the response has the requested shape and whether execution stayed within configured limits. They do not establish factual accuracy or completeness.
+A model may return a plausible but incomplete answer without signaling failure. LlmSource therefore makes its boundaries observable: it checks requested types, maps or reports returned keys, reserves every provider attempt against a budget, and includes execution and schema diagnostics in each result. These checks show whether the response has the requested shape and whether execution stayed within configured limits. They do not establish factual accuracy or completeness.

@@ -107,6 +107,10 @@ class LitellmStub:
         self.expected = 0
         self.all_entered: asyncio.Event | None = None
         self.calls: list[dict[str, Any]] = []
+        # Bare names the provider library cannot route, as its bundled price map cannot for a
+        # model released after it. A named provider or a `provider/model` name still routes.
+        self.unroutable: set[str] = set()
+        self.resolved: list[tuple[str, str | None]] = []
         # The chunk lists handed to the assembler, so a test can assert the client read the
         # whole stream rather than the first chunk of it.
         self.assembled: list[list[Any]] = []
@@ -127,6 +131,29 @@ class LitellmStub:
 
     def completion_cost(self, completion_response: Any = None, **kwargs: Any) -> float:
         return self.cost
+
+    def get_supported_openai_params(
+        self, *, model: str, custom_llm_provider: str | None = None
+    ) -> list[str]:
+        del model, custom_llm_provider
+        return ["reasoning_effort", "max_completion_tokens"]
+
+    def get_llm_provider(
+        self, model: str, custom_llm_provider: str | None = None, **kwargs: Any
+    ) -> tuple[str, str, str | None, str | None]:
+        """Resolve a provider the way litellm does, failing with its missing-provider message."""
+        self.resolved.append((model, custom_llm_provider))
+        if custom_llm_provider:
+            return model, custom_llm_provider, None, None
+        if "/" in model:
+            prefix, _, rest = model.partition("/")
+            return rest, prefix, None, None
+        if model in self.unroutable:
+            raise RuntimeError(
+                f"litellm.BadRequestError: LLM Provider NOT provided. Pass in the LLM provider "
+                f"you are trying to call. You passed model={model}"
+            )
+        return model, "openai", None, None
 
     def stream_chunk_builder(self, chunks: list[Any], **kwargs: Any) -> Any:
         """Rebuild one response from *chunks*, as the provider library's helper does.
@@ -180,6 +207,8 @@ class LitellmStub:
         module.completion = self.completion  # pyright: ignore[reportAttributeAccessIssue]
         module.acompletion = self.acompletion  # pyright: ignore[reportAttributeAccessIssue]
         module.completion_cost = self.completion_cost  # pyright: ignore[reportAttributeAccessIssue]
+        module.get_supported_openai_params = self.get_supported_openai_params  # pyright: ignore[reportAttributeAccessIssue]
+        module.get_llm_provider = self.get_llm_provider  # pyright: ignore[reportAttributeAccessIssue]
         module.stream_chunk_builder = self.stream_chunk_builder  # pyright: ignore[reportAttributeAccessIssue]
         return module
 

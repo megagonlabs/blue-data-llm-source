@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from blue_data_llm_source import priceable_models, rates_for
 from click.testing import CliRunner
 
@@ -46,7 +47,15 @@ def test_model_inspect_reports_the_published_rates(runner: CliRunner) -> None:
     assert body["model"] == "gpt-4o"
     assert body["input_price_per_token"] == rates[0]
     assert body["output_price_per_token"] == rates[1]
+    assert body["max_tokens"] == 4_096
     assert body["can_bound"] is True
+
+
+def test_model_inspect_uses_the_named_model_profile_allowance(runner: CliRunner) -> None:
+    body = json.loads(
+        runner.invoke(cli, ["model", "inspect", "gpt-6-luna-2026-09-22", "--format", "json"]).stdout
+    )
+    assert body["max_tokens"] == 25_000
 
 
 def test_an_unpriced_model_reports_nulls_rather_than_dropping_the_keys(
@@ -94,6 +103,47 @@ def test_the_prose_names_the_floor_a_cost_ceiling_has_to_clear(runner: CliRunner
         runner.invoke(cli, ["model", "inspect", "gpt-4o", "--format", "nl"]).stdout.split()
     )
     assert "cost ceiling has to clear" in out
+
+
+@pytest.mark.parametrize(
+    ("model", "floor"),
+    [("gpt-4o", "$0.0410 at 4096"), ("gpt-6-luna", "$0.0138 at 25000")],
+)
+def test_the_floor_carries_the_regional_uplift_where_the_bound_does(
+    runner: CliRunner, model: str, floor: str
+) -> None:
+    out = " ".join(runner.invoke(cli, ["model", "inspect", model, "--format", "nl"]).stdout.split())
+    assert f"has to clear about {floor} output tokens" in out
+
+
+def test_model_inspect_adds_the_published_defaults(runner: CliRunner) -> None:
+    body = json.loads(
+        runner.invoke(cli, ["model", "inspect", "gpt-6-sol", "--format", "json"]).stdout
+    )
+    assert body["max_tokens"] == 25_000
+    defaults = body["published_defaults"]
+    assert defaults["reasoning_efforts"] == ["none", "low", "medium", "high", "xhigh", "max"]
+    assert defaults["default_reasoning_effort"] == "medium"
+    assert defaults["temperature"] == "effort_none_only"
+    assert defaults["output_token_parameter"] == "max_completion_tokens"
+    assert defaults["cached_input_price_per_token"] == 0.20e-6
+    assert defaults["cache_write_price_per_token"] == 2.50e-6
+    assert defaults["long_context_threshold_tokens"] == 272_000
+
+
+def test_an_unknown_model_publishes_no_defaults(runner: CliRunner) -> None:
+    body = json.loads(
+        runner.invoke(cli, ["model", "inspect", "llama-9", "--format", "json"]).stdout
+    )
+    assert body["published_defaults"] is None
+
+
+def test_the_table_spells_each_published_default_on_its_own_row(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["model", "inspect", "gpt-5", "--format", "csv"])
+    assert result.exit_code == 0, result.output
+    rows = dict(line.split(",", 1) for line in result.stdout.splitlines()[1:])
+    assert rows["published_defaults.reasoning_efforts"] == '"minimal, low, medium, high"'
+    assert rows["published_defaults.temperature"] == "never"
 
 
 # ------------------------------------------------------------ model select --

@@ -49,6 +49,7 @@ from blue_data_llm_source import (
     TransportError,
     redact,
 )
+from blue_data_llm_source.llm import DEFAULT_MODEL
 from rich.console import Console
 
 from blue_data_llm_cli import __version__
@@ -617,7 +618,7 @@ def default_max_tokens() -> int:
     Read from a bare source rather than written down again here: it is the library's number,
     and a second copy of it is a second thing to get wrong when the library changes its mind.
     """
-    return int(LlmSource().properties["llm.max_tokens"])
+    return int(cast("int", LlmSource().max_tokens_for_model(DEFAULT_MODEL)))
 
 
 def plan_properties(

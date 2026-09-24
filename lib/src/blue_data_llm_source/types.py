@@ -291,6 +291,10 @@ class ExecMeta:
     marginal_key_yields: list[int] = field(default_factory=list[int])
     incomplete_key_records: int = 0
     normalization_collisions: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    repaired_numbers: int = 0
+    """Numbers the model wrote with thousands separators, such as ``4,470``, that were read
+    as ``4470``. Such a response is not valid JSON; it is read only after this one repair,
+    so a non-zero count says the parser changed the model's text before reading it."""
     observed_keys: list[str] = field(default_factory=list[str])
     unmapped_keys: list[str] = field(default_factory=list[str])
     remapped_keys: dict[str, str] = field(default_factory=dict[str, str])
@@ -396,6 +400,11 @@ class Estimate:
     # will see the second.
     max_attempts: int = 1
     max_cost_per_attempt: float | None = None
+    attempts_within_ceiling: int | None = None
+    """How many of ``max_attempts`` fit under the request's cost ceiling, counted the way the
+    ledger admits them, each at its per-attempt bound. ``0`` with attempts allowed means the
+    first attempt is refused before any call. An empty request costs nothing, so all of its
+    ``max_attempts`` fit. None when no cost ceiling is set or no bound could be given."""
 
 
 @runtime_checkable

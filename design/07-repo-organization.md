@@ -2,7 +2,7 @@
 
 ## Directory Tree
 
-This tree lists the packages and the files that define their main boundaries. It is a navigation map rather than an exhaustive inventory of test modules.
+This tree lists the packages and files that define their main boundaries. It serves as a navigation map, not an exhaustive inventory of test modules.
 
 ```
 blue-data-llm-source/
@@ -80,6 +80,7 @@ blue-data-llm-source/
 │   │       ├── llm/                        # the model boundary
 │   │       │   ├── __init__.py
 │   │       │   ├── budget.py               # Limits, Budget, Reservation — four-axis enforcement
+│   │       │   ├── models.py               # each known model's request contract and rates
 │   │       │   ├── pricing.py              # the cost bound a reservation claims, or a refusal
 │   │       │   └── client.py               # DefaultLlmClient, FunctionClient
 │   │       │
@@ -169,9 +170,9 @@ blue-data-llm-source/
 
 ### `lib/`: the Python library
 
-All business logic lives under `lib/src/`. The `src/` layout keeps the package off the import path by accident, so nothing imports it just because the working directory happens to be the project root. The test suite puts `src` on the path explicitly through `pythonpath` in `pyproject.toml`, so tests run against the working tree; the packaging gates are what exercise the installed artifact.
+All business logic lives under `lib/src/`. The `src/` layout prevents accidental imports from the project root. The test suite adds `src` to the path through `pythonpath` in `pyproject.toml`, so tests run against the working tree; packaging gates exercise the installed artifact.
 
-Two documents sit beside the code. `README.md` doubles as the API reference. `COMPATIBILITY.md` records what this library does differently from the source design document and from the earlier implementation in the platform, with the reason for each, so that anyone porting a caller reads the deviations in one place rather than discovering them one at a time.
+Two documents sit beside the code. `README.md` also serves as the API reference. `COMPATIBILITY.md` records how this library differs from the source design document and the earlier platform implementation, along with the reason for each difference. This gives anyone porting a caller one place to review them.
 
 `lib/scripts/` provides three scripts:
 
@@ -192,6 +193,7 @@ Two documents sit beside the code. `README.md` doubles as the API reference. `CO
 | `execution/` | Execution: versioned leaf tasks, concurrent mapping, and bounded continuation |
 | `llm/client.py` | Model Boundary: `DefaultLlmClient` and `FunctionClient` |
 | `llm/budget.py` | Model Boundary: `Limits`, `Budget`, and `Reservation`, the four-axis enforcement |
+| `llm/models.py` | Model Boundary: the one table of known models, each with its request contract and published rates |
 | `llm/pricing.py` | Model Boundary: the upper bound a cost reservation claims and `estimate` reports, or the refusal that replaces it |
 | `cache/memory.py`, `cache/file.py` | Model Boundary: the two included `CacheStore` implementations |
 | `reduction/parsing.py` | Reduction: response text to record mappings |
@@ -204,11 +206,11 @@ Two documents sit beside the code. `README.md` doubles as the API reference. `CO
 
 ### One prompt module
 
-Every prompt the package sends lives in `prompts/`, not as a constant on the class that uses it. Prompts are the highest-churn text in a library of this kind, and duplicate copies can diverge in wording and variable naming. Keeping one maintained copy makes prompt changes and their recorded responses visible together.
+Every prompt the package sends lives in `prompts/`, rather than as a constant on the class that uses it. Prompts change frequently, and duplicate copies can diverge in wording and variable names. Keeping one maintained copy makes prompt changes visible alongside their recorded responses.
 
 ### Compatibility import direction
 
-The core imports nothing from `compat/`, and `compat/` imports the core. The direction mattered when the dependency was optional; it is kept because a module that exists only to preserve an older name should not be something the core depends on.
+The core imports nothing from `compat/`, while `compat/` imports the core. This direction mattered when the dependency was optional and remains appropriate because the core should not depend on a module that only preserves an older name.
 
 ### Contract ownership
 
@@ -219,11 +221,11 @@ layers from owning each other's types while giving platform adapters one stable 
 
 ### `design/` and `docs/`
 
-Two directories of prose at the root, addressed to different readers. `design/` holds the numbered documents that describe what this repository is and why it is shaped this way, plus the note on how they are produced and the layout template they follow; it is read by whoever is changing the design. `docs/` is written for whoever is using the result, and runs from a quickstart through the feature tour to the per-interface references. A claim belongs in one of them and is linked from the other rather than copied.
+The repository has two documentation directories for different readers. `design/` holds numbered documents describing the repository and its design, along with the process note and layout template; it is for people changing the design. `docs/` is for users and includes a quickstart, feature guide, and per-interface references. A claim belongs in one directory and should be linked from the other rather than copied.
 
 ### `platform/`: external interface services
 
-Each external interface is an independent deployable unit under `platform/`. They depend on `lib` and contain no business logic, so that the library carries no CLI or server dependency and each service can be built, versioned, and released on its own schedule.
+Each external interface is an independent deployable unit under `platform/`. The services depend on `lib` and contain no business logic. This keeps CLI and server dependencies out of the library and lets each service be built, versioned, and released on its own schedule.
 
 | Service | Package | State | Notes |
 |---------|---------|-------|-------|
@@ -259,7 +261,7 @@ both included stores against the published protocol.
 
 `test_packaging.py` checks a repository-wide dependency boundary rather than one module. It scans the package for an import of `blue` or `blue_data_ops` and fails on either, because this package depends on the data layer but not the orchestration layer above it.
 
-`llm/` also holds `test_pricing.py`, which covers the bound both the cost ceiling and `estimate` rest on. `lib/tests/cassettes/` holds four recorded provider responses and a receipt stating what the recording round cost. `test_cassette_fixtures.py` replays them through the real pipeline, so the specified worked examples are covered end to end with no network connection. `record_cassettes.py` sits beside the suite rather than in it, because it is the one thing here that makes real calls, and it is run by hand when a prompt change makes the recordings stale.
+`llm/` also holds `test_pricing.py`, which covers the bound both the cost ceiling and `estimate` rest on, and `test_models.py`, which covers each model's request contract, rates and settlement. `lib/tests/cassettes/` holds four recorded provider responses and a receipt stating what the recording round cost. `test_cassette_fixtures.py` replays them through the real pipeline, so the specified worked examples are covered end to end with no network connection. `record_cassettes.py` sits beside the suite rather than in it, because it is the one thing here that makes real calls, and it is run by hand when a prompt change makes the recordings stale.
 
 `lib/tests/doubles/` holds the doubles the suite needs, one per boundary the package owns:
 

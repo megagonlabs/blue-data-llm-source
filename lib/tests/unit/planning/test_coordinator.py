@@ -15,14 +15,32 @@ from blue_data_llm_source.planning.bounds import (
     MODE_PARTITIONED,
     MODE_ROW_BY_ROW,
     PlanLimits,
+    fact_calls,
+    leaf_limit,
+    max_nodes,
     planned_logical_calls,
     planned_provider_attempts,
+    planning_calls,
+    planning_model_calls,
+    proposal_attempt_limit,
+    request_calls,
+    worst_case_attempts,
+)
+from blue_data_llm_source.planning.context import (
+    PLANNING_CARDINALITY_FIRST,
+    PLANNING_COMBINED,
+    PLANNING_LOCKED_PARALLEL,
+    PLANNING_LOCKED_SEQUENTIAL,
+    PLANNING_ORDERS,
+    PLANNING_SCHEMA_FIRST,
 )
 from blue_data_llm_source.planning.coordinator import (
+    PlanningBundle,
     coordinate_plan,
     intersect_constraints,
     partition_proposal_from_response,
 )
+from blue_data_llm_source.planning.partition_safety import IdentityPartitionRule
 from blue_data_llm_source.planning.plan import (
     FetchPlan,
     Leaf,
@@ -36,7 +54,15 @@ from blue_data_llm_source.planning.schema import (
     Schema,
 )
 from blue_data_llm_source.planning.transport import LeafTask
-from blue_data_llm_source.types import Attr, BudgetExceeded, Constraint, Exact, OneOf, Usage
+from blue_data_llm_source.types import (
+    Attr,
+    BudgetExceeded,
+    ConfigError,
+    Constraint,
+    Exact,
+    OneOf,
+    Usage,
+)
 
 
 def encoded(**fields: object) -> str:
@@ -208,10 +234,13 @@ def tree(*, limits: PlanLimits, proposals: Mapping[str, PartitionProposal | None
 class TestPureBreadthFirstExpansion:
     def test_derived_call_bounds_match_the_design_formulas(self) -> None:
         limits = PlanLimits(max_leaves=4, max_continuations=1, max_retries=2)
+        order = PLANNING_COMBINED
         assert planned_logical_calls(limits, MODE_FLAT) == 2
-        assert planned_logical_calls(limits, MODE_PARTITIONED) == 1 + 7 + 4 * 2
-        assert planned_logical_calls(limits, MODE_ROW_BY_ROW) == 2 + 4 * 2
-        assert planned_provider_attempts(limits, MODE_PARTITIONED) == 16 * 3
+        assert planned_logical_calls(limits, MODE_PARTITIONED, planning_order=order) == 1 + 7 + 8
+        assert planned_logical_calls(limits, MODE_ROW_BY_ROW, planning_order=order) == 2 + 4 * 2
+        assert planned_provider_attempts(limits, MODE_PARTITIONED, planning_order=order) == 16 * 3
+        # The source's default schedule asks three fact questions rather than one.
+        assert planned_logical_calls(limits, MODE_PARTITIONED) == 3 + 7 + 4 * 2
 
     def test_depth_two_builds_a_real_hierarchy(self) -> None:
         proposals = {
@@ -708,3 +737,325 @@ async def test_row_by_row_uses_explicit_key_list_or_one_enumeration() -> None:
     assert explicit.facts.entity_enumeration_attempted is False
     assert len(enumerated.plan.leaves) == 3
     assert enumerated.facts.entity_enumeration_attempted is True
+
+
+# ---------------------------------------------- the bounds hold for the coordinator --
+class ProposingClient:
+    """Answers the bootstrap, then every partition proposal, choosing each proposal's width.
+
+    ``widths`` cycles: a width is how many distinct values the next proposal offers, and a
+    width of zero answers with malformed JSON. Every child is estimated far above the row
+    target, so every child stays eligible to split again and the tree grows as far as the
+    configuration lets it.
+    """
+
+    def __init__(self, widths: tuple[int, ...]) -> None:
+        self.widths = widths
+        self.prompts: list[str] = []
+
+    def bound_for_attempt(self, _prompt: str, _properties: dict[str, Any]) -> float:
+        return 0.0
+
+    async def acomplete(self, prompt: str, properties: dict[str, Any]) -> str:
+        budget = properties[C.BUDGET_PROPERTY]
+        assert isinstance(budget, Budget)
+        with budget.attempt(0.0) as reservation:
+            reservation.settle(0.0)
+        self.prompts.append(prompt)
+        if len(self.prompts) == 1:
+            return bootstrap()
+        index = len(self.prompts) - 2
+        width = self.widths[index % len(self.widths)]
+        if width == 0:
+            return "not json"
+        values = [f"v{index}-{i}" for i in range(width)]
+        return proposal(f"key{index}", values, [10_000] * width)
+
+
+@pytest.mark.parametrize(
+    ("depth", "partitions", "leaves"),
+    [
+        (0, 4, 24),
+        (1, 2, 1),
+        (1, 4, 3),
+        (2, 1, 24),
+        (2, 2, 3),
+        (2, 3, 5),
+        (2, 4, 24),
+        (2, 20, 5),
+        (2, 20, 100),
+        (2, 20, 200),
+        (3, 2, 8),
+        (3, 3, 10),
+        (3, 2, 100),
+        (3, 5, 40),
+    ],
+)
+@pytest.mark.parametrize(
+    "widths",
+    [(99,), (2,), (3, 0, 2), (0,)],
+    ids=["always-max", "always-two", "mixed", "never-parses"],
+)
+async def test_the_coordinator_stays_inside_every_derived_bound(
+    depth: int, partitions: int, leaves: int, widths: tuple[int, ...]
+) -> None:
+    """Proposals, split nodes and leaves, counted from what actually happened.
+
+    A width of 99 is clipped to ``max_partitions`` so the widest legal split is always
+    offered; one past it would be refused and prove nothing about the bound.
+    """
+    limits = PlanLimits(max_depth=depth, max_partitions=partitions, max_leaves=leaves)
+    clipped = tuple(min(width, max(partitions, 2)) if width else 0 for width in widths)
+    client = ProposingClient(clipped)
+
+    result = await coordinate_plan(
+        mode=MODE_PARTITIONED,
+        original_query="places",
+        caller_context="",
+        caller_constraints={},
+        declared_schema=SCHEMA,
+        schema_mode=SCHEMA_PRESERVE,
+        limits=limits,
+        client=client,
+        budget=Budget(Limits(max_retries=0)),
+    )
+
+    proposals_made = len(client.prompts) - 1
+    assert proposals_made <= proposal_attempt_limit(limits)
+    assert result.plan.attempted_proposals <= proposal_attempt_limit(limits)
+    assert result.plan.accepted_internal_nodes <= max_nodes(limits, MODE_PARTITIONED)
+    assert len(result.plan.nodes) <= max_nodes(limits, MODE_PARTITIONED)
+    assert len(result.plan.leaves) <= leaf_limit(limits, MODE_PARTITIONED)
+    assert 1 + proposals_made + len(result.plan.leaves) <= planned_logical_calls(
+        limits, MODE_PARTITIONED
+    )
+
+
+async def test_the_proposal_bound_is_reached_when_every_split_is_as_wide_as_allowed() -> None:
+    """One proposal per node above the leaf level: 1 + 3 + 9 at depth three and width three.
+
+    The bound is not padded. Each node is proposed for once, so doubling the node count, as
+    the leaf-cap formula would, charges proposals the coordinator never makes.
+    """
+    limits = PlanLimits(max_depth=3, max_partitions=3, max_leaves=27)
+    client = ProposingClient((3,))
+
+    result = await coordinate_plan(
+        mode=MODE_PARTITIONED,
+        original_query="places",
+        caller_context="",
+        caller_constraints={},
+        declared_schema=SCHEMA,
+        schema_mode=SCHEMA_PRESERVE,
+        limits=limits,
+        client=client,
+        budget=Budget(Limits(max_retries=0)),
+    )
+
+    assert len(client.prompts) - 1 == proposal_attempt_limit(limits) == 13
+    assert len(result.plan.leaves) == leaf_limit(limits, MODE_PARTITIONED) == 27
+    assert result.plan.accepted_internal_nodes == max_nodes(limits, MODE_PARTITIONED) == 13
+
+
+def test_the_default_caps_bound_planning_by_the_tree_shape() -> None:
+    """Twenty partitions at depth two: 21 proposals and 100 leaves, not 199 and 100."""
+    limits = PlanLimits()
+    assert (limits.max_partitions, limits.max_depth, limits.max_leaves) == (20, 2, 100)
+    assert proposal_attempt_limit(limits) == 21
+    assert max_nodes(limits, MODE_PARTITIONED) == 21
+    assert leaf_limit(limits, MODE_PARTITIONED) == 100
+    assert planned_logical_calls(limits, MODE_PARTITIONED) == 3 + 21 + 100
+    assert planned_logical_calls(limits, MODE_PARTITIONED, planning_order=PLANNING_COMBINED) == (
+        1 + 21 + 100
+    )
+
+
+# ------------------------------- every schedule, with and without distribution --
+KEYED = Schema(
+    attrs=[Attr("K0", "string"), Attr("K1", "string"), Attr("K2", "string"), Attr("v", "string")],
+    primary_keys=("K0", "K1", "K2"),
+    key_from=KEY_FROM_CALLER,
+)
+DOMAINS = {"K0": ("a", "b", "c"), "K1": ("d", "e", "f"), "K2": ("g", "h", "i")}
+RULES = tuple(
+    IdentityPartitionRule(
+        dimension=dimension,
+        ordered_primary_keys=("K0", "K1", "K2"),
+        allowed_domain=domain,
+        parent_scope={},
+        provenance="source_configuration",
+    )
+    for dimension, domain in DOMAINS.items()
+)
+
+
+class StageClient:
+    """Answers every planning stage by what the prompt asks for.
+
+    The fact stages other than the combined bootstrap are answered with malformed text: the
+    call is made and counted, the coordinator falls back to the caller's facts, and planning
+    goes on to the splits, which is where the counts grow. Every split is as wide as the
+    configuration allows and every child is estimated far above the row target.
+    """
+
+    def __init__(self, width: int, entities: int) -> None:
+        self.width = width
+        self.entities = entities
+        self.prompts: list[str] = []
+
+    def bound_for_attempt(self, _prompt: str, _properties: dict[str, Any]) -> float:
+        return 0.0
+
+    async def acomplete(self, prompt: str, properties: dict[str, Any]) -> str:
+        budget = properties[C.BUDGET_PROPERTY]
+        assert isinstance(budget, Budget)
+        with budget.attempt(0.0) as reservation:
+            reservation.settle(0.0)
+        self.prompts.append(prompt)
+        index = len(self.prompts)
+        if prompt.startswith("Prepare a structured data request"):
+            return json.dumps(
+                {
+                    "ask": "retrieval wording",
+                    "constraints": {},
+                    "row_estimate": 10_000,
+                    "schema": {
+                        "attrs": [{"name": attr.name, "type": "string"} for attr in KEYED.attrs],
+                        "primary_keys": list(KEYED.primary_keys),
+                    },
+                }
+            )
+        if prompt.startswith("Propose one useful partition"):
+            values = [f"v{index}-{i}" for i in range(self.width)]
+            return proposal(f"key{index}", values, [10_000] * self.width)
+        if prompt.startswith("Estimate the distribution of records"):
+            line = prompt.split("Declared partition key: ", 1)[1].split("\n", 1)[0]
+            key = str(json.loads(line))
+            partitions = [
+                {"value": value, "estimate": {"expected": 10_000}} for value in DOMAINS[key]
+            ]
+            return json.dumps(
+                {
+                    "key": key,
+                    "partitions": partitions,
+                    "ambiguity": 0.1,
+                    "reasoning": "a declared domain",
+                }
+            )
+        if prompt.startswith("Enumerate every entity"):
+            values = [{"K0": f"e{i}", "K1": "x", "K2": "y"} for i in range(self.entities)]
+            return json.dumps({"keys": ["K0", "K1", "K2"], "values": values})
+        return "not json"
+
+
+async def _plan_with(
+    mode: str, order: str, distribution: bool, limits: PlanLimits, client: StageClient
+) -> PlanningBundle:
+    return await coordinate_plan(
+        mode=mode,
+        original_query="places",
+        caller_context="",
+        caller_constraints={},
+        declared_schema=KEYED,
+        schema_mode=SCHEMA_PRESERVE,
+        limits=limits,
+        client=client,
+        budget=Budget(Limits(max_retries=0)),
+        planning_order=order,
+        distribution_search=distribution,
+        identity_partition_rules=RULES if distribution else (),
+    )
+
+
+@pytest.mark.parametrize("order", PLANNING_ORDERS)
+@pytest.mark.parametrize(
+    ("mode", "distribution"),
+    [
+        (MODE_FLAT, False),
+        (MODE_PARTITIONED, False),
+        (MODE_PARTITIONED, True),
+        (MODE_ROW_BY_ROW, False),
+    ],
+    ids=["flat", "partitioned", "distribution", "row_by_row"],
+)
+@pytest.mark.parametrize(
+    "limits",
+    [
+        PlanLimits(max_depth=0, max_partitions=4, max_leaves=24),
+        PlanLimits(max_depth=1, max_partitions=3, max_leaves=24, max_strategy_candidates=3),
+        PlanLimits(max_depth=2, max_partitions=3, max_leaves=9, max_strategy_candidates=2),
+        PlanLimits(max_depth=3, max_partitions=3, max_leaves=100, max_strategy_candidates=3),
+        PlanLimits(),
+    ],
+    ids=["depth0", "depth1", "depth2-tight-leaves", "depth3", "defaults"],
+)
+async def test_every_schedule_stays_inside_the_published_counts(
+    order: str, mode: str, distribution: bool, limits: PlanLimits
+) -> None:
+    """Counted from the calls the coordinator actually made, under every schedule."""
+    client = StageClient(width=min(limits.max_partitions, 3), entities=limits.max_leaves)
+    result = await _plan_with(mode, order, distribution, limits, client)
+
+    planning = len(client.prompts)
+    leaves = len(result.plan.leaves)
+    assert planning <= planning_model_calls(
+        limits, mode, planning_order=order, distribution_search=distribution
+    )
+    assert leaves <= leaf_limit(limits, mode)
+    assert planning + leaves <= planned_logical_calls(
+        limits, mode, planning_order=order, distribution_search=distribution
+    )
+    assert planning + leaves <= request_calls(
+        limits, mode, leaves, planning_order=order, distribution_search=distribution
+    )
+    assert planning + leaves <= request_calls(
+        limits, mode, planning_order=order, distribution_search=distribution
+    )
+    # The design figure takes no schedule because it covers them all.
+    assert planning <= planning_calls(limits, mode)
+    assert planning + leaves <= worst_case_attempts(limits, mode)
+    # The source's default schedule bounds every other one.
+    assert planning <= planning_model_calls(limits, mode, distribution_search=distribution)
+
+
+@pytest.mark.parametrize(
+    ("order", "facts"),
+    [
+        (PLANNING_COMBINED, 1),
+        (PLANNING_LOCKED_SEQUENTIAL, 2),
+        (PLANNING_LOCKED_PARALLEL, 2),
+        (PLANNING_CARDINALITY_FIRST, 3),
+        (PLANNING_SCHEMA_FIRST, 3),
+    ],
+)
+async def test_each_schedule_reaches_its_published_count(order: str, facts: int) -> None:
+    """Fact calls, then one proposal for the root and each of its three children."""
+    limits = PlanLimits(max_depth=2, max_partitions=3, max_leaves=9)
+    client = StageClient(width=3, entities=0)
+    result = await _plan_with(MODE_PARTITIONED, order, False, limits, client)
+
+    assert fact_calls(order) == facts
+    assert len(client.prompts) == planning_model_calls(
+        limits, MODE_PARTITIONED, planning_order=order
+    )
+    assert len(client.prompts) == facts + 4
+    assert len(result.plan.leaves) == leaf_limit(limits, MODE_PARTITIONED) == 9
+
+
+async def test_distribution_search_reaches_its_published_count() -> None:
+    """Every rule is tried at every node that can split: 3 at the root, 2 at each child."""
+    limits = PlanLimits(max_depth=2, max_partitions=3, max_leaves=9, max_strategy_candidates=3)
+    client = StageClient(width=3, entities=0)
+    result = await _plan_with(MODE_PARTITIONED, PLANNING_COMBINED, True, limits, client)
+
+    made = len(client.prompts)
+    assert made == 1 + 3 + 3 * 2
+    assert made <= planning_model_calls(
+        limits, MODE_PARTITIONED, planning_order=PLANNING_COMBINED, distribution_search=True
+    )
+    assert len(result.plan.leaves) == 9
+
+
+def test_an_unknown_schedule_is_refused_by_name() -> None:
+    with pytest.raises(ConfigError, match="planning_order"):
+        planned_logical_calls(PlanLimits(), MODE_PARTITIONED, planning_order="planning.auto")

@@ -16,6 +16,6 @@ Use Python for application code, the command line for interactive or scripted sh
 
 ## If you need HTTP
 
-Wrap the library. `LlmSource.afetch` is async and returns a `FetchResult` whose `records` and `meta` serialize to JSON directly, so a handler in whatever framework you already run is a small amount of code. [extending.md](extending.md) covers the seams, and [architecture.md](architecture.md) covers what the adapters do and do not hold, which is what a fourth adapter would have to match: argument translation and output shaping, with validation, alignment and budgets left to the library.
+Wrap the library. `LlmSource.afetch` is async and returns a `FetchResult` whose `records` and `meta` serialize directly to JSON. A handler in your existing framework therefore requires little code. [extending.md](extending.md) describes the extension points, and [architecture.md](architecture.md) explains what the adapters handle. A fourth adapter would need to translate arguments and shape output, while leaving validation, alignment, and budgets to the library.
 
 Configure `limits.*` on the source you build, instead of taking ceilings from the request. A ceiling supplied by a caller is a ceiling that caller can raise.

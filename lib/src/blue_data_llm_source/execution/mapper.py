@@ -40,7 +40,7 @@ from blue_data_llm_source.reduction.identity import (
     key_identity,
     record_identity,
 )
-from blue_data_llm_source.reduction.parsing import parse_records, salvage_records
+from blue_data_llm_source.reduction.parsing import read_records, salvage_read
 from blue_data_llm_source.types import (
     Attr,
     BudgetExceeded,
@@ -159,6 +159,8 @@ class LeafRun:
     marginal_key_yields: tuple[int, ...] = ()
     incomplete_key_records: int = 0
     normalization_collisions: tuple[dict[str, Any], ...] = ()
+    repaired_numbers: int = 0
+    """Numbers written with thousands separators that were read after removing them."""
 
     @property
     def recovered_prefix(self) -> bool:
@@ -305,6 +307,7 @@ def _leaf_loop(
     marginal_yields: list[int] = []
     incomplete_key_records = 0
     normalization_collisions: list[dict[str, Any]] = []
+    repaired_numbers = 0
 
     # The first ask plus its continuations, which is the per-leaf figure the worst case is
     # computed from in `bounds.execution_calls`. A loop that allowed one more would put
@@ -356,13 +359,13 @@ def _leaf_loop(
         answer = reply.text
         recovered = False
         try:
-            returned = parse_records(answer, wanted)
+            returned, repaired = read_records(answer, wanted)
         except ParseError as e:
             try:
                 # A response that ends mid-document is not a failure of the whole attempt:
                 # the records above the cut are complete, and the call that produced them
                 # was billed whether they are read or thrown away.
-                returned = salvage_records(answer, wanted)
+                returned, repaired = salvage_read(answer, wanted)
             except ParseError:
                 failure = e
                 # Reported, not read as "the model has nothing". A response that cannot be
@@ -385,6 +388,7 @@ def _leaf_loop(
                 )
                 break
             recovered = True
+        repaired_numbers += repaired
 
         # Filed against the response it describes, not accumulated into a flag about the
         # leaf. Read for evidence and never for reassurance: "length" is the provider saying
@@ -486,6 +490,7 @@ def _leaf_loop(
         marginal_key_yields=tuple(marginal_yields),
         incomplete_key_records=incomplete_key_records,
         normalization_collisions=tuple(normalization_collisions),
+        repaired_numbers=repaired_numbers,
     )
 
 

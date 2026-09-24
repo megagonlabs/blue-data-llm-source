@@ -1,15 +1,14 @@
 """The four limit axes, what binds them, and what a refused ceiling looks like.
 
-Rows are capped here, once the records are parsed, so ``limits.max_rows`` binds any
+Rows are capped after parsing, so ``limits.max_rows`` applies to any
 client. Calls, time and cost are claimed before a provider attempt, so they bind only a
 client that declares that axis through ``budget_capabilities()``. ``FunctionClient``, the
 wrapper around an ``llm_fn``, declares rows alone -- it cannot know what a caller's
 callable is billed, how to stop it at a deadline, or how many provider calls one
-invocation becomes -- so the other three are refused with a ``ConfigError`` rather than
-reported as holding something.
+invocation becomes. The other three ceilings are therefore refused with a ``ConfigError``.
 
-The key set is closed and every value is checked when the ceiling is built, so a typo or
-a ``NaN`` fails loudly instead of reading as configured while enforcing nothing.
+The key set is closed, and each value is checked when the ceiling is built. A typo or
+``NaN`` therefore raises an error instead of appearing configured without taking effect.
 
 Every fetch below is answered by a canned function. Nothing contacts a provider.
 

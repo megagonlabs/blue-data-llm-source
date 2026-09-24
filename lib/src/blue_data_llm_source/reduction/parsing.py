@@ -99,8 +99,74 @@ def _unwrapped(envelope: dict[str, Any], wanted: list[str] | None) -> list[Any] 
     return inner if len(asked & inner_keys) > len(asked & outer) else None
 
 
+# A number written with thousands separators: one to three digits, then groups of three.
+_GROUPED_NUMBER = re.compile(r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?")
+_JSON_SPACE = " \t\r\n"
+
+
+def _ungroup_values(body: str) -> tuple[str, int]:
+    """*body* with grouping commas taken out of bare numbers in object-value position.
+
+    Models write ``"population": 4,470`` often enough to lose whole answers to it. The
+    repair is narrow on purpose: only immediately after a ``:`` outside any string, and only
+    a literal shaped exactly like a grouped number and followed by ``,``, ``}`` or ``]``. A
+    comma after a value there has to be followed by a key, which is a quoted string, so a
+    run of digits after it can only be the rest of the number. String contents, keys and
+    array elements are never touched: ``[1,234]`` is two numbers and valid as it stands.
+
+    Returns the repaired text and how many numbers were repaired.
+    """
+    out: list[str] = []
+    repaired = 0
+    in_string = False
+    escaped = False
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        out.append(ch)
+        i += 1
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == ":":
+            start = i
+            while start < len(body) and body[start] in _JSON_SPACE:
+                start += 1
+            found = _GROUPED_NUMBER.match(body, start)
+            if found is None:
+                continue
+            after = found.end()
+            while after < len(body) and body[after] in _JSON_SPACE:
+                after += 1
+            if after < len(body) and body[after] in ",}]":
+                out.append(body[i:start] + found.group().replace(",", ""))
+                repaired += 1
+                i = found.end()
+    return "".join(out), repaired
+
+
 def parse_records(text: str | None, wanted: list[str] | None = None) -> list[dict[str, Any]]:
     """Read a JSON array of objects from *text*, or raise ParseError."""
+    return read_records(text, wanted)[0]
+
+
+def read_records(
+    text: str | None, wanted: list[str] | None = None
+) -> tuple[list[dict[str, Any]], int]:
+    """:func:`parse_records`, and how many grouped numbers had to be repaired to read it.
+
+    Strict JSON is tried first. Only when that fails is the one repair in
+    :func:`_ungroup_values` applied and the result parsed again under the same strict rules.
+    If it still fails, the error is the one the original text raised, so the message
+    describes what the model actually wrote.
+    """
     # The client boundary is duck-typed: an injected client or an llm_fn can hand back
     # None, so None is accepted here and reported as an empty response rather than
     # becoming an AttributeError inside strip_fence.
@@ -147,17 +213,27 @@ def parse_records(text: str | None, wanted: list[str] | None = None) -> list[dic
             seen.add(key)
         return dict(pairs)
 
-    try:
-        parsed: Any = json.loads(
-            body,
+    def _loads(document: str) -> Any:
+        return json.loads(
+            document,
             parse_constant=_reject,
             parse_float=_finite,
             object_pairs_hook=_reject_duplicates,
         )
-    except json.JSONDecodeError as e:
-        raise ParseError(f"model response is not valid JSON: {e}", raw=text) from e
+
+    repaired = 0
+    try:
+        parsed: Any = _loads(body)
     except ValueError as e:
-        raise ParseError(f"model response is not valid JSON: {e}", raw=text) from e
+        # JSONDecodeError is a ValueError, and so are the strict hooks' refusals.
+        original = ParseError(f"model response is not valid JSON: {e}", raw=text)
+        ungrouped, repaired = _ungroup_values(body)
+        if not repaired:
+            raise original from e
+        try:
+            parsed = _loads(ungrouped)
+        except ValueError:
+            raise original from e
 
     # A single object is accepted and wrapped. Models do this when the answer is one
     # record, and rejecting it would fail a correct answer on a formatting detail.
@@ -182,7 +258,7 @@ def parse_records(text: str | None, wanted: list[str] | None = None) -> list[dic
         if not isinstance(item, dict):
             raise ParseError(f"record {i} is {type(item).__name__}, expected an object", raw=text)
         records.append(cast("dict[str, Any]", item))
-    return records
+    return records, repaired
 
 
 _OPENERS: Final = {"[": "]", "{": "}"}
@@ -246,6 +322,13 @@ def _completed_prefix(body: str) -> str | None:
 
 
 def salvage_records(text: str | None, wanted: list[str] | None = None) -> list[dict[str, Any]]:
+    """The whole records from a response that stopped mid-document; see :func:`salvage_read`."""
+    return salvage_read(text, wanted)[0]
+
+
+def salvage_read(
+    text: str | None, wanted: list[str] | None = None
+) -> tuple[list[dict[str, Any]], int]:
     """The whole records from a response that stopped mid-document, or raise ParseError.
 
     A model that reaches its output ceiling stops mid-token. The records it had already
@@ -253,7 +336,7 @@ def salvage_records(text: str | None, wanted: list[str] | None = None) -> list[d
     document whole discards rows that are paid for and present — and hands the caller an
     exception instead of the answer it partly has.
 
-    The recovered prefix goes back through :func:`parse_records` rather than being read
+    The recovered prefix goes back through :func:`read_records` rather than being read
     here. Every rule that decides what a record is — the wrapper reading, duplicate keys,
     non-finite numbers, the nesting ceiling — then applies to a salvaged response exactly
     as it does to a whole one. A second reader with its own rules would accept, from a
@@ -269,4 +352,4 @@ def salvage_records(text: str | None, wanted: list[str] | None = None) -> list[d
     prefix = _completed_prefix(_unfenced(text))
     if prefix is None:
         raise ParseError("model response is unreadable and does not look truncated", raw=text)
-    return parse_records(prefix, wanted)
+    return read_records(prefix, wanted)

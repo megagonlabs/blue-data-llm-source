@@ -34,7 +34,7 @@ the same model, with rates the caller maintains
 
 an llm_fn cannot price itself, so the request against one is unestimable
   bounded             False
-  model               gpt-4o
+  model               gpt-6-luna
   prompt bytes        798
   max output tokens   0
   max attempts        3

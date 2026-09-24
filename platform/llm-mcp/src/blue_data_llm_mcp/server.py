@@ -32,13 +32,14 @@ SERVER_NAME = "blue-data-llm"
 
 # What a client reads during the handshake to decide what this server is for. The three
 # sentences are the three things a caller gets wrong otherwise: where the records come
-# from, that a call which sets no ceiling has none, and that pricing can be asked about
-# for free before anything is spent.
+# from, which ceilings bind a call, and that pricing can be asked about for free before
+# anything is spent.
 SERVER_INSTRUCTIONS = (
     "Structured records from a language model's own knowledge, rather than from a store. "
     "llmdb_query asks the model and returns records with a meta object saying what the run "
-    "cost and why rows may be missing. Ceilings are per call and nothing sets them for you: "
-    "a call that names no limits.max_cost, limits.max_seconds or limits.max_calls has none. "
+    "cost and why rows may be missing. The operator may set ceilings for every call; a "
+    "call's own limits.max_cost, limits.max_seconds or limits.max_calls can only lower them, "
+    "and without either a call has none. "
     "llmdb_estimate bounds what a query would cost, and llmdb_list_models and "
     "llmdb_inspect_model say which models can be bounded at all. Those three contact no "
     "provider and cost nothing."
@@ -76,8 +77,9 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
     except Exception as error:
         # Anything this package never classified travels the same way, so it leaves the
         # same way: a provider SDK is free to put a request or a key fragment into an
-        # exception, and nothing else stands between that text and the caller.
-        raise ValueError(redact(f"{type(error).__name__}: {error}")) from error
+        # exception, and nothing else stands between that text and the caller. A cache
+        # backend can name its directory, which is the operator's, so that is masked too.
+        raise ValueError(tools.conceal(redact(f"{type(error).__name__}: {error}"))) from error
     return [types.TextContent(type="text", text=json.dumps(payload, default=str))]  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
 

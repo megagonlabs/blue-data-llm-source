@@ -39,6 +39,7 @@ from blue_data_llm_source.types import (
 
 WIRE_VERSION: Final = 2
 SAFETY_WIRE_VERSION: Final = 3
+REASONING_WIRE_VERSION: Final = 4
 LEGACY_WIRE_VERSION: Final = 1
 PROMPT_VERSION: Final = KEYED_LEAF_FETCH_PROMPT_VERSION
 EXECUTION_SETTING_KEYS: Final = frozenset(
@@ -51,6 +52,7 @@ EXECUTION_SETTING_KEYS: Final = frozenset(
         "max_output_tokens",
         "max_retries",
         "model",
+        "reasoning_effort",
         "temperature",
         "expose_estimate",
     }
@@ -111,6 +113,7 @@ def _check_versions(data: Mapping[str, Any]) -> int:
         LEGACY_WIRE_VERSION,
         WIRE_VERSION,
         SAFETY_WIRE_VERSION,
+        REASONING_WIRE_VERSION,
     }:
         raise ConfigError(f"unsupported wire_version {data.get('wire_version')!r}")
     prompt_version = data.get("prompt_version")
@@ -168,6 +171,22 @@ def _check_settings(settings: Mapping[str, Any]) -> None:
             or not math.isfinite(float(temperature))
         ):
             raise ConfigError("task setting temperature must be a finite number or null")
+    if "reasoning_effort" in settings and settings["reasoning_effort"] is not None:
+        effort = settings["reasoning_effort"]
+        if not isinstance(effort, str) or effort not in {
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+        }:
+            raise ConfigError("task setting reasoning_effort is not supported")
+        if effort != "none" and settings.get("temperature") is not None:
+            raise ConfigError(
+                "task setting temperature requires reasoning_effort to be 'none' or null"
+            )
 
 
 def _filter_to_dict(value: Constraint) -> dict[str, object]:
@@ -333,6 +352,9 @@ class LeafTask:
             raise ConfigError("task primary_keys disagree with schema primary_keys")
         filters = MappingProxyType(dict(self.filters))
         copied_settings = deepcopy(dict(self.settings))
+        for name in ("reasoning_effort", "temperature"):
+            if copied_settings.get(name) is None:
+                copied_settings.pop(name, None)
         _check_settings(copied_settings)
         traced = self.partition_safety_status is not None or self.partition_rule_digest is not None
         if traced and (
@@ -345,7 +367,14 @@ class LeafTask:
         object.__setattr__(self, "filters", filters)
         object.__setattr__(self, "primary_keys", keys)
         object.__setattr__(self, "settings", _freeze_json(copied_settings))
-        object.__setattr__(self, "wire_version", SAFETY_WIRE_VERSION if traced else WIRE_VERSION)
+        wire_version = (
+            REASONING_WIRE_VERSION
+            if "reasoning_effort" in copied_settings
+            else SAFETY_WIRE_VERSION
+            if traced
+            else WIRE_VERSION
+        )
+        object.__setattr__(self, "wire_version", wire_version)
         object.__setattr__(self, "prompt_version", PROMPT_VERSION)
 
     @classmethod
@@ -394,7 +423,7 @@ class LeafTask:
             "filters": {name: _filter_to_dict(value) for name, value in self.filters.items()},
             "settings": settings,
         }
-        if self.wire_version == SAFETY_WIRE_VERSION:
+        if self.wire_version in {SAFETY_WIRE_VERSION, REASONING_WIRE_VERSION}:
             payload["partition_safety_status"] = self.partition_safety_status
             payload["partition_rule_digest"] = self.partition_rule_digest
         return payload
@@ -415,9 +444,9 @@ class LeafTask:
             "filters",
             "settings",
         }
-        if wire_version in {WIRE_VERSION, SAFETY_WIRE_VERSION}:
+        if wire_version in {WIRE_VERSION, SAFETY_WIRE_VERSION, REASONING_WIRE_VERSION}:
             expected.update({"primary_keys", "estimate"})
-        if wire_version == SAFETY_WIRE_VERSION:
+        if wire_version in {SAFETY_WIRE_VERSION, REASONING_WIRE_VERSION}:
             expected.update({"partition_safety_status", "partition_rule_digest"})
         if set(data) != expected:
             raise ConfigError(f"leaf task fields do not match wire version {wire_version}")
@@ -447,6 +476,13 @@ class LeafTask:
             not isinstance(safety_status, str) or not isinstance(rule_digest, str)
         ):
             raise ConfigError("task partition safety trace must contain strings")
+        if wire_version == REASONING_WIRE_VERSION:
+            if settings.get("reasoning_effort") is None:
+                raise ConfigError("reasoning wire version requires reasoning_effort")
+            if (safety_status is None) != (rule_digest is None):
+                raise ConfigError("task partition safety trace must be complete or absent")
+        elif "reasoning_effort" in settings:
+            raise ConfigError("reasoning_effort requires reasoning wire version")
         return cls(
             task_id=_require_string(data.get("task_id"), "task_id"),
             parent_id=parent_id,

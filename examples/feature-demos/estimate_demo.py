@@ -1,15 +1,14 @@
 """estimate(): what one flat fetch could cost, answered without contacting anything.
 
-``estimate`` builds the prompt this source would actually send, measures it, and bounds
-it against the published rates in ``llm/pricing.py``. No provider is involved by
-construction -- which is why this script, unlike the rest of the cost story, needs no
-credential at all. It is the call a planner makes before deciding how wide to fan out and
-the call an operator makes before letting a request through.
+``estimate`` builds and measures the prompt this source would send, then calculates a
+bound using the published rates in ``llm/pricing.py``. It does not contact a provider,
+so this script needs no credential. A planner can use it before deciding how widely to
+fan out, and an operator can use it before allowing a request.
 
-Two things it deliberately does not do. It bounds a *flat* fetch, so a request with parts
+It has two limitations. It bounds a *flat* fetch, so a request with parts
 or continuations can cost several times the figure; pass any ``plan.*`` setting and the
-same numbers come back. And it is not a claim about what the provider will invoice: the
-rate table is a static snapshot of list prices with no effective date.
+same numbers come back. The estimate does not predict the provider's invoice: the rate
+table is a static snapshot of list prices with no effective date.
 
 Run from the repository root:
     python3 examples/feature-demos/estimate_demo.py

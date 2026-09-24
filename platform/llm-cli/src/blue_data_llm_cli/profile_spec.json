@@ -11,6 +11,12 @@
     "required": false,
     "cast": "int"
   },
+  "BLUE_DATA_LLM_SOURCE_REASONING_EFFORT": {
+    "default": null,
+    "prompt": "Model reasoning effort: none, minimal, low, medium, high, xhigh, or max",
+    "required": false,
+    "cast": "str"
+  },
   "BLUE_DATA_LLM_SOURCE_TEMPERATURE": {
     "default": null,
     "prompt": "Sampling temperature",

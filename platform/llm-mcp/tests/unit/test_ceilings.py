@@ -139,7 +139,7 @@ def test_llmdb_estimate_returns_a_bound_and_contacts_nothing(make_source: Any) -
     assert payload["reason"] is None
     assert payload["model"]
     assert payload["prompt_bytes"] > 0
-    assert payload["max_output_tokens"] == 4096
+    assert payload["max_output_tokens"] == 25_000
 
     assert client.prompts == [], "the estimate called the model"
     assert client.usages == [], "the estimate spent something"
@@ -333,8 +333,40 @@ class TestTheModelTools:
         assert (payload["price_per_input_token"], payload["price_per_output_token"]) == rates_for(
             "gpt-4o"
         )
-        assert payload["max_output_tokens"] == 4096
+        assert payload["max_output_tokens"] == 4_096
         assert payload["cost_ceiling_supported"] is True
+
+    def test_luna_reports_its_model_default_allowance(self, source: Any) -> None:
+        payload = tools.dispatch("llmdb_inspect_model", {"model": "gpt-6-luna"}, source=source)
+        assert payload["max_output_tokens"] == 25_000
+
+    def test_inspect_adds_the_published_defaults(self, source: Any) -> None:
+        """Labelled as the model's published defaults, beside the deployment's own answer."""
+        from blue_data_llm_source import published_defaults
+
+        payload = tools.dispatch("llmdb_inspect_model", {"model": "gpt-6-astra"}, source=source)
+        defaults = payload["published_defaults"]
+        assert defaults == published_defaults("gpt-6-astra")
+        assert defaults["reasoning_efforts"] == ["low", "medium", "high", "xhigh", "max"]
+        assert defaults["temperature"] == "never"
+        assert defaults["cache_write_price_per_token"] == 12.50 / 1_000_000
+        assert defaults["long_context_threshold_tokens"] == 272_000
+        assert payload["max_output_tokens"] == 25_000
+
+    def test_a_prefixed_openai_name_reads_the_same_entry(self, source: Any) -> None:
+        payload = tools.dispatch(
+            "llmdb_inspect_model", {"model": "openai/gpt-6-sol"}, source=source
+        )
+        assert payload["priceable"] is True
+        assert payload["price_per_input_token"] == 2.00 / 1_000_000
+        assert payload["published_defaults"]["default_reasoning_effort"] == "medium"
+
+    def test_the_older_gpt_4o_snapshot_has_its_own_rates(self, source: Any) -> None:
+        payload = tools.dispatch(
+            "llmdb_inspect_model", {"model": "gpt-4o-2024-05-13"}, source=source
+        )
+        assert payload["price_per_input_token"] == 5.00 / 1_000_000
+        assert payload["price_per_output_token"] == 15.00 / 1_000_000
 
     def test_an_unpriced_model_is_an_answer_and_not_a_failure(self, source: Any) -> None:
         """The same shape as `bounded: false` on an estimate, for the same reason."""
@@ -345,6 +377,7 @@ class TestTheModelTools:
         assert payload["price_per_input_token"] is None
         assert payload["price_per_output_token"] is None
         assert payload["cost_ceiling_supported"] is False
+        assert payload["published_defaults"] is None
 
     def test_a_dated_variant_inherits_the_rates_the_library_gives_it(self, source: Any) -> None:
         payload = tools.dispatch(

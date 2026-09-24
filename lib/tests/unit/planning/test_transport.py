@@ -6,10 +6,14 @@ import json
 
 import pytest
 
+from blue_data_llm_source.execution.local import execution_settings
+from blue_data_llm_source.llm.budget import Budget
+from blue_data_llm_source.planning.bounds import PlanLimits
 from blue_data_llm_source.planning.plan import Leaf
 from blue_data_llm_source.planning.schema import KEY_FROM_CALLER, Schema
 from blue_data_llm_source.planning.transport import (
-    SAFETY_WIRE_VERSION,
+    REASONING_WIRE_VERSION,
+    WIRE_VERSION,
     ErrorData,
     LeafTask,
     LeafTaskResult,
@@ -18,7 +22,7 @@ from blue_data_llm_source.planning.transport import (
 from blue_data_llm_source.types import Attr, ConfigError, Exact, OneOf, Usage
 
 
-def task() -> LeafTask:
+def task(settings: dict[str, object] | None = None) -> LeafTask:
     leaf = Leaf(
         id="0.1.0",
         parent_id="0.1",
@@ -35,7 +39,7 @@ def task() -> LeafTask:
             key="name",
             key_from=KEY_FROM_CALLER,
         ),
-        settings={"max_continuations": 1, "empty_leaf_retry": False},
+        settings=settings or {"max_continuations": 1, "empty_leaf_retry": False},
     )
 
 
@@ -62,7 +66,7 @@ def test_result_json_round_trip_uses_error_data_and_usage_primitives() -> None:
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("wire_version", SAFETY_WIRE_VERSION + 1),
+        ("wire_version", REASONING_WIRE_VERSION + 1),
         ("wire_version", True),
         ("wire_version", 1.0),
         ("prompt_version", "future"),
@@ -124,6 +128,56 @@ def test_wire_settings_preserve_nullable_model_and_token_limit() -> None:
     restored = LeafTask.from_dict(payload)
     assert restored.settings["model"] is None
     assert restored.settings["max_output_tokens"] is None
+
+
+def test_reasoning_effort_round_trips_on_its_wire_version() -> None:
+    original = task({"reasoning_effort": "medium"})
+    restored = LeafTask.from_dict(json.loads(json.dumps(original.to_dict())))
+    assert restored.wire_version == REASONING_WIRE_VERSION
+    assert restored.settings["reasoning_effort"] == "medium"
+
+
+def test_gpt_4o_null_reasoning_stays_on_the_legacy_wire() -> None:
+    settings = execution_settings(
+        {"llm.model": "gpt-4o", "llm.reasoning_effort": None, "llm.temperature": 0},
+        PlanLimits(),
+        Budget(),
+    )
+    original = task(settings)
+    restored = LeafTask.from_dict(json.loads(json.dumps(original.to_dict())))
+    assert "reasoning_effort" not in restored.settings
+    assert restored.settings["temperature"] == 0
+    assert restored.wire_version == WIRE_VERSION
+
+
+def test_gpt_6_luna_null_temperature_uses_only_the_reasoning_wire_field() -> None:
+    settings = execution_settings(
+        {
+            "llm.model": "gpt-6-luna",
+            "llm.reasoning_effort": "medium",
+            "llm.temperature": None,
+        },
+        PlanLimits(),
+        Budget(),
+    )
+    original = task(settings)
+    restored = LeafTask.from_dict(json.loads(json.dumps(original.to_dict())))
+    assert restored.settings["reasoning_effort"] == "medium"
+    assert "temperature" not in restored.settings
+    assert restored.wire_version == REASONING_WIRE_VERSION
+
+
+def test_wire_rejects_sampling_with_active_reasoning() -> None:
+    payload = task().to_dict()
+    settings = payload["settings"]
+    assert isinstance(settings, dict)
+    settings["reasoning_effort"] = "medium"
+    settings["temperature"] = 0.2
+    payload["wire_version"] = REASONING_WIRE_VERSION
+    payload["partition_safety_status"] = None
+    payload["partition_rule_digest"] = None
+    with pytest.raises(ConfigError, match="temperature"):
+        LeafTask.from_dict(payload)
 
 
 def test_usage_numbers_must_be_finite() -> None:

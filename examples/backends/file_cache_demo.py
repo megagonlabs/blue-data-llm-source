@@ -4,12 +4,12 @@
 whole provider request, so the second of two identical fetches is served from disk: no
 provider call, no tokens, no API cost. Rows from a cache hit still count against a row
 ceiling, and admission still checks elapsed time, which is what keeps a caller-owned
-budget binding across a sequence that the cache is quietly shortening.
+budget across a sequence whose later calls the cache shortens.
 
-The cache lives inside the client, below the source, so the first call has to be real.
-That is why this script needs a credential and its offline sibling,
-``backends/cache_stores_demo.py``, does not: that one drives the same two stores through
-the ``CacheStore`` protocol directly.
+The cache lives inside the client, below the source, so the first call contacts the
+provider. This script therefore needs a credential. Its offline sibling,
+``backends/cache_stores_demo.py``, drives the same stores through the ``CacheStore``
+protocol directly and needs no credential.
 
 Requires: OPENAI_API_KEY, and the provider extra (pip install 'blue-data-llm-source[llm]'),
 which brings diskcache along with litellm.

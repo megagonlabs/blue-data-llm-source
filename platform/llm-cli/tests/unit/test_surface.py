@@ -205,8 +205,27 @@ def test_the_profile_wins_over_the_default(runner: CliRunner) -> None:
 def test_the_built_in_default_is_the_last_tier(runner: CliRunner) -> None:
     result = runner.invoke(cli, ["data", "query", QUERY, "--format", "json"])
     settings = json.loads(result.stdout)["settings"]
-    assert settings["applied"]["llm.model"] == "gpt-4o"
+    assert settings["applied"]["llm.model"] == "gpt-6-luna"
     assert settings["source"]["llm.model"] == "default"
+
+
+def test_reasoning_effort_reaches_the_library(runner: CliRunner, default_client: Any) -> None:
+    result = runner.invoke(
+        cli,
+        [
+            "data",
+            "query",
+            QUERY,
+            "--model",
+            "gpt-6-luna",
+            "--reasoning-effort",
+            "high",
+            "--format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert default_client.properties[0]["llm.reasoning_effort"] == "high"
 
 
 def test_the_root_profile_option_reads_blue_data_profile(runner: CliRunner) -> None:

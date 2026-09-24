@@ -2,7 +2,7 @@
 
 This package exposes `blue-data-llm-source` through an MCP server named `blue-data-llm`. The server uses stdio and provides five tools and no resources. It validates each tool call against the advertised schema, translates the arguments into a library call, and returns JSON. The library remains responsible for domain validation, configuration, alignment, and budgets. Library errors are returned with their original wording so a model-driven client can act on them.
 
-**Each ceiling applies to one call. A call that sets no ceiling is unbounded.** `llmdb_query` accepts `limits.max_cost`, `limits.max_seconds`, and `limits.max_calls`, while `llmdb_estimate` calculates a cost bound before a query runs. The server constructs its source with no default properties, so omitted ceilings are not supplied elsewhere and the provider may charge without a per-call spending cap. Configure the client accordingly before exposing a provider credential. See [Ceilings](#ceilings) for details and alternatives.
+**Set an operator ceiling before exposing a provider credential.** `llmdb_query` accepts `limits.max_cost`, `limits.max_seconds`, and `limits.max_calls`, and `llmdb_estimate` calculates a cost bound before a query runs. The operator can set the same ceilings for every call with `BLUE_DATA_LLM_SOURCE_LIMIT_COST`, `_LIMIT_CALLS` and `_LIMIT_SECONDS`; a call can lower them but never raise or remove them. Without an operator ceiling, a call that sets none is unbounded. See [Ceilings](#ceilings).
 
 ## Tools
 
@@ -16,7 +16,7 @@ This package exposes `blue-data-llm-source` through an MCP server named `blue-da
 
 The `llmdb_` prefix prevents collisions when a client loads several data-source servers into one tool namespace. The remainder of each name matches the corresponding `blue-llmdb` operation.
 
-Versions before 2.0.0 exposed `llm_fetch`, `llm_estimate` and `llm_info`. Those names are removed rather than aliased; a client still calling one gets an `UnknownTool` error naming every tool that does exist.
+Versions before 2.0.0 exposed `llm_fetch`, `llm_estimate` and `llm_info`. These names are no longer supported. A client that calls one receives an `UnknownTool` error listing the available tools.
 
 ### `llmdb_query`
 
@@ -46,7 +46,7 @@ Fetch structured records from a language model's own knowledge.
 | `plan.exact_rows` | integer, minimum 0 | no | Single-leaf hard target; a multi-leaf plan reports `exact_rows_not_leaf_bound` instead |
 | `plan.max_exclusion_bytes` | integer, minimum 0 | no | Encoded byte cap for whole-key exclusions |
 
-The rows are in schema order. The three `plan.*` sets above are closed: the schema declares a JSON Schema `enum` for each, and a value outside it is refused before the library is reached.
+The rows follow schema order. Each of the three `plan.*` settings above has a closed set of values: its schema declares a JSON Schema `enum`, and the server refuses values outside that set before calling the library.
 
 The `type` on an attribute is deliberately **not** closed. The library checks a value against a type name it recognises (`int`, `integer`, `float`, `number`, `bool`, `boolean`, `date`, `str`, `string`, `text`) and accepts any other name unchecked, reporting it once in `meta.unchecked_types`. Refusing an unrecognised name here would make that field unreachable over this transport.
 
@@ -58,8 +58,7 @@ A call and its result:
 {
   "query": "the member states of the European Union",
   "attrs": ["country", {"name": "accession_year", "type": "int"}],
-  "max_records": 5,
-  "limits.max_cost": 0.25
+  "max_records": 5
 }
 ```
 
@@ -70,11 +69,11 @@ A call and its result:
   ],
   "meta": {
     "outcome": "ok",
-    "model": "gpt-4o",
+    "model": "gpt-6-luna",
     "calls": 1,
     "prompt_tokens": 12,
     "completion_tokens": 34,
-    "cost": 0.0012,
+    "cost": 0.0000182,
     "elapsed_seconds": 0.31,
     "row_estimate": null,
     "cardinality_estimate": null,
@@ -93,7 +92,7 @@ A call and its result:
 
 Every field in that sample is always present, so a program branches on what it says rather than on whether the key arrived. `gaps` reports an observed failed or interrupted part, a ceiling, or discarded output; a valid empty answer alone does not create one. `stop_reasons` retains simultaneous limits in precedence order. `row_estimate` is the accepted non-flat bootstrap root hint or JSON `null`.
 
-`meta` also carries `normalization_collisions`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to`, `cache_hits`, `unmapped_keys`, `remapped_keys`, `type_mismatches`, `key_collisions`, and `accounting_known`, each when it applies. An absent key there means the thing did not happen. Read `accounting_known` before `cost`: when false, a zero cost means unmeasured. A budget stop is a result rather than a tool error.
+`meta` also carries `normalization_collisions`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to`, `cache_hits`, `unmapped_keys`, `remapped_keys`, `type_mismatches`, `key_collisions`, and `accounting_known`, each when it applies. An absent key there means the thing did not happen. Read `accounting_known` before `cost`: when false, `cost` is a conservative bound, or a zero that means unmeasured. [What `cost` means](../../lib/README.md#what-cost-means) lists each case. A budget stop is a result rather than a tool error.
 
 ### `llmdb_estimate`
 
@@ -106,42 +105,62 @@ What one **flat** `llmdb_query` of the same request could cost, without calling 
 ```json
 {
   "bounded": true,
-  "max_cost": 0.1292025,
-  "max_cost_per_attempt": 0.0430675,
+  "max_cost": 0.041528190000000006,
+  "max_cost_per_attempt": 0.013842730000000001,
   "max_attempts": 3,
   "reason": null,
-  "model": "gpt-4o",
+  "model": "gpt-6-luna",
   "prompt_bytes": 779,
-  "max_output_tokens": 4096
+  "max_output_tokens": 25000,
+  "attempts_within_ceiling": null
 }
 ```
 
+`attempts_within_ceiling` is `null` when no cost ceiling applies to the call. With one, from the call or from the operator, it is how many of `max_attempts` fit under it, each at `max_cost_per_attempt`; `0` means the first attempt would be refused.
+
 `max_cost` bounds the whole of a `flat` fetch rather than predicting it: `max_cost_per_attempt` accumulated `max_attempts` times, with the entire output allowance reserved at the model's output rate and the prompt bounded by its encoded length. A typical call costs a fraction of it. It is the same figure the reservation claims, so a request that estimates inside a ceiling is not refused when it runs, and a ceiling set to exactly `max_cost` admits every attempt the figure accounted for. Both are computed from this package's static price table, never from anything the provider reports, so they agree with each other and not necessarily with an invoice. Neither cost is rounded, for the same reason: a figure a run can exceed is not a bound.
 
-`bounded` is `false` when no bound can be established, which happens for a model this library has no rates for and was given none. `reason` then says what is missing. That is a successful call rather than an error, because asking what something might cost is reasonable even where the answer cannot be given. Nothing on this path contacts the provider.
+`bounded` is `false` when no bound can be established, such as when the library has no rates for a model and none were supplied. `reason` identifies what is missing. This is a successful call, even when it cannot provide a cost bound. This path does not contact the provider.
 
 ### `llmdb_list_models`
 
-No inputs. The pricing bases this package carries a published price for, sorted. These are bases and not the whole set of boundable names: a dated variant prices against the base it extends, so `gpt-4o-2024-08-06` is bindable and is not on the list. A ceiling needs a listed name, a dated variant of one, or rates the deployment supplied; `llmdb_inspect_model` settles a single name without this ambiguity.
+No inputs. The pricing bases this package carries a published price for, sorted. These are bases and not the whole set of boundable names: a dated variant prices against the base it extends, so `gpt-4o-2024-08-06` is boundable and is not on the list. A ceiling needs a listed name, a dated variant of one, or rates the deployment supplied; `llmdb_inspect_model` settles a single name without this ambiguity.
 
 ```json
 {
   "models": [
-    "claude-3-5-haiku",
-    "claude-3-5-sonnet",
-    "claude-3-opus",
     "gpt-3.5-turbo",
     "gpt-4",
     "gpt-4-turbo",
+    "gpt-4.1",
+    "gpt-4.1-mini",
+    "gpt-4.1-nano",
     "gpt-4o",
+    "gpt-4o-2024-05-13",
     "gpt-4o-mini",
+    "gpt-5",
+    "gpt-5-mini",
+    "gpt-5-nano",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
+    "gpt-5.5",
+    "gpt-5.6",
+    "gpt-5.6-luna",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-6-astra",
+    "gpt-6-luna",
+    "gpt-6-sol",
     "o1",
-    "o3-mini"
+    "o3",
+    "o3-mini",
+    "o4-mini"
   ]
 }
 ```
 
-Names rather than rates. The price table is a snapshot of published list prices and goes stale; a name is a stable thing to publish, and `llmdb_inspect_model` gives the rates for one.
+The price table is a snapshot of published list prices and can become outdated. This tool publishes model names; use `llmdb_inspect_model` to retrieve a model's rates.
 
 ### `llmdb_inspect_model`
 
@@ -149,7 +168,7 @@ One model's rates, and whether this server could bound a `limits.max_cost` ceili
 
 | Input | Type | Required | Meaning |
 |---|---|---|---|
-| `model` | string | **yes** | Model name to look up. Exact names and dated variants only; a longer name is a different model, not a variant of the one it starts with |
+| `model` | string | **yes** | Model name to look up. Exact names and dated variants only, with or without an `openai/` prefix; a longer name is a different model, not a variant of the one it starts with |
 
 ```json
 {"model": "gpt-4o"}
@@ -162,7 +181,16 @@ One model's rates, and whether this server could bound a `limits.max_cost` ceili
   "price_per_input_token": 2.5e-06,
   "price_per_output_token": 1e-05,
   "max_output_tokens": 4096,
-  "cost_ceiling_supported": true
+  "cost_ceiling_supported": true,
+  "published_defaults": {
+    "reasoning_efforts": [],
+    "default_reasoning_effort": null,
+    "temperature": "always",
+    "output_token_parameter": "max_tokens",
+    "cached_input_price_per_token": 1.25e-06,
+    "cache_write_price_per_token": null,
+    "long_context_threshold_tokens": null
+  }
 }
 ```
 
@@ -170,32 +198,33 @@ One model's rates, and whether this server could bound a `limits.max_cost` ceili
 |---|---|
 | `priceable` | Whether the package's price table carries this model |
 | `price_per_input_token`, `price_per_output_token` | Published list prices in USD per token, or `null` |
-| `max_output_tokens` | The output allowance this server's source is configured with |
+| `max_output_tokens` | The explicit deployment allowance, or the inspected model's default |
 | `cost_ceiling_supported` | Whether a cost bound can be established on this deployment. It needs rates and a finite output allowance, so a priceable model on a source with no allowance is still `false`, and a model the table does not carry is `true` where the deployment supplied `llm.price_per_input_token` and `llm.price_per_output_token`. It is the same question `llmdb_estimate` answers as `bounded` |
+| `published_defaults` | What the package's model table records for this model: `reasoning_efforts` it accepts, `default_reasoning_effort`, when it accepts a `temperature` (`always`, `effort_none_only` or `never`), the `output_token_parameter` the request uses, `cached_input_price_per_token`, `cache_write_price_per_token` and `long_context_threshold_tokens`. These are the model's published defaults; a deployment setting such as `BLUE_DATA_LLM_SOURCE_REASONING_EFFORT` overrides them. `null` for a model the table does not carry |
 
-A model the table does not carry answers with `priceable: false` and null rates. That is a successful call, the same way `bounded: false` is on an estimate.
+A model the table does not carry answers with `priceable: false`, null rates and null `published_defaults`. That is a successful call, the same way `bounded: false` is on an estimate.
 
 ### `llmdb_inspect_metadata`
 
-No inputs. Returns the protocol, the variant, and the version of the library underneath:
+No inputs. Returns the protocol, the variant, and the version of the library underneath. It reads no deployment setting, so it still answers while a malformed one is failing the query, estimate and model-inspection tools:
 
 ```json
-{"protocol": "llm", "variant": "openai", "version": "2.0.0"}
+{"protocol": "llm", "variant": "openai", "version": "2.1.0"}
 ```
 
 ## Decomposition
 
-`llmdb_query` answers with one model call by default. A large ask can be split into parts, each asked separately and merged on the way back, at a call per part. Nothing selects a shape for the caller.
+By default, `llmdb_query` answers with one model call. A large request can be split into parts, queried separately, and merged, with one call per part. The caller selects the decomposition mode.
 
 | Argument | Meaning |
 |---|---|
 | `plan.mode` | `flat` is the one-completion default; `partitioned` builds a bounded recursive tree; `row_by_row` asks per identified entity. |
 | `plan.max_continuations` | How many times a part may ask again for records it did not get. `0` by default, so each part asks once. It bounds asks per part, not provider attempts or planning calls; each ask may still be retried up to `limits.max_retries` times, three attempts by default. |
-| `plan.max_leaves` | The most parts a plan may hold, the term that bounds its worst-case cost. |
+| `plan.max_leaves` | The most parts a plan may hold, the term that bounds its worst-case cost. Default `100`. |
 | `plan.key` | The attribute identifying a record, so parts returning the same one merge. Must be among the requested attributes. |
 | `plan.partition_key` | Preferred root split dimension. Descendants may choose another dimension. |
 | `plan.max_depth` | Deepest partition level. Default `2`; `0` disables subdivision. |
-| `plan.max_partitions` | Most children proposed for one node. Default `4`. |
+| `plan.max_partitions` | Most children proposed for one node. Default `20`. |
 | `plan.target_rows_per_leaf` | Uncertain row-count hint for descendant splitting. Default `50`; it is not a completeness target. |
 | `plan.schema_mode` | `preserve` keeps declared attributes; `enrich` lets non-flat planning append inferred ones. |
 | `plan.keys` | Ordered primary-key fields for composite identity. |
@@ -243,9 +272,9 @@ The `blue-llmdb` CLI spells the same settings as hyphenated flags, because a dot
 |---|---|
 | `profile add/remove/list/config/inspect/select` | CLI-local state under `~/.blue-llmdb/`, written on the operator's disk. `profile config` also accepts a credential, which is not something an agent call should write. |
 | `model select` | The same CLI-local state. A server started per client session has nowhere to put a selection. |
-| The `llm.*` request settings (`model`, `max_tokens`, `temperature`, `timeout`, `max_parallel`, `cache`, `cache_dir`, `price_per_input_token`, `price_per_output_token`) | Deployment configuration on this transport, not per-call arguments. The server builds its source from the process configuration the client started it with, and a cost ceiling is claimed against that configured model. |
+| The `llm.*` request settings as call arguments | A model, its allowance and its prices are the operator's choice, and a cost ceiling is claimed against them, so no call argument sets them. The server reads them from its own environment instead, under the CLI's variable names: `BLUE_DATA_LLM_MODEL` and the `BLUE_DATA_LLM_SOURCE_*` settings listed in [Configuration](#configuration). |
 | A `--format` equivalent | An MCP tool's wire format is fixed JSON by protocol. `--format table/json/nl/csv` is a CLI concern and is deliberately not mirrored here. |
-| MCP resources | This server is tools-only. The price table contains ten names with no paging or subscription behavior, and each other read is either a live provider call, which a client must not be able to trigger by prefetching context, or a fact already returned by a tool. |
+| MCP resources | This server is tools-only. The price table contains 27 names with no paging or subscription behavior, and each other read is either a live provider call, which a client must not be able to trigger by prefetching context, or a fact already returned by a tool. |
 | The library's registry surface (`fetch_schema`, `fetch_databases`, `fetch_database_collections` and the rest) | They exist so a registry sync has a hierarchy to walk. `fetch_databases()` returns one synthetic name and `fetch_schema()` returns `{}`; there is nothing for an agent to read. |
 | The `DataSource` orchestrator-tool surface (`get_nl_tools`, `execute_nl_tool`, `execute_query_nl`) | That is how Blue's own orchestrator drives a source, and it is already a tool-dispatch layer. Putting it behind an MCP tool would nest one tool protocol inside another and give an agent two routes to the same fetch. `llmdb_query` is that fetch. |
 
@@ -255,11 +284,11 @@ Three axes bound what a call may spend: `limits.max_cost` in dollars, `limits.ma
 
 `max_records` is not one of them. It caps the rows in the result, not the spend: the model is asked once and the surplus records are dropped on arrival.
 
-There is a floor a cost ceiling has to clear. The bound reserves the whole output allowance at the model's output rate, so a `limits.max_cost` below `max_cost_per_attempt` refuses every call before making one. Ask `llmdb_estimate` for that figure rather than guessing at it; lowering the allowance itself needs `llm.max_tokens`, which is a deployment setting and is not exposed here.
+Every cost ceiling must meet a minimum. The bound reserves the full output allowance at the model's output rate, plus OpenAI's 10% regional uplift for applicable models. A `limits.max_cost` below `max_cost_per_attempt` therefore refuses every call before it starts. Use `llmdb_estimate` to obtain that figure. The output allowance is controlled by the deployment setting `BLUE_DATA_LLM_SOURCE_MAX_TOKENS`; no call argument changes it.
 
-A cost ceiling also needs rates for the model, from the price table or from the `llm.price_per_input_token` and `llm.price_per_output_token` this deployment was configured with. Ask `llmdb_inspect_model` first: `cost_ceiling_supported: false` means `limits.max_cost` will refuse every call on this server, whatever value it is given.
+A cost ceiling also needs rates for the model, from the price table or from the `BLUE_DATA_LLM_SOURCE_PRICE_PER_INPUT_TOKEN` and `BLUE_DATA_LLM_SOURCE_PRICE_PER_OUTPUT_TOKEN` this deployment was started with. Ask `llmdb_inspect_model` first: `cost_ceiling_supported: false` means `limits.max_cost` will refuse every call on this server, whatever value it is given.
 
-The ceilings are per call and nothing sets them for the agent. The server constructs its source with no properties, so a call that names no ceiling has none, and a ceiling one call sets does not carry to the next. A deployment that cannot leave that to the agent embeds the library and configures `limits.*` on the source it builds, or wraps this server in a process that does. The library's ceilings are described in [lib/README.md](../../lib/README.md) and stated in full in [lib/COMPATIBILITY.md](../../lib/COMPATIBILITY.md).
+An operator can set ceilings for every call with `BLUE_DATA_LLM_SOURCE_LIMIT_COST`, `BLUE_DATA_LLM_SOURCE_LIMIT_CALLS` and `BLUE_DATA_LLM_SOURCE_LIMIT_SECONDS` (see [Configuration](#configuration)). A call's own `limits.*` argument can lower one of these for that call but never raise or remove it: the ceiling that applies is the lower of the two. Without an operator ceiling, a call that names none has none, and a ceiling one call sets does not carry to the next. The library's ceilings are described in [lib/README.md](../../lib/README.md) and stated in full in [lib/COMPATIBILITY.md](../../lib/COMPATIBILITY.md).
 
 ## Errors
 
@@ -274,10 +303,10 @@ Error text uses `Kind: message` and preserves the library's wording. Before the 
 | `QueryError`, `ConfigError`, `TransportError`, `ParseError` | The library refused or failed, and the kind is its exception class. Fix the request or the deployment, as the message says. |
 
 ```text
-ConfigError: no model configured (set llm.model)
+ConfigError: BLUE_DATA_LLM_SOURCE_MAX_TOKENS must be a whole number of at least 1.
 ```
 
-That one is a deployment message: the model is configured where the server is started, not on this surface. See [What this server does not expose](#what-this-server-does-not-expose).
+That one is a deployment message: the variable is set where the server is started, not on this surface, and `llmdb_query`, `llmdb_estimate` and `llmdb_inspect_model` fail with it until the variable is fixed. See [Configuration](#configuration).
 
 Before 2.0.0 an argument refusal was also reported as `ConfigError`, so "unknown argument" and "no model configured" shared one prefix with two different remedies. They are told apart now.
 
@@ -303,13 +332,7 @@ scripts/install.sh              # from a checkout
 blue-data-llm-mcp
 ```
 
-`pip install blue-data-llm-mcp` works only where `blue-data` is resolvable, which means an internal index. It is a core dependency of the library underneath and is not on the public one, so a plain install fails to resolve it. From a checkout, `scripts/install.sh` puts it in place first; set `BLUE_DATA_PATH` if it does not sit alongside this repository.
-
-This package points `pyright` at a `.venv` in its own directory. Create and activate one before installing, or the type check reports every import as unresolved:
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-```
+`pip install blue-data-llm-mcp` from a package index does not work: neither this package nor `blue-data`, a core dependency of the library underneath, is published to one. From a checkout, `scripts/install.sh` puts `blue-data` in place first. It looks for it beside this repository, at `../blue-data/lib` from the repository root; set `BLUE_DATA_PATH` to its `lib` directory if it is elsewhere.
 
 The MCP client starts the server over stdio. The server opens no network port. Configure a client as follows:
 
@@ -324,25 +347,69 @@ The MCP client starts the server over stdio. The server opens no network port. C
 }
 ```
 
+With a model, an output allowance and a cost ceiling chosen for the deployment:
+
+```json
+{
+  "mcpServers": {
+    "blue-data-llm": {
+      "command": "blue-data-llm-mcp",
+      "env": {
+        "OPENAI_API_KEY": "...",
+        "BLUE_DATA_LLM_MODEL": "gpt-6-sol",
+        "BLUE_DATA_LLM_SOURCE_MAX_TOKENS": "8000",
+        "BLUE_DATA_LLM_SOURCE_LIMIT_COST": "0.50"
+      }
+    }
+  }
+}
+```
+
 `python -m blue_data_llm_mcp.server` runs the same thing from a checkout.
 
 ## Configuration
 
-This server reads no configuration file and no `BLUE_DATA_*` environment variable. It constructs its source with no properties, so every setting is the library's default and every ceiling is whatever arrived with the call.
+This server reads no configuration file and no CLI profile. It reads these variables from the environment its client starts it with, under the names the CLI uses for the same settings:
 
-`OPENAI_API_KEY` in the snippet above belongs to the provider SDK. The SDK reads it from the server process environment; neither this package nor the library reads it directly, and no tool accepts a credential as an argument. Text about a call passes through `redact`, including errors, model names, requested attributes, rewritten queries, unchecked types, and unbounded-estimate reasons. A test examines every returned string and requires it to be redacted or explicitly exempted. Returned records are exempt because they are the query result; a token-shaped record value remains data.
+| Variable | Setting | Read as |
+|---|---|---|
+| `BLUE_DATA_LLM_MODEL` | `llm.model` | a model name |
+| `BLUE_DATA_LLM_SOURCE_REASONING_EFFORT` | `llm.reasoning_effort` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max` |
+| `BLUE_DATA_LLM_SOURCE_MAX_TOKENS` | `llm.max_tokens` | a whole number |
+| `BLUE_DATA_LLM_SOURCE_TEMPERATURE` | `llm.temperature` | a number |
+| `BLUE_DATA_LLM_SOURCE_TIMEOUT` | `llm.timeout` | seconds |
+| `BLUE_DATA_LLM_SOURCE_MAX_PARALLEL` | `llm.max_parallel` | a whole number |
+| `BLUE_DATA_LLM_SOURCE_CACHE` | `llm.cache` | `1`, `true`, `yes`, `on`, or `0`, `false`, `no`, `off` |
+| `BLUE_DATA_LLM_SOURCE_CACHE_DIR` | `llm.cache_dir` | a directory; a leading `~` is expanded |
+| `BLUE_DATA_LLM_SOURCE_PRICE_PER_INPUT_TOKEN` | `llm.price_per_input_token` | USD per token |
+| `BLUE_DATA_LLM_SOURCE_PRICE_PER_OUTPUT_TOKEN` | `llm.price_per_output_token` | USD per token |
+| `BLUE_DATA_LLM_SOURCE_LIMIT_COST` | `limits.max_cost`, for every call | dollars, zero or more |
+| `BLUE_DATA_LLM_SOURCE_LIMIT_CALLS` | `limits.max_calls`, for every call | a whole number, zero or more |
+| `BLUE_DATA_LLM_SOURCE_LIMIT_SECONDS` | `limits.max_seconds`, for every call | seconds, zero or more |
 
-The `blue-llmdb` CLI stores profiles and applies its own environment-variable precedence chain under `~/.blue-llmdb/`. The MCP server does not read that state because ceilings are explicit per-call inputs. A deployment that requires server-side default ceilings should embed the library. Both interfaces use the property names shown in the mapping table above.
+They are read on every call, not once at startup. A variable that is unset or blank leaves the library's default in place, so with none set the server runs `gpt-6-luna` at medium reasoning with a 25,000-token allowance. A value that cannot be read as its type, or that the library refuses, fails that call with a `ConfigError` naming the variable and what it must be, never the value itself, and the server keeps running. A configured model name the package does not publish, and the cache directory, are masked as `***` wherever they would appear in a result or an error, since a deployment setting can hold anything and a caller's transcript is not the operator's to control.
+
+The rate and allowance settings are not masked. Any MCP caller can work out `BLUE_DATA_LLM_SOURCE_PRICE_PER_INPUT_TOKEN`, `BLUE_DATA_LLM_SOURCE_PRICE_PER_OUTPUT_TOKEN` and `BLUE_DATA_LLM_SOURCE_MAX_TOKENS` from `max_output_tokens`, from two `llmdb_estimate` results, or from `meta.cost`. Do not put a confidential rate in them. The three `LIMIT` variables are operator ceilings: a call's `limits.*` argument applies only where it is lower, so an agent can tighten a ceiling for one call but not loosen it. No other `BLUE_DATA_*` variable is read: the planning settings stay per-call arguments, and a call's `plan.*` arguments apply to that call only.
+
+`OPENAI_API_KEY` in the snippets above belongs to the provider SDK. The SDK reads it from the server process environment; neither this package nor the library reads it directly, and no tool accepts a credential as an argument. Text about a call passes through `redact`, including errors, model names, requested attributes, rewritten queries, unchecked types, and unbounded-estimate reasons. A test examines every returned string and requires it to be redacted or explicitly exempted. Returned records are exempt because they are the query result; a token-shaped record value remains data.
+
+The `blue-llmdb` CLI stores profiles and applies its own environment-variable precedence chain under `~/.blue-llmdb/`. The MCP server reads none of that state, only the variables above. Both interfaces use the property names shown in the mapping table above.
 
 ## Layout
 
-`tools.py` holds the tool definitions and the argument translation and imports nothing from `mcp`. `server.py` holds the transport and is the only module that does. That split is what lets the tests run against the tools directly, with no server and no `mcp` installed, which is also how they run in CI.
+`tools.py` defines the tools and translates their arguments without importing `mcp`. `server.py` implements the transport and is the only module that imports `mcp`. This separation lets tests call the tools directly without the server or `mcp` installed, including in CI.
 
 ## Tests
 
 ```bash
 python3 -m pytest tests/unit -q
 python3 -m ruff format --check . && python3 -m ruff check .
+```
+
+For the type check, create a `.venv` in this directory before installing. `pyproject.toml` points `pyright` at it, and without one pyright reports every import as unresolved instead of real typing errors:
+
+```bash
+python -m venv .venv && source .venv/bin/activate
 ```
 
 Tests compare the documented tool names, schemas, enums, and JSON examples with the `tools/list` and `tools/call` handlers.

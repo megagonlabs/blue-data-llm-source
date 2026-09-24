@@ -402,3 +402,170 @@ def test_no_shipped_file_describes_the_whole_fetch_bound_as_a_product() -> None:
     assert not offenders, "the whole-fetch bound accumulates, it is not a product: " + ", ".join(
         offenders
     )
+
+
+# ------------------------------------------------------ fit against a ceiling --
+def _sized(ceiling: float | None, **properties: Any) -> Any:
+    extra: dict[str, Any] = {"llm.model": "gpt-4o-mini", "llm.max_tokens": 512, **properties}
+    if ceiling is not None:
+        extra["limits.max_cost"] = ceiling
+    return LlmSource().estimate("the member states of the European Union", properties=extra)
+
+
+def test_no_ceiling_reports_no_fit() -> None:
+    assert _sized(None).attempts_within_ceiling is None
+
+
+def test_the_fit_counts_attempts_the_way_the_ledger_admits_them() -> None:
+    per_attempt = _sized(None).max_cost_per_attempt
+    assert _sized(per_attempt * 3).attempts_within_ceiling == 3
+    assert _sized(per_attempt * 2.5).attempts_within_ceiling == 2
+    assert _sized(per_attempt * 1).attempts_within_ceiling == 1
+    assert _sized(per_attempt * 0.5).attempts_within_ceiling == 0
+    assert _sized(100.0).attempts_within_ceiling == 3
+
+
+def test_the_fit_is_counted_under_the_call_cap() -> None:
+    sized = _sized(100.0, **{"limits.max_calls": 1})
+    assert sized.max_attempts == 1
+    assert sized.attempts_within_ceiling == 1
+
+
+def test_the_fit_agrees_with_what_the_ledger_then_admits() -> None:
+    """A ceiling the estimate says admits two attempts admits exactly two reservations."""
+    per_attempt = _sized(None).max_cost_per_attempt
+    budget = Budget(Limits(max_cost=per_attempt * 2.5))
+    admitted = 0
+    for _ in range(3):
+        try:
+            with budget.attempt(per_attempt) as reservation:
+                reservation.keep_unpriced()
+        except Exception:
+            break
+        admitted += 1
+    assert admitted == _sized(per_attempt * 2.5).attempts_within_ceiling == 2
+
+
+def test_an_unbounded_estimate_reports_no_fit() -> None:
+    sized = LlmSource().estimate(
+        "anything", properties={"llm.model": "house-model", "limits.max_cost": 1.0}
+    )
+    assert sized.bounded is False
+    assert sized.attempts_within_ceiling is None
+
+
+# ---------------------------------------------------- refusal names the remedy --
+def test_a_ceiling_no_attempt_fits_names_the_figure_and_the_remedy() -> None:
+    from blue_data_llm_source.types import BudgetExceeded
+
+    budget = Budget(Limits(max_cost=0.001))
+    with pytest.raises(BudgetExceeded) as caught:
+        budget.check_admissible(0.0123)
+    message = str(caught.value)
+    assert "$0.012300" in message
+    assert "$0.001" in message
+    assert "llm.max_tokens" in message
+    assert caught.value.limit == "max_cost"
+
+
+def test_a_fetch_refused_before_any_call_says_why_in_its_gap(
+    litellm_stub: InstallStub,
+) -> None:
+    stub = litellm_stub(LitellmStub(chat_payload("[]")))
+    result = LlmSource().fetch(
+        "the member states of the European Union",
+        properties={"llm.model": "gpt-4o-mini", "llm.max_tokens": 512, "limits.max_cost": 1e-9},
+    )
+    assert stub.calls == []
+    assert result.meta.stopped_by == "max_cost"
+    gap = " ".join(result.meta.gaps)
+    assert "one attempt needs up to $" in gap
+    assert "llm.max_tokens" in gap
+
+
+# ------------------------------------------------ the retry cap and exact sums --
+def _sol(retries: int, ceiling: float | None = None) -> Any:
+    properties: dict[str, Any] = {
+        "llm.model": "gpt-6-sol",
+        "llm.max_tokens": 64,
+        "limits.max_retries": retries,
+    }
+    if ceiling is not None:
+        properties["limits.max_cost"] = ceiling
+    return LlmSource().estimate("who?", properties=properties)
+
+
+def _admitted(per_attempt: float, attempts: int, ceiling: float) -> int:
+    """How many attempts the real ledger admits at *ceiling*, each kept at its bound."""
+    from blue_data_llm_source.types import BudgetExceeded
+
+    budget = Budget(Limits(max_cost=ceiling, max_retries=9_999))
+    admitted = 0
+    for _ in range(attempts):
+        try:
+            with budget.attempt(per_attempt) as reservation:
+                reservation.keep_unpriced()
+        except BudgetExceeded:
+            break
+        admitted += 1
+    return admitted
+
+
+def test_the_largest_retry_allowance_agrees_with_the_ledger_exactly() -> None:
+    """At the published total every attempt fits; one ulp below, the last one does not."""
+    sized = _sol(9_999)
+    assert sized.max_attempts == 10_000
+    per_attempt = sized.max_cost_per_attempt
+    at = sized.max_cost
+    below = math.nextafter(at, 0.0)
+
+    assert _sol(9_999, ceiling=at).attempts_within_ceiling == 10_000
+    assert _admitted(per_attempt, 10_000, at) == 10_000
+    assert _sol(9_999, ceiling=below).attempts_within_ceiling == 9_999
+    assert _admitted(per_attempt, 10_000, below) == 9_999
+
+
+@pytest.mark.parametrize("retries", [10_000, 10**309])
+def test_a_retry_allowance_past_the_cap_is_refused_by_name(retries: int) -> None:
+    from blue_data_llm_source.planning.bounds import PlanLimits
+    from blue_data_llm_source.types import ConfigError
+
+    with pytest.raises(ConfigError, match=r"limits\.max_retries must be at most 9999"):
+        Limits(max_retries=retries)
+    with pytest.raises(ConfigError, match=r"limits\.max_retries must be at most 9999"):
+        _sol(retries)
+    with pytest.raises(ConfigError, match="max_retries must be at most 9999"):
+        PlanLimits(max_retries=retries)
+
+
+def test_a_retry_allowance_past_the_cap_is_refused_before_any_call(
+    litellm_stub: InstallStub,
+) -> None:
+    from blue_data_llm_source.types import ConfigError
+
+    stub = litellm_stub(LitellmStub(chat_payload("[]")))
+    with pytest.raises(ConfigError, match="at most 9999"):
+        LlmSource().fetch("who?", properties={"limits.max_retries": 10_000})
+    assert stub.calls == []
+
+
+@pytest.mark.parametrize("attempts", [1, 3, 10_000])
+def test_a_zero_bound_costs_nothing_and_fits_every_attempt(attempts: int) -> None:
+    from blue_data_llm_source.source import (  # pyright: ignore[reportPrivateUsage]
+        _accumulated,  # pyright: ignore[reportPrivateUsage]
+        _attempts_within,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    assert _accumulated(0.0, attempts) == 0.0
+    assert _attempts_within(0.0, attempts, 0.0) == attempts
+    assert _admitted(0.0, attempts, 0.0) == attempts
+
+
+def test_an_empty_request_fits_every_attempt_it_is_allowed() -> None:
+    """It makes no call and costs nothing, so the fit is all of its attempts."""
+    sized = LlmSource().estimate(
+        "   ", properties={"llm.model": "gpt-4o-mini", "limits.max_cost": 0.0}
+    )
+    assert sized.max_cost == 0.0
+    assert sized.attempts_within_ceiling == sized.max_attempts
+    assert LlmSource().estimate("   ").attempts_within_ceiling is None

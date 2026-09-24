@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blue-data-llm-mcp"
-version = "2.0.0"
+version = "2.1.0"
 description = "MCP server for the Blue Data LLM Source Layer"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "blue-data-llm-source[llm]>=2.0.0",
+    "blue-data-llm-source[llm]>=2.1.0",
     # Pinned, not floored. The low-level Server's decorator API this module is built on
     # was removed in mcp 2.0, so ">=1.0" resolves to a release where the server cannot
     # import at all. blue-data-ops pins the same version for the same reason.

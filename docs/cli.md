@@ -14,7 +14,7 @@ Version 2.0.0 replaces the `llm` command. `llm fetch` is now `blue-llmdb data qu
 platform/llm-cli/scripts/install.sh
 ```
 
-That installs `blue-data` from a checkout, then the library from `lib/`, then the CLI, all editable. Set `BLUE_DATA_PATH` if `blue-data` does not sit alongside this repository. [installation.md](installation.md) covers every route, the extras, and what each script does.
+That installs `blue-data` from a checkout, then the library from `lib/`, then the CLI, all editable. It looks for `blue-data` beside this repository, at `../blue-data/lib` from the repository root; set `BLUE_DATA_PATH` to its `lib` directory if it is elsewhere. [installation.md](installation.md) covers every route, the extras, and what each script does.
 
 ## Commands
 
@@ -62,7 +62,7 @@ blue-llmdb --version
 ```
 
 ```text
-blue-llmdb 2.0.0
+blue-llmdb 2.1.0
 ```
 
 ```bash
@@ -75,7 +75,7 @@ blue-llmdb metadata inspect
 ┡━━━━━━━━━━╇━━━━━━━━┩
 │ protocol │ llm    │
 │ variant  │ openai │
-│ version  │ 2.0.0  │
+│ version  │ 2.1.0  │
 └──────────┴────────┘
 ```
 
@@ -89,7 +89,7 @@ blue-llmdb metadata inspect --format json
 {
   "protocol": "llm",
   "variant": "openai",
-  "version": "2.0.0"
+  "version": "2.1.0"
 }
 ```
 
@@ -172,11 +172,12 @@ blue-llmdb profile remove staging --confirm
 | Parameter | Cast | Default | Asked on a first run | Reaches |
 |---|---|---|---|---|
 | `OPENAI_API_KEY` | secret | — | yes | the provider SDK, through the environment |
-| `BLUE_DATA_LLM_MODEL` | str | `gpt-4o` | yes | `llm.model` |
+| `BLUE_DATA_LLM_MODEL` | str | `gpt-6-luna` | yes | `llm.model` |
 | `BLUE_DATA_CLI_FORMAT` | str | `table` | | the default for `--format` |
 | `BLUE_DATA_CLI_LOG_LIMIT` | int | `80` | | the default for `--log-limit` |
 | `BLUE_DATA_LLM_SOURCE_MAX_RECORDS` | int | — | | the default for `--max-records` |
 | `BLUE_DATA_LLM_SOURCE_MAX_TOKENS` | int | — | | `llm.max_tokens` |
+| `BLUE_DATA_LLM_SOURCE_REASONING_EFFORT` | str | — | | `llm.reasoning_effort` |
 | `BLUE_DATA_LLM_SOURCE_TEMPERATURE` | float | — | | `llm.temperature` |
 | `BLUE_DATA_LLM_SOURCE_TIMEOUT` | float | — | | `llm.timeout` |
 | `BLUE_DATA_LLM_SOURCE_MAX_PARALLEL` | int | — | | `llm.max_parallel` |
@@ -212,7 +213,7 @@ The point of putting a ceiling in a profile is that it applies, and a misspelled
 └── cache/                the default llm.cache_dir
 ```
 
-Every write goes to a temporary file in the same directory and is moved into place, so an interrupted run cannot leave a profiles file the next run refuses to parse. A complete write cannot either: a value holding a line break is refused, because the file is line-oriented and one pasted from a CRLF file would be read back as a separate setting. A path inside the home that is a symlink out of it is refused rather than followed. A path found with wider permissions is reported once; the directory is left as you set it, and a file goes back to 0600 on the next write.
+Every write goes to a temporary file in the same directory and is moved into place, so an interrupted run cannot leave a profiles file the next run refuses to parse. A complete write cannot either: a value holding a line break is refused, because the file is line-oriented and one pasted from a CRLF file would be read back as a separate setting. A path inside the home that is a symlink out of it is refused rather than followed. A home directory at 0755 is reported once and left as it is. A home that group or others can write to is refused, and so is a settings file that group or others can read or write: every command then exits 4 with `ERROR: PROFILE` naming the path and the mode it needs, until you fix it with `chmod 700` on the directory or `chmod 600` on the file. The CLI never changes an existing mode.
 
 A secret is never accepted as a value on the command line, where it would land in shell history. `blue-llmdb profile config OPENAI_API_KEY` prompts with the input hidden. Enter `$MY_KEY` at that prompt to store a reference to an environment variable instead of the secret itself; `profile inspect` then shows `$MY_KEY (set)` or `$MY_KEY (unset)`, so you can see what to export.
 
@@ -269,8 +270,8 @@ blue-llmdb data query "the member states of the European Union" \
 │ Spain          │ 1986           │
 │ Sweden         │ 1995           │
 └────────────────┴────────────────┘
-27 records | model gpt-4o-2024-08-06 | 1 call | 638 tokens | row estimate unknown | $0.0051 | 5.21s
-settings: llm.cache_dir=~/.blue-llmdb/cache (default), llm.model=gpt-4o (default), plan.max_continuations=0 (default)
+27 records | model gpt-6-luna | 1 call | 638 tokens | row estimate unknown | $0.0002 | 5.21s
+settings: llm.cache_dir=~/.blue-llmdb/cache (default), llm.model=gpt-6-luna (default), plan.max_continuations=0 (default)
 ```
 
 The footer under the rows is the accounting line, and the `settings:` line under it names the values this invocation resolved and the tier each came from.
@@ -296,7 +297,7 @@ blue-llmdb data query "the member states of the European Union" \
 
 ### Model and adapter options
 
-`--model`, `--max-tokens`, `--temperature`, `--timeout`, `--max-parallel`, `--cache`/`--no-cache`, `--cache-dir`, `--price-in` and `--price-out` set the library's `llm.*` settings of the same meaning, and `--variant` sets the source variant within the `llm` protocol. Each has a profile parameter, so a value you use every time belongs in the profile and a value you use once belongs on the command line.
+`--model`, `--max-tokens`, `--reasoning-effort`, `--temperature`, `--timeout`, `--max-parallel`, `--cache`/`--no-cache`, `--cache-dir`, `--price-in` and `--price-out` set the library's `llm.*` settings of the same meaning, and `--variant` sets the source variant within the `llm` protocol. Each has a profile parameter, so a value you use every time belongs in the profile and a value you use once belongs on the command line. Each model the package knows has its own reasoning efforts, default effort and temperature rule, listed under [Supported models](../lib/README.md#supported-models). GPT-6 Luna defaults to medium reasoning and accepts `--temperature` only with `--reasoning-effort none`; GPT-4o sends temperature 0 and accepts no reasoning effort. A combination the model rules out is refused before anything is spent.
 
 ```bash
 blue-llmdb data query "the member states of the European Union" \
@@ -316,9 +317,9 @@ blue-llmdb data query "the member states of the European Union" \
     --model gpt-4o --limit-cost 0.50 --limit-seconds 30 --limit-calls 2 --max-retries 1
 ```
 
-`--limit-cost` is claimed against an upper bound on what the call can cost rather than an estimate of what it is likely to cost, and that bound is reconciled against the real figure once the call returns. A request refused this way prints no records and exits 7, with `outcome: stopped_by_limit` and `stopped by: max_cost` under the table. See [The cost bound](../lib/README.md#the-cost-bound) for how it is calculated and how to size one.
+`--limit-cost` is claimed against an upper bound on what the call can cost rather than an estimate of what it is likely to cost. The bound is reconciled once the call returns: a measured cost settles it, and [the cost bound](../lib/README.md#the-cost-bound) sets the charge when the response cannot prove it. That section also says how the bound is calculated and how to size one, and [what `cost` means](../lib/README.md#what-cost-means) says how to read the figure a run reports. A request refused this way prints no records and exits 7, with `outcome: stopped_by_limit` and `stopped by: max_cost` under the table.
 
-There is a floor a cost ceiling has to clear. The floor is the whole output allowance at the model's output rate and does not depend on the prompt: for `gpt-4o` with the library's default of 4096 output tokens it is about $0.041, so `--limit-cost 0.01` would refuse every call before making one. Ask for a smaller answer with `--max-tokens` rather than raising the ceiling, since the output allowance is what the floor is made of. A model this package carries no published price for is refused a cost ceiling outright, with a `ConfigError` naming what is missing and exit code 4, instead of being bounded against a guessed rate.
+There is a floor a cost ceiling has to clear. The floor is the whole output allowance at the model's output rate and does not depend on the prompt. GPT-4o's default allowance is 4,096 output tokens, for a floor of about $0.041. The GPT-6 Luna default is 25,000 tokens, for a floor of about $0.0138 once OpenAI's 10% regional-processing uplift is added. Ask for a smaller answer with `--max-tokens` rather than raising the ceiling, since the output allowance is what the floor is made of. A model this package carries no published price for is refused a cost ceiling outright, with a `ConfigError` naming what is missing and exit code 4, instead of being bounded against a guessed rate.
 
 ### Decomposition
 
@@ -409,36 +410,62 @@ blue-llmdb model list
 ┏━━━━━━━━━━━━━━━━━━━┓
 ┃ model             ┃
 ┡━━━━━━━━━━━━━━━━━━━┩
-│ claude-3-5-haiku  │
-│ claude-3-5-sonnet │
-│ claude-3-opus     │
 │ gpt-3.5-turbo     │
 │ gpt-4             │
 │ gpt-4-turbo       │
+│ gpt-4.1           │
+│ gpt-4.1-mini      │
+│ gpt-4.1-nano      │
 │ gpt-4o            │
+│ gpt-4o-2024-05-13 │
 │ gpt-4o-mini       │
+│ gpt-5             │
+│ gpt-5-mini        │
+│ gpt-5-nano        │
+│ gpt-5.4           │
+│ gpt-5.4-mini      │
+│ gpt-5.4-nano      │
+│ gpt-5.5           │
+│ gpt-5.6           │
+│ gpt-5.6-luna      │
+│ gpt-5.6-sol       │
+│ gpt-5.6-terra     │
+│ gpt-6-astra       │
+│ gpt-6-luna        │
+│ gpt-6-sol         │
 │ o1                │
+│ o3                │
 │ o3-mini           │
+│ o4-mini           │
 └───────────────────┘
 ```
 
-Those are the models this package carries a published price for. Any model name the provider accepts can be used; these are the ones a cost ceiling can be bounded against without supplying rates of your own.
+Those are the models this package carries a published price for. Any model name the provider accepts can be used; these are the ones a cost ceiling can be bounded against without supplying rates of your own. [Supported models](../lib/README.md#supported-models) gives each one's reasoning efforts and prices.
 
 ```bash
 blue-llmdb model inspect gpt-4o
 ```
 
 ```text
-┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
-┃ key                    ┃ value   ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
-│ model                  │ gpt-4o  │
-│ input_price_per_token  │ 2.5e-06 │
-│ output_price_per_token │ 1e-05   │
-│ max_tokens             │ 4096    │
-│ can_bound              │ True    │
-└────────────────────────┴─────────┘
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┓
+┃ key                                              ┃ value      ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━┩
+│ model                                            │ gpt-4o     │
+│ input_price_per_token                            │ 2.5e-06    │
+│ output_price_per_token                           │ 1e-05      │
+│ max_tokens                                       │ 4096       │
+│ can_bound                                        │ True       │
+│ published_defaults.reasoning_efforts             │            │
+│ published_defaults.default_reasoning_effort      │            │
+│ published_defaults.temperature                   │ always     │
+│ published_defaults.output_token_parameter        │ max_tokens │
+│ published_defaults.cached_input_price_per_token  │ 1.25e-06   │
+│ published_defaults.cache_write_price_per_token   │            │
+│ published_defaults.long_context_threshold_tokens │            │
+└──────────────────────────────────────────────────┴────────────┘
 ```
+
+The `published_defaults.*` rows are the model's entry in the package's table: the reasoning efforts it accepts and its default, when it accepts a temperature (`always`, `effort_none_only` or `never`), the output-token parameter, the cached-input and cache-write rates, and the long-context threshold. They describe the model; a profile setting or a flag overrides them for a query. The `nl` format adds a sentence naming the floor a cost ceiling has to clear, with the regional uplift included where it applies.
 
 ```bash
 blue-llmdb model select gpt-4o

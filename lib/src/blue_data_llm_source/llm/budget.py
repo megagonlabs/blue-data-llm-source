@@ -6,9 +6,9 @@ for a fan-out: by the time the total is read, the money is gone.
 
 Every axis is claimed before the provider is contacted, under one lock, so concurrent
 callers cannot race past a ceiling. Cost is claimed the only way an unknown price can be:
-an estimated upper bound is reserved before the attempt and reconciled against the real
-cost afterwards, releasing the difference. The sibling operator library already does this
-one layer up, estimating a semantic join's tokens and refusing above a cap before it runs.
+an estimated upper bound is reserved before the attempt, then resolved against the best
+accounting the client can verify. The sibling operator library already does this one layer
+up, estimating a semantic join's tokens and refusing above a cap before it runs.
 
 Reserving rather than settling is what makes the two hard cases work. A cost that cannot be
 read leaves its reservation standing, so an accounting failure is not a free call. And ten
@@ -35,6 +35,31 @@ from blue_data_llm_source.types import BudgetExceeded, ConfigError
 
 _Number = TypeVar("_Number", int, float)
 
+MAX_RETRIES = 9_999
+"""The most ``limits.max_retries`` accepts: at most 10,000 attempts per call.
+
+A bound on the input so every figure computed from the attempt count is exact. ``estimate``
+publishes the total the ledger reaches by adding one bound per attempt, and a caller sizes a
+ceiling against it; past a fixed count that sum could only be approximated, and an
+approximation sized a ceiling that refused an attempt the figure had counted. No real run
+retries anywhere near this often.
+"""
+
+
+def check_retries(value: object, name: str = "limits.max_retries") -> int:
+    """*value* as a retry allowance, or a ConfigError naming *name* and the range."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(f"{name} must be a whole number, got {value!r}")
+    if value < 0:
+        raise ConfigError(f"{name} must not be negative, got {value!r}")
+    if value > MAX_RETRIES:
+        # The value is not repeated: it can run to hundreds of digits.
+        raise ConfigError(
+            f"{name} must be at most {MAX_RETRIES}, so that one call makes at most "
+            f"{MAX_RETRIES + 1} attempts"
+        )
+    return value
+
 
 @dataclass(frozen=True)
 class Limits:
@@ -57,9 +82,9 @@ class Limits:
             _require_whole(name, getattr(self, name))
         for name in ("max_seconds", "max_cost"):
             _require_real(name, getattr(self, name))
-        retries = _require_whole("max_retries", self.max_retries, allow_none=False)
-        if retries is None:  # pragma: no cover - _require_whole raises when None is refused
-            raise ConfigError("limits.max_retries must be set")
+        if self.max_retries is None:  # pyright: ignore[reportUnnecessaryComparison]
+            raise ConfigError("limits.max_retries must be a whole number, not None")
+        check_retries(self.max_retries)
 
 
 def _require_whole(name: str, value: object, allow_none: bool = True) -> int | None:
@@ -501,6 +526,16 @@ class Budget:
                 self._stop(
                     "max_seconds",
                     f"time limit reached ({limits.max_seconds}s, elapsed {self.elapsed:.1f}s)",
+                )
+            if limits.max_cost is not None and estimate > limits.max_cost:
+                # No attempt can ever fit, whatever has been spent. Saying so, with the
+                # figure and what lowers it, is the difference between a caller fixing the
+                # request and one raising a ceiling that was never the problem's size.
+                self._stop(
+                    "max_cost",
+                    f"cost limit reached: one attempt needs up to ${estimate:.6f}, above the "
+                    f"${limits.max_cost} ceiling. Lower llm.max_tokens, which sets most of "
+                    f"that figure, or raise limits.max_cost",
                 )
             if (
                 limits.max_cost is not None

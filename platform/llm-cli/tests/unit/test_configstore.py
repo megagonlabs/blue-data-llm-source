@@ -62,7 +62,7 @@ def test_the_walked_list_is_the_two_parameters_a_first_run_is_asked_for() -> Non
 def test_the_family_parameters_keep_the_family_names_and_casts() -> None:
     spec = base_spec()
     assert spec["OPENAI_API_KEY"].is_secret
-    assert spec["BLUE_DATA_LLM_MODEL"].default == "gpt-4o"
+    assert spec["BLUE_DATA_LLM_MODEL"].default == "gpt-6-luna"
     assert spec["BLUE_DATA_CLI_FORMAT"].default == "table"
     assert spec["BLUE_DATA_CLI_LOG_LIMIT"].cast == "int"
 
@@ -203,19 +203,58 @@ def test_a_failed_write_leaves_the_previous_contents_intact(
     assert sorted(p.name for p in store.home.iterdir()) == [".profiles", ".selected.profile"]
 
 
-def test_a_store_that_cannot_be_read_is_an_error_rather_than_a_traceback(home: Path) -> None:
-    """Every command builds a resolver, so an unreadable store took all twelve down."""
+def test_a_non_regular_profiles_path_is_refused(home: Path) -> None:
     home.mkdir(parents=True)
     (home / ".profiles").mkdir()
-    with pytest.raises(ProfileError, match="cannot read"):
+    with pytest.raises(ProfileError, match="not a regular file"):
         ProfileStore(home).list_profiles()
 
 
-def test_a_selection_that_cannot_be_read_is_an_error_too(home: Path) -> None:
+def test_a_non_regular_selection_path_is_refused(home: Path) -> None:
     home.mkdir(parents=True)
     (home / ".selected.profile").mkdir()
-    with pytest.raises(ProfileError, match="cannot read"):
+    with pytest.raises(ProfileError, match="not a regular file"):
         ProfileStore(home).selected()
+
+
+def test_initialize_refuses_an_exposed_selection_before_creating_profiles(home: Path) -> None:
+    home.mkdir(mode=0o700)
+    selection = home / ".selected.profile"
+    selection.write_text("default")
+    os.chmod(selection, 0o644)
+
+    with pytest.raises(ProfileError, match="mode 0600 with chmod"):
+        ProfileStore(home).initialize()
+
+    assert not (home / ".profiles").exists()
+    assert selection.read_text() == "default"
+    assert stat.S_IMODE(selection.stat().st_mode) == 0o644
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO permissions are POSIX-only")
+def test_initialize_refuses_a_selection_fifo_before_creating_profiles(home: Path) -> None:
+    home.mkdir(mode=0o700)
+    selection = home / ".selected.profile"
+    os.mkfifo(selection, mode=0o600)
+
+    with pytest.raises(ProfileError, match="not a regular file"):
+        ProfileStore(home).initialize()
+
+    assert not (home / ".profiles").exists()
+    assert stat.S_ISFIFO(selection.lstat().st_mode)
+
+
+def test_initialize_refuses_a_broken_selection_link_before_creating_profiles(home: Path) -> None:
+    home.mkdir(mode=0o700)
+    selection = home / ".selected.profile"
+    selection.symlink_to(home / "missing")
+
+    with pytest.raises(ProfileError, match="not a regular file"):
+        ProfileStore(home).initialize()
+
+    assert not (home / ".profiles").exists()
+    assert selection.is_symlink()
+    assert not selection.exists()
 
 
 def test_a_home_that_cannot_be_written_is_an_error_too(tmp_path: Path) -> None:
@@ -259,6 +298,212 @@ def test_a_wider_existing_home_is_reported_once_and_left_alone(
     assert capsys.readouterr().err.count(str(home)) == 1
 
 
+def test_a_home_owned_by_another_uid_is_refused(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home.mkdir(mode=0o700)
+    real_lstat = Path.lstat
+
+    def other_owner(candidate: Path) -> os.stat_result:
+        status = real_lstat(candidate)
+        if candidate != home:
+            return status
+        fields = list(status)
+        fields[4] = status.st_uid + 1
+        return os.stat_result(fields)
+
+    monkeypatch.setattr(Path, "lstat", other_owner)
+    with pytest.raises(ProfileError, match="not the current uid"):
+        ProfileStore(home).initialize()
+
+
+def test_a_home_symlink_is_refused(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir(mode=0o700)
+    home = tmp_path / "home"
+    home.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(ProfileError, match="not a directory"):
+        ProfileStore(home).initialize()
+
+
+@pytest.mark.parametrize("mode", [0o720, 0o702, 0o777])
+def test_initialize_refuses_a_writable_home_without_creating_files(home: Path, mode: int) -> None:
+    home.mkdir(parents=True)
+    os.chmod(home, mode)
+
+    with pytest.raises(ProfileError, match="mode 0700 with chmod"):
+        ProfileStore(home).initialize()
+
+    assert list(home.iterdir()) == []
+
+
+@pytest.mark.parametrize("mode", [0o720, 0o702, 0o777])
+def test_a_home_writable_by_another_account_is_refused_without_mutation(
+    home: Path, mode: int
+) -> None:
+    home.mkdir(parents=True)
+    profiles = home / ".profiles"
+    profiles.write_text("[default]\nBLUE_DATA_LLM_MODEL = before\n")
+    os.chmod(profiles, 0o600)
+    os.chmod(home, mode)
+    before = profiles.read_bytes()
+
+    store = ProfileStore(home)
+    with pytest.raises(ProfileError, match="mode 0700 with chmod"):
+        store.list_profiles()
+    with pytest.raises(ProfileError, match="mode 0700 with chmod"):
+        store.set_value("default", "BLUE_DATA_LLM_MODEL", "after")
+
+    assert profiles.read_bytes() == before
+    assert sorted(path.name for path in home.iterdir()) == [".profiles"]
+
+
+@pytest.mark.parametrize("mode", [0o640, 0o604, 0o620, 0o602])
+def test_an_exposed_profiles_file_is_refused_without_mutation(
+    store: ProfileStore, mode: int
+) -> None:
+    path = store.profiles_path
+    before = path.read_bytes()
+    os.chmod(path, mode)
+
+    with pytest.raises(ProfileError, match="mode 0600 with chmod"):
+        store.values("default")
+    with pytest.raises(ProfileError, match="mode 0600 with chmod"):
+        store.set_value("default", "BLUE_DATA_LLM_MODEL", "after")
+
+    assert path.read_bytes() == before
+    assert stat.S_IMODE(path.stat().st_mode) == mode
+
+
+@pytest.mark.parametrize("mode", [0o640, 0o604, 0o620, 0o602])
+def test_an_exposed_selection_file_is_refused_without_mutation(
+    store: ProfileStore, mode: int
+) -> None:
+    path = store.selection_path
+    before = path.read_bytes()
+    os.chmod(path, mode)
+
+    with pytest.raises(ProfileError, match="mode 0600 with chmod"):
+        store.selected()
+    with pytest.raises(ProfileError, match="mode 0600 with chmod"):
+        store.select("default")
+
+    assert path.read_bytes() == before
+    assert stat.S_IMODE(path.stat().st_mode) == mode
+
+
+def test_remove_checks_the_selection_before_mutating_profiles(store: ProfileStore) -> None:
+    store.add("staging")
+    store.select("staging")
+    profiles_before = store.profiles_path.read_bytes()
+    selection_before = store.selection_path.read_bytes()
+    os.chmod(store.selection_path, 0o644)
+
+    with pytest.raises(ProfileError, match="mode 0600 with chmod"):
+        store.remove("staging")
+
+    assert store.profiles_path.read_bytes() == profiles_before
+    assert store.selection_path.read_bytes() == selection_before
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO permissions are POSIX-only")
+def test_a_profiles_fifo_is_refused_on_initialize_read_and_write(home: Path) -> None:
+    home.mkdir(mode=0o700)
+    path = home / ".profiles"
+    os.mkfifo(path, mode=0o600)
+    store = ProfileStore(home)
+
+    with pytest.raises(ProfileError, match="not a regular file"):
+        store.initialize()
+    with pytest.raises(ProfileError, match="not a regular file"):
+        store.list_profiles()
+    with pytest.raises(ProfileError, match="not a regular file"):
+        store.add("staging")
+
+    assert stat.S_ISFIFO(path.lstat().st_mode)
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO permissions are POSIX-only")
+def test_a_selection_fifo_is_refused_on_read_and_write(store: ProfileStore) -> None:
+    store.selection_path.unlink()
+    os.mkfifo(store.selection_path, mode=0o600)
+
+    with pytest.raises(ProfileError, match="not a regular file"):
+        store.selected()
+    with pytest.raises(ProfileError, match="not a regular file"):
+        store.select("default")
+
+    assert stat.S_ISFIFO(store.selection_path.lstat().st_mode)
+
+
+def test_a_profile_file_owned_by_another_uid_is_refused(
+    store: ProfileStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_lstat = Path.lstat
+    path = store.profiles_path
+
+    def other_owner(candidate: Path) -> os.stat_result:
+        status = real_lstat(candidate)
+        if candidate != path:
+            return status
+        fields = list(status)
+        fields[4] = status.st_uid + 1
+        return os.stat_result(fields)
+
+    monkeypatch.setattr(Path, "lstat", other_owner)
+    with pytest.raises(ProfileError, match="not the current uid"):
+        store.values("default")
+
+
+def test_a_selection_file_owned_by_another_uid_is_refused(
+    store: ProfileStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_lstat = Path.lstat
+    path = store.selection_path
+
+    def other_owner(candidate: Path) -> os.stat_result:
+        status = real_lstat(candidate)
+        if candidate != path:
+            return status
+        fields = list(status)
+        fields[4] = status.st_uid + 1
+        return os.stat_result(fields)
+
+    monkeypatch.setattr(Path, "lstat", other_owner)
+    with pytest.raises(ProfileError, match="not the current uid"):
+        store.selected()
+
+
+def test_an_opened_profile_file_is_revalidated_before_read(
+    store: ProfileStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_fstat = os.fstat
+
+    def changed_owner(descriptor: int) -> os.stat_result:
+        status = real_fstat(descriptor)
+        fields = list(status)
+        fields[4] = status.st_uid + 1
+        return os.stat_result(fields)
+
+    monkeypatch.setattr(os, "fstat", changed_owner)
+    with pytest.raises(ProfileError, match="not the current uid"):
+        store.values("default")
+
+
+def test_permission_remediation_is_not_a_copyable_shell_command(tmp_path: Path) -> None:
+    home = tmp_path / "unsafe; echo injected"
+    home.mkdir(mode=0o700)
+    os.chmod(home, 0o777)
+
+    with pytest.raises(ProfileError) as refusal:
+        ProfileStore(home).initialize()
+
+    message = str(refusal.value)
+    assert "mode 0700 with chmod" in message
+    assert "chmod 700 " not in message
+
+
 def test_a_symlink_out_of_the_home_is_refused_rather_than_followed(
     home: Path, tmp_path: Path
 ) -> None:
@@ -268,15 +513,48 @@ def test_a_symlink_out_of_the_home_is_refused_rather_than_followed(
     home.mkdir(parents=True)
     (home / ".profiles").symlink_to(elsewhere / "stolen")
 
-    with pytest.raises(ProfileError, match="symlink"):
+    with pytest.raises(ProfileError, match="not a regular file"):
         ProfileStore(home).list_profiles()
 
 
-def test_a_symlink_inside_the_home_is_fine(home: Path) -> None:
+def test_a_symlink_inside_the_home_is_refused(home: Path) -> None:
     home.mkdir(parents=True)
     (home / "real").write_text("[default]\n")
+    os.chmod(home / "real", 0o600)
     (home / ".profiles").symlink_to(home / "real")
-    assert ProfileStore(home).list_profiles() == ["default"]
+    with pytest.raises(ProfileError, match="not a regular file"):
+        ProfileStore(home).list_profiles()
+
+
+def test_a_broken_profiles_symlink_is_refused_without_replacement(home: Path) -> None:
+    home.mkdir(mode=0o700)
+    path = home / ".profiles"
+    path.symlink_to(home / "missing")
+    store = ProfileStore(home)
+
+    with pytest.raises(ProfileError, match="not a regular file"):
+        store.initialize()
+    with pytest.raises(ProfileError, match="not a regular file"):
+        store.list_profiles()
+    with pytest.raises(ProfileError, match="not a regular file"):
+        store.add("staging")
+
+    assert path.is_symlink()
+    assert not path.exists()
+
+
+def test_a_broken_selection_symlink_is_refused_without_replacement(store: ProfileStore) -> None:
+    path = store.selection_path
+    path.unlink()
+    path.symlink_to(store.home / "missing")
+
+    with pytest.raises(ProfileError, match="not a regular file"):
+        store.selected()
+    with pytest.raises(ProfileError, match="not a regular file"):
+        store.select("default")
+
+    assert path.is_symlink()
+    assert not path.exists()
 
 
 # --------------------------------------------------------------- the secret --
@@ -348,7 +626,7 @@ def test_the_profile_outranks_the_default(store: ProfileStore) -> None:
 
 def test_the_default_is_the_last_tier(store: ProfileStore) -> None:
     config = resolver(store)
-    assert config.get("BLUE_DATA_LLM_MODEL") == "gpt-4o"
+    assert config.get("BLUE_DATA_LLM_MODEL") == "gpt-6-luna"
     assert config.source_of("BLUE_DATA_LLM_MODEL") == "default"
 
 

@@ -24,6 +24,8 @@ from blue_data_llm_source.llm.client import (
     FunctionClient,
     accepted_adapter_keys,
     check_adapter_keys,
+    default_max_tokens_for,
+    default_reasoning_effort_for,
 )
 from blue_data_llm_source.planning.bounds import (
     MODE_FLAT,
@@ -89,7 +91,7 @@ def _declared(client: Any) -> frozenset[str]:
     return frozenset(reported) if reported else frozenset()
 
 
-# The closed set of limit knobs, so a misspelling is refused rather than ignored.
+# Accepted limit keys; reject misspellings instead of ignoring them.
 _LIMIT_KEYS = frozenset(f.name for f in fields(Limits))
 
 _PLAN_LIMIT_KEYS = frozenset(
@@ -106,9 +108,8 @@ _PLAN_LIMIT_KEYS = frozenset(
 )
 """The `PlanLimits` fields a `plan.*` setting can reach."""
 
-# `mode`, `key` and `partition_key` are not PlanLimits fields and have to be named, or the
-# validator refuses a key the facade reads — two halves of one setting disagreeing, which is
-# the shape this closed key set exists to catch.
+# `mode`, `key` and `partition_key` are not PlanLimits fields, so list them here or the
+# validator will reject keys the facade reads.
 _PLAN_KEYS = _PLAN_LIMIT_KEYS | {
     "mode",
     "key",
@@ -154,9 +155,9 @@ _BARE_KEYS = frozenset(
 # accepted or refused by name before the whole-map check reads it.
 _NAMESPACES: Final = ("llm.", "limits.", "plan.")
 
-# Request fields the data-layer surfaces read out of `optional_properties`, because their
-# signatures have nowhere else to put them. On `fetch` each is a parameter, so they are
-# lifted out of the map before the property vocabulary is checked rather than joining it.
+# Request fields that the data-layer surfaces read from `optional_properties` because their
+# signatures have nowhere else to put them. `fetch` takes each as a parameter, so these
+# fields are removed from the map before validating the property names.
 _REQUEST_KEYS: Final = ("attrs", "attr_names", "context", "max_records")
 
 
@@ -316,8 +317,8 @@ def _in_hierarchy() -> Generator[None]:
     except LlmSourceError:
         raise
     except Exception as e:
-        # Chained, never replaced: the original type and traceback are what a maintainer
-        # needs, and the wrapper is what a caller's `except LlmSourceError` needs.
+        # Preserve the original type and traceback for maintainers, and chain the wrapper
+        # so callers can catch `LlmSourceError`.
         raise LlmSourceError(f"{type(e).__name__}: {e}") from e
 
 
@@ -332,12 +333,10 @@ def _origins_for(
     parallel to the merged records is still parallel to what they produce; the passes that
     change the list's length are the ones this follows.
     """
-    # First index wins, and unseen identities are consumed as they are matched. A dict built
-    # the other way keeps only the *last* index for a repeated object, so the same dictionary
-    # appearing twice in `before` would attribute both copies to the second one's origin and
-    # lose the first. JSON parsing builds distinct objects, so no public path reaches that
-    # today; a helper whose docstring is unrestricted and whose behaviour is not is how the
-    # next caller gets surprised.
+    # Keep the first index and consume each identity once. A reverse dict would retain only
+    # the last index for a repeated object, assigning both copies in `before` to the second
+    # origin. JSON parsing creates distinct objects, but this helper should still handle
+    # repeated identities consistently.
     at: dict[int, list[int]] = {}
     for index, record in enumerate(before):
         at.setdefault(id(record), []).append(index)
@@ -371,14 +370,6 @@ def _renumber_by_record(
     return out
 
 
-# Above this, the loop stops reproducing the ledger and multiplies instead. The loop exists
-# so the published figure accumulates in the same order the ledger will, and float addition
-# makes that differ from multiplication in the last bits — but no run makes ten thousand
-# attempts, and `estimate` is documented as contacting no provider, so an unbounded loop
-# turned a pre-flight check into minutes of arithmetic for a large `limits.max_retries`.
-_LEDGER_FIDELITY_LIMIT = 10_000
-
-
 def _reported_allowance(max_tokens: object) -> int:
     """The output allowance the cost bound actually reserved.
 
@@ -391,22 +382,42 @@ def _reported_allowance(max_tokens: object) -> int:
 
 
 def _accumulated(per_attempt: float, attempts: int) -> float:
-    """The total a ledger reaches by adding *per_attempt* one attempt at a time."""
-    if attempts > _LEDGER_FIDELITY_LIMIT:
-        return per_attempt * attempts
+    """The total the ledger reaches after *attempts* charges of *per_attempt*.
+
+    The ledger's own arithmetic, one addition per attempt, so a ceiling set to this figure
+    admits every attempt it counts. ``limits.max_retries`` caps the attempts at 10,000, so
+    the loop is bounded.
+    """
     total = 0.0
     for _ in range(attempts):
         total += per_attempt
     return total
 
 
-# The base class's tool set is relational — databases, collections, columns, row samples,
-# foreign keys — and four of its eight tools answer usefully from a source whose only
-# knowledge is a model's. Of the rest, three return an empty result with nothing said, and
-# `get_sample` raises a bare TypeError out of the base dispatcher itself, which passes
-# `row_sample_size` to a `fetch_entity_stats` that has no such parameter. Advertising a tool
-# that answers with silence is the defect this package exists to prevent, so what is
-# advertised is these four.
+def _attempts_within(per_attempt: float, attempts: int, ceiling: float | None) -> int | None:
+    """How many of *attempts* a cost *ceiling* admits, each charged its full bound.
+
+    The ledger's own comparison, made the way it makes it: before each attempt, what is
+    committed plus this attempt's bound must not pass the ceiling. A bound of zero fits
+    every attempt.
+    """
+    if ceiling is None:
+        return None
+    fits = 0
+    total = 0.0
+    for _ in range(attempts):
+        total += per_attempt
+        if total > ceiling:
+            break
+        fits += 1
+    return fits
+
+
+# The base class's relational tool set covers databases, collections, columns, row samples,
+# and foreign keys. Four of its eight tools work with a source whose only knowledge comes
+# from a model. Three others return an unexplained empty result. `get_sample` raises a
+# TypeError in the base dispatcher, which passes `row_sample_size` to `fetch_entity_stats`,
+# a method without that parameter. Advertise only the four supported tools.
 _SERVED_NL_TOOLS = frozenset({"list_databases", "list_collections", "get_schema", "execute_query"})
 
 
@@ -474,13 +485,15 @@ class LlmSource(DataSource):
 
     # ------------------------------------------------------------ properties --
     def _initialize_properties(self) -> None:
-        # The provider defaults the source this replaces documented, carried forward so
-        # behaviour does not silently change with a provider's own defaults. Every one is
-        # overridable through properties.
-        defaults = {
+        # Send provider-facing defaults explicitly to avoid silent provider changes, but keep
+        # them out of `properties`. The registry reads that map back when rebuilding a source
+        # and treats every key as caller configuration. Storing defaults there made the
+        # default model's effort and token allowance override settings for other models, and
+        # made the default model and stream flag override an injected client's configuration.
+        # Effort and allowance depend on the model, so `_resolved_properties` fills them for
+        # the model selected by each call.
+        self._defaults: dict[str, Any] = {
             "llm.model": DEFAULT_MODEL,
-            "llm.max_tokens": 4096,
-            "llm.temperature": 0,
             "llm.stream": False,
         }
         connection = {
@@ -491,13 +504,7 @@ class LlmSource(DataSource):
             "user": "",
             "password": "",
         }
-        self.properties = {"connection": connection, **defaults}
-        # Which of the above are this source's defaults rather than a caller's choice. An
-        # injected client carries its own configuration, and these must not overwrite it:
-        # the source's `gpt-4o` replaced a client's private model while that client's rate
-        # overrides survived, so a call was priced at one model's rates and made against
-        # another, and a cost ceiling was crossed by the difference.
-        self._defaulted = set(defaults)
+        self.properties = {"connection": connection}
 
     def _resolved_properties(self, per_call: dict[str, Any] | None) -> dict[str, Any]:
         """Three layers, in the order a caller would expect them to win.
@@ -508,19 +515,40 @@ class LlmSource(DataSource):
         configuration survived, which is how a call came to be priced at one model's rates
         and made against another.
         """
-        chosen = {k: v for k, v in self.properties.items() if k not in self._defaulted}
-        defaults = {k: v for k, v in self.properties.items() if k in self._defaulted}
+        # Preserve an injected client's configuration. Previously, the source's default model
+        # replaced the client's model while its rate overrides remained. The call then used
+        # one model and was priced as another, crossing the cost ceiling by the difference.
+        chosen = self.properties
+        defaults = self._defaults
         client_own: Any = getattr(self._client, "properties", None)
         from_client: dict[str, Any] = (
             dict(cast("dict[str, Any]", client_own)) if isinstance(client_own, dict) else {}
         )
         resolved = {**defaults, **from_client, **chosen, **(per_call or {})}
-        # Validated here, on the result, rather than only on what the caller passed. An
-        # injected client's own properties reached the provider without ever crossing the
-        # closed boundary: `llm.stream=True` was forwarded instead of refused by name, and
-        # `llm.max_parallel=0` built a semaphore with no permits and waited.
+        reasoning_is_explicit = any(
+            "llm.reasoning_effort" in layer for layer in (from_client, chosen, per_call or {})
+        )
+        if not reasoning_is_explicit:
+            reasoning_effort = default_reasoning_effort_for(resolved.get("llm.model"))
+            if reasoning_effort is None:
+                resolved.pop("llm.reasoning_effort", None)
+            else:
+                resolved["llm.reasoning_effort"] = reasoning_effort
+        max_tokens_is_explicit = any(
+            "llm.max_tokens" in layer for layer in (from_client, chosen, per_call or {})
+        )
+        if not max_tokens_is_explicit:
+            resolved["llm.max_tokens"] = default_max_tokens_for(resolved.get("llm.model"))
+        # Validate the resolved properties, not only caller-supplied values. An injected
+        # client's properties previously bypassed the closed boundary: `llm.stream=True` was
+        # forwarded instead of rejected, and `llm.max_parallel=0` created a semaphore with no
+        # permits and waited indefinitely.
         self._check_property_keys(resolved)
         return resolved
+
+    def max_tokens_for_model(self, model: str) -> object:
+        """Return the output allowance a call to *model* would use."""
+        return self._resolved_properties({"llm.model": model}).get("llm.max_tokens")
 
     # The default matches the base class, which gained one upstream. Without it this override
     # is incompatible: a caller holding a `DataSource` may call it with no argument, and ours
@@ -529,7 +557,6 @@ class LlmSource(DataSource):
         if not properties:
             return
         # Anything the caller sets is theirs, not a default, and outranks a client's own.
-        self._defaulted -= set(properties)
         for key, value in properties.items():
             if key == "connection" and isinstance(value, dict):
                 self.properties["connection"].update(value)
@@ -1250,6 +1277,12 @@ class LlmSource(DataSource):
                     answered=run.answered,
                     failed=run.ordinary_failure,
                     unserved=run.budget_denied,
+                    stop_detail=(
+                        str(run.exception)
+                        if isinstance(run.exception, BudgetExceeded)
+                        and run.stopped_by == "max_cost"
+                        else None
+                    ),
                     at_cap=run.at_cap,
                     recovered_prefix=run.recovered_prefix,
                     provider_output_limit=run.provider_output_limit,
@@ -1263,6 +1296,7 @@ class LlmSource(DataSource):
         meta.observed_key_count = sum(run.observed_key_count for run in runs)
         meta.marginal_key_yields = [value for run in runs for value in run.marginal_key_yields]
         meta.incomplete_key_records = sum(run.incomplete_key_records for run in runs)
+        meta.repaired_numbers = sum(run.repaired_numbers for run in runs)
         meta.normalization_collisions = [
             collision for run in runs for collision in run.normalization_collisions
         ]
@@ -1284,10 +1318,9 @@ class LlmSource(DataSource):
         alignment = aligner.align(records, attrs)
         checked, mismatches = verifier.verify(alignment.records, attrs)
         answered = verifier.drop_empty(checked, alignment.matched, attrs)
-        # Attribution follows the records through every pass that changes the list. It was
-        # computed against what the merge produced, and three passes below that one drop or
-        # trim rows — publishing it unfollowed would index it against records that no longer
-        # exist, which is worse than publishing nothing because it looks right.
+        # Keep attribution aligned through every pass that changes the records list. It was
+        # computed from the merged result, but later passes can drop or trim rows. Publishing
+        # the original indices would attach origins to the wrong records or to none at all.
         deduped, origins = verifier.dedupe(
             answered, origins=_origins_for(coverage.record_origins, checked, answered)
         )
@@ -1420,13 +1453,15 @@ class LlmSource(DataSource):
 
         text = checks.normalize_query(query)
         if not text:
-            # An empty ask never reaches the model, so it cannot cost anything.
+            # An empty ask never reaches the model, so it cannot cost anything, and every
+            # attempt it is allowed fits under any ceiling at a bound of zero.
             return Estimate(
                 bounded=True,
                 max_cost=0.0,
                 max_cost_per_attempt=0.0,
                 model=model,
                 max_attempts=attempts,
+                attempts_within_ceiling=_attempts_within(0.0, attempts, limits.max_cost),
             )
 
         wanted: list[Attr] = checks.normalize_attrs(attrs)
@@ -1434,7 +1469,7 @@ class LlmSource(DataSource):
         prompt = prompts.build_fetch_prompt(text, wanted, caller_context=ctx)
         prompt_bytes = len(prompt.encode("utf-8"))
 
-        client = self._resolve_client(llm_fn, Budget(limits))
+        client = self._resolve_client(llm_fn, Budget(limits), default_properties=merged)
         bound_for_attempt = getattr(client, "bound_for_attempt", None)
         if not callable(bound_for_attempt) or Capability.ESTIMATE not in _declared(client):
             return Estimate(
@@ -1467,6 +1502,7 @@ class LlmSource(DataSource):
 
         return Estimate(
             bounded=True,
+            attempts_within_ceiling=_attempts_within(per_attempt, attempts, limits.max_cost),
             # Accumulated the way the ledger will accumulate it, one attempt at a time.
             # Neither the product nor `fsum` is that: the ledger settles each charge and then
             # compares the running total against the next bound, and two-stage aggregation

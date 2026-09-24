@@ -20,6 +20,7 @@ from blue_data_llm_source.planning.bounds import (
     attempts,
     distribution_node_attempt_limit,
     execution_calls,
+    leaf_limit,
     max_nodes,
     planning_calls,
     worst_case_attempts,
@@ -53,10 +54,16 @@ class TestEveryTermIsCapped:
             + limits.max_leaves
         )
 
-    @pytest.mark.parametrize("leaves", [2, 5, 50, 500])
-    def test_the_node_bound_holds_at_every_leaf_cap(self, leaves: int) -> None:
+    @pytest.mark.parametrize(
+        ("leaves", "expected"),
+        [(2, 1), (5, 4), (21, 20), (22, 21), (50, 21), (500, 21)],
+    )
+    def test_the_node_bound_is_the_smaller_of_the_leaf_cap_and_the_tree_shape(
+        self, leaves: int, expected: int
+    ) -> None:
+        """At depth 2 and twenty partitions only 1 + 20 nodes can split, however many leaves."""
         limits = PlanLimits(max_leaves=leaves)
-        assert max_nodes(limits, MODE_PARTITIONED) == leaves - 1
+        assert max_nodes(limits, MODE_PARTITIONED) == expected
 
     def test_the_smallest_legal_cap_still_admits_the_root_node(self) -> None:
         """A partitioned plan records its root whatever its leaf count.
@@ -174,7 +181,7 @@ class TestTheRetryMultiplier:
         this central should not rest on a single assertion.
         """
         limits = PlanLimits(max_retries=retries)
-        logical = planning_calls(limits, mode) + execution_calls(limits, limits.max_leaves)
+        logical = planning_calls(limits, mode) + execution_calls(limits, leaf_limit(limits, mode))
         assert worst_case_attempts(limits, mode) == logical * (retries + 1)
 
 

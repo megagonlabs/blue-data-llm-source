@@ -2,9 +2,9 @@
 
 ## Overview
 
-LlmSource uses one test tier: **unit tests**. The source has no backing store, and tests must not contact the only external system, the model provider. Each I/O boundary therefore has a test double. The suite runs offline without a provider SDK. It currently runs manually; the proposed CI pipeline would run it on every push.
+LlmSource uses one test tier: **unit tests**. The source has no backing store, and tests must not contact the only external system, the model provider. Each I/O boundary has a test double. The suite runs offline without a provider SDK. It currently runs manually; the proposed CI pipeline would run it on every push.
 
-The model boundary is a structural protocol, and the provider package is imported lazily inside the call that uses it. Tests can therefore supply a scripted client without patching a vendor SDK, and the package remains importable and testable without the provider dependency.
+The model boundary is a structural protocol, and the provider package is imported lazily inside the call that uses it. Tests can supply a scripted client without patching a vendor SDK, and the package remains importable and testable without the provider dependency.
 
 ---
 
@@ -17,7 +17,7 @@ The model boundary is a structural protocol, and the provider package is importe
 | `pytest-cov` | Coverage measurement, reported and not enforced |
 | `jsonschema` | Tool input schema checking, in the MCP package only |
 
-All are declared in the `dev` extra of the package that uses them. No recording library is declared or used. Recorded provider responses exist, and they are plain JSON files replayed by a client double, which is described in section 4.
+All are declared in the `dev` extra of the package that uses them. The recorded provider responses are plain JSON files replayed by a client double, as described in section 4; no recording library is used.
 
 ```toml
 [tool.pytest.ini_options]
@@ -84,6 +84,7 @@ lib/tests/
     llm/
       test_budget.py           # reservation, settlement, derivation, row admission, concurrency
       test_pricing.py          # the bound holds for dense text; a model with no price is refused
+      test_models.py           # each model's request contract, rates, provider pin, and settlement
       test_client_config.py    # accepted overrides, control keys, reserved keys, model default
       test_client_call.py      # call arguments and response extraction
       test_client_cache.py     # hit, miss, per-directory binding, zero budget consumption
@@ -124,14 +125,14 @@ lib/tests/
 
 Each test subdirectory carries an `__init__.py`, so that identically named modules in sibling directories do not collide during collection.
 
-Platform adapter tests live with their packages, under `platform/llm-cli/tests/unit/` and `platform/llm-mcp/tests/unit/`. Each package's pytest configuration adds the library's source directory to the path, so both suites run against a checkout with no install step.
+Platform adapter tests live with their packages, under `platform/llm-cli/tests/unit/` and `platform/llm-mcp/tests/unit/`. The MCP server's environment settings are covered by `test_deployment_settings.py` there, against a recording stand-in for the provider library. Each package's pytest configuration adds the library's source directory to the path, so both suites run against a checkout with no install step.
 
 ---
 
 ## 3. The Doubles
 
 Five double modules cover four boundaries in `lib/tests/doubles/`: model responses, including
-truncation; provider transport; cache; and the outside world the guard closes off.
+truncation; provider transport; cache; and the outside world blocked by the guard.
 
 ### The model
 
@@ -143,7 +144,7 @@ def scripted() -> ScriptedClient:
     return ScriptedClient()
 ```
 
-Four properties of these doubles matter to the tests built on them. They record the prompt, so a test can assert what a request, its attributes, and its context rendered to without owning the prompt text. They return text rather than a provider payload, so parsing tests and client tests stay separate. They can raise, so reservation handling and error propagation are exercised without simulating a network. And `ScriptedClient` declares `Capability.ALL` and claims against the budget it is handed on the call, priced at whatever cost it was built with, which is what makes it a budget-aware client instead of an opaque one and is how the ceiling tests reach the client boundary at all. A separate double declaring no capabilities stands in for the opaque case, and it is what the refusal path is tested against.
+These doubles support several test needs. They record prompts, allowing tests to check how a request, its attributes, and its context were rendered without embedding prompt text. They return text rather than provider payloads, keeping parsing tests separate from client tests. They can raise errors, allowing tests to exercise reservation handling and error propagation without a network. `ScriptedClient` declares `Capability.ALL` and claims against the supplied budget at its configured cost, so it acts as a budget-aware client for ceiling tests. A separate double declares no capabilities to exercise the refusal path.
 
 A plain callable covers the `llm_fn` path, which reaches the model through `FunctionClient` rather than through an injected client.
 
@@ -206,15 +207,15 @@ Each axis gets the same three tests: a run that stays under it completes, a run 
 - A derived child spends from what its parent has left, and a child given a more generous ceiling than its parent holds still reports the parent's headroom.
 - A malformed ceiling is refused where it is configured rather than at the call: a wrong type, a `bool`, a negative value, or a non-finite value raises `ConfigError`, and so does an unknown `limits.*` key.
 
-The bound itself gets its own file. It is the number both the cost ceiling and `estimate` rest on, and its previous version was wrong in a way no ceiling test would catch. Two tests state the property directly: a bound computed for a prompt of a recorded call's token count still exceeds what that call cost, and a bound for text that tokenizes close to one token per character (short words, punctuation, non-Latin script) is not exceeded by it. The refusals are asserted too: an unlisted model, a half-supplied price pair, and an output cap that is absent, zero, negative, boolean, a string, or non-finite each raise `ConfigError`.
+The cost bound has its own test file because both the cost ceiling and `estimate` depend on it. Two tests check its properties: a bound for a prompt with the token count of a recorded call exceeds that call's cost, and a bound for text that tokenizes close to one token per character (short words, punctuation, non-Latin script) is not exceeded by the text. The tests also check that an unlisted model, a half-supplied price pair, and an absent, zero, negative, boolean, string, or non-finite output cap each raise `ConfigError`.
 
-The client boundary gets three tests of its own, because the ceiling means nothing without them. A client that declares no capabilities is refused a configured call, cost, or time ceiling, and the same run with only `limits.max_rows` succeeds, since the source counts the records itself. The same ceiling is asserted to read the same on every path that declares the axis, because a limit that holds for one client and not another is a default rather than a limit. And a concurrent pair of fetches through one reused client is asserted to report its own tokens and its own model on each result, which is the property the per-call `usage_sink` list exists for and which a cursor into a shared history could not hold.
+Three tests cover the client boundary. A client that declares no capabilities is refused a configured call, cost, or time ceiling; the same run succeeds with only `limits.max_rows`, since the source counts records itself. The tests also check that each ceiling has the same effect on every path whose client declares that axis. A concurrent pair of fetches through one reused client must report its own tokens and model in each result. The per-call `usage_sink` list provides this isolation; a cursor into shared history would not.
 
-Concurrency gets two tests, not one, and the second is the interesting one. The first runs several callers against one budget with a call ceiling and asserts that the number admitted equals the ceiling exactly. The second asserts that the check and the claim happen under the same lock, using a clock that deliberately takes its time. `reserve` reads the clock between checking the call ceiling and claiming the attempt, and a slow clock widens that window from nanoseconds to milliseconds. If the lock were released between the two steps, the widened window would let a second caller through, and the test would see it.
+Two tests cover concurrency. The first runs several callers against one budget with a call ceiling and checks that the number admitted equals the ceiling. The second checks that the limit check and claim happen under the same lock, using a deliberately slow clock. `reserve` reads the clock between checking the call ceiling and claiming the attempt. The slow clock widens that interval from nanoseconds to milliseconds; if the lock were released between the steps, a second caller could enter during that interval and the test would detect it.
 
 Row admission has its own concurrent test. It does not use the widened clock, because `add_rows` never reads the clock: its race is over the row count alone, so the barrier is what makes the callers overlap.
 
-`test_estimate.py` covers the other end of the same number. Three of its assertions are the ones that matter. The estimate contacts nothing, verified by handing the source a scripted client and asserting it recorded no prompt. An unpriceable model comes back with `bounded` false and a reason rather than raising, since a caller asking what a request might cost is entitled to an answer of "not knowable here". And the estimate bounds what a fetch of the same arguments actually spends, asserted as an inequality against a real run and not by recomputing the same pricing call: comparing an estimate against another call of the function that produced it proves only that an implementation matches itself. A divergence between the estimate and the ceiling is one no other test in the suite would notice.
+`test_estimate.py` covers the estimate path. It checks that the estimate contacts no provider by asserting that a scripted client recorded no prompt. An unpriceable model must return `bounded` as false with a reason rather than raise. The test also compares an estimate with the cost of a fetch using the same arguments. This checks the estimate against a real run rather than against another call to the same pricing function, which would only show that the function agrees with itself. No other test would detect a mismatch between the estimate and the ceiling.
 
 ---
 
@@ -225,7 +226,8 @@ Every configuration key has a test proving that changing it changes observable b
 | Key | Observable effect asserted |
 |-----|---------------------------|
 | `llm.model` | Appears in the call arguments and in `ExecMeta.model` |
-| `llm.temperature`, `llm.max_tokens`, `llm.timeout` | Forwarded to the provider call arguments |
+| `llm.reasoning_effort` | Forwarded within each reasoning model's accepted set, defaulted from its table entry, and refused before any reservation for an effort outside the set or for a model that accepts none |
+| `llm.temperature`, `llm.max_tokens`, `llm.timeout` | Forwarded through the selected model's supported arguments; a temperature the model's entry rules out at the effective effort is refused before any reservation |
 | `llm.stream` | Both values are forwarded; a streamed call returns the records the same unstreamed call does, is priced when the provider sends usage, and keeps its reservation when it does not |
 | `llm.cache`, `llm.cache_dir` | Second identical call is a cache hit; a different directory is a miss |
 | `llm.max_parallel` | Bounds in-flight calls under concurrent fetches |

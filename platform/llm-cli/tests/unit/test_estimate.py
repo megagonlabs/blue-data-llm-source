@@ -109,7 +109,6 @@ def test_an_unbounded_estimate_gives_the_reason(runner: CliRunner) -> None:
         ["--variant", "openai"],
         ["--attr", "country"],
         ["--context", "founding members only"],
-        ["--verbose"],
         ["--log"],
     ],
     ids=lambda o: o[0],
@@ -180,3 +179,122 @@ def test_an_option_on_both_commands_means_the_same_thing(runner: CliRunner) -> N
         assert left.opts == right.opts, name
         assert left.default == right.default, name
         assert type(left.type) is type(right.type), name
+
+
+# ------------------------------------------------------ fit against a ceiling --
+class FittingSource(RecordingSource):
+    """Reports the fit the library computes, for the ceiling the CLI passed down."""
+
+    def __init__(self, fits: int | None) -> None:
+        super().__init__()
+        self.fits = fits
+
+    def estimate(self, *args: Any, **kwargs: Any) -> Estimate:
+        base = super().estimate(*args, **kwargs)
+        base.attempts_within_ceiling = self.fits
+        return base
+
+
+def test_a_ceiling_that_fits_every_attempt_says_so(runner: CliRunner, install_source: Any) -> None:
+    source = install_source(FittingSource(3))
+    body = json.loads(
+        runner.invoke(
+            cli, ["data", "estimate", QUERY, "--limit-cost", "100", "--format", "json"]
+        ).stdout
+    )
+    assert source.properties["limits.max_cost"] == 100
+    assert body["attempts_within_ceiling"] == 3
+    prose = runner.invoke(
+        cli, ["data", "estimate", QUERY, "--limit-cost", "100", "--format", "nl"]
+    ).stdout
+    assert "At this ceiling 3 of 3 attempts fit." in " ".join(prose.split())
+
+
+def test_a_ceiling_below_one_attempt_names_the_figure_and_the_remedy(
+    runner: CliRunner, install_source: Any
+) -> None:
+    install_source(FittingSource(0))
+    result = runner.invoke(
+        cli, ["data", "estimate", QUERY, "--limit-cost", "0.01", "--format", "nl"]
+    )
+    assert result.exit_code == 0, result.output
+    prose = " ".join(result.stdout.split())
+    assert (
+        "The first attempt needs $0.04, above the $0.01 ceiling; lower --max-tokens or "
+        "raise the ceiling." in prose
+    )
+    table = runner.invoke(cli, ["data", "estimate", QUERY, "--limit-cost", "0.01"]).stdout
+    assert "The first attempt needs $0.04" in " ".join(table.split())
+
+
+def test_no_ceiling_reports_no_fit(runner: CliRunner, install_source: Any) -> None:
+    install_source(FittingSource(None))
+    result = runner.invoke(cli, ["data", "estimate", QUERY, "--format", "nl"])
+    body = json.loads(runner.invoke(cli, ["data", "estimate", QUERY, "--format", "json"]).stdout)
+    assert body["attempts_within_ceiling"] is None
+    assert "At this ceiling" not in result.stdout
+
+
+def test_estimate_has_no_verbose_flag(runner: CliRunner) -> None:
+    """It reads no response, so there is nothing for it to show verbosely."""
+    result = runner.invoke(cli, ["data", "estimate", QUERY, "--verbose"])
+    assert result.exit_code == config.EXIT_USAGE
+
+
+def test_a_query_the_ceiling_refuses_outright_says_what_to_change(runner: CliRunner) -> None:
+    result = runner.invoke(
+        cli,
+        [
+            "data",
+            "query",
+            QUERY,
+            "--model",
+            "gpt-4o-mini",
+            "--max-tokens",
+            "512",
+            "--limit-cost",
+            "0.0000001",
+            "--format",
+            "table",
+        ],
+    )
+    assert result.exit_code == config.EXIT_BUDGET, result.output
+    text = " ".join(result.stdout.split())
+    assert "one attempt needs up to $" in text
+    assert "stopped by: max_cost. No call fit under the cost ceiling" in text
+    assert "Lower --max-tokens" in text
+
+
+@pytest.mark.parametrize(
+    ("bound", "ceiling", "expected"),
+    [
+        (0.000041, 0.0, ("0.000041", "0")),
+        (0.04, 0.01, ("0.04", "0.01")),
+        (0.0100001, 0.01, ("0.0100001", "0.01")),
+        (12.5, 3.0, ("12.5", "3")),
+    ],
+)
+def test_refused_amounts_are_written_so_they_differ(
+    bound: float, ceiling: float, expected: tuple[str, str]
+) -> None:
+    from blue_data_llm_cli.commands import _distinct_amounts  # pyright: ignore[reportPrivateUsage]
+
+    assert _distinct_amounts(bound, ceiling) == expected
+
+
+@pytest.mark.parametrize("retries", ["10000", str(10**309)])
+@pytest.mark.parametrize("command", ["estimate", "query"])
+def test_a_retry_allowance_past_the_cap_is_refused(
+    runner: CliRunner, command: str, retries: str
+) -> None:
+    result = runner.invoke(cli, ["data", command, QUERY, "--max-retries", retries])
+    assert result.exit_code == config.EXIT_CONFIG, result.output
+    assert "at most 9999" in result.output
+    assert "OverflowError" not in result.output
+
+
+def test_the_largest_retry_allowance_is_accepted(runner: CliRunner, install_source: Any) -> None:
+    source = install_source(RecordingSource())
+    result = runner.invoke(cli, ["data", "estimate", QUERY, "--max-retries", "9999"])
+    assert result.exit_code == 0, result.output
+    assert source.properties["limits.max_retries"] == 9999
