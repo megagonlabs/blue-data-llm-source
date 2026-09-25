@@ -1,35 +1,30 @@
 # blue-data-llm-source
 
-`blue-data-llm-source` is a structured, commonsense-knowledge data source for the Blue data layer. You ask a question in plain language, name the attributes you want, and get back typed records drawn from a language model's knowledge.
+`blue-data-llm-source` exposes a language model's general knowledge as typed records and generates relations on demand for agent workflows that combine heterogeneous data sources. Callers supply a natural-language data request and, when needed, an attribute schema. The package returns records through a Python library, a command-line interface, and an MCP server.
 
 [Full documentation](docs/README.md) · [Quick start](docs/quickstart.md) · [Installation](docs/installation.md) · [Examples](examples/README.md) · [Changelog](CHANGELOG.md)
 
-## What it is
+## Data source
 
-A conventional data source answers from data it stores: a table, a document collection, a graph, a vector index. This one stores nothing. It answers from what a language model learned in training, and returns the answer as records with the attributes and types you asked for, such as `country` and `accession_year:int` for "the member states of the European Union".
+`LlmSource` generates records from model knowledge in response to a natural-language query. It has no maintained table, document corpus, or index. Optional caches reuse model responses. For a request about member states of the European Union, a caller can specify `country` and `accession_year:int` as output attributes.
 
-It is one source among many in the data layer. It registers under protocol `llm` with variant `openai`, the way a Postgres source registers under `sql` and `postgres`, and it answers on the same `DataSource` interface.
+The source implements the Blue `DataSource` interface under protocol `llm` and variant `openai`. A Postgres source uses the same interface under protocol `sql` and variant `postgres`.
 
-## When to use it
+## Primary uses
 
-Use it as glue, when a data task needs data that no existing source holds: no maintained table exists, or building and keeping one is not worth it for the question at hand. Lists of trade-bloc members, companies listed in a given year, standard container sizes, or the capital of each country in a region are typical.
+**Structured access to model knowledge.** The source answers structured queries over information unavailable in a maintained source, or information that would be disproportionate to maintain for occasional use. This includes commonsense groupings and classifications as well as factual lists such as trade-bloc membership, companies listed in a specified year, standard container dimensions, and national capitals within a region.
 
-Because it answers on the shared `DataSource` interface, a planner can combine its records with those of SQL, document, graph and vector sources. A supplier table in Postgres has a `country` column, and the task needs to know which suppliers are in the EU:
+**On-demand relations in heterogeneous agent workflows.** An agent can generate a relation when it needs one, then pass its records to downstream operators alongside SQL, document, graph, and vector results. For example, generated `eu_members(country, accession_year)` records can be joined on `country` with Postgres `vendors(name, country)` rows.
 
-```text
-Postgres source   vendors(name, country, ...)            stored rows
-LlmSource         eu_members(country, accession_year)    model knowledge
-planner           vendors JOIN eu_members ON country
-```
+Generated records require independent verification when factual accuracy or coverage matters. Model knowledge may be outdated. Use a maintained source for authoritative data and a document or vector source for facts in private documents.
 
-Do not use it where a maintained, authoritative source exists, where every row must be correct or the list must be complete, or for facts newer than the model's training data. It is also the wrong tool for questions about your own documents or data, which the model has never seen; use a document or vector source for those.
-
-## What you get, and what it does not promise
+## Capabilities and limits
 
 - **Typed, aligned records.** Each value is checked against its declared type; a value that fails is kept and reported in `meta.type_mismatches`. Returned keys are matched to the attributes you asked for, and a key that matches none is reported rather than dropped.
-- **Bounded execution.** Every request can be bounded by rows, time, cost and provider calls. Calls, time and cost are claimed before the provider is contacted, so a request that would cross a ceiling is refused, not billed. `estimate` gives the cost bound for a request without contacting anything.
+- **Request planning.** Non-flat modes can rewrite the request, infer an output schema and key, and estimate row count. `meta.asked` reports an accepted rewrite; `meta.row_estimate` is a planning hint rather than a completeness measure.
+- **Bounded execution.** Rows can be capped for every request. With a client that supports usage reservation, time, cost, and provider-call ceilings can also be applied; unsupported ceilings are refused. Supported call, time, and cost ceilings are checked before provider contact, so a request that would cross one is refused. `estimate` gives the cost bound for a request without contacting a provider.
 - **Diagnostics on every result.** `fetch` returns the records with `meta`: the outcome, the model, calls, tokens, cost, elapsed time, the gaps it detected, and which limit stopped the run.
-- **Larger requests, split and bounded.** A request can be split into parts along a key, each asked separately and merged, within caps on depth, parts and calls.
+- **Partitioned retrieval.** A request can be split into parts along a key, queried separately, and merged on record identity within caps on depth, parts, and calls. `meta.record_origins` identifies the producing parts; optional continuations can ask a part for additional records.
 
 It does not verify facts and does not measure completeness. The records are model output: `meta.outcome=ok` means no execution failure was detected, and an empty `meta.gaps` means no supported diagnostic fired, not that the answer is complete or correct. Verify facts that matter against another source. [docs/guide.md](docs/guide.md) covers what each field does and does not promise.
 
@@ -37,7 +32,15 @@ It does not verify facts and does not measure completeness. The records are mode
 
 ### Install
 
-Run these commands from the `blue-data-llm-source` checkout with `blue-data` beside it. Create the environment once; Conda may ask for confirmation. If `blue-llmdb` already exists, skip this block and activate it below.
+Keep `blue-data` in a separate checkout beside `blue-data-llm-source`, under the same parent directory. From this repository root, its library is at `../blue-data/lib`:
+
+```text
+workspace/
+├── blue-data/
+└── blue-data-llm-source/
+```
+
+Run these commands from `blue-data-llm-source`. Create the environment once; Conda may ask for confirmation. If `blue-llmdb` already exists, skip this block and activate it below.
 
 ```bash
 ls -d ../blue-data/lib &&
@@ -54,7 +57,7 @@ python -m pip install -e ./platform/llm-cli &&
 blue-llmdb metadata inspect
 ```
 
-If Conda cannot activate the environment, run `conda init zsh` (or `conda init bash`) once, open a new terminal, return to this checkout, and rerun the second block. If the packages are already installed, activate their environment and start with `blue-llmdb metadata inspect`. [Installation](docs/installation.md) also covers `venv`, the install scripts, and the MCP package.
+If Conda cannot activate the environment, run `conda init zsh` (or `conda init bash`) once, open a new terminal, return to this checkout, and rerun the second block. If the CLI is already installed, activate its environment and start with `blue-llmdb metadata inspect`. [Installation](docs/installation.md) also covers `venv`, the install scripts, and the MCP package.
 
 ### Python
 

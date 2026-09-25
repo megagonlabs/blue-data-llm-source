@@ -28,7 +28,7 @@ The `mcp` pin is exact rather than a floor. The low-level server API that compon
 - A local checkout of the `blue-data` repository. It is not on a public package index, so it must be installed from source.
 - A provider credential in the environment for any request that reaches a model. The library never reads it; the provider SDK does. A request with an injected client or an `llm_fn` needs none.
 
-For the commands below, place the checkouts under one parent directory:
+Clone `blue-data` into the parent directory of this checkout. The commands below expect two sibling repositories, so `../blue-data/lib` resolves from the `blue-data-llm-source` root:
 
 ```text
 workspace/
@@ -72,7 +72,7 @@ python -m pip install -e ./platform/llm-mcp &&
 blue-llmdb metadata inspect
 ```
 
-If Conda cannot activate the environment, run `conda init zsh` (or `conda init bash`) once, open a new terminal, return to this checkout, and rerun the second block. If the packages are already installed, activate their environment and start with `blue-llmdb metadata inspect`.
+If Conda cannot activate the environment, run `conda init zsh` (or `conda init bash`) once, open a new terminal, return to this checkout, and rerun the second block. If the CLI is already installed, activate its environment and start with `blue-llmdb metadata inspect`.
 
 When `blue-data` lives elsewhere, replace both `../blue-data/lib` paths with its `lib/` directory. The Conda environment works for running the packages and examples. The type gate uses the component-local `.venv` paths configured in `pyproject.toml`.
 

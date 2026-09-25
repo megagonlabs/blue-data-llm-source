@@ -1,6 +1,14 @@
 # Quick Start
 
-Use the command line to inspect the installation, configure a provider, estimate cost, and query for records. Run these commands from the `blue-data-llm-source` checkout with `blue-data` beside it. See [installation.md](installation.md) for `venv` and other installation paths.
+Use the command line to inspect the installation, configure a provider, estimate cost, and query for records. `blue-data` and `blue-data-llm-source` are separate checkouts under the same parent directory:
+
+```text
+workspace/
+├── blue-data/
+└── blue-data-llm-source/
+```
+
+Run the commands below from `blue-data-llm-source`; `../blue-data/lib` points to the sibling checkout. See [installation.md](installation.md) for `venv` and other installation paths.
 
 Create the environment once; Conda may ask for confirmation. If `blue-llmdb` already exists, skip this block and activate it below.
 

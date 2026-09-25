@@ -357,7 +357,7 @@ A missing or wrong provider credential arrives as `TransportError`, not `ConfigE
 
 ## Install and run
 
-From the `blue-data-llm-source` checkout, with `blue-data` beside it, create a Conda environment once:
+Place the separate `blue-data` checkout beside `blue-data-llm-source`, under the same parent directory. From the `blue-data-llm-source` root, `../blue-data/lib` must exist. Create a Conda environment once:
 
 ```bash
 ls -d ../blue-data/lib &&

@@ -10,7 +10,7 @@ Version 2.0.0 replaces the `llm` command. `llm fetch` is now `blue-llmdb data qu
 
 ## Install
 
-From the `blue-data-llm-source` checkout, with `blue-data` beside it, create a Conda environment once:
+Place the separate `blue-data` checkout beside `blue-data-llm-source`, under the same parent directory. From the `blue-data-llm-source` root, `../blue-data/lib` must exist. Create a Conda environment once:
 
 ```bash
 ls -d ../blue-data/lib &&
@@ -230,11 +230,11 @@ Every write goes to a temporary file in the same directory and is moved into pla
 
 A secret is never accepted as a value on the command line, where it would land in shell history. `blue-llmdb profile config OPENAI_API_KEY` prompts with the input hidden. Enter `$MY_KEY` at that prompt to store a reference to an environment variable instead of the secret itself; `profile inspect` then shows `$MY_KEY (set)` or `$MY_KEY (unset)`, so you can see what to export.
 
-Nor does any command print a credential that reached it another way. An error line, a JSON error object, a log line and the traceback `--log` prints all carry text this CLI did not write: a library message quoting what you typed, or a provider SDK exception that is free to include a request header or a fragment of a key. All of them pass through the library's `redact`, which replaces `***` for a value the environment holds under a credential's name, and for anything written in a credential's shape. So does the model name a run reports, in every format, and the `llm.model` entry in the `settings` envelope: a deployment that pastes a credential into that setting would otherwise get it echoed back in the most visible line this CLI prints. A model name that is only a model name is unchanged.
+The CLI redacts known credential values from error lines, JSON errors, logs, tracebacks, reported model names, and the `llm.model` entry in the `settings` envelope. These fields can contain library or provider text that the CLI did not write. Redaction replaces an environment value held under a credential name, or text matching a credential shape, with `***`. A model name that is only a model name is unchanged.
 
 Two things are deliberately not masked. The rest of the `settings` envelope is not, because a cache directory is a path and a path carries enough entropy to read as a key shape, so masking it would report `***` for a directory you chose. Records are not, because they are model output, and a record value that happens to read like a token is the answer you asked for.
 
-A directly entered secret is stored as base64 behind an `enc:` prefix. **This is obfuscation, not encryption.** Anyone who can read the file can decode it; the file permissions provide the protection. Commands do not print secret values in profile output, logs, or error messages.
+A directly entered secret is stored as base64 behind an `enc:` prefix. **This is obfuscation, not encryption.** Anyone who can read the file can decode it; the file permissions provide the protection. Profile commands do not print stored secret values. Error and log output use the scoped redaction described above.
 
 ## data query
 
@@ -356,7 +356,7 @@ blue-llmdb data query "the largest lakes in Africa" \
     --plan-mode partitioned --plan-depth 2 --plan-partitions 4 --plan-target-rows 50
 ```
 
-When an answer is short, the reason is printed with it rather than left to be inferred from the row count: an `outcome:` line whenever the outcome is anything but `ok`, a `gap:` line per shortfall, and the same two facts under `outcome` and `gaps` in the machine formats. The outcome is the general statement (`empty_query`, `model_returned_none` and `filtered_to_empty` are three different empty results), and the gaps and the stop reasons refine it. No gap means that no supported operational diagnostic fired. It is not a completeness result.
+When the library detects a limit or interrupted part, the CLI reports it: an `outcome:` line whenever the outcome is anything but `ok`, a `gap:` line per diagnostic, and the same facts under `outcome` and `gaps` in the machine formats. The outcome is the general statement (`empty_query`, `model_returned_none` and `filtered_to_empty` are three different empty results), and the gaps and stop reasons refine it. An apparently short answer may have no diagnostic. No gap means that no supported operational diagnostic fired; it does not establish completeness.
 
 ### `--verbose` and `--log`
 

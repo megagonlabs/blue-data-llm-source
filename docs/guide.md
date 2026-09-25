@@ -71,7 +71,7 @@ Only a genuine thousands grouping is stripped from a number, so a decimal comma 
 
 | Field | Read it for |
 |---|---|
-| `outcome` | Whether this is a complete answer, an empty one with a reason, a truncated one, or a partial one |
+| `outcome` | `ok` means no detected execution failure; other values distinguish empty, truncated, stopped, and partial runs. No value establishes completeness |
 | `stopped_by` | Which ceiling ended the run, when one did |
 | `gaps` | Operational diagnostics that may explain missing rows |
 | `unmapped_keys`, `key_collisions`, `type_mismatches` | Whether the records are shaped the way you asked |

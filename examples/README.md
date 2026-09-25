@@ -2,19 +2,19 @@
 
 Runnable examples are grouped by backend, feature, integration, and usage scenario.
 
-Each script has a matching `.output.txt` file containing captured standard output. Thirteen examples were captured offline; four were captured from provider-backed runs.
+Each script has a matching `.output.txt` file containing captured standard output. The partitioned WikiTabGen example's captured output is its setup preview; `--live` prints the provider responses.
 
-Thirteen of the seventeen scripts require no credential, network access, or configuration. They use a scripted `llm_fn` or an injected client to exercise prompt rendering, attribute alignment, type checking, limits, budgets, gaps, outcome precedence, planning modes, and the registry round trip. The remaining four scripts require a provider key. Each script identifies its execution mode in a header comment, and the table at the end of this file records the same distinction.
+Most scripts require no credential or network access. They use a scripted `llm_fn` or an injected client to exercise prompt rendering, attribute alignment, type checking, limits, budgets, gaps, outcome precedence, planning modes, and the registry round trip. Provider calls require a key. The table at the end of this file identifies each script's execution mode.
 
 ## Quick start
 
-Install `blue-data` and the library with its `llm` extra as shown in [Installation](../docs/installation.md), then activate that environment. Run every command below from the repository root.
+Install `blue-data` from a separate sibling checkout at `../blue-data`, then install this library with its `llm` extra as shown in [Installation](../docs/installation.md). Activate that environment and run every command below from the `blue-data-llm-source` root.
 
 ```bash
 python3 examples/backends/function_client_quickstart.py
 ```
 
-The quickstart needs no credential. The four provider-backed scripts read `OPENAI_API_KEY` from the environment. If it is not already set, run this block first and enter the key at the prompt. The shell hides the value and keeps it out of history.
+The quickstart needs no credential. Provider-backed runs read `OPENAI_API_KEY` from the environment. If it is not already set, run this block first and enter the key at the prompt. The shell hides the value and keeps it out of history.
 
 ```bash
 if [ -z "${OPENAI_API_KEY:-}" ]; then
@@ -173,7 +173,7 @@ Both examples use [LangGraph](https://github.com/langchain-ai/langgraph) and are
 
 ### Direct Python API (`langgraph_direct_demo.py`)
 
-The pipeline has two nodes. `retrieve` calls `LlmSource.fetch` under a `Budget` owned by the graph, then `respond` composes a sentence. The records travel with `meta.outcome` and `meta.gaps`; the writing node is instructed to report when retrieval is incomplete. An agent that reads only `records` cannot distinguish a complete answer from a truncated one.
+The pipeline has two nodes. `retrieve` calls `LlmSource.fetch` under a `Budget` owned by the graph, then `respond` composes a sentence. The records travel with `meta.outcome` and `meta.gaps`; the writing node is instructed to report detected limits or gaps. An agent that reads only `records` misses detected truncation; even an empty `meta.gaps` does not establish completeness.
 
 ```bash
 pip install langgraph langchain-openai
@@ -200,7 +200,7 @@ python3 examples/framework-demos/langgraph_mcp_demo.py
 
 ### Registering the source in the data layer (`register_source_demo.py`)
 
-The example registers a built instance with `register_source`, then retrieves it with `connect_source`. After the live instance is dropped, `connect_source` rebuilds an equivalent source from the recorded class path, making the registration durable. It then exercises the shared interface: `execute_query_nl` with a string, `execute_query` with an `op` dict, and a `limits.*` ceiling in `optional_properties` that applies to one call.
+The example registers a built instance with `register_source`, then retrieves it with `connect_source`. After the live instance is dropped, `connect_source` rebuilds an equivalent source from the recorded class path in the same registry. It then exercises the shared interface: `execute_query_nl` with a string, `execute_query` with an `op` dict, and a `limits.*` ceiling in `optional_properties` that applies to one call.
 
 ```bash
 python3 examples/integration-demos/register_source_demo.py
@@ -222,11 +222,11 @@ python3 examples/integration-demos/estimate_then_fetch_demo.py
 
 ## scenario-demos/: end-to-end scenarios
 
-### Knowing when an enumeration is short (`bounded_enumeration_demo.py`)
+### Diagnosing bounded enumerations (`bounded_enumeration_demo.py`)
 
 A model asked to enumerate a set larger than its output allowance may return a valid but incomplete list. Counting records does not distinguish a complete result from a truncated one, and an empty gap list does not establish completeness.
 
-The example declares an identifying column with `plan.key`, enables continuations, and reads `gaps`. A run that exhausts the set finishes without a gap; a run that reaches its cap while records are still arriving reports `leaf_at_cap` and the count reached.
+The example declares an identifying column with `plan.key`, enables continuations, and reads `gaps`. In this scripted run, exhausting the set finishes without a gap; reaching the cap while records are still arriving reports `leaf_at_cap` and the count reached.
 
 The three runs return 6 of 24 records without a diagnostic, 18 of 24 with a named gap, and 24 of 24 without a gap. The scripted model returns at most six items per request so the example exercises merging and continuation accounting.
 
@@ -235,6 +235,34 @@ python3 examples/scenario-demos/bounded_enumeration_demo.py
 ```
 
 **API key:** not required | **[Sample output](scenario-demos/bounded_enumeration_demo.output.txt)**
+
+### Comparing retrieval modes on WikiTabGen (`partitioned_wikitabgen_demo.py`)
+
+This runs WikiTabGen query 15, a 118-row table of chemical elements with 11 columns, through `flat`, `row_by_row`, and `partitioned` retrieval. Every mode receives the same query and columns. The context supplies the complete list of atomic numbers, 1–118, to every mode; it supplies no element names or attribute values. `row_by_row` uses atomic number `Z` as its key. `partitioned` uses `Period` and `Z`, with a declared finite domain of seven periods. Each call uses GPT-6 Luna with reasoning effort `none` and a 4,096-token output allowance. Continuations are disabled, so flat makes one capped call. Modes selected in one invocation share a $0.30, 160-call, 900-second budget; later modes receive what remains. The script prints each request, complete successful model response, returned records, diagnostics, and a call, cost, and row summary. The benchmark files are needed only for reference scoring.
+
+```bash
+python3 examples/scenario-demos/partitioned_wikitabgen_demo.py --live
+```
+
+Omit `--live` to preview the inputs and settings without contacting the provider. Repeat `--mode` to run a subset, such as `--mode flat --mode partitioned`. With no `--mode`, all three run. If you have a sibling `pkdb` checkout with the WikiTabGen benchmark, use `third_parties/WikiTabGen/benchmark/tables/elements.csv` as the optional reference. The CSV used below has SHA-256 `5f856b8394b552a38b0fa0c9a6430acd8c5e74ae71c61f4257261525f2e47a8c`. The score matches atomic number `Z` and then compares each populated non-key reference cell. Duplicate returned keys are excluded from cell matches. Numbers compare by decimal value; text ignores case and surrounding space.
+
+```bash
+REFERENCE_CSV=../pkdb/third_parties/WikiTabGen/benchmark/tables/elements.csv
+shasum -a 256 "$REFERENCE_CSV"
+python3 examples/scenario-demos/partitioned_wikitabgen_demo.py --live --reference-csv "$REFERENCE_CSV"
+```
+
+The command above produced these results in one live invocation on 2026-09-24. The reference table has 118 atomic numbers and 1,152 populated non-key cells.
+
+| Mode | Rows returned | Reference `Z` keys | Matching cells | Calls | Settled cost | Outcome |
+|---|---:|---:|---:|---:|---:|---|
+| `flat` | 54 | 54/118 | 488/1,152 | 1 | $0.003545 | `stopped_by_limit` |
+| `row_by_row` | 118 | 118/118 | 888/1,152 | 119 | $0.032558 | `ok` |
+| `partitioned` | 118 | 118/118 | 910/1,152 | 9 | $0.010442 | `ok` |
+
+Flat reached its output allowance in its single call. Row-by-row made one planning call and 118 per-element calls. The partitioned plan accepted one split into seven period leaves and returned every atomic number in nine calls. The supplied key list means reference-key coverage measures extraction within the call limits, not discovery of the elements. On this table, partitioning returned 64 keys absent from the capped flat result at about one-third of row-by-row's cost. It also matched 22 more non-key cells than row-by-row. Some values still differed from the reference; these results describe one run, not a general accuracy ranking.
+
+**Requires for `--live`:** `OPENAI_API_KEY` and the `llm` extra | **[Preview output](scenario-demos/partitioned_wikitabgen_demo.output.txt)**
 
 ---
 
@@ -259,5 +287,6 @@ python3 examples/scenario-demos/bounded_enumeration_demo.py
 | [`register_source_demo.py`](integration-demos/register_source_demo.py) | integration-demos | none | scripted and injected | [output](integration-demos/register_source_demo.output.txt) |
 | [`estimate_then_fetch_demo.py`](integration-demos/estimate_then_fetch_demo.py) | integration-demos | none | injected double | [output](integration-demos/estimate_then_fetch_demo.output.txt) |
 | [`bounded_enumeration_demo.py`](scenario-demos/bounded_enumeration_demo.py) | scenario-demos | none | scripted `llm_fn` | [output](scenario-demos/bounded_enumeration_demo.output.txt) |
+| [`partitioned_wikitabgen_demo.py`](scenario-demos/partitioned_wikitabgen_demo.py) | scenario-demos | OpenAI with `--live` | GPT-6 Luna | [preview](scenario-demos/partitioned_wikitabgen_demo.output.txt) |
 
 The rest of the project's documentation lives under `docs/`.
