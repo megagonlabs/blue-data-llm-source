@@ -31,6 +31,29 @@ def test_cli_translates_planning_order_and_estimate_exposure() -> None:
     }
 
 
+def test_cli_passes_the_prompt_contract_switches_through_unrenamed() -> None:
+    properties = config.plan_properties(
+        plan_leaf_prompt="keyed-leaf-fetch-2",
+        plan_child_wording="canonical",
+        plan_filter_enforcement="drop",
+        plan_range_filters=False,
+        plan_partition_guardrails=True,
+        plan_split_policy="evidence",
+        plan_split_threshold_rows=0,
+    )
+    assert properties == {
+        "plan.leaf_prompt": "keyed-leaf-fetch-2",
+        "plan.child_wording": "canonical",
+        "plan.filter_enforcement": "drop",
+        "plan.range_filters": False,
+        "plan.partition_guardrails": True,
+        "plan.split_policy": "evidence",
+        "plan.split_threshold_rows": 0,
+    }
+    # Unset switches send nothing, so the library's own defaults apply.
+    assert config.plan_properties() == {}
+
+
 def test_cli_translates_the_ceilings_to_the_keys_the_source_reads() -> None:
     limits = config.build_limits(0.5, 30.0, 2, 1)
     assert config.limit_properties(limits) == {

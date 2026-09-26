@@ -20,6 +20,13 @@ PLAN_ARGUMENTS: dict[str, Any] = {
     "plan.partition_key": "continent",
     "plan.planning_order": "planning.schema_first",
     "plan.expose_estimate": False,
+    "plan.leaf_prompt": "keyed-leaf-fetch-2",
+    "plan.child_wording": "canonical",
+    "plan.filter_enforcement": "drop",
+    "plan.range_filters": True,
+    "plan.partition_guardrails": True,
+    "plan.split_policy": "evidence",
+    "plan.split_threshold_rows": 200,
 }
 
 

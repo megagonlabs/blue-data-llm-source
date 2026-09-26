@@ -37,7 +37,15 @@ from blue_data_llm_source.planning.partition_safety import (
     AppliedPartitionDecision,
     evaluate_partition_safety,
 )
+from blue_data_llm_source.planning.ranges import (
+    SMALL_ORDINAL_SPAN,
+    is_numeric,
+    is_ordinal,
+    small_ordinal,
+    typed_children,
+)
 from blue_data_llm_source.planning.schema import Schema
+from blue_data_llm_source.prompts import canonical_child_wording, split_filters
 from blue_data_llm_source.reduction.identity import (
     KeyTuple,
     clean_key_names,
@@ -51,16 +59,65 @@ from blue_data_llm_source.types import (
     Exact,
     JsonScalar,
     OneOf,
+    Range,
     json_scalar,
+    resolve_attr,
     value_identity,
 )
 
 ROOT: Final = "0"
 PLAN_SERIALIZATION_VERSION: Final = 1
+RANGE_PLAN_SERIALIZATION_VERSION: Final = 2
+"""The version a plan carrying any ``Range`` constraint is written under.
+
+Its own number because a 2.1.0 reader of version 1 has no range kind, and a payload it must
+refuse should say so by its version rather than fail on a constraint deep inside. A plan
+without ranges is still written as version 1, byte for byte as before."""
+PLAN_SERIALIZATION_VERSIONS: Final = (PLAN_SERIALIZATION_VERSION, RANGE_PLAN_SERIALIZATION_VERSION)
 
 VALUES_FROM_ESTIMATOR: Final = "estimator"
 VALUES_FROM_ENUMERATION: Final = "enumeration"
 VALUES_FROM_CONSTRAINTS: Final = "caller_constraints"
+
+CHILD_WORDING_PARENT: Final = "parent"
+CHILD_WORDING_CANONICAL: Final = "canonical"
+CHILD_WORDINGS: Final = (CHILD_WORDING_PARENT, CHILD_WORDING_CANONICAL)
+"""How a child leaf's retrieval wording is chosen, the first being the default."""
+
+
+@dataclass(frozen=True)
+class PartitionPolicy:
+    """How an accepted proposal becomes child leaves. The defaults are 2.1.0 behaviour.
+
+    ``child_wording="parent"`` gives every child its parent's wording, separated from its
+    siblings only by the filter. ``"canonical"`` derives the wording from the root request
+    plus the child's validated filters, so the question a child is asked names the slice it
+    covers.
+
+    ``range_filters`` reads a model proposal written as integer spans, on a column the schema
+    declares an integer, as :class:`~blue_data_llm_source.types.Range` filters instead of
+    exact text. See :mod:`blue_data_llm_source.planning.ranges` for what qualifies.
+
+    ``partition_guardrails`` sends the ``partition-2`` proposal prompt, with rules about
+    which keys and values make a usable split, and refuses a model-proposed key the schema
+    declares numeric whose values are not a small ordinal set: a continuous measurement split
+    into buckets gives children whose filters no record's exact value falls under.
+    """
+
+    child_wording: str = CHILD_WORDING_PARENT
+    range_filters: bool = False
+    partition_guardrails: bool = False
+
+    def __post_init__(self) -> None:
+        if self.child_wording not in CHILD_WORDINGS:
+            raise ConfigError(
+                f"unknown child wording {self.child_wording!r}; expected one of "
+                f"{', '.join(CHILD_WORDINGS)}"
+            )
+        if not isinstance(self.range_filters, bool):  # pyright: ignore[reportUnnecessaryIsInstance]
+            raise ConfigError("range_filters must be a boolean")
+        if not isinstance(self.partition_guardrails, bool):  # pyright: ignore[reportUnnecessaryIsInstance]
+            raise ConfigError("partition_guardrails must be a boolean")
 
 
 class Gap:
@@ -294,6 +351,8 @@ class PlanSchemaContract:
 def _constraint_identity(value: Constraint) -> tuple[str, tuple[object, ...]]:
     if isinstance(value, Exact):
         return ("exact", (value_identity(value.value),))
+    if isinstance(value, Range):
+        return ("range", (value.lo, value.hi))
     return ("one_of", tuple(value_identity(item) for item in value.values))
 
 
@@ -462,9 +521,21 @@ class FetchPlan:
     def leaf_count(self) -> int:
         return len(self.leaves)
 
+    def _has_ranges(self) -> bool:
+        holders: list[Leaf | Node] = [*self.leaves, *self.nodes]
+        return any(
+            isinstance(constraint, Range)
+            for holder in holders
+            for constraint in holder.constraints.values()
+        )
+
     def to_dict(self) -> dict[str, object]:
         return {
-            "serialization_version": PLAN_SERIALIZATION_VERSION,
+            "serialization_version": (
+                RANGE_PLAN_SERIALIZATION_VERSION
+                if self._has_ranges()
+                else PLAN_SERIALIZATION_VERSION
+            ),
             "mode": self.mode,
             "leaves": [_leaf_to_dict(leaf) for leaf in self.leaves],
             "nodes": [_node_to_dict(node) for node in self.nodes],
@@ -495,7 +566,12 @@ class FetchPlan:
             "applied_partition_decisions",
             "schema_contract",
         }
-        if set(data) != expected or data.get("serialization_version") != PLAN_SERIALIZATION_VERSION:
+        version = data.get("serialization_version")
+        if (
+            set(data) != expected
+            or type(version) is not int
+            or version not in PLAN_SERIALIZATION_VERSIONS
+        ):
             raise ConfigError("fetch plan fields or serialization version are invalid")
         mode = _required_text(data.get("mode"), "fetch plan mode")
         if mode not in MODES:
@@ -509,7 +585,7 @@ class FetchPlan:
         refused = data.get("refused")
         if not isinstance(refused, bool):
             raise ConfigError("fetch plan refused must be a boolean")
-        return cls(
+        plan = cls(
             mode=mode,
             leaves=[_leaf_from_dict(item) for item in leaves],
             nodes=[_node_from_dict(item) for item in nodes],
@@ -526,6 +602,9 @@ class FetchPlan:
             ),
             schema_contract=PlanSchemaContract.from_dict(data.get("schema_contract")),
         )
+        if version == PLAN_SERIALIZATION_VERSION and plan._has_ranges():
+            raise ConfigError("fetch plan serialization version 1 cannot carry range constraints")
+        return plan
 
 
 def _required_text(value: object, name: str) -> str:
@@ -565,6 +644,8 @@ def _optional_nonnegative_int(value: object, name: str) -> int | None:
 def _constraint_to_dict(value: Constraint) -> dict[str, object]:
     if isinstance(value, Exact):
         return {"kind": "exact", "value": value.value}
+    if isinstance(value, Range):
+        return {"kind": "range", "lo": value.lo, "hi": value.hi}
     return {"kind": "one_of", "values": list(value.values)}
 
 
@@ -581,6 +662,8 @@ def _constraint_from_dict(value: object) -> Constraint:
                 for item in _required_list(data.get("values"), "fetch plan one_of values")
             )
         )
+    if set(data) == {"kind", "lo", "hi"} and data.get("kind") == "range":
+        return Range(data.get("lo"), data.get("hi"))  # pyright: ignore[reportArgumentType]
     raise ConfigError("fetch plan constraint fields are invalid")
 
 
@@ -1131,14 +1214,83 @@ def _ancestor_keys(plan: FetchPlan, leaf: Leaf) -> set[str]:
     return keys
 
 
+def _declared_type(schema: Schema, name: str) -> str | None:
+    attr = resolve_attr(name, schema.attrs)
+    return attr.type if attr is not None else None
+
+
+def partition_keys(plan: FetchPlan, leaf: Leaf) -> tuple[str, ...]:
+    """The constraint keys partitioning introduced on *leaf*, in its constraint order.
+
+    A key is introduced when the leaf carries it and the root does not: the root holds what
+    the analysis step and the caller set for the whole request, so everything it carries is
+    request scope. A root key that a split narrowed stays request scope too; the narrower
+    value still reaches the leaf, and the only claim withheld is that every record carries
+    that field. A plan with no partition node introduces nothing.
+    """
+    root = next((node for node in plan.nodes if node.parent_id is None), None)
+    if root is None or leaf.parent_id is None:
+        return ()
+    return tuple(name for name in leaf.constraints if name not in root.constraints)
+
+
+def range_buckets(values: Sequence[int], count: int) -> list[Range]:
+    """Integers grouped into at most *count* contiguous, pairwise disjoint spans.
+
+    The numeric counterpart of :func:`_buckets`, and the other source a ``Range`` may come
+    from. Distinct values are sorted first, so each bucket is a run of neighbours and the
+    spans cannot overlap; a span covers the integers between its ends, including ones no
+    value named, which is what makes it a slice rather than a list.
+    """
+    ordered: list[JsonScalar] = sorted({value for value in values if not isinstance(value, bool)})
+    return [
+        Range(cast("int", group[0]), cast("int", group[-1])) for group in _buckets(ordered, count)
+    ]
+
+
+def _canonical_base(plan: FetchPlan, leaf: Leaf) -> tuple[str, Mapping[str, Constraint]]:
+    """The request every child's wording is derived from, and the filters it already states.
+
+    The root's, not the parent's. Deriving from the parent's wording would restate each
+    ancestor's restriction once per level, and the root request is the one the analysis step
+    made canonical.
+    """
+    if leaf.parent_id is None:
+        return leaf.query, leaf.constraints
+    root = next((node for node in plan.nodes if node.parent_id is None), None)
+    if root is None:
+        return leaf.query, leaf.constraints
+    return root.query, root.constraints
+
+
+def _child_query(
+    plan: FetchPlan,
+    leaf: Leaf,
+    constraints: Mapping[str, Constraint],
+    policy: PartitionPolicy,
+    schema: Schema,
+) -> str:
+    if policy.child_wording == CHILD_WORDING_PARENT:
+        return leaf.query
+    request, stated = _canonical_base(plan, leaf)
+    # Column filters only, by the rule the leaf prompt uses: introduced by partitioning, not
+    # carried by the root, and naming one schema column. Everything else stays in the
+    # structured filters, where the leaf prompt presents it as request scope.
+    introduced = [name for name in constraints if name not in stated]
+    columns, _ = split_filters(constraints, schema.attrs, introduced)
+    return canonical_child_wording(request, columns)
+
+
 def _proposal_children(
     plan: FetchPlan,
     leaf: Leaf,
     proposal: PartitionProposal | None,
     schema: Schema,
     limits: PlanLimits,
+    policy: PartitionPolicy | None = None,
 ) -> tuple[list[Leaf], Node | None, str | None]:
     """Validate one proposal and return its complete replacement, if usable."""
+    policy = policy or PartitionPolicy()
     if proposal is None:
         return [], None, "no partition proposal was returned"
     key = proposal.key.strip()
@@ -1174,6 +1326,21 @@ def _proposal_children(
         return [], None, f"proposal has {len(paired)} values above max_partitions"
     if len(paired) < 2:
         return [], None, "proposal did not produce two distinct values"
+    if (
+        policy.partition_guardrails
+        and proposal.values_from == VALUES_FROM_ENUMERATION
+        and is_numeric(_declared_type(schema, key))
+        and not small_ordinal([value for value, _ in paired])
+    ):
+        return (
+            [],
+            None,
+            (
+                f"partition key {key!r} is declared {_declared_type(schema, key)!r} and its values "
+                f"are not integers or integer spans covering at most {SMALL_ORDINAL_SPAN}, so it "
+                "reads as a continuous measurement"
+            ),
+        )
 
     inherited = leaf.constraints.get(key)
     if isinstance(inherited, Exact):
@@ -1196,14 +1363,30 @@ def _proposal_children(
     if len(plan.leaves) - 1 + len(paired) > limits.max_leaves:
         return [], None, f"complete expansion would exceed max_leaves={limits.max_leaves}"
 
+    # Spans only where a model wrote the values and nothing above constrains the key. A
+    # caller-declared domain is matched value for value by the safety check, and an inherited
+    # filter on the key has already been handled by the checks above.
+    typed: list[Constraint] | None = None
+    if (
+        policy.range_filters
+        and inherited is None
+        and proposal.values_from == VALUES_FROM_ENUMERATION
+        and is_ordinal(_declared_type(schema, key))
+    ):
+        typed, range_failure = typed_children([value for value, _ in paired])
+        if range_failure is not None:
+            return [], None, range_failure
+
     children: list[Leaf] = []
     for index, (value, child_estimate) in enumerate(paired):
+        split = typed[index] if typed is not None else Exact(value)
+        constraints: dict[str, Constraint] = {**leaf.constraints, key: split}
         children.append(
             Leaf(
                 id=f"{leaf.id}.{index}",
                 parent_id=leaf.id,
-                query=leaf.query,
-                constraints={**leaf.constraints, key: Exact(value)},
+                query=_child_query(plan, leaf, constraints, policy, schema),
+                constraints=constraints,
                 depth=leaf.depth + 1,
                 original_query=leaf.original_query,
                 estimate=child_estimate,
@@ -1244,12 +1427,13 @@ def apply_partition_proposal(
     applied_decision: AppliedPartitionDecision | None = None,
     schema_contract: PlanSchemaContract | None = None,
     proposal_failure: str | None = None,
+    policy: PartitionPolicy | None = None,
 ) -> FetchPlan:
     """Apply one complete proposal while preserving the parent on rejection."""
     leaf = next((candidate for candidate in plan.leaves if candidate.id == leaf_id), None)
     if leaf is None:
         raise ConfigError(f"unknown frontier leaf {leaf_id!r}")
-    children, node, reason = _proposal_children(plan, leaf, proposal, schema, limits)
+    children, node, reason = _proposal_children(plan, leaf, proposal, schema, limits, policy)
     if proposal is None and proposal_failure is not None:
         reason = proposal_failure
     if plan.attempted_proposals >= proposal_attempt_limit(limits):
@@ -1443,6 +1627,10 @@ def build_key_tuple_plan(
             if inherited is None:
                 admitted[key] = value
                 continue
+            if isinstance(inherited, Range):
+                # A planner-built span; an enumerated entity is not matched against one.
+                valid = False
+                break
             candidates = (inherited.value,) if isinstance(inherited, Exact) else inherited.values
             matched = next(
                 (

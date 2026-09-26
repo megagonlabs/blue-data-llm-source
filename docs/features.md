@@ -250,7 +250,7 @@ print(result.meta.calls, result.meta.record_origins)
 # 6 [['0.0'], ['0.0'], ['0.1']]
 ```
 
-The scripted answers above stand in for a real model at each planning stage. The shape is bounded by eighteen `plan.*` settings, listed in [api-reference.md](api-reference.md#plan-properties).
+The scripted answers above stand in for a real model at each planning stage. The shape is bounded by twenty-five `plan.*` settings, listed in [api-reference.md](api-reference.md#plan-properties). With `plan.split_policy="evidence"` the root is asked once first and split only on evidence that one answer was not enough; [the guide](guide.md#asking-once-before-splitting) has a runnable example.
 
 ## Attribution across a split
 

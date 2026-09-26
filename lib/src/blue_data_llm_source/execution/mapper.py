@@ -28,11 +28,11 @@ from blue_data_llm_source.planning.bounds import PlanLimits
 from blue_data_llm_source.planning.cardinality import CardinalityEstimate
 from blue_data_llm_source.planning.plan import Leaf
 from blue_data_llm_source.prompts import (
-    KEYED_LEAF_FETCH_PROMPT_VERSION,
+    LEAF_PROMPT_VERSIONS,
+    bounded_held_entries,
     build_fetch_prompt,
     build_leaf_fetch_prompt,
-    render_held,
-    rendered_held_entries_size,
+    with_held,
 )
 from blue_data_llm_source.reduction.identity import (
     KeyTuple,
@@ -251,6 +251,9 @@ def _leaf_loop(
     context: str = "",
     prompt_version: str | None = None,
     expose_estimate: bool = True,
+    partition_keys: Sequence[str] = (),
+    held: Sequence[Any] = (),
+    held_total: int = 0,
 ) -> LeafLoop:
     """Every decision a leaf makes, with the waiting taken out.
 
@@ -285,6 +288,9 @@ def _leaf_loop(
         _check_count("exact_rows", exact_rows)
     if legacy_row_target is not None:
         _check_count("row_target", legacy_row_target)
+    _check_count("held_total", held_total)
+    if held_total < len(held):
+        raise ConfigError("held_total must count at least the held entries passed")
 
     if not leaf.query.strip():
         # Refused without a call. An empty ask has no answer, and the attempt would be
@@ -295,7 +301,14 @@ def _leaf_loop(
 
     wanted = [a.name for a in attrs]
     records: list[dict[str, Any]] = []
-    seen: list[Any] = []
+    # Seeded with what an earlier call already returned, when there was one: a child split
+    # after a root probe is told which keys the probe holds, so it asks for the rest. Only
+    # the prompt's exclusion list is seeded. A child that returns a probe key anyway keeps
+    # the record, and reduction merges the two.
+    seen: list[Any] = list(held)
+    # Held entries the caller counted but did not pass, because the list was bounded before
+    # it crossed the task boundary. The prompt's count includes them.
+    unshown = held_total - len(held)
     held_keys: dict[KeyTuple, KeyTuple] = {}
     held_records: set[object] = set()
     attempts = 0
@@ -319,8 +332,8 @@ def _leaf_loop(
     empty_retries = 1 if limits.empty_leaf_retry else 0
 
     while True:
-        shown = _bounded_exclusions(seen, max_excluded_keys, max_exclusion_bytes)
-        if prompt_version == KEYED_LEAF_FETCH_PROMPT_VERSION:
+        shown = bounded_held_entries(seen, max_excluded_keys, max_exclusion_bytes)
+        if prompt_version in LEAF_PROMPT_VERSIONS:
             prompt = build_leaf_fetch_prompt(
                 original_query=leaf.original_query,
                 retrieval_query=leaf.query,
@@ -329,10 +342,10 @@ def _leaf_loop(
                 constraints=leaf.constraints,
                 primary_keys=primary_keys,
                 estimate=(estimate.to_dict() if expose_estimate and estimate is not None else None),
+                prompt_version=prompt_version,
+                partition_keys=partition_keys,
             )
-            held_lines = render_held(shown, len(seen))
-            if held_lines:
-                prompt = f"{prompt.rstrip()}\n\n" + "\n".join(held_lines) + "\n"
+            prompt = with_held(prompt, shown, len(seen) + unshown)
         else:
             prompt = build_fetch_prompt(
                 leaf.query,
@@ -340,7 +353,7 @@ def _leaf_loop(
                 caller_context=context,
                 constraints=leaf.constraints,
                 held=shown,
-                held_total=len(seen),
+                held_total=len(seen) + unshown,
                 primary_keys=primary_keys,
                 estimate=(estimate.to_dict() if expose_estimate and estimate is not None else None),
             )
@@ -510,6 +523,9 @@ def run_leaf(
     context: str = "",
     prompt_version: str | None = None,
     expose_estimate: bool = True,
+    partition_keys: Sequence[str] = (),
+    held: Sequence[Any] = (),
+    held_total: int = 0,
 ) -> LeafRun:
     """Ask for this leaf and keep asking for what is missing, until something stops it.
 
@@ -531,6 +547,9 @@ def run_leaf(
         context=context,
         prompt_version=prompt_version,
         expose_estimate=expose_estimate,
+        partition_keys=partition_keys,
+        held=held,
+        held_total=held_total,
     )
     reply: tuple[str, Any] | None = None
     while True:
@@ -563,6 +582,9 @@ async def arun_leaf(
     context: str = "",
     prompt_version: str | None = None,
     expose_estimate: bool = True,
+    partition_keys: Sequence[str] = (),
+    held: Sequence[Any] = (),
+    held_total: int = 0,
 ) -> LeafRun:
     """:func:`run_leaf` against an awaitable model boundary.
 
@@ -586,6 +608,9 @@ async def arun_leaf(
         context=context,
         prompt_version=prompt_version,
         expose_estimate=expose_estimate,
+        partition_keys=partition_keys,
+        held=held,
+        held_total=held_total,
     )
     reply: tuple[str, Any] | None = None
     while True:
@@ -637,21 +662,6 @@ def _resolve_keys(primary_keys: Sequence[str], key: str | None) -> tuple[str, ..
     if len(set(keys)) != len(keys):
         raise ConfigError("primary_keys must be distinct non-empty strings")
     return keys
-
-
-def _bounded_exclusions(values: Sequence[Any], count: int, byte_limit: int) -> list[Any]:
-    """Keep recent exclusions whole while satisfying count and encoded-byte bounds."""
-    if not count or not byte_limit:
-        return []
-    kept: list[Any] = []
-    for value in reversed(values):
-        candidate = [value, *kept]
-        if rendered_held_entries_size(candidate) > byte_limit:
-            continue
-        kept = candidate
-        if len(kept) >= count:
-            break
-    return kept
 
 
 def _check_count(name: str, value: object) -> None:

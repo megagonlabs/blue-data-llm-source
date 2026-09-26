@@ -46,7 +46,15 @@ from blue_data_llm_source.planning.partition_safety import (
     SOURCE_CONFIGURATION,
     IdentityPartitionRule,
 )
-from blue_data_llm_source.planning.plan import Gap, build_plan
+from blue_data_llm_source.planning.plan import (
+    CHILD_WORDING_PARENT,
+    CHILD_WORDINGS,
+    ROOT,
+    Gap,
+    PartitionPolicy,
+    build_plan,
+    partition_keys,
+)
 from blue_data_llm_source.planning.receipt import PlanningReceipt
 from blue_data_llm_source.planning.schema import (
     KEY_FROM_CALLER,
@@ -56,11 +64,25 @@ from blue_data_llm_source.planning.schema import (
     SCHEMA_PRESERVE,
     Schema,
 )
+from blue_data_llm_source.planning.split_gate import (
+    DEFAULT_SPLIT_THRESHOLD_ROWS,
+    PROBE_ORIGIN,
+    SPLIT_ALWAYS,
+    SPLIT_EVIDENCE,
+    SPLIT_POLICIES,
+    ProbeOutcome,
+)
 from blue_data_llm_source.planning.transport import LeafTask
 from blue_data_llm_source.redaction import redact
 from blue_data_llm_source.reduction import aligner, verifier
 from blue_data_llm_source.reduction.coverage import FAILED, LeafInput, LeafOutcome, reduce_leaves
 from blue_data_llm_source.reduction.identity import key_identity, normalized_value
+from blue_data_llm_source.reduction.obedience import (
+    FILTER_DROP,
+    FILTER_ENFORCEMENTS,
+    FILTER_FLAG,
+    contradictions,
+)
 from blue_data_llm_source.types import (
     STOPPED_BY_CONTINUATIONS,
     STOPPED_BY_INCOMPLETE_RESPONSE,
@@ -121,6 +143,13 @@ _PLAN_KEYS = _PLAN_LIMIT_KEYS | {
     "expose_estimate",
     "distribution_search",
     "identity_partitions",
+    "leaf_prompt",
+    "child_wording",
+    "filter_enforcement",
+    "range_filters",
+    "partition_guardrails",
+    "split_policy",
+    "split_threshold_rows",
 }
 """The `plan.*` namespace, held apart from `limits.*` rather than merged into it.
 
@@ -427,6 +456,30 @@ class _DistributionControls:
     rules: tuple[IdentityPartitionRule, ...]
 
 
+@dataclass(frozen=True)
+class _ContractControls:
+    """The prompt-contract and child-construction switches, each defaulting to 2.1.0 behaviour.
+
+    Held together because they are read together and compared one at a time: a switch here
+    changes what a leaf is asked, never how many calls a plan may make.
+    """
+
+    leaf_prompt: str = prompts.KEYED_LEAF_FETCH_PROMPT_VERSION
+    child_wording: str = CHILD_WORDING_PARENT
+    filter_enforcement: str = FILTER_FLAG
+    range_filters: bool = False
+    partition_guardrails: bool = False
+    split_policy: str = SPLIT_ALWAYS
+    split_threshold_rows: int = DEFAULT_SPLIT_THRESHOLD_ROWS
+
+    def partition_policy(self) -> PartitionPolicy:
+        return PartitionPolicy(
+            child_wording=self.child_wording,
+            range_filters=self.range_filters,
+            partition_guardrails=self.partition_guardrails,
+        )
+
+
 # Keys a tool schema can require that `execute_nl_tool` also takes as arguments. The base
 # dispatcher reads each from the tool input and falls back to the argument, so a call
 # supplying them the second way is complete and must not be refused as incomplete.
@@ -727,6 +780,126 @@ class LlmSource(DataSource):
             )
         return _DistributionControls(enabled=enabled, rules=tuple(rules))
 
+    @staticmethod
+    def _check_filters(
+        runs: list[Any], plan: Any, schema: Schema, *, drop: bool
+    ) -> tuple[list[Any], int]:
+        """Count the records that contradict their leaf's filter, and remove them on request."""
+        leaves = {leaf.id: leaf for leaf in plan.leaves}
+        checked: list[Any] = []
+        total = 0
+        for run in runs:
+            leaf = leaves.get(run.leaf_id)
+            if leaf is None or not leaf.constraints or not run.records:
+                checked.append(run)
+                continue
+            # Column filters only: request scope, including a root constraint whose key
+            # matches a column, is never counted or dropped.
+            columns, _ = prompts.split_filters(
+                leaf.constraints, schema.attrs, partition_keys(plan, leaf)
+            )
+            flags = contradictions(run.records, columns, schema.attrs)
+            found = sum(flags)
+            total += found
+            if drop and found:
+                kept = [record for record, flag in zip(run.records, flags, strict=True) if not flag]
+                run = replace(run, records=kept)
+            checked.append(run)
+        return checked, total
+
+    @staticmethod
+    def _contract_controls(merged: dict[str, Any], mode: str) -> _ContractControls:
+        """Read and check the contract switches, refusing one the chosen mode cannot honour.
+
+        A switch accepted in a mode that never reaches it would be the setting this source's
+        closed key set exists to prevent: set, echoed back, and changing nothing.
+        """
+        leaf_prompt = merged.get("plan.leaf_prompt", prompts.KEYED_LEAF_FETCH_PROMPT_VERSION)
+        if not isinstance(leaf_prompt, str) or leaf_prompt not in prompts.LEAF_PROMPT_VERSIONS:
+            raise ConfigError(
+                f"unknown plan.leaf_prompt {leaf_prompt!r}; expected one of "
+                f"{', '.join(prompts.LEAF_PROMPT_VERSIONS)}"
+            )
+        if leaf_prompt != prompts.KEYED_LEAF_FETCH_PROMPT_VERSION and mode == MODE_FLAT:
+            raise ConfigError(
+                f"plan.leaf_prompt={leaf_prompt!r} requires a non-flat plan.mode; flat mode "
+                "sends the unversioned fetch prompt"
+            )
+        child_wording = merged.get("plan.child_wording", CHILD_WORDING_PARENT)
+        if not isinstance(child_wording, str) or child_wording not in CHILD_WORDINGS:
+            raise ConfigError(
+                f"unknown plan.child_wording {child_wording!r}; expected one of "
+                f"{', '.join(CHILD_WORDINGS)}"
+            )
+        if child_wording != CHILD_WORDING_PARENT and mode != MODE_PARTITIONED:
+            raise ConfigError(
+                f"plan.child_wording={child_wording!r} requires plan.mode='partitioned', the "
+                "only mode that builds child leaves from a partition proposal"
+            )
+        enforcement = merged.get("plan.filter_enforcement", FILTER_FLAG)
+        if not isinstance(enforcement, str) or enforcement not in FILTER_ENFORCEMENTS:
+            raise ConfigError(
+                f"unknown plan.filter_enforcement {enforcement!r}; expected one of "
+                f"{', '.join(FILTER_ENFORCEMENTS)}"
+            )
+        if enforcement == FILTER_DROP and mode == MODE_FLAT:
+            raise ConfigError(
+                "plan.filter_enforcement='drop' requires a non-flat plan.mode; a flat leaf "
+                "carries no filter to enforce"
+            )
+        range_filters = merged.get("plan.range_filters", False)
+        if not isinstance(range_filters, bool):
+            raise ConfigError("plan.range_filters must be a boolean")
+        if range_filters and mode != MODE_PARTITIONED:
+            raise ConfigError(
+                "plan.range_filters requires plan.mode='partitioned', the only mode that "
+                "builds child leaves from a partition proposal"
+            )
+        if range_filters and leaf_prompt != prompts.COMPLETE_LEAF_FETCH_PROMPT_VERSION:
+            # Not a preference: a range filter crosses the executor boundary only on the wire
+            # version that carries that contract, and the older versions have no range kind.
+            raise ConfigError(
+                "plan.range_filters requires plan.leaf_prompt='keyed-leaf-fetch-2'; range "
+                "filters travel only on that contract's wire version"
+            )
+        guardrails = merged.get("plan.partition_guardrails", False)
+        if not isinstance(guardrails, bool):
+            raise ConfigError("plan.partition_guardrails must be a boolean")
+        if guardrails and mode != MODE_PARTITIONED:
+            raise ConfigError(
+                "plan.partition_guardrails requires plan.mode='partitioned', the only mode "
+                "that asks a model to propose a partition"
+            )
+        split_policy = merged.get("plan.split_policy", SPLIT_ALWAYS)
+        if not isinstance(split_policy, str) or split_policy not in SPLIT_POLICIES:
+            raise ConfigError(
+                f"unknown plan.split_policy {split_policy!r}; expected one of "
+                f"{', '.join(SPLIT_POLICIES)}"
+            )
+        if split_policy != SPLIT_ALWAYS and mode != MODE_PARTITIONED:
+            raise ConfigError(
+                f"plan.split_policy={split_policy!r} requires plan.mode='partitioned', the only "
+                "mode whose root splits"
+            )
+        threshold = merged.get("plan.split_threshold_rows", DEFAULT_SPLIT_THRESHOLD_ROWS)
+        if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < 0:
+            raise ConfigError(
+                f"plan.split_threshold_rows must be a non-negative integer, got {threshold!r}"
+            )
+        if threshold != DEFAULT_SPLIT_THRESHOLD_ROWS and split_policy != SPLIT_EVIDENCE:
+            raise ConfigError(
+                "plan.split_threshold_rows is read only under plan.split_policy='evidence'"
+            )
+        return _ContractControls(
+            leaf_prompt=leaf_prompt,
+            child_wording=child_wording,
+            filter_enforcement=enforcement,
+            range_filters=range_filters,
+            partition_guardrails=guardrails,
+            split_policy=split_policy,
+            split_threshold_rows=threshold,
+        )
+
     async def _run_leaves(
         self,
         plan: Any,
@@ -741,6 +914,8 @@ class LlmSource(DataSource):
         budget: Budget,
         exact_rows: int | None,
         sinks: list[list[Usage]] | None = None,
+        leaf_prompt: str = prompts.KEYED_LEAF_FETCH_PROMPT_VERSION,
+        probed: ProbeOutcome | None = None,
     ) -> list[Any]:
         """Every leaf of the plan, concurrently, bounded by the client's own parallelism.
 
@@ -790,6 +965,15 @@ class LlmSource(DataSource):
                         caller_context=ctx,
                         schema=schema,
                         settings=settings,
+                        prompt_version=leaf_prompt,
+                        partition_keys=(
+                            partition_keys(plan, leaf)
+                            if leaf_prompt == prompts.COMPLETE_LEAF_FETCH_PROMPT_VERSION
+                            else ()
+                        ),
+                        # Every leaf below a probed root is told what the probe holds.
+                        held_exclusions=probed.held if probed is not None else (),
+                        held_total=probed.held_total if probed is not None else 0,
                     ),
                     client=client,
                     properties=properties,
@@ -1103,8 +1287,34 @@ class LlmSource(DataSource):
         expose_estimate = merged.get("plan.expose_estimate", True)
         if not isinstance(expose_estimate, bool):
             raise ConfigError("plan.expose_estimate must be a boolean")
+        contract = self._contract_controls(merged, mode)
+
+        # The root probe's receipts, kept apart from planning's so a probe that hit its output
+        # allowance is not reported as a discarded planning response, and folded into the
+        # run's accounting whichever way planning ends.
+        probe_sink: list[Usage] = []
+
+        async def probe(leaf: Any, effective: Schema) -> LeafRun:
+            """The root leaf, asked once: the same task execution would send, minus the
+            continuations and the empty-answer retry, which the probe's bound does not buy."""
+            probe_limits = replace(plan_limits, max_continuations=0, empty_leaf_retry=False)
+            task = LeafTask.from_leaf(
+                leaf,
+                caller_context=ctx,
+                schema=effective,
+                # The root's trusted row target applies to the probe as it would to the root
+                # leaf: a target of zero asks nothing.
+                settings=execution_settings(
+                    provider_properties, probe_limits, run_budget, exact_rows=exact_rows
+                ),
+                prompt_version=contract.leaf_prompt,
+            )
+            return await run_local_leaf(
+                task, client=client, properties=provider_properties, usage_sink=probe_sink
+            )
 
         planning_receipt: PlanningReceipt | None = None
+        probed: ProbeOutcome | None = None
         if mode == MODE_FLAT:
             schema = declared_schema
             plan = build_plan(
@@ -1139,8 +1349,15 @@ class LlmSource(DataSource):
                     planning_order=planning_order,
                     distribution_search=distribution.enabled,
                     identity_partition_rules=distribution.rules,
+                    leaf_prompt=contract.leaf_prompt,
+                    partition_policy=contract.partition_policy(),
+                    split_policy=contract.split_policy,
+                    split_threshold_rows=contract.split_threshold_rows,
+                    probe=probe if contract.split_policy == SPLIT_EVIDENCE else None,
+                    probe_exact_rows=exact_rows,
                 )
             except BudgetExceeded as e:
+                call_usages.extend(probe_sink)
                 meta.outcome = Outcome.STOPPED_BY_LIMIT
                 meta.stop_reasons = _ordered_distinct([e.limit])
                 meta.stopped_by = meta.stop_reasons[0]
@@ -1150,6 +1367,12 @@ class LlmSource(DataSource):
                 return FetchResult(records=[], meta=meta)
             plan = bundle.plan
             schema = bundle.schema
+            call_usages.extend(probe_sink)
+            probed = bundle.probe
+            # Published only when the probe asked something. A zero-row target answers the
+            # root without a call, and a decision about a call never made would say otherwise.
+            if probed is not None and probed.run.attempts > 0:
+                meta.split_decision = probed.decision
             if distribution.enabled:
                 planning_receipt = PlanningReceipt(
                     configured_rule_digests=tuple(rule.digest for rule in distribution.rules),
@@ -1224,20 +1447,32 @@ class LlmSource(DataSource):
             planning_gaps.append(
                 "exact_rows_not_leaf_bound: trusted root count cannot be applied to separate leaves"
             )
+        # The probe's answer stands for the root leaf when the plan did not split after it:
+        # accepted, or a split was called for and no proposal survived. Asking the root again
+        # would repeat the same question for the same answer, truncation included.
+        answered_by_probe = probed is not None and (
+            not probed.split or [leaf.id for leaf in plan.leaves] == [ROOT]
+        )
         try:
-            runs = await self._run_leaves(
-                plan,
-                make_ask,
-                list(schema.attrs),
-                execution_limits,
-                schema,
-                ctx,
-                mode,
-                client,
-                provider_properties,
-                run_budget,
-                leaf_exact_rows,
-                leaf_usages,
+            runs = (
+                [cast("ProbeOutcome", probed).run]
+                if answered_by_probe
+                else await self._run_leaves(
+                    plan,
+                    make_ask,
+                    list(schema.attrs),
+                    execution_limits,
+                    schema,
+                    ctx,
+                    mode,
+                    client,
+                    provider_properties,
+                    run_budget,
+                    leaf_exact_rows,
+                    leaf_usages,
+                    leaf_prompt=contract.leaf_prompt,
+                    probed=probed,
+                )
             )
         except BudgetExceeded as e:
             meta.stop_reasons = _ordered_distinct([e.limit])
@@ -1258,6 +1493,13 @@ class LlmSource(DataSource):
         # change, not an accounting one, and the totals a caller reads must not move.
         for sink in leaf_usages:
             call_usages.extend(sink)
+
+        # At the leaf and before reduction, because reduction merges fields across leaves that
+        # returned the same key: a row removed after the merge has already lent its fields to a
+        # record that stays, and the row cap would have been spent on it.
+        runs, meta.filter_contradictions = self._check_filters(
+            runs, plan, schema, drop=contract.filter_enforcement == FILTER_DROP
+        )
 
         results: list[LeafInput] = [
             (
@@ -1292,16 +1534,48 @@ class LlmSource(DataSource):
             for run in runs
         ]
 
+        # Stop reasons come from the leaves that answered the plan. A probe the plan split
+        # after is not one of them: its truncation or shortfall is why the children ran.
         run_stop_reasons = _run_stop_reasons(runs)
-        meta.observed_key_count = sum(run.observed_key_count for run in runs)
-        meta.marginal_key_yields = [value for run in runs for value in run.marginal_key_yields]
-        meta.incomplete_key_records = sum(run.incomplete_key_records for run in runs)
-        meta.repaired_numbers = sum(run.repaired_numbers for run in runs)
+        counted = list(runs)
+        if probed is not None and not answered_by_probe and probed.run.ordinary_failure:
+            # The split recovered from it, but a failure is still a failure: said, not hidden
+            # behind the children's rows.
+            # The exception's type only. Its message is provider or parser text, which a gap
+            # would publish unredacted through every adapter.
+            failure = probed.run.exception
+            planning_gaps.append(
+                f"probe_failed: {type(failure).__name__ if failure is not None else 'error'}"
+            )
+        if probed is not None and not answered_by_probe:
+            root_run = replace(probed.run, leaf_id=PROBE_ORIGIN)
+            counted.insert(0, root_run)
+            # Its records enter reduction like any leaf's, under the origin "root": they
+            # merge on key with the children's, count toward the row cap, and are attributed.
+            # The outcome is plain, so the account does not report as a gap what the split
+            # already answered.
+            results.append(
+                (
+                    PROBE_ORIGIN,
+                    root_run.records,
+                    LeafOutcome(
+                        leaf_id=PROBE_ORIGIN,
+                        outcome=Outcome.OK,
+                        rows=len(root_run.records),
+                        calls=root_run.attempts,
+                        answered=root_run.answered,
+                    ),
+                )
+            )
+        meta.observed_key_count = sum(run.observed_key_count for run in counted)
+        meta.marginal_key_yields = [value for run in counted for value in run.marginal_key_yields]
+        meta.incomplete_key_records = sum(run.incomplete_key_records for run in counted)
+        meta.repaired_numbers = sum(run.repaired_numbers for run in counted)
         meta.normalization_collisions = [
-            collision for run in runs for collision in run.normalization_collisions
+            collision for run in counted for collision in run.normalization_collisions
         ]
-        answered_any = any(run.answered for run in runs)
-        retained_any = any(run.records for run in runs)
+        answered_any = any(run.answered for run in counted)
+        retained_any = any(run.records for run in counted)
         if any(run.ordinary_failure for run in runs) and not answered_any and not retained_any:
             self._fold_usage(call_usages, meta, run_budget, self._attests(client))
             stop_reasons = _ordered_distinct(

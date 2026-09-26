@@ -67,10 +67,17 @@ Fetch structured records from a language model's own knowledge. This is the one 
 | `plan.keys` | array of strings | no | Ordered primary-key fields for composite identity |
 | `plan.exact_rows` | integer, minimum 0 | no | Single-leaf hard target; a multi-leaf plan reports `exact_rows_not_leaf_bound` instead |
 | `plan.max_exclusion_bytes` | integer, minimum 0 | no | Encoded byte cap for whole-key exclusions |
+| `plan.leaf_prompt` | enum: `keyed-leaf-fetch-1`, `keyed-leaf-fetch-2` | no | Leaf prompt contract for non-flat modes |
+| `plan.child_wording` | enum: `parent`, `canonical` | no | How a partitioned child is worded |
+| `plan.filter_enforcement` | enum: `flag`, `drop` | no | Keep or remove records that contradict their part's filter |
+| `plan.range_filters` | boolean | no | Read integer-span partition values as range filters |
+| `plan.partition_guardrails` | boolean | no | Proposal rules and the numeric-key reject |
+| `plan.split_policy` | enum: `always`, `evidence` | no | Always split the root, or ask it once first |
+| `plan.split_threshold_rows` | integer, minimum 0 | no | Estimate above which a short probe answer splits |
 
 Nothing is required. A missing query is a successful call with no records, not an error.
 
-The three `plan.*` sets above are closed: the schema declares a JSON Schema `enum` for each, and a value outside it is refused before the library is reached. The `type` on an attribute is deliberately **not** closed. The library checks a value against a type name it recognises (`int`, `integer`, `float`, `number`, `bool`, `boolean`, `date`, `str`, `string`, `text`) and accepts any other name unchecked, reporting it once in `meta.unchecked_types`. Refusing an unrecognised name here would make that field unreachable over this transport.
+The seven enum `plan.*` sets above are closed: the schema declares a JSON Schema `enum` for each, and a value outside it is refused before the library is reached. The `type` on an attribute is deliberately **not** closed. The library checks a value against a type name it recognises (`int`, `integer`, `float`, `number`, `bool`, `boolean`, `date`, `str`, `string`, `text`) and accepts any other name unchecked, reporting it once in `meta.unchecked_types`. Refusing an unrecognised name here would make that field unreachable over this transport.
 
 A call and its result:
 
@@ -101,6 +108,7 @@ A call and its result:
     "observed_key_count": 0,
     "marginal_key_yields": [],
     "incomplete_key_records": 0,
+    "filter_contradictions": 0,
     "gaps": [],
     "stop_reasons": [],
     "requested_attrs": ["country", "accession_year"]
@@ -241,7 +249,7 @@ A model the table does not carry answers with `priceable: false`, null rates and
 No inputs. Returns the protocol, the variant, and the version of the library underneath. It reads no deployment setting, so it still answers while a malformed one is failing the query, estimate and model-inspection tools:
 
 ```json
-{"protocol": "llm", "variant": "openai", "version": "2.1.0"}
+{"protocol": "llm", "variant": "openai", "version": "2.2.0"}
 ```
 
 ## Decomposition
@@ -264,8 +272,17 @@ No inputs. Returns the protocol, the variant, and the version of the library und
 | `plan.max_exclusion_bytes` | Encoded byte cap for whole-key exclusions in a continuation prompt. |
 | `plan.planning_order` | One of five planning schedules. The locked schedules require a non-empty caller schema and ordered `plan.keys`. |
 | `plan.expose_estimate` | Whether extraction prompts include the soft estimate. |
+| `plan.leaf_prompt` | `keyed-leaf-fetch-1` is the default. `keyed-leaf-fetch-2` asks for every matching record, states the expected count as a sentence, and allows an empty answer only when nothing matches. Refused in `flat`. |
+| `plan.child_wording` | `parent` is the default. `canonical` derives each partitioned child's wording from the request and its own filters. |
+| `plan.filter_enforcement` | `flag` keeps records that contradict their part's filter; `drop` removes them at the part, before merging. Both count them in `meta.filter_contradictions`. |
+| `plan.range_filters` | Reads partition values written as integer spans, on an integer column, as range filters. Needs `partitioned` and `plan.leaf_prompt` `keyed-leaf-fetch-2`. |
+| `plan.partition_guardrails` | Sends proposal rules against identifier, measurement, placeholder and catch-all values, and refuses a numeric key bucketed like a measurement. Needs `partitioned`. |
+| `plan.split_policy` | `always` is the default. `evidence` asks the root once and splits only when that answer was cut off, by the output allowance or mid-answer, when the probe failed, or when it holds fewer than half the keys an estimate above `plan.split_threshold_rows` expects; otherwise that answer is the result, and `meta.split_decision` says which. The probe is one more call in the bound. Needs `partitioned`. |
+| `plan.split_threshold_rows` | Under `evidence`, the estimate above which a short probe answer splits. Default `120`. |
 
-These are the 14 standard planning controls shared with Python and the CLI. The MCP schema does not expose `plan.distribution_search`, `plan.identity_partitions`, or `plan.max_strategy_candidates`, and `llmdb_query` returns only records and meta, not the direct-Python planning receipt.
+`plan.leaf_prompt`, `plan.child_wording`, `plan.filter_enforcement`, `plan.range_filters` and `plan.partition_guardrails` are experimental. `keyed-leaf-fetch-2` reduced recall with GPT-4o in internal testing and is not recommended. `plan.split_policy` `evidence` improved recall with GPT-4o in an internal benchmark and has not been measured on other models.
+
+These are the 21 standard planning controls shared with Python and the CLI. The MCP schema does not expose `plan.distribution_search`, `plan.identity_partitions`, or `plan.max_strategy_candidates`, and `llmdb_query` returns only records and meta, not the direct-Python planning receipt.
 
 Non-flat calls also spend on the selected planning schedule and may make bounded proposal or entity enumeration calls before leaf extraction. The library admits those calls incrementally against the shared budget; `plan.max_continuations` is not a bound on the whole request.
 
@@ -295,6 +312,13 @@ The `blue-llmdb` CLI spells the same settings as hyphenated flags, because a dot
 | `plan.schema_mode` | `--plan-schema-mode` |
 | `plan.planning_order` | `--plan-planning-order` |
 | `plan.expose_estimate` | `--plan-expose-estimate` / `--no-plan-expose-estimate` |
+| `plan.leaf_prompt` | `--plan-leaf-prompt` |
+| `plan.child_wording` | `--plan-child-wording` |
+| `plan.filter_enforcement` | `--plan-filter-enforcement` |
+| `plan.range_filters` | `--plan-range-filters` / `--no-plan-range-filters` |
+| `plan.partition_guardrails` | `--plan-partition-guardrails` / `--no-plan-partition-guardrails` |
+| `plan.split_policy` | `--plan-split-policy` |
+| `plan.split_threshold_rows` | `--plan-split-threshold-rows` |
 
 `max_records` maps to `Limits.max_rows` and overrides any configured value for that call. The MCP surface has no separate `limits.max_rows` argument; the server refuses that spelling to avoid two names for the same setting.
 

@@ -186,6 +186,23 @@ def distribution_node_attempt_limit(limits: PlanLimits) -> int:
     return max_nodes(limits, MODE_PARTITIONED)
 
 
+SPLIT_POLICY_ALWAYS: Final = "always"
+SPLIT_POLICY_EVIDENCE: Final = "evidence"
+
+
+def probe_calls(mode: str, split_policy: str = SPLIT_POLICY_ALWAYS) -> int:
+    """Logical calls the root probe makes: one under ``split_policy="evidence"``, else none.
+
+    The probe is one ask of the root leaf with no continuation and no empty-answer retry, so
+    a single logical call bounds it; its retries are the transport attempts every accessor
+    multiplies by. Only a partitioned plan probes.
+    """
+    _check_mode(mode)
+    if split_policy not in (SPLIT_POLICY_ALWAYS, SPLIT_POLICY_EVIDENCE):
+        raise ConfigError(f"unknown split policy {split_policy!r}")
+    return 1 if mode == MODE_PARTITIONED and split_policy == SPLIT_POLICY_EVIDENCE else 0
+
+
 def fact_calls(planning_order: str) -> int:
     """Model calls the planning schedule makes before any split or enumeration.
 
@@ -207,6 +224,7 @@ def planning_model_calls(
     *,
     planning_order: str = PLANNING_SCHEMA_FIRST,
     distribution_search: bool = False,
+    split_policy: str = SPLIT_POLICY_ALWAYS,
 ) -> int:
     """Logical model calls one request's planning can make, at worst, under this schedule.
 
@@ -218,11 +236,15 @@ def planning_model_calls(
 
     The default schedule is the one ``LlmSource`` runs when ``plan.planning_order`` is not
     set, and it is also the one with the most fact calls.
+
+    Under ``split_policy="evidence"`` the root probe runs between the facts and the first
+    proposal, and is charged here with them (:func:`probe_calls`). When it is accepted no
+    proposal follows, so the charge only ever over-counts.
     """
     _check_mode(mode)
     if mode == MODE_FLAT:
         return 0
-    facts = fact_calls(planning_order)
+    facts = fact_calls(planning_order) + probe_calls(mode, split_policy)
     if mode == MODE_ROW_BY_ROW:
         return facts + 1
     if distribution_search:
@@ -236,6 +258,7 @@ def planned_logical_calls(
     *,
     planning_order: str = PLANNING_SCHEMA_FIRST,
     distribution_search: bool = False,
+    split_policy: str = SPLIT_POLICY_ALWAYS,
 ) -> int:
     """Logical model calls one request in this mode can make, at worst, the plan included.
 
@@ -245,7 +268,11 @@ def planned_logical_calls(
     _check_mode(mode)
     per_leaf = 1 + limits.max_continuations + (1 if limits.empty_leaf_retry else 0)
     planning = planning_model_calls(
-        limits, mode, planning_order=planning_order, distribution_search=distribution_search
+        limits,
+        mode,
+        planning_order=planning_order,
+        distribution_search=distribution_search,
+        split_policy=split_policy,
     )
     return planning + leaf_limit(limits, mode) * per_leaf
 
@@ -256,10 +283,15 @@ def planned_provider_attempts(
     *,
     planning_order: str = PLANNING_SCHEMA_FIRST,
     distribution_search: bool = False,
+    split_policy: str = SPLIT_POLICY_ALWAYS,
 ) -> int:
     """:func:`planned_logical_calls` multiplied by the configured transport attempts."""
     logical = planned_logical_calls(
-        limits, mode, planning_order=planning_order, distribution_search=distribution_search
+        limits,
+        mode,
+        planning_order=planning_order,
+        distribution_search=distribution_search,
+        split_policy=split_policy,
     )
     return attempts(logical, limits)
 
@@ -286,7 +318,9 @@ def max_nodes(limits: PlanLimits, mode: str) -> int:
     return max(1, min(limits.max_leaves - 1, _splittable_nodes(limits)))
 
 
-def planning_calls(limits: PlanLimits, mode: str) -> int:
+def planning_calls(
+    limits: PlanLimits, mode: str, *, split_policy: str = SPLIT_POLICY_ALWAYS
+) -> int:
     """Logical model calls planning can make, at worst.
 
     One to analyse and one to estimate; a schema pool, a candidate set, and one
@@ -307,7 +341,7 @@ def planning_calls(limits: PlanLimits, mode: str) -> int:
     # rewrite it into. Charging a rewrite there would inflate the bound on the one shape
     # where the caller is most likely to be watching the cost.
     rewrites = 0 if mode == MODE_FLAT else leaf_limit(limits, mode)
-    return 2 + schema + nodes + rewrites
+    return 2 + schema + nodes + rewrites + probe_calls(mode, split_policy)
 
 
 def execution_calls(limits: PlanLimits, leaves: int) -> int:
@@ -351,6 +385,7 @@ def request_calls(
     *,
     planning_order: str = PLANNING_SCHEMA_FIRST,
     distribution_search: bool = False,
+    split_policy: str = SPLIT_POLICY_ALWAYS,
 ) -> int:
     """Logical model calls a whole request in this mode makes, at worst.
 
@@ -378,21 +413,29 @@ def request_calls(
     if mode == MODE_FLAT:
         return execution_calls(limits, 1)
     planning = planning_model_calls(
-        limits, mode, planning_order=planning_order, distribution_search=distribution_search
+        limits,
+        mode,
+        planning_order=planning_order,
+        distribution_search=distribution_search,
+        split_policy=split_policy,
     )
     return planning + execution_calls(
         limits, leaf_limit(limits, mode) if leaves is None else leaves
     )
 
 
-def worst_case_attempts(limits: PlanLimits, mode: str) -> int:
+def worst_case_attempts(
+    limits: PlanLimits, mode: str, *, split_policy: str = SPLIT_POLICY_ALWAYS
+) -> int:
     """Every attempt a whole request in this mode can make, before it starts.
 
     This is what a recommendation is sized against: no plan exists yet, so the leaf count
     is :func:`leaf_limit` rather than a real count. Built on :func:`planning_calls`, so it
     bounds every planning schedule and distribution setting at once.
     """
-    logical = planning_calls(limits, mode) + execution_calls(limits, leaf_limit(limits, mode))
+    logical = planning_calls(limits, mode, split_policy=split_policy) + execution_calls(
+        limits, leaf_limit(limits, mode)
+    )
     return attempts(logical, limits)
 
 

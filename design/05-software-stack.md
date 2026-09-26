@@ -128,7 +128,7 @@ The `llm.cache` switch is separate from both stores and opens `diskcache`. That 
 | Tools | `llmdb_query`, `llmdb_estimate`, `llmdb_list_models`, `llmdb_inspect_model`, `llmdb_inspect_metadata` |
 | Entry point | `blue-data-llm-mcp` |
 | Configuration | `BLUE_DATA_LLM_MODEL` and nine `BLUE_DATA_LLM_SOURCE_*` request settings from the process environment, read on every call, plus three operator ceilings (`_LIMIT_COST`, `_LIMIT_CALLS`, `_LIMIT_SECONDS`) that a call can lower but not raise |
-| Dependencies | `blue-data-llm-source[llm]>=2.1.0`, `mcp==1.27.2` |
+| Dependencies | `blue-data-llm-source[llm]>=2.2.0`, `mcp==1.27.2` |
 
 The low-level server is used rather than the decorator-derived one because the tool schemas are written by hand. Deriving a schema from a handler signature would put the tool contract in a Python signature instead of in the JSON a client actually sees, and that JSON is the contract an agent reads.
 
@@ -145,7 +145,7 @@ The `mcp` import is confined to the transport module. Tool definitions and argum
 | Commands | 12, over the `profile`, `data`, `model` and `metadata` components |
 | Entry point | `blue-llmdb` |
 | Configuration | Profiles under `~/.blue-llmdb`, a local stand-in for `blue_data.utils.config` until that module ships |
-| Dependencies | `blue-data-llm-source[llm]>=2.1.0`, `click>=8.0`, `rich>=13.0` |
+| Dependencies | `blue-data-llm-source[llm]>=2.2.0`, `click>=8.0`, `rich>=13.0` |
 
 Click commands are synchronous and call the library's synchronous wrapper. Rich markup is disabled on output, because a record value containing square brackets is data rather than a style tag.
 

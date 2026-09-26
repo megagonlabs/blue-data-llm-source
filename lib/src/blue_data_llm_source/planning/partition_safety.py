@@ -16,6 +16,7 @@ from blue_data_llm_source.types import (
     Exact,
     JsonScalar,
     OneOf,
+    Range,
     json_scalar,
     value_identity,
 )
@@ -34,6 +35,8 @@ SAFETY_UNKNOWN: Final = "unknown"
 def _constraint_payload(value: Constraint) -> dict[str, object]:
     if isinstance(value, Exact):
         return {"kind": "exact", "value": value.value}
+    if isinstance(value, Range):
+        return {"kind": "range", "lo": value.lo, "hi": value.hi}
     return {"kind": "one_of", "values": list(value.values)}
 
 
@@ -60,6 +63,8 @@ def _constraint_from_payload(value: object) -> Constraint:
 def _constraint_identity(value: Constraint) -> tuple[str, tuple[object, ...]]:
     if isinstance(value, Exact):
         return ("exact", (value_identity(value.value),))
+    if isinstance(value, Range):
+        return ("range", (value.lo, value.hi))
     return ("one_of", tuple(value_identity(item) for item in value.values))
 
 
@@ -393,7 +398,9 @@ def evaluate_partition_safety(
         reasons.append("proposed partition domain does not match the declared domain")
 
     inherited = parent_constraints.get(dimension)
-    if isinstance(inherited, Exact):
+    # A range parent is refused like an exact one. A finite declared domain is not checked
+    # against a span here, and accepting it unchecked would claim containment nobody showed.
+    if isinstance(inherited, (Exact, Range)):
         containment = False
     elif isinstance(inherited, OneOf):
         inherited_ids = {normalized_value(value, declared_type) for value in inherited.values}

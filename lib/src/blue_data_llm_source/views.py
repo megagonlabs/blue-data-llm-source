@@ -71,6 +71,7 @@ def meta_view(meta: ExecMeta, *, verbose: bool = False) -> dict[str, Any]:
         "observed_key_count": meta.observed_key_count,
         "marginal_key_yields": list(meta.marginal_key_yields),
         "incomplete_key_records": meta.incomplete_key_records,
+        "filter_contradictions": meta.filter_contradictions,
         "gaps": list(meta.gaps),
         "stop_reasons": list(meta.stop_reasons),
         "requested_attrs": [redact(name) for name in meta.requested_attrs],
@@ -80,6 +81,9 @@ def meta_view(meta: ExecMeta, *, verbose: bool = False) -> dict[str, Any]:
     # Include only when the parser changed the model's text.
     if meta.repaired_numbers:
         view["repaired_numbers"] = meta.repaired_numbers
+    # Include only when a root probe ran, so the default result's shape does not change.
+    if meta.split_decision is not None:
+        view["split_decision"] = meta.split_decision
     # Report an uncheckable declared type once. A misspelled type would otherwise check
     # nothing without notice.
     if meta.unchecked_types:

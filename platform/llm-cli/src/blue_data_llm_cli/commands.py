@@ -11,7 +11,7 @@ the resolver, which the root callback builds and exports into the environment be
 command runs; a command option sits on top and never reaches the resolver at all.
 
 A flag the spec has no parameter for is read from the command line and nowhere else. That is
-all fourteen ``--plan-*`` controls and the flags that are the request itself, and it is a
+all twenty-one ``--plan-*`` controls and the flags that are the request itself, and it is a
 choice rather than an omission: a plan setting describes one ask, and a partition key or a
 row target left in a profile would apply itself to the next, unrelated query. ``--effort`` is
 the exception among them, because a continuation allowance is an appetite for spending.
@@ -43,6 +43,10 @@ from blue_data_llm_source import __version__ as library_version
 from blue_data_llm_source.llm.client import default_max_tokens_for
 from blue_data_llm_source.llm.models import entry_for
 from blue_data_llm_source.planning import MODES, PLANNING_ORDERS, SCHEMA_MODES
+from blue_data_llm_source.planning.plan import CHILD_WORDINGS
+from blue_data_llm_source.planning.split_gate import SPLIT_POLICIES
+from blue_data_llm_source.prompts import LEAF_PROMPT_VERSIONS
+from blue_data_llm_source.reduction.obedience import FILTER_ENFORCEMENTS
 
 from blue_data_llm_cli import config, formats
 from blue_data_llm_cli.configstore import ConfigResolver
@@ -302,6 +306,53 @@ _PLAN_OPTIONS = [
         default=None,
         help="Include or omit the soft row estimate in extraction prompts.",
     ),
+    click.option(
+        "--plan-leaf-prompt",
+        type=click.Choice(LEAF_PROMPT_VERSIONS),
+        default=None,
+        help="Leaf prompt contract for non-flat modes. keyed-leaf-fetch-2 asks for every "
+        "matching record. Default: keyed-leaf-fetch-1.",
+    ),
+    click.option(
+        "--plan-child-wording",
+        type=click.Choice(CHILD_WORDINGS),
+        default=None,
+        help="Child leaf wording in partitioned mode: the parent's, or canonical wording "
+        "derived from the request and the child's filters. Default: parent.",
+    ),
+    click.option(
+        "--plan-filter-enforcement",
+        type=click.Choice(FILTER_ENFORCEMENTS),
+        default=None,
+        help="Keep (flag) or remove at the leaf (drop) records that contradict their leaf's "
+        "filter. Both count them. Default: flag.",
+    ),
+    click.option(
+        "--plan-range-filters/--no-plan-range-filters",
+        default=None,
+        help="Read integer-span partition values as range filters. Needs partitioned mode "
+        "and --plan-leaf-prompt keyed-leaf-fetch-2. Default: off.",
+    ),
+    click.option(
+        "--plan-partition-guardrails/--no-plan-partition-guardrails",
+        default=None,
+        help="Send the partition-2 proposal prompt and refuse numeric keys bucketed like a "
+        "measurement. Needs partitioned mode. Default: off.",
+    ),
+    click.option(
+        "--plan-split-policy",
+        type=click.Choice(SPLIT_POLICIES),
+        default=None,
+        help="Whether the root always splits, or is asked once first and splits only on a cut, "
+        "failed or short answer (evidence). Needs partitioned mode. Default: always.",
+    ),
+    click.option(
+        "--plan-split-threshold-rows",
+        type=click.IntRange(min=0),
+        default=None,
+        help="Under --plan-split-policy evidence, the estimate above which a probe holding "
+        "fewer than half the expected keys splits. Default: 120.",
+    ),
 ]
 
 
@@ -421,6 +472,13 @@ def data_query(
     plan_schema_mode: str | None,
     plan_planning_order: str | None,
     plan_expose_estimate: bool | None,
+    plan_leaf_prompt: str | None,
+    plan_child_wording: str | None,
+    plan_filter_enforcement: str | None,
+    plan_range_filters: bool | None,
+    plan_partition_guardrails: bool | None,
+    plan_split_policy: str | None,
+    plan_split_threshold_rows: int | None,
     rate_limit: str | None,
     output_format: str | None,
     verbose: bool,
@@ -485,6 +543,13 @@ def data_query(
                 plan_schema_mode=plan_schema_mode,
                 plan_planning_order=plan_planning_order,
                 plan_expose_estimate=plan_expose_estimate,
+                plan_leaf_prompt=plan_leaf_prompt,
+                plan_child_wording=plan_child_wording,
+                plan_filter_enforcement=plan_filter_enforcement,
+                plan_range_filters=plan_range_filters,
+                plan_partition_guardrails=plan_partition_guardrails,
+                plan_split_policy=plan_split_policy,
+                plan_split_threshold_rows=plan_split_threshold_rows,
             )
         )
         chosen_variant = settings.take(

@@ -11,7 +11,17 @@ Use this index to find installation, usage, interface, and design documentation 
 | [features.md](features.md) | See what the library can do, at a glance, with a short offline example per feature |
 | [Supported models](../lib/README.md#supported-models) | Check which models the package knows, the reasoning efforts each accepts, and what each costs |
 | [examples/](../examples/README.md) | Run something: scripts with real captured output, organized by backend, feature, framework integration, and scenario |
-| [`CHANGELOG.md`](../CHANGELOG.md) | Upgrade from an earlier release. 2.1.0 adds the GPT model table and reads the MCP server's settings from its environment; 2.0.0 renames the command line, renames every MCP tool, and closes the `properties` map |
+| [`CHANGELOG.md`](../CHANGELOG.md) | Upgrade from an earlier release. 2.2.0 adds the opt-in evidence-gated split and five experimental plan settings; 2.1.0 adds the GPT model table and reads the MCP server's settings from its environment; 2.0.0 renames the command line, renames every MCP tool, and closes the `properties` map |
+
+## Upgrading from 2.1.0
+
+At the defaults, 2.2.0 sends the same prompts and returns the same records as 2.1.0. The [changelog](../CHANGELOG.md#220--candidate) lists what a caller can still observe:
+
+- Result metadata always carries `filter_contradictions`.
+- `ExecMeta` has two new fields ahead of `observed_keys`.
+- The CLI and MCP server require `blue-data-llm-source[llm]>=2.2.0`.
+
+`plan.split_policy="evidence"` is opt-in. It has been measured with GPT-4o only.
 
 ## Upgrading from 2.0.0
 

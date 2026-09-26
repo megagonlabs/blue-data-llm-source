@@ -193,6 +193,7 @@ UNMASKED: dict[str, str] = {
     "{}": "the view's own field names, written as literals in `views`.",
     "outcome": "a library outcome constant. No caller or model text reaches it.",
     "stopped_by": "a library stop-reason constant, and the first of `stop_reasons`.",
+    "split_decision": "a library constant naming what the root probe decided.",
     "stop_reasons[]": "library limit names, from the ceiling that fired.",
     "gaps[]": (
         "operational diagnostics, which quote the record values two leaves disagreed about. "

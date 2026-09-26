@@ -110,6 +110,13 @@ def test_fetch_schema_declares_the_fields_the_server_accepts() -> None:
         "plan.schema_mode",
         "plan.planning_order",
         "plan.expose_estimate",
+        "plan.leaf_prompt",
+        "plan.child_wording",
+        "plan.filter_enforcement",
+        "plan.range_filters",
+        "plan.partition_guardrails",
+        "plan.split_policy",
+        "plan.split_threshold_rows",
         "limits.max_cost",
         "limits.max_seconds",
         "limits.max_calls",
@@ -165,15 +172,27 @@ def test_the_declared_enums_are_the_library_closed_sets() -> None:
     """
     from blue_data_llm_source.planning.bounds import MODES
     from blue_data_llm_source.planning.context import PLANNING_ORDERS
+    from blue_data_llm_source.planning.plan import CHILD_WORDINGS
     from blue_data_llm_source.planning.schema import SCHEMA_MODES
+    from blue_data_llm_source.planning.split_gate import SPLIT_POLICIES
+    from blue_data_llm_source.prompts import LEAF_PROMPT_VERSIONS
+    from blue_data_llm_source.reduction.obedience import FILTER_ENFORCEMENTS
 
     assert tools.PLAN_MODES == MODES
     assert tools.SCHEMA_MODES == SCHEMA_MODES
     assert tools.PLANNING_ORDERS == PLANNING_ORDERS
+    assert tools.LEAF_PROMPTS == LEAF_PROMPT_VERSIONS
+    assert tools.CHILD_WORDINGS == CHILD_WORDINGS
+    assert tools.FILTER_ENFORCEMENTS == FILTER_ENFORCEMENTS
+    assert tools.SPLIT_POLICIES == SPLIT_POLICIES
     properties = tools.QUERY_INPUT_SCHEMA["properties"]
     assert properties["plan.mode"]["enum"] == list(MODES)
     assert properties["plan.schema_mode"]["enum"] == list(SCHEMA_MODES)
     assert properties["plan.planning_order"]["enum"] == list(PLANNING_ORDERS)
+    assert properties["plan.leaf_prompt"]["enum"] == list(LEAF_PROMPT_VERSIONS)
+    assert properties["plan.child_wording"]["enum"] == list(CHILD_WORDINGS)
+    assert properties["plan.filter_enforcement"]["enum"] == list(FILTER_ENFORCEMENTS)
+    assert properties["plan.split_policy"]["enum"] == list(SPLIT_POLICIES)
 
 
 def test_the_open_attribute_type_set_is_not_declared_closed() -> None:

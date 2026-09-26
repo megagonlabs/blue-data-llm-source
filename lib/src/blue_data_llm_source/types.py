@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Hashable, Iterator
+from collections.abc import Hashable, Iterator, Sequence
 from dataclasses import asdict, dataclass, field
-from typing import Any, Final, Protocol, TypeAlias, runtime_checkable
+from typing import Any, Final, Protocol, TypeAlias, cast, runtime_checkable
 
 
 def value_identity(value: object) -> Hashable:
@@ -88,6 +88,19 @@ class Attr:
     type: str | None = None
 
 
+def resolve_attr(name: str, attrs: Sequence[Attr]) -> Attr | None:
+    """The schema attribute *name* refers to, matched without regard to case, or None.
+
+    A constraint key comes from a model, which writes ``Year`` for a column declared
+    ``year``. The match is taken only when exactly one attribute's name folds to the same
+    text; two attributes that differ only by case make every spelling of that name
+    ambiguous, including an exact one, and an ambiguous key names no column.
+    """
+    folded = name.strip().casefold()
+    matches = [attr for attr in attrs if attr.name.strip().casefold() == folded]
+    return matches[0] if len(matches) == 1 else None
+
+
 JsonScalar: TypeAlias = str | int | float | bool
 """A JSON scalar suitable for an exact, locally comparable constraint."""
 
@@ -133,8 +146,47 @@ class OneOf:
         )
 
 
-Constraint = Exact | OneOf
-"""What a leaf may say about a field, tagged with which of the two it is.
+@dataclass(frozen=True)
+class Range:
+    """A filter satisfied by any integer from ``lo`` to ``hi``, both included.
+
+    Built only by the planner, from a proposal value written as a span such as
+    ``"1946–1952"`` on a column declared as an integer, or from numeric bucketing, and only
+    under ``plan.range_filters``. Without it the same value becomes an ``Exact`` filter on
+    the literal text, which no record's year can equal, so a leaf asked for a span was asked
+    for nothing a model could match.
+    """
+
+    lo: int
+    hi: int
+
+    def __post_init__(self) -> None:
+        for name in ("lo", "hi"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ConfigError(f"range {name} must be an integer, got {value!r}")
+        if self.lo > self.hi:
+            raise ConfigError(f"range lo {self.lo} is above hi {self.hi}")
+
+    def contains(self, value: object) -> bool:
+        """Whether *value* is an integer from ``lo`` to ``hi``.
+
+        Integer-valued only: a range bounds an integer column, so ``2.5`` is not in
+        ``Range(1, 3)`` even though it lies between the ends. A float with no fractional part
+        counts, since JSON has one number type; a bool does not.
+        """
+        if isinstance(value, bool):
+            return False
+        if isinstance(value, float):
+            if not value.is_integer():
+                return False
+        elif not isinstance(value, int):
+            return False
+        return self.lo <= value <= self.hi
+
+
+Constraint = Exact | OneOf | Range
+"""What a leaf may say about a field, tagged with which kind it is.
 
 The tag is the point. A filter held as an untagged scalar or list is one absent-minded
 ``join``, ``str()``, or "treat every entry as required" away from asking a different
@@ -295,6 +347,27 @@ class ExecMeta:
     """Numbers the model wrote with thousands separators, such as ``4,470``, that were read
     as ``4470``. Such a response is not valid JSON; it is read only after this one repair,
     so a non-zero count says the parser changed the model's text before reading it."""
+    split_decision: str | None = None
+    """What the root probe decided under ``plan.split_policy="evidence"``, or None.
+
+    ``probe_accepted``: the root answered in one call and the plan did not split.
+    ``probe_split_length``: the provider said its output allowance ended the probe's answer.
+    ``probe_split_incomplete``: the probe's answer ended mid-document and only its complete
+    records were read, with no word from the provider on why.
+    ``probe_split_shortfall``: the probe held fewer than half the keys an estimate above
+    ``plan.split_threshold_rows`` expects. ``probe_split_failed``: the probe gave no usable
+    answer. None under the default policy, when the root could not split and was not
+    probed, or when ``plan.exact_rows=0`` answered the root without a call. Absent from
+    :meth:`FetchResult.to_dict` and ``meta_view`` when None."""
+    filter_contradictions: int = 0
+    """Records whose checkable filter column contradicts the filter of the leaf that returned
+    them, counted before reduction and once per record.
+
+    Zero means none was observed, not that every leaf obeyed: a filter on an undeclared or
+    untyped column, or a value its declared type cannot read, is not checked. Under
+    ``plan.filter_enforcement="flag"`` these records are kept; under ``"drop"`` they are
+    removed at their leaf and this still counts them. The comparison rule is in
+    :mod:`blue_data_llm_source.reduction.obedience`."""
     observed_keys: list[str] = field(default_factory=list[str])
     unmapped_keys: list[str] = field(default_factory=list[str])
     remapped_keys: dict[str, str] = field(default_factory=dict[str, str])
@@ -429,6 +502,11 @@ class FetchResult:
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = asdict(self)
+        meta = cast("dict[str, object]", payload["meta"])
+        # Written only when a root probe ran, so a result from the default policy serializes
+        # exactly as it did before the field existed.
+        if meta.get("split_decision") is None:
+            meta.pop("split_decision", None)
         receipt = self.planning_receipt
         if receipt is not None:
             payload["planning_receipt"] = receipt.to_dict()

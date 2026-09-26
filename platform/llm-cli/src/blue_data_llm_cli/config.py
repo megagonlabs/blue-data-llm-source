@@ -636,6 +636,13 @@ def plan_properties(
     plan_schema_mode: str | None = None,
     plan_planning_order: str | None = None,
     plan_expose_estimate: bool | None = None,
+    plan_leaf_prompt: str | None = None,
+    plan_child_wording: str | None = None,
+    plan_filter_enforcement: str | None = None,
+    plan_range_filters: bool | None = None,
+    plan_partition_guardrails: bool | None = None,
+    plan_split_policy: str | None = None,
+    plan_split_threshold_rows: int | None = None,
 ) -> dict[str, Any]:
     """The `plan.*` settings, under the names the library reads.
 
@@ -671,6 +678,20 @@ def plan_properties(
         out["plan.planning_order"] = plan_planning_order
     if plan_expose_estimate is not None:
         out["plan.expose_estimate"] = plan_expose_estimate
+    if plan_leaf_prompt is not None:
+        out["plan.leaf_prompt"] = plan_leaf_prompt
+    if plan_child_wording is not None:
+        out["plan.child_wording"] = plan_child_wording
+    if plan_filter_enforcement is not None:
+        out["plan.filter_enforcement"] = plan_filter_enforcement
+    if plan_range_filters is not None:
+        out["plan.range_filters"] = plan_range_filters
+    if plan_partition_guardrails is not None:
+        out["plan.partition_guardrails"] = plan_partition_guardrails
+    if plan_split_policy is not None:
+        out["plan.split_policy"] = plan_split_policy
+    if plan_split_threshold_rows is not None:
+        out["plan.split_threshold_rows"] = plan_split_threshold_rows
     return out
 
 

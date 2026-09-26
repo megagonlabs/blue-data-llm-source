@@ -103,6 +103,18 @@ def _fetch_responses() -> list[str]:
     ]
 
 
+def _serialized_default(result: FetchResult) -> dict[str, object]:
+    """The dataclass fields as ``to_dict`` writes them for a run with no root probe.
+
+    ``split_decision`` is written only when a probe ran, so a default result keeps the
+    shape it had before the field existed.
+    """
+    payload = asdict(result)
+    meta = cast("dict[str, object]", payload["meta"])
+    assert meta.pop("split_decision") is None
+    return payload
+
+
 def _without_latency(value: ExecMeta) -> dict[str, object]:
     result = asdict(value)
     result["latency_seconds"] = 0.0
@@ -148,7 +160,7 @@ def test_disabled_distribution_settings_leave_the_source_run_unchanged(
     assert configured_client.prompts == baseline_client.prompts
     assert plans[1] == plans[0]
     assert configured.planning_receipt is None
-    assert configured.to_dict() == asdict(configured)
+    assert configured.to_dict() == _serialized_default(configured)
     assert "planning_receipt" not in configured.to_dict()
     assert set(vars(configured)) == {"records", "meta"}
 
@@ -392,7 +404,7 @@ def test_fetch_result_runtime_types_and_default_serialization_keep_the_old_shape
     assert attacher_hints["receipt"] == PlanningReceiptProtocol | None
     assert attacher_hints["return"] is FetchResult
     assert [item.name for item in fields(result)] == ["records", "meta"]
-    assert result.to_dict() == asdict(result)
+    assert result.to_dict() == _serialized_default(result)
     assert "planning_receipt" not in result.to_dict()
 
 

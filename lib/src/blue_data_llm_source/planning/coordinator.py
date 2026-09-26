@@ -19,6 +19,7 @@ from blue_data_llm_source.planning.analysis import (
 )
 from blue_data_llm_source.planning.bounds import (
     MODE_FLAT,
+    MODE_PARTITIONED,
     MODE_ROW_BY_ROW,
     MODES,
     PlanLimits,
@@ -50,11 +51,13 @@ from blue_data_llm_source.planning.plan import (
     Gap,
     Leaf,
     Note,
+    PartitionPolicy,
     PartitionProposal,
     PlanSchemaContract,
     apply_partition_proposal,
     build_entity_plan,
     build_key_tuple_plan,
+    partition_keys,
     root_plan,
 )
 from blue_data_llm_source.planning.schedules import (
@@ -73,6 +76,17 @@ from blue_data_llm_source.planning.schema import (
     SCHEMA_MODES,
     Schema,
     SchemaDefinition,
+)
+from blue_data_llm_source.planning.split_gate import (
+    DEFAULT_SPLIT_THRESHOLD_ROWS,
+    PROBE_ACCEPTED,
+    SPLIT_ALWAYS,
+    SPLIT_EVIDENCE,
+    SPLIT_POLICIES,
+    ProbeOutcome,
+    Prober,
+    decide,
+    held_from_records,
 )
 from blue_data_llm_source.types import (
     Attr,
@@ -148,6 +162,8 @@ class PlanningBundle:
     context: PlanningContext | None = None
     usages: list[Usage] = field(default_factory=list[Usage])
     diagnostics: list[str] = field(default_factory=list[str])
+    probe: ProbeOutcome | None = None
+    """The root probe under ``split_policy="evidence"``, or None when none ran."""
 
 
 def partition_proposal_from_response(
@@ -284,8 +300,19 @@ def _fetch_prompt(
     leaf: Leaf,
     schema: Schema,
     caller_context: str,
+    leaf_prompt: str,
+    plan: FetchPlan | None = None,
+    probed: ProbeOutcome | None = None,
 ) -> str:
-    return prompts.build_leaf_fetch_prompt(
+    """The leaf prompt execution will send, priced before anything is committed to it.
+
+    Built under the contract execution will use. Pricing one contract and running another
+    would let a longer prompt through an affordability check made for a shorter one. *plan*
+    is the plan *leaf* belongs to, which says which of its constraints partitioning
+    introduced; a root leaf needs none. *probed* is the root probe, whose held keys every
+    leaf below the root is sent.
+    """
+    prompt = prompts.build_leaf_fetch_prompt(
         original_query=leaf.original_query,
         retrieval_query=leaf.query,
         attrs=schema.attrs,
@@ -293,7 +320,12 @@ def _fetch_prompt(
         constraints=leaf.constraints,
         primary_keys=schema.primary_keys,
         estimate=leaf.cardinality.to_dict() if leaf.cardinality is not None else None,
+        prompt_version=leaf_prompt,
+        partition_keys=partition_keys(plan, leaf) if plan is not None else (),
     )
+    if probed is None or leaf.parent_id is None:
+        return prompt
+    return prompts.with_held(prompt, probed.held, probed.held_total)
 
 
 def _rejected_attempt(plan: FetchPlan, leaf: Leaf, reason: str) -> FetchPlan:
@@ -344,10 +376,39 @@ async def coordinate_plan(
     planning_order: str = PLANNING_COMBINED,
     distribution_search: bool = False,
     identity_partition_rules: Sequence[IdentityPartitionRule] = (),
+    leaf_prompt: str = prompts.KEYED_LEAF_FETCH_PROMPT_VERSION,
+    partition_policy: PartitionPolicy | None = None,
+    split_policy: str = SPLIT_ALWAYS,
+    split_threshold_rows: int = DEFAULT_SPLIT_THRESHOLD_ROWS,
+    probe: Prober | None = None,
+    probe_exact_rows: int | None = None,
 ) -> PlanningBundle:
-    """Build planning facts and expand a bounded plan."""
+    """Build planning facts and expand a bounded plan.
+
+    *leaf_prompt* is the leaf contract execution will send. It is read here only to price the
+    prompts the plan commits to; it does not change which plan is built. *partition_policy*
+    decides how an accepted proposal becomes child leaves; the default is 2.1.0 behaviour.
+    """
+    policy = partition_policy or PartitionPolicy()
+    if leaf_prompt not in prompts.LEAF_PROMPT_VERSIONS:
+        raise ConfigError(
+            f"unknown leaf prompt {leaf_prompt!r}; expected one of "
+            f"{', '.join(prompts.LEAF_PROMPT_VERSIONS)}"
+        )
     if mode not in MODES:
         raise ConfigError(f"unknown mode {mode!r}; expected one of {', '.join(MODES)}")
+    if split_policy not in SPLIT_POLICIES:
+        raise ConfigError(
+            f"unknown split policy {split_policy!r}; expected one of {', '.join(SPLIT_POLICIES)}"
+        )
+    if split_policy != SPLIT_ALWAYS and mode != MODE_PARTITIONED:
+        raise ConfigError("split_policy='evidence' requires partitioned mode")
+    if (
+        isinstance(split_threshold_rows, bool)
+        or not isinstance(split_threshold_rows, int)  # pyright: ignore[reportUnnecessaryIsInstance]
+        or split_threshold_rows < 0
+    ):
+        raise ConfigError("split_threshold_rows must be a non-negative integer")
     if schema_mode not in SCHEMA_MODES:
         raise ConfigError(f"unknown schema mode {schema_mode!r}")
     if mode == MODE_FLAT and schema_mode == SCHEMA_ENRICH:
@@ -406,7 +467,9 @@ async def coordinate_plan(
         budget=budget,
         properties=props,
         planning_order=schedule,
-        extraction_prompt=_fetch_prompt(protected.leaves[0], declared_schema, caller_context),
+        extraction_prompt=_fetch_prompt(
+            protected.leaves[0], declared_schema, caller_context, leaf_prompt
+        ),
     )
     diagnostics.extend(context.diagnostics)
     analysis = context.analysis
@@ -446,7 +509,7 @@ async def coordinate_plan(
         client,
         budget,
         props,
-        _fetch_prompt(prospective.leaves[0], schema, caller_context),
+        _fetch_prompt(prospective.leaves[0], schema, caller_context, leaf_prompt),
     ):
         plan = prospective
     else:
@@ -493,7 +556,45 @@ async def coordinate_plan(
             diagnostics=diagnostics,
             context=context,
             base_facts=base_facts,
+            leaf_prompt=leaf_prompt,
         )
+
+    probed: ProbeOutcome | None = None
+    if split_policy == SPLIT_EVIDENCE and _eligible(plan.leaves[0], limits):
+        # Before any proposal: the root is asked once, and its answer decides whether a
+        # proposal is worth making. A root that cannot split is not probed, because the leaf
+        # that would run instead is the same ask.
+        if probe is None:
+            raise ConfigError("split_policy='evidence' needs a probe to run the root leaf")
+        root = plan.leaves[0]
+        run = await probe(root, schema)
+        if run.budget_denied and run.exception is not None:
+            # Refused before it could answer: nothing is known, and a split would need more.
+            raise run.exception
+        decision = decide(run, root.cardinality, split_threshold_rows, probe_exact_rows)
+        held, held_total = (
+            held_from_records(
+                run.records,
+                schema.primary_keys,
+                schema.attrs,
+                max_excluded_keys=limits.max_excluded_keys,
+                max_exclusion_bytes=limits.max_exclusion_bytes,
+            )
+            if decision != PROBE_ACCEPTED
+            else ((), 0)
+        )
+        probed = ProbeOutcome(run=run, decision=decision, held=held, held_total=held_total)
+        if decision == PROBE_ACCEPTED:
+            return PlanningBundle(
+                plan=plan,
+                analysis=analysis,
+                schema=schema,
+                facts=base_facts,
+                context=context,
+                usages=planning_usages(usages, usage_start),
+                diagnostics=diagnostics,
+                probe=probed,
+            )
 
     frontier = [plan.leaves[0]]
     candidates_considered = 0
@@ -587,7 +688,9 @@ async def coordinate_plan(
                     budget=budget,
                     properties=props,
                     planning_prompt=distribution_prompt,
-                    fallback_prompt=_fetch_prompt(leaf, schema, caller_context),
+                    fallback_prompt=_fetch_prompt(
+                        leaf, schema, caller_context, leaf_prompt, plan, probed
+                    ),
                 ):
                     diagnostics.append(f"{leaf.id}: distribution skipped to preserve extraction")
                     break
@@ -662,6 +765,7 @@ async def coordinate_plan(
                 limits=limits,
                 applied_decision=_partition_decision(leaf, selected),
                 schema_contract=PlanSchemaContract.from_schema(schema),
+                policy=policy,
             )
             typed_child_estimates = {
                 value_identity(part.value): part.estimate for part in selected.stats.partitions
@@ -681,7 +785,9 @@ async def coordinate_plan(
                     client,
                     budget,
                     props,
-                    _fetch_prompt(item, schema, caller_context),
+                    _fetch_prompt(
+                        item, schema, caller_context, leaf_prompt, candidate_plan, probed
+                    ),
                 )
                 for item in children
             ):
@@ -700,13 +806,22 @@ async def coordinate_plan(
             ancestor_keys=ancestor_keys,
             preferred_key=partition_key if leaf.depth == 0 else None,
             max_partitions=limits.max_partitions,
+            prompt_version=(
+                prompts.GUARDED_PARTITION_PROMPT_VERSION
+                if policy.partition_guardrails
+                else prompts.PARTITION_PROMPT_VERSION
+            ),
+            parent_expected=(
+                leaf.cardinality.expected if leaf.cardinality is not None else leaf.estimate
+            ),
+            target_rows_per_leaf=limits.target_rows_per_leaf,
         )
         if not planning_lookahead(
             client=client,
             budget=budget,
             properties=props,
             planning_prompt=proposal_prompt,
-            fallback_prompt=_fetch_prompt(leaf, schema, caller_context),
+            fallback_prompt=_fetch_prompt(leaf, schema, caller_context, leaf_prompt, plan, probed),
         ):
             diagnostics.append(f"{leaf.id}: proposal skipped to preserve extraction")
             break
@@ -736,6 +851,7 @@ async def coordinate_plan(
             schema=schema,
             limits=limits,
             proposal_failure=proposal_failure,
+            policy=policy,
         )
         if candidate.accepted_internal_nodes == plan.accepted_internal_nodes:
             plan = candidate
@@ -746,7 +862,7 @@ async def coordinate_plan(
                 client,
                 budget,
                 props,
-                _fetch_prompt(item, schema, caller_context),
+                _fetch_prompt(item, schema, caller_context, leaf_prompt, candidate, probed),
             )
             for item in children
         ):
@@ -792,6 +908,7 @@ async def coordinate_plan(
         context=context,
         usages=planning_usages(usages, usage_start),
         diagnostics=diagnostics,
+        probe=probed,
     )
 
 
@@ -811,6 +928,7 @@ async def _coordinate_entities(
     diagnostics: list[str],
     context: PlanningContext,
     base_facts: PlanningFacts,
+    leaf_prompt: str,
 ) -> PlanningBundle:
     keys = schema.primary_keys
     key = schema.key
@@ -850,7 +968,7 @@ async def _coordinate_entities(
             budget=budget,
             properties=properties,
             planning_prompt=entity_prompt,
-            fallback_prompt=_fetch_prompt(plan.leaves[0], schema, caller_context),
+            fallback_prompt=_fetch_prompt(plan.leaves[0], schema, caller_context, leaf_prompt),
         ):
             diagnostics.append("entity enumeration skipped to preserve batch extraction")
             entity_plan = plan
@@ -884,7 +1002,7 @@ async def _coordinate_entities(
                     client,
                     budget,
                     properties,
-                    _fetch_prompt(leaf, schema, caller_context),
+                    _fetch_prompt(leaf, schema, caller_context, leaf_prompt, entity_plan),
                 )
                 for leaf in entity_plan.leaves
             ):

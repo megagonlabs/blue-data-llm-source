@@ -39,6 +39,7 @@ from blue_data_llm_source.planning.bounds import (
     planned_provider_attempts,
     planning_calls,
     planning_model_calls,
+    probe_calls,
     proposal_attempt_limit,
     worst_case_attempts,
 )
@@ -174,6 +175,7 @@ __all__ = [
     "plan_fits",
     "planning_calls",
     "planning_model_calls",
+    "probe_calls",
     "proposal_attempt_limit",
     "coordinate_plan",
     "schema_from_bootstrap",

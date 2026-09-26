@@ -1,32 +1,36 @@
 # blue-data-llm-source
 
-`blue-data-llm-source` exposes a language model's general knowledge as typed records and generates relations on demand for agent workflows that combine heterogeneous data sources. Callers supply a natural-language data request and, when needed, an attribute schema. The package returns records through a Python library, a command-line interface, and an MCP server.
+`blue-data-llm-source` is a Blue data source that makes a language model's general knowledge, including common-sense information, queryable as typed records (natural language → LLM → table). A caller submits a natural-language request and may declare an attribute schema. For larger data requests, the source can plan retrieval beyond a single model response. In planned modes, it can rewrite the request, infer or complete the output schema, estimate row count, and divide the query into hierarchical data tasks. It executes those tasks under explicit limits, checks the returned records against the schema, and merges records that share an identified key. Together, partitioning, task execution, and merging form a map-reduce process. The Python library, command-line interface, and MCP server expose the records and execution metadata. The records can be used alongside those from other Blue data sources.
 
 [Full documentation](docs/README.md) · [Quick start](docs/quickstart.md) · [Installation](docs/installation.md) · [Examples](examples/README.md) · [Changelog](CHANGELOG.md)
 
 ## Data source
 
-`LlmSource` generates records from model knowledge in response to a natural-language query. It has no maintained table, document corpus, or index. Optional caches reuse model responses. For a request about member states of the European Union, a caller can specify `country` and `accession_year:int` as output attributes.
+`LlmSource` uses a language model as its source of records. It has no maintained table, document corpus, or index; optional caches can reuse earlier model responses. For example, a query for European Union member states can declare `country` and `accession_year:int` as output attributes.
 
 The source implements the Blue `DataSource` interface under protocol `llm` and variant `openai`. A Postgres source uses the same interface under protocol `sql` and variant `postgres`.
 
 ## Primary uses
 
-**Structured access to model knowledge.** The source answers structured queries over information unavailable in a maintained source, or information that would be disproportionate to maintain for occasional use. This includes commonsense groupings and classifications as well as factual lists such as trade-bloc membership, companies listed in a specified year, standard container dimensions, and national capitals within a region.
+* `LlmSource` gives structured access to common-sense and other model knowledge, particularly when an agent needs a large set of records or lacks a suitable maintained data source. Callers can use the typed records directly or pass them to operators for filtering, aggregation, and joins with other sources.
 
-**On-demand relations in heterogeneous agent workflows.** An agent can generate a relation when it needs one, then pass its records to downstream operators alongside SQL, document, graph, and vector results. For example, generated `eu_members(country, accession_year)` records can be joined on `country` with Postgres `vendors(name, country)` rows.
+* `LlmSource` can generate a table needed to combine data from existing sources. An agent or data planner can request the table on demand. For example, generated `eu_members(country, accession_year)` records can be joined on `country` with Postgres `vendors(name, country)` rows. A downstream operator performs the join.
 
-Generated records require independent verification when factual accuracy or coverage matters. Model knowledge may be outdated. Use a maintained source for authoritative data and a document or vector source for facts in private documents.
+* Large sets of records can exceed the capacity of a single model response or be returned incompletely. Partitioned retrieval divides a request into bounded parts, can request additional records for a part, and merges results by key. It reports observed gaps and limits, but does not verify factual accuracy or guarantee full coverage.
 
-## Capabilities and limits
+Model-generated records require independent verification when factual accuracy or coverage matters. The model's knowledge may be outdated. Use a maintained source for authoritative data, and a document or vector source for facts in private documents.
 
-- **Typed, aligned records.** Each value is checked against its declared type; a value that fails is kept and reported in `meta.type_mismatches`. Returned keys are matched to the attributes you asked for, and a key that matches none is reported rather than dropped.
-- **Request planning.** Non-flat modes can rewrite the request, infer an output schema and key, and estimate row count. `meta.asked` reports an accepted rewrite; `meta.row_estimate` is a planning hint rather than a completeness measure.
-- **Bounded execution.** Rows can be capped for every request. With a client that supports usage reservation, time, cost, and provider-call ceilings can also be applied; unsupported ceilings are refused. Supported call, time, and cost ceilings are checked before provider contact, so a request that would cross one is refused. `estimate` gives the cost bound for a request without contacting a provider.
-- **Diagnostics on every result.** `fetch` returns the records with `meta`: the outcome, the model, calls, tokens, cost, elapsed time, the gaps it detected, and which limit stopped the run.
-- **Partitioned retrieval.** A request can be split into parts along a key, queried separately, and merged on record identity within caps on depth, parts, and calls. `meta.record_origins` identifies the producing parts; optional continuations can ask a part for additional records.
+## Features
 
-It does not verify facts and does not measure completeness. The records are model output: `meta.outcome=ok` means no execution failure was detected, and an empty `meta.gaps` means no supported diagnostic fired, not that the answer is complete or correct. Verify facts that matter against another source. [docs/guide.md](docs/guide.md) covers what each field does and does not promise.
+- Natural-language queries return records with caller-declared attributes and types. In planned modes, the source can infer an output schema and key when the caller does not provide them.
+- Planning can rewrite the request, estimate the expected number of rows, and divide a large request into bounded parts. The row estimate is a planning hint, not a completeness measure.
+- Partitioned retrieval can continue a part to request more records, merge records with the same key, and report which parts produced each record. The opt-in `plan.split_policy="evidence"` asks once before splitting; [the changelog](CHANGELOG.md#220--candidate) reports its measured results. With the default client, `llm.max_parallel` limits concurrent provider calls per event loop.
+- Values are checked against declared types, and returned fields are aligned with requested attributes. Mismatches and unmatched fields remain visible in result metadata.
+- Every request can cap returned rows. Provider-call, time, and cost ceilings are available when the configured client supports usage reservation. `estimate` checks a flat fetch without provider contact and returns a cost bound when pricing is available; otherwise it reports why no bound is available.
+- Each `fetch` result includes records and metadata about the outcome, model usage, cost, elapsed time, and detected gaps. Optional caches can reuse equivalent model responses.
+- The Python library, command-line interface, MCP server, and Blue `DataSource` interface expose the source to applications and agent workflows.
+
+`LlmSource` does not verify facts or measure completeness. `meta.outcome=ok` means no execution failure was detected; an empty `meta.gaps` means no supported diagnostic fired. Neither field establishes that the records are correct or complete. [docs/guide.md](docs/guide.md) explains these fields and their limits.
 
 ## Using it
 
@@ -61,7 +65,7 @@ If Conda cannot activate the environment, run `conda init zsh` (or `conda init b
 
 ### Python
 
-`fetch` asks for records; `estimate` bounds what the same request could cost without contacting a provider. The `llm_fn` below stands in for the model so the snippet runs offline. Omit it to use the model named by `llm.model`, which needs the `llm` extra and a provider key in the environment.
+`fetch` asks for records; `estimate` checks the cost of one flat fetch without contacting a provider and returns a bound when pricing is available. The `llm_fn` below stands in for the model so the snippet runs offline. Omit it to use the model named by `llm.model`, which needs the `llm` extra and a provider key in the environment.
 
 ```python
 from blue_data_llm_source import LlmSource

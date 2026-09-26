@@ -11,6 +11,7 @@ from blue_data_llm_source.llm.budget import Budget
 from blue_data_llm_source.planning.bounds import PlanLimits
 from blue_data_llm_source.planning.plan import Leaf
 from blue_data_llm_source.planning.transport import (
+    COMPLETE_WIRE_VERSION,
     ErrorData,
     LeafTask,
     LeafTaskResult,
@@ -45,6 +46,15 @@ def execution_settings(
     if temperature is not None:
         settings["temperature"] = temperature
     return settings
+
+
+def _thaw(value: Any) -> Any:
+    """A frozen task value back as the plain JSON the prompt renders."""
+    if isinstance(value, Mapping):
+        return {key: _thaw(item) for key, item in cast("Mapping[str, Any]", value).items()}
+    if isinstance(value, tuple):
+        return [_thaw(item) for item in cast("tuple[Any, ...]", value)]
+    return value
 
 
 def _task_limits(settings: Mapping[str, Any]) -> PlanLimits:
@@ -99,6 +109,9 @@ async def run_local_leaf(
             context=received.caller_context,
             prompt_version=received.prompt_version,
             expose_estimate=cast("bool", received.settings.get("expose_estimate", True)),
+            partition_keys=received.partition_keys,
+            held=_thaw(received.held_exclusions),
+            held_total=received.held_total,
         )
         error = None
         if run.error is not None:
@@ -107,6 +120,18 @@ async def run_local_leaf(
                 kind=type(run.exception).__name__ if run.exception is not None else "error",
                 message=run.error,
                 code=code if isinstance(code, str) else None,
+            )
+        if received.wire_version == COMPLETE_WIRE_VERSION:
+            # Answered under the contract the task named, so the result says so. The older
+            # contracts keep their historical result envelope unchanged.
+            return LeafTaskResult(
+                task_id=received.task_id,
+                records=run.records,
+                usages=list(usage_sink),
+                outcome=run.outcome,
+                error=error,
+                wire_version=received.wire_version,
+                prompt_version=received.prompt_version,
             )
         return LeafTaskResult(
             task_id=received.task_id,

@@ -54,6 +54,7 @@ ALWAYS_PRESENT_PLATFORM_FIELDS = [
     "observed_key_count",
     "marginal_key_yields",
     "incomplete_key_records",
+    "filter_contradictions",
 ]
 
 

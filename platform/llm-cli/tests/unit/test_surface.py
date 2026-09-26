@@ -93,7 +93,7 @@ def test_each_affected_command_states_the_precedence_chain(
 def test_the_chain_is_claimed_only_for_the_settings_that_have_one(runner: CliRunner) -> None:
     """`data query --help` promised the chain for "every setting below" it.
 
-    All fourteen `--plan-*` controls sit below it, no profile parameter carries a plan
+    All twenty-one `--plan-*` controls sit below it, no profile parameter carries a plan
     setting, and `--effort` is the only planning-adjacent option that reads configuration.
     """
     from blue_data_llm_cli.commands import data_query
@@ -105,7 +105,7 @@ def test_the_chain_is_claimed_only_for_the_settings_that_have_one(runner: CliRun
         for option in parameter.opts
         if option.startswith("--plan-")
     }
-    assert len(plan_flags) == 14
+    assert len(plan_flags) == 21
     assert not [name for name in cli_spec().names() if "PLAN" in name]
 
     text = " ".join(runner.invoke(cli, ["data", "query", "--help"]).stdout.split())

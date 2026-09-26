@@ -75,7 +75,7 @@ blue-llmdb --version
 ```
 
 ```text
-blue-llmdb 2.1.0
+blue-llmdb 2.2.0
 ```
 
 ```bash
@@ -88,7 +88,7 @@ blue-llmdb metadata inspect
 ┡━━━━━━━━━━╇━━━━━━━━┩
 │ protocol │ llm    │
 │ variant  │ openai │
-│ version  │ 2.1.0  │
+│ version  │ 2.2.0  │
 └──────────┴────────┘
 ```
 
@@ -102,7 +102,7 @@ blue-llmdb metadata inspect --format json
 {
   "protocol": "llm",
   "variant": "openai",
-  "version": "2.1.0"
+  "version": "2.2.0"
 }
 ```
 
@@ -347,7 +347,9 @@ blue-llmdb data query "the member states of the European Union" \
 
 `--plan-depth` bounds recursion, `--plan-partitions` bounds children per node, and `--plan-target-rows` supplies the uncertain row-count threshold for descendant splits. `--plan-leaves` bounds the parts a split may run, grouping values past it several to a part. `--plan-partition-key` guides only the root proposal. `--plan-schema-mode` takes `preserve`, which keeps caller attributes, or `enrich`, which lets non-flat planning append inferred ones.
 
-The remaining standard controls are `--plan-keys` for ordered composite identity, `--plan-exact-rows` for a hard target when the plan has one leaf, `--plan-exclusion-bytes` for continuation-prompt size, `--plan-planning-order` for one of the five schedules, and `--plan-expose-estimate`/`--no-plan-expose-estimate` for extraction-prompt context. The CLI, MCP, and Python APIs share these 14 controls. Rule-backed distribution controls and the optional planning receipt are available only through direct Python calls. The two locked schedules need a non-empty caller schema and ordered `--plan-keys`. A multi-leaf plan does not apply `--plan-exact-rows` and adds `exact_rows_not_leaf_bound` to the result's gaps.
+The remaining standard controls are `--plan-keys` for ordered composite identity, `--plan-exact-rows` for a hard target when the plan has one leaf, `--plan-exclusion-bytes` for continuation-prompt size, `--plan-planning-order` for one of the five schedules, and `--plan-expose-estimate`/`--no-plan-expose-estimate` for extraction-prompt context.
+
+Five experimental switches choose how a split is asked, and each defaults to the 2.1.0 behaviour. `--plan-leaf-prompt keyed-leaf-fetch-2` sends the leaf contract that asks for every matching record rather than a sample. `--plan-child-wording canonical` words each partitioned child from the request and its own filters instead of copying the parent's. `--plan-filter-enforcement drop` removes, at the leaf and before merging, records that contradict their leaf's filter; `flag`, the default, keeps them, and both count them in `filter_contradictions`. `--plan-range-filters`/`--no-plan-range-filters` reads partition values written as integer spans, such as `1946-1952`, as range filters, and needs `--plan-leaf-prompt keyed-leaf-fetch-2`. `--plan-partition-guardrails`/`--no-plan-partition-guardrails` sends proposal rules against identifier, measurement, placeholder and catch-all values, and refuses a numeric key bucketed like a measurement. None of them adds a call. `keyed-leaf-fetch-2` reduced recall with GPT-4o in internal testing and is not recommended. `--plan-split-policy evidence` asks the root of a partitioned plan once before splitting it, and splits only when that answer was cut off, by the output allowance or mid-answer, when the probe failed, or when it holds fewer than half the keys an estimate above `--plan-split-threshold-rows` (default 120) expects; otherwise that one answer is the result, and `split_decision` in the result says which. The probe is one more call in the published bound. It improved recall with GPT-4o in an internal benchmark and has not been measured on other models. The CLI, MCP, and Python APIs share these 21 controls. Rule-backed distribution controls and the optional planning receipt are available only through direct Python calls. The two locked schedules need a non-empty caller schema and ordered `--plan-keys`. A multi-leaf plan does not apply `--plan-exact-rows` and adds `exact_rows_not_leaf_bound` to the result's gaps.
 
 None of the `--plan-*` controls has a profile parameter, so none of them is in the precedence chain: each is read from the command line and nowhere else. A plan setting describes one ask, not a deployment, and a partition key or a row target left in a profile would apply itself to the next, unrelated query. `--effort` is the one planning-adjacent option that does read configuration, as `BLUE_DATA_LLM_SOURCE_EFFORT`, because a continuation allowance is an appetite for spending rather than a shape.
 
@@ -529,6 +531,7 @@ blue-llmdb data query "the member states of the European Union" --format json
     "observed_key_count": 0,
     "marginal_key_yields": [],
     "incomplete_key_records": 0,
+    "filter_contradictions": 0,
     "gaps": [],
     "stop_reasons": [],
     "requested_attrs": ["country", "accession_year"]
@@ -542,7 +545,7 @@ blue-llmdb data query "the member states of the European Union" --format json
 
 Three keys, and the same three every time.
 
-`meta` always carries `outcome`, the accounting fields, `gaps`, `stop_reasons`, `requested_attrs`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields` and `incomplete_key_records`, even when the list is empty: a reader branches on what they say rather than on whether they arrived. `normalization_collisions`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to` and `cache_hits` appear when there is something to report, and `accounting_known` appears only when it is false. `--verbose` adds `unmapped_keys`, `remapped_keys`, `type_mismatches` and `key_collisions`, which carry arbitrary model output.
+`meta` always carries `outcome`, the accounting fields, `gaps`, `stop_reasons`, `requested_attrs`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records` and `filter_contradictions`, even when the list is empty: a reader branches on what they say rather than on whether they arrived. `normalization_collisions`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to` and `cache_hits` appear when there is something to report, and `accounting_known` appears only when it is false. `--verbose` adds `unmapped_keys`, `remapped_keys`, `type_mismatches` and `key_collisions`, which carry arbitrary model output.
 
 `settings` is this CLI's own envelope, and its scope is exactly what the CLI can know: the values this invocation resolved and passed to the library, and the tier each came from. It is not a report of the library's effective configuration. Keys are the library's own dotted names, so the same spelling appears here, in the profile file and in the MCP schema. A property this run did not set appears in neither map.
 

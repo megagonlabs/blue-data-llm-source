@@ -72,10 +72,10 @@ plan, planning counters, and optional receipt are later contracts built from tho
 
 `LeafTask` is a different object. It is the versioned execution DTO produced after planning, with
 the prompt version and execution settings needed to cross the local or process boundary. Accepted
-`prompt_version` values are `leaf-fetch-1` for legacy wire version 1 and `keyed-leaf-fetch-1`
-for current wire versions 2 and 3. The two name what the leaf prompt states: the keyed contract
-gives the model the ordered primary key and may give it a row estimate, and the legacy contract
-gives neither. It transports the cardinality estimate even when `plan.expose_estimate` is false;
+`prompt_version` values are `leaf-fetch-1` for legacy wire version 1, `keyed-leaf-fetch-1`
+for wire versions 2, 3, 4 and 6, and `keyed-leaf-fetch-2` for wire version 5. Wire version 6 is a `keyed-leaf-fetch-1` task seeded with `held_exclusions` and `held_total`, the keys a root probe already returned; wire version 5 carries the same two fields. They name what the leaf prompt states: the keyed contracts
+give the model the ordered primary key and may give it a row estimate, and the legacy contract
+gives neither. `keyed-leaf-fetch-2`, selected by `plan.leaf_prompt`, also asks for every matching record, states the estimate as a sentence rather than an object, and presents constraints that partitioning introduced on a schema column as column filters and all others, request-level constraints included, as request scope. A wire version 5 task carries `partition_keys`, the filter names partitioning introduced. Each wire version admits exactly one prompt version, so a task built for one contract cannot be answered with the other. `LeafTask` transports the cardinality estimate even when `plan.expose_estimate` is false;
 that setting only omits the estimate from extraction prompts. Model cardinality remains advisory
 throughout planning and extraction. `plan.exact_rows` is a hard target only when the plan has one
 leaf. A multi-leaf plan does not apply it and reports `exact_rows_not_leaf_bound` in `meta.gaps`.
@@ -161,7 +161,9 @@ results without distribution search keep the two-key form. The CLI and MCP omit 
 | `marginal_key_yields` | `list[int]` | New normalized key identities from each extraction attempt in leaf order; when no primary key exists, new exact records per attempt |
 | `incomplete_key_records` | `int` | Distinct per-leaf records missing at least one primary-key value; zero when no primary key exists |
 | `normalization_collisions` | `list[dict]` | Per-leaf complete keys that compare equal after declared-type-aware normalization but use different display values; each entry carries `primary_keys`, `kept`, and `collided` |
+| `split_decision` | `str \| None` | What the root probe decided under `plan.split_policy="evidence"`: `probe_accepted` (the probe's answer is the result), `probe_split_length` (the provider said its output allowance ended the answer), `probe_split_incomplete` (the answer ended mid-document and only its complete records were read, with no reason from the provider), `probe_split_shortfall` (fewer than half the keys an estimate above `plan.split_threshold_rows` expects) or `probe_split_failed` (no usable answer). `None` under the default policy, when the root could not split and was not probed, or when `plan.exact_rows=0` answered the root without a call, and then absent from `FetchResult.to_dict()` and `meta_view` |
 | `repaired_numbers` | `int` | Numbers the model wrote with thousands separators in an object value, such as `4,470`, read as `4470`. Such a response is not valid JSON; strict parsing is tried first and this is the one repair applied before parsing it again. `0` when nothing was repaired |
+| `filter_contradictions` | `int` | Records whose checkable filter column contradicts the filter of the leaf that returned them, counted once per record before reduction. A filter is checkable when it names a declared attribute of a recognised type and that type can read both the record's value and the filter's; strings compare after case and whitespace folding, numbers by value. Kept under `plan.filter_enforcement="flag"`, removed at the leaf under `"drop"`, and counted either way. `0` means none was observed |
 | `observed_keys` | `list[str]` | Every key the model produced, in order of first appearance |
 | `remapped_keys` | `dict[str, str]` | Returned key mapped to the requested attribute it was matched to |
 | `unmapped_keys` | `list[str]` | Returned keys that matched no requested attribute |

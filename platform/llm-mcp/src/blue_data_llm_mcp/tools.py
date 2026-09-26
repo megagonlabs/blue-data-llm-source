@@ -166,9 +166,9 @@ LIMIT_KEYS: tuple[str, ...] = tuple(LIMIT_PROPERTIES)
 # proceeds under a default the caller did not choose and cannot see. The CLI's `--plan-*`
 # flags map to these keys; the README carries that table too.
 
-# The three closed sets the library refuses by name, written out here as schema literals: a
+# The seven closed sets the library refuses by name, written out here as schema literals: a
 # client reads the accepted values out of the advertised schema, so they are part of what
-# this server publishes rather than a lookup it performs. A test pins all three against the
+# this server publishes rather than a lookup it performs. A test pins all seven against the
 # library's own constants, so a change there fails here instead of reaching a caller as a
 # schema that no longer matches what the runtime accepts.
 PLAN_MODES = ("flat", "partitioned", "row_by_row")
@@ -180,6 +180,10 @@ PLANNING_ORDERS = (
     "planning.locked_parallel",
     "planning.combined",
 )
+LEAF_PROMPTS = ("keyed-leaf-fetch-1", "keyed-leaf-fetch-2")
+CHILD_WORDINGS = ("parent", "canonical")
+FILTER_ENFORCEMENTS = ("flag", "drop")
+SPLIT_POLICIES = ("always", "evidence")
 PLAN_PROPERTIES: dict[str, Any] = {
     "plan.mode": {
         "type": "string",
@@ -286,6 +290,65 @@ PLAN_PROPERTIES: dict[str, Any] = {
     "plan.max_exclusion_bytes": {
         "type": "integer",
         "description": "Most encoded bytes of whole key exclusions in one continuation.",
+        "minimum": 0,
+    },
+    "plan.leaf_prompt": {
+        "type": "string",
+        "enum": list(LEAF_PROMPTS),
+        "description": (
+            "Leaf prompt contract for non-flat modes. `keyed-leaf-fetch-1` is the default; "
+            "`keyed-leaf-fetch-2` asks for every matching record, states the expected count "
+            "as a sentence, and allows an empty answer only when nothing matches. Refused in "
+            "flat mode."
+        ),
+    },
+    "plan.child_wording": {
+        "type": "string",
+        "enum": list(CHILD_WORDINGS),
+        "description": (
+            "How a child part is worded in partitioned mode: `parent` (default) copies the "
+            "parent's wording; `canonical` derives it from the request and the child's filters."
+        ),
+    },
+    "plan.filter_enforcement": {
+        "type": "string",
+        "enum": list(FILTER_ENFORCEMENTS),
+        "description": (
+            "Records that contradict their part's filter are kept (`flag`, default) or removed "
+            "at the part before merging (`drop`). Both count them in "
+            "meta.filter_contradictions. `drop` is refused in flat mode."
+        ),
+    },
+    "plan.range_filters": {
+        "type": "boolean",
+        "description": (
+            "Read partition values written as integer spans, on an integer column, as range "
+            "filters. Requires partitioned mode and plan.leaf_prompt `keyed-leaf-fetch-2`."
+        ),
+    },
+    "plan.partition_guardrails": {
+        "type": "boolean",
+        "description": (
+            "Send partition proposals with key and value rules and refuse a numeric key "
+            "bucketed like a measurement. Requires partitioned mode."
+        ),
+    },
+    "plan.split_policy": {
+        "type": "string",
+        "enum": list(SPLIT_POLICIES),
+        "description": (
+            "`always` (default) splits the root of a partitioned plan whatever it holds. "
+            "`evidence` asks the root once first and splits only when that answer was cut off "
+            "or failed, or holds fewer than half the keys a large estimate expects; "
+            "otherwise that answer is the result. Requires partitioned mode."
+        ),
+    },
+    "plan.split_threshold_rows": {
+        "type": "integer",
+        "description": (
+            "Under plan.split_policy `evidence`, the estimate above which a short root answer "
+            "splits. Default: 120."
+        ),
         "minimum": 0,
     },
 }

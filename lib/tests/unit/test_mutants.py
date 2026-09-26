@@ -105,7 +105,7 @@ class TestPuttingTheDefectBackChangesWhatIsReported:
     ) -> None:
         # The critical defect. Two tests written to prove grouping worked both split the
         # rendered value on ", ", so both agreed with it and always would have.
-        def joined(constraints: dict[str, Constraint]) -> list[str]:
+        def joined(constraints: dict[str, Exact | OneOf]) -> list[str]:
             return [
                 f"- field {json.dumps(str(name))}: "
                 f"{json.dumps(', '.join(str(value) for value in c.values))}"

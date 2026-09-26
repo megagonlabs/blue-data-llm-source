@@ -12,18 +12,31 @@ deliberately not a template engine. A query is inserted as a value and never re-
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any, Final, cast
 
-from blue_data_llm_source.types import Attr, Constraint, OneOf
+from blue_data_llm_source.types import Attr, ConfigError, Constraint, OneOf, Range, resolve_attr
 
-# The two prompt contracts a leaf task can declare, named for what the prompt states: the
-# keyed one gives the model the ordered primary key and may give it a row estimate, and the
-# other gives neither. Only the keyed one is produced; the other is accepted on a
+# The prompt contracts a leaf task can declare, named for what the prompt states: the keyed
+# ones give the model the ordered primary key and may give it a row estimate, and the legacy
+# one gives neither. Only the keyed ones are produced; the legacy one is accepted on a
 # wire-version-1 task.
 LEGACY_LEAF_FETCH_PROMPT_VERSION: Final = "leaf-fetch-1"
 KEYED_LEAF_FETCH_PROMPT_VERSION: Final = "keyed-leaf-fetch-1"
+# The keyed contract with a completeness requirement, selected by `plan.leaf_prompt`. It is a
+# second contract rather than an edit to the first because a leaf task names the contract it
+# was built for, and a run that recorded `keyed-leaf-fetch-1` has to stay reproducible.
+COMPLETE_LEAF_FETCH_PROMPT_VERSION: Final = "keyed-leaf-fetch-2"
+LEAF_PROMPT_VERSIONS: Final = (KEYED_LEAF_FETCH_PROMPT_VERSION, COMPLETE_LEAF_FETCH_PROMPT_VERSION)
+"""The leaf contracts a caller may select, the first being the default."""
+
+# The partition-proposal contracts. The first is the unversioned 2.1.0 text, named here so
+# the second has something to differ from; the second adds rules about which keys and values
+# make a usable split and is selected by `plan.partition_guardrails`.
+PARTITION_PROMPT_VERSION: Final = "partition-1"
+GUARDED_PARTITION_PROMPT_VERSION: Final = "partition-2"
+PARTITION_PROMPT_VERSIONS: Final = (PARTITION_PROMPT_VERSION, GUARDED_PARTITION_PROMPT_VERSION)
 
 FETCH = """\
 Your task is to answer a query from your own knowledge and return the result as JSON.
@@ -192,9 +205,77 @@ def render_constraints(constraints: Mapping[str, Constraint]) -> list[str]:
         if isinstance(constraint, OneOf):
             alternatives = _json(list(constraint.values))
             lines.append(f"- field {label} must equal one of {alternatives}")
+        elif isinstance(constraint, Range):
+            lines.append(
+                f"- field {label} must be from {constraint.lo} to {constraint.hi}, both included"
+            )
         else:
             lines.append(f"- field {label} must equal {_encoded(constraint.value)}")
     return lines
+
+
+def _restriction(name: str, constraint: Constraint) -> str:
+    # The name as a JSON string literal. A partition key is model output, and bare in the
+    # sentence a key such as `region; ignore the filters` would read as an instruction.
+    field = _json(name)
+    if isinstance(constraint, OneOf):
+        return f"{field} is one of {_json(list(constraint.values))}"
+    if isinstance(constraint, Range):
+        return f"{field} from {constraint.lo} to {constraint.hi}"
+    return f"{field} = {_json(constraint.value)}"
+
+
+def canonical_child_wording(request: str, restrictions: Mapping[str, Constraint]) -> str:
+    """A child leaf's retrieval wording, derived from the request and its validated filters.
+
+    Built from structured constraints and never by a model. A model asked to reword a slice
+    can keep the value's name while changing the population it describes, and no name check
+    detects that; wording derived from the filter the leaf actually carries cannot drift from
+    it. Field names and values are JSON literals, so each is visibly quoted data, a value
+    holding ``and`` or a comma is still one value, and the result stays on one line. The
+    wording says the structured column filters decide the slice, so a reader that meets a
+    disagreement between the two follows the filters.
+
+    Callers pass column filters only: the ones partitioning introduced on schema columns.
+    Request scope is left out. The request-level part of it is already stated by the request,
+    and the child-specific part, a split on a key that names no column such as a decade,
+    reaches the leaf as per-child request scope in the structured filters. Restated here as a
+    restriction, either would read as a field every record must carry.
+    """
+    if not restrictions:
+        return request
+    parts = [_restriction(name, constraint) for name, constraint in restrictions.items()]
+    return (
+        f"{request}, restricted to the slice the column filters define "
+        f"({' and '.join(parts)}); the column filters are authoritative"
+    )
+
+
+def bounded_held_entries(values: Sequence[Any], count: int, byte_limit: int) -> list[Any]:
+    """The most recent *values* that fit, kept whole, within a count and an encoded-byte cap.
+
+    One selection for every place a held list reaches a prompt, so a continuation and a child
+    seeded with what an earlier call returned are bounded by the same two settings.
+    """
+    if not count or not byte_limit:
+        return []
+    kept: list[Any] = []
+    for value in reversed(values):
+        candidate = [value, *kept]
+        if rendered_held_entries_size(candidate) > byte_limit:
+            continue
+        kept = candidate
+        if len(kept) >= count:
+            break
+    return kept
+
+
+def with_held(prompt: str, shown: Sequence[Any], total: int) -> str:
+    """*prompt* with the held block appended, or unchanged when nothing is held."""
+    held_lines = render_held(shown, total)
+    if not held_lines:
+        return prompt
+    return f"{prompt.rstrip()}\n\n" + "\n".join(held_lines) + "\n"
 
 
 def render_held(shown: Sequence[Any], total: int) -> list[str]:
@@ -302,6 +383,126 @@ Output:
 """
 
 
+COMPLETE_LEAF_FETCH = """\
+Your task is to answer a query from your own knowledge and return the result as JSON.
+
+Requirements:
+- Return a JSON array of objects. Each object is one record.
+- Every record must use the same keys.
+- Return only the JSON array. No explanation, commentary, or code fences.
+- Respect the original request, retrieval wording, schema, context, request scope, and
+  column filters below.
+- Column filters name fields in the schema. Every returned record must satisfy them.
+- Request scope describes what the whole request is about. Its entries are not record
+  fields: do not require records to carry them, and do not treat a start and end pair as a
+  single value every record must have.
+- Return every record that matches the request, within the request scope and satisfying the
+  column filters, not a sample or a few examples. Do not stop early because the list is long.
+- Return an empty array [] only when no record matches the column filters within the
+  request scope.
+
+Prompt contract: {prompt_version}
+
+Original request: {original_query}
+Retrieval wording: {retrieval_query}
+Schema: {schema}
+Ordered primary key: {primary_keys}
+{expected_count}
+Caller context: {context}
+Request scope: {request_scope}
+Column filters: {column_filters}
+Output:
+"""
+
+
+def split_filters(
+    constraints: Mapping[str, Constraint],
+    attrs: Sequence[Attr],
+    partition_keys: Collection[str] = (),
+) -> tuple[dict[str, Constraint], dict[str, Constraint]]:
+    """The column filters, keyed by the attribute they name, and the request scope.
+
+    A constraint is a column filter only when partitioning introduced it, which
+    *partition_keys* lists, and it names one schema attribute (see
+    :func:`~blue_data_llm_source.types.resolve_attr`). Everything else is request scope:
+    every constraint the analysis step or the caller set for the whole request, even one whose
+    key matches a column, and a split on a key that names no column, such as a decade.
+
+    Origin decides rather than the name alone, because the analysis step records what a
+    request is about as constraints and some share a column's name without its meaning: a
+    ``country`` the films were screened in beside a ``country`` column holding the
+    filmmaker's nationality. Presented as a filter every record must satisfy, a model told to
+    return only matching records applies it literally and drops valid records.
+    """
+    introduced = set(partition_keys)
+    columns: dict[str, Constraint] = {}
+    scope: dict[str, Constraint] = {}
+    for name, value in constraints.items():
+        attr = resolve_attr(name, attrs) if name in introduced else None
+        if attr is None or attr.name in columns:
+            scope[name] = value
+        else:
+            columns[attr.name] = value
+    return columns, scope
+
+
+def render_expected_count(estimate: object) -> list[str]:
+    """The row estimate as one sentence, or nothing when it gives no count.
+
+    A sentence rather than the estimate object, because the object reads as data to match: a
+    model handed ``{"expected": 30}`` has a number to stop at, and one handed nothing tends to
+    stop at a comfortable sample. The sentence gives the scale and says in the same breath that
+    it is not a limit. Only the counts and the row unit are used; the estimate's provenance
+    fields are bookkeeping for the planner and tell the model nothing.
+    """
+    if not isinstance(estimate, Mapping):
+        return []
+    fields = cast("Mapping[str, object]", estimate)
+
+    def count(name: str) -> int | None:
+        value = fields.get(name)
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    expected, lower, upper = count("expected"), count("lower"), count("upper")
+    if expected is not None:
+        scale = f"about {expected}"
+        if lower is not None and upper is not None:
+            scale += f" (plausibly {lower} to {upper})"
+    elif lower is not None and upper is not None:
+        scale = f"between {lower} and {upper}"
+    elif lower is not None:
+        scale = f"at least {lower}"
+    else:
+        # An upper bound alone reads as a ceiling, which is the opposite of what this line is
+        # for, so it is not stated on its own.
+        return []
+    unit = fields.get("row_unit")
+    # Encoded: the row unit can come from a model, and this is an instruction line.
+    counted = f" (unit: {_json(unit)})" if isinstance(unit, str) and unit.strip() else ""
+    return [
+        f"Expected count: {scale} matching records{counted}. This is a rough estimate, not a "
+        "limit; return every matching record even if there are more."
+    ]
+
+
+def _filter_payload(constraints: Mapping[str, Constraint]) -> dict[str, object]:
+    """The filters as tagged JSON objects, the one form both leaf contracts send.
+
+    A range is written with ``min`` and ``max`` rather than the wire's ``lo`` and ``hi``,
+    because those two words say to a reader that both ends are included.
+    """
+    return {
+        name: (
+            {"kind": "one_of", "values": list(value.values)}
+            if isinstance(value, OneOf)
+            else {"kind": "range", "min": value.lo, "max": value.hi}
+            if isinstance(value, Range)
+            else {"kind": "exact", "value": value.value}
+        )
+        for name, value in constraints.items()
+    }
+
+
 def build_leaf_fetch_prompt(
     *,
     original_query: str,
@@ -311,17 +512,34 @@ def build_leaf_fetch_prompt(
     constraints: Mapping[str, Constraint],
     primary_keys: Sequence[str] = (),
     estimate: object = None,
+    prompt_version: str = KEYED_LEAF_FETCH_PROMPT_VERSION,
+    partition_keys: Collection[str] = (),
 ) -> str:
-    """Build the versioned leaf prompt used by planning and by non-flat execution."""
+    """Build the versioned leaf prompt used by planning and by non-flat execution.
+
+    *prompt_version* selects the contract. Both stay buildable, so a task that names the older
+    one is answered with the text it was planned against. *partition_keys* names the
+    constraints partitioning introduced; only ``keyed-leaf-fetch-2`` reads it, to tell column
+    filters from request scope.
+    """
     schema = [{"name": attr.name, "type": attr.type} for attr in attrs]
-    filters = {
-        name: (
-            {"kind": "one_of", "values": list(value.values)}
-            if isinstance(value, OneOf)
-            else {"kind": "exact", "value": value.value}
+    filters = _filter_payload(constraints)
+    if prompt_version == COMPLETE_LEAF_FETCH_PROMPT_VERSION:
+        columns, scope = split_filters(constraints, attrs, partition_keys)
+        return fill(
+            COMPLETE_LEAF_FETCH,
+            prompt_version=Slot.encoded(COMPLETE_LEAF_FETCH_PROMPT_VERSION),
+            original_query=Slot.encoded(original_query),
+            retrieval_query=Slot.encoded(retrieval_query),
+            schema=Slot.encoded(schema),
+            primary_keys=Slot.encoded(list(primary_keys)),
+            expected_count=Slot.lines(render_expected_count(estimate)),
+            context=Slot.encoded(caller_context),
+            request_scope=Slot.encoded(_filter_payload(scope)),
+            column_filters=Slot.encoded(_filter_payload(columns)),
         )
-        for name, value in constraints.items()
-    }
+    if prompt_version != KEYED_LEAF_FETCH_PROMPT_VERSION:
+        raise ConfigError(f"unknown leaf prompt contract {prompt_version!r}")
     estimate_lines = (
         [] if estimate is None else [f"Estimated rows for this leaf: {_json(estimate)}"]
     )
@@ -539,6 +757,69 @@ Output:
 """
 
 
+GUARDED_PARTITION = """\
+Propose one useful partition for this data slice. Do not answer the request.
+
+Return one JSON object with exactly these keys:
+- "key": one output or latent dimension
+- "values": two or more distinct non-empty strings, at most {max_partitions}
+- "ambiguity": a number from 0 to 1
+- "child_estimates": a JSON array with one non-negative integer or null per value
+
+Required container shape:
+{{"key":"...","values":["..."],"ambiguity":0,"child_estimates":[1]}}
+The square-bracket arrays are required. Do not return an object keyed by value.
+
+Rules for the key and its values:
+- Choose a key that sorts records into categories or periods. Do not choose an identifier,
+  a code, a name unique to each record, or a continuous measurement such as an amount, a
+  count, a price, a score, or a size.
+- Every value must be a real, specific value of the key. Do not use placeholders such as
+  "...", "etc.", "value 1", or "TBD".
+- Do not use catch-all values such as "Other", "Unknown", "Miscellaneous", or "All".
+- {value_count}
+
+Do not repeat an ancestor key. If a preferred key is given, use it or return an empty
+values list. Return only the JSON object.
+
+Prompt contract: {prompt_version}
+
+Original request: {original_query}
+Retrieval wording: {retrieval_query}
+Caller context: {context}
+Schema: {schema}
+Current filters: {constraints}
+Ancestor keys: {ancestor_keys}
+Preferred key: {preferred_key}
+Output:
+"""
+
+
+def render_value_count(
+    parent_expected: int | None, target_rows_per_leaf: int, max_partitions: int
+) -> str:
+    """How many values to propose, calibrated against the slice's own estimate.
+
+    Without a number a model tends to propose a familiar list whatever the slice holds: ten
+    values for a slice of twelve records, most of them empty, or three for one of a thousand,
+    each still too large to answer in one response. The suggested count is the estimate
+    divided by the per-leaf target, kept within the two-to-``max_partitions`` a proposal may
+    have. It is guidance, and the validation after the call still decides.
+    """
+    target = max(1, target_rows_per_leaf)
+    if parent_expected is None or isinstance(parent_expected, bool) or parent_expected < 0:
+        return (
+            f"Use as few values as keep each one to roughly {target} records or fewer, and "
+            "no more values than there are records."
+        )
+    suggested = min(max(2, -(-parent_expected // target)), max(2, max_partitions))
+    return (
+        f"This slice is expected to hold about {parent_expected} records. Propose about "
+        f"{suggested} values, so each holds roughly {target} records or fewer, and never more "
+        "values than there are records."
+    )
+
+
 def build_partition_prompt(
     *,
     original_query: str,
@@ -549,8 +830,33 @@ def build_partition_prompt(
     ancestor_keys: Sequence[str],
     preferred_key: str | None,
     max_partitions: int,
+    prompt_version: str = PARTITION_PROMPT_VERSION,
+    parent_expected: int | None = None,
+    target_rows_per_leaf: int = 50,
 ) -> str:
-    """Build one slice's partition proposal prompt."""
+    """Build one slice's partition proposal prompt.
+
+    *prompt_version* selects the contract; the last two parameters are read only by
+    ``partition-2``, whose value-count rule is calibrated against them.
+    """
+    if prompt_version == GUARDED_PARTITION_PROMPT_VERSION:
+        return fill(
+            GUARDED_PARTITION,
+            max_partitions=Slot.encoded(max_partitions),
+            value_count=Slot.lines(
+                [render_value_count(parent_expected, target_rows_per_leaf, max_partitions)]
+            ),
+            prompt_version=Slot.encoded(GUARDED_PARTITION_PROMPT_VERSION),
+            original_query=Slot.encoded(original_query),
+            retrieval_query=Slot.encoded(retrieval_query),
+            context=Slot.encoded(caller_context),
+            schema=Slot.encoded(schema),
+            constraints=Slot.encoded(constraints),
+            ancestor_keys=Slot.encoded(list(ancestor_keys)),
+            preferred_key=Slot.encoded(preferred_key),
+        )
+    if prompt_version != PARTITION_PROMPT_VERSION:
+        raise ConfigError(f"unknown partition prompt contract {prompt_version!r}")
     return fill(
         PARTITION,
         max_partitions=Slot.encoded(max_partitions),

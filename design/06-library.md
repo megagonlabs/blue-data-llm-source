@@ -327,6 +327,8 @@ class ExecMeta:
     incomplete_key_records: int = 0
     normalization_collisions: list[dict[str, Any]] = ...
     repaired_numbers: int = 0
+    split_decision: str | None = None
+    filter_contradictions: int = 0
     observed_keys: list[str] = ...
     unmapped_keys: list[str] = ...
     remapped_keys: dict[str, str] = ...
@@ -343,7 +345,7 @@ class ExecMeta:
 
 What happened during a fetch, alongside the records. `observed_keys` lists every key the model produced, `remapped_keys` maps a returned key to the requested attribute it was matched to, and `unmapped_keys` lists keys with no match. `type_mismatches` lists the values that would not coerce to their declared types. `key_collisions` lists returned keys whose values were not used because another key had already answered the same attribute. `stop_reasons` is always present and retains every observed stop fact; `stopped_by` is its first member. `gaps` is always present and carries supported operational diagnostics, not a completeness result. `requested_attrs` remains the caller declaration.
 
-`cardinality_estimate` is the accepted non-flat bootstrap estimate with `expected`, `lower`, `upper`, `row_unit`, `source`, `parse_status`, and `diagnostics`; `None` means flat mode or that planning did not produce the structure. `row_estimate` is its `expected` value for compatibility. Both are planning evidence, not measured row counts or completeness measures. `primary_keys` is the ordered set of identifying attributes used for execution and reduction. `observed_key_count` counts distinct complete keys in the final returned records, after reduction, deduplication, and the row cap. `marginal_key_yields` records the new normalized key identities from each extraction attempt in leaf order; without primary keys it counts new exact records. `incomplete_key_records` counts distinct per-leaf records missing at least one primary-key value. `normalization_collisions` reports per-leaf key spellings that compare equal after declared-type-aware normalization, with `primary_keys`, `kept`, and `collided` in each entry. `repaired_numbers` counts numbers the model wrote with thousands separators in an object value, such as `4,470`, that were read as `4470`; such a response is not valid JSON and is read only after that one repair. These observations do not establish that all keys or rows were found.
+`cardinality_estimate` is the accepted non-flat bootstrap estimate with `expected`, `lower`, `upper`, `row_unit`, `source`, `parse_status`, and `diagnostics`; `None` means flat mode or that planning did not produce the structure. `row_estimate` is its `expected` value for compatibility. Both are planning evidence, not measured row counts or completeness measures. `primary_keys` is the ordered set of identifying attributes used for execution and reduction. `observed_key_count` counts distinct complete keys in the final returned records, after reduction, deduplication, and the row cap. `marginal_key_yields` records the new normalized key identities from each extraction attempt in leaf order; without primary keys it counts new exact records. `incomplete_key_records` counts distinct per-leaf records missing at least one primary-key value. `normalization_collisions` reports per-leaf key spellings that compare equal after declared-type-aware normalization, with `primary_keys`, `kept`, and `collided` in each entry. `repaired_numbers` counts numbers the model wrote with thousands separators in an object value, such as `4,470`, that were read as `4470`; such a response is not valid JSON and is read only after that one repair. `filter_contradictions` counts records whose checkable filter column contradicts the filter of the leaf that returned them, once per record and before reduction; `plan.filter_enforcement` decides whether they are kept (`flag`) or removed at the leaf (`drop`), and zero means none was observed, not that every leaf obeyed. `split_decision` says what the root probe decided under `plan.split_policy="evidence"`: `probe_accepted`, `probe_split_length`, `probe_split_incomplete`, `probe_split_shortfall` or `probe_split_failed`; it is `None` under the default policy or when the root could not split and was not probed. These observations do not establish that all keys or rows were found.
 
 `record_origins` runs parallel to records, and `asked` carries a restated query when one ran.
 
@@ -769,17 +771,21 @@ Every message names the offending value and the accepted form, because a caller 
 | `render_held_entries(shown)` | `list[str]` | Complete encoded lines for held records |
 | `rendered_held_entries_size(shown)` | `int` | UTF-8 byte size of the held-record block, including line separators |
 | `build_fetch_prompt(query, attrs, *, caller_context, constraints, held, held_total, primary_keys, estimate)` | `str` | Flat extraction and continuation prompt |
-| `build_leaf_fetch_prompt(...)` | `str` | Versioned non-flat leaf extraction prompt |
+| `canonical_child_wording(request, restrictions)` | `str` | A child leaf's retrieval wording under `plan.child_wording="canonical"`: the root request plus its added column filters, with names and values as JSON literals and the column filters named as authoritative, such as `…, restricted to the slice the column filters define ("year" from 1946 to 1952); the column filters are authoritative` |
+| `split_filters(constraints, attrs, partition_keys)` | `tuple[dict, dict]` | Column filters (constraints partitioning introduced that name one schema attribute, matched without regard to case) and request scope (the rest), as the `keyed-leaf-fetch-2` prompt presents them |
+| `render_expected_count(estimate)` | `list[str]` | The row estimate as one sentence for the `keyed-leaf-fetch-2` contract, or nothing when it has no usable count |
+| `build_leaf_fetch_prompt(..., prompt_version)` | `str` | Versioned non-flat leaf extraction prompt; `prompt_version` selects `keyed-leaf-fetch-1` (default) or `keyed-leaf-fetch-2` |
 | `build_analyse_prompt(query, context)` | `str` | Query-analysis prompt |
 | `build_schema_prompt(...)` | `str` | Independent schema prompt |
 | `build_cardinality_prompt(...)` | `str` | Independent cardinality prompt |
 | `build_bootstrap_prompt(...)` | `str` | Compatible combined analysis, schema, and cardinality prompt |
-| `build_partition_prompt(...)` | `str` | Partition-proposal prompt |
+| `render_value_count(parent_expected, target_rows_per_leaf, max_partitions)` | `str` | The `partition-2` value-count rule, calibrated against the slice's estimate |
+| `build_partition_prompt(..., prompt_version, parent_expected, target_rows_per_leaf)` | `str` | Partition-proposal prompt; `prompt_version` selects `partition-1` (default, the 2.1.0 text) or `partition-2`, which adds key and value rules |
 | `build_distribution_prompt(...)` | `str` | Rule-backed distribution prompt |
 | `build_entity_prompt(...)` | `str` | Row-by-row entity-enumeration prompt |
 
-The nine templates are `FETCH`, `LEAF_FETCH`, `ANALYSE`, `SCHEMA`, `CARDINALITY`,
-`BOOTSTRAP`, `PARTITION`, `DISTRIBUTION`, and `ENUMERATE_ENTITIES`. Each builder passes `Slot`
+The eleven templates are `FETCH`, `LEAF_FETCH`, `COMPLETE_LEAF_FETCH`, `ANALYSE`, `SCHEMA`, `CARDINALITY`,
+`BOOTSTRAP`, `PARTITION`, `GUARDED_PARTITION`, `DISTRIBUTION`, and `ENUMERATE_ENTITIES`. Each builder passes `Slot`
 instances to `fill`, which applies one `str.format_map` over fixed named fields. Model-derived and
 structured values use encoded slots. Raw slots are limited to caller-owned request, context, and
 attribute text; an architecture test pins those uses.

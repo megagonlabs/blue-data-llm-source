@@ -99,8 +99,14 @@ def _date(value: object) -> str | None:
     return None
 
 
-def normalized_value(value: object, declared_type: str | None) -> Hashable:
-    """Normalize one key component according to its declared output type."""
+def typed_identity(value: object, declared_type: str | None) -> Hashable | None:
+    """*value* read under its declared type, or None when the type or the value cannot be.
+
+    None covers two cases a caller comparing values has to treat alike: a column with no
+    declared type, or one this module does not recognise, and a value the declared type
+    cannot read, such as ``"unknown"`` in an integer column. Neither is evidence about what
+    the value means, so neither may be compared as if it were.
+    """
     declared = (declared_type or "").strip().casefold()
     normalized: object | None
     if declared in {"int", "integer"}:
@@ -116,8 +122,14 @@ def normalized_value(value: object, declared_type: str | None) -> Hashable:
     else:
         normalized = None
     if normalized is None:
-        return value_identity(value)
-    return (declared or "untyped", normalized)
+        return None
+    return (declared, normalized)
+
+
+def normalized_value(value: object, declared_type: str | None) -> Hashable:
+    """Normalize one key component according to its declared output type."""
+    typed = typed_identity(value, declared_type)
+    return value_identity(value) if typed is None else typed
 
 
 def _key_name(value: object) -> str:

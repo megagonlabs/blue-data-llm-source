@@ -41,12 +41,13 @@ from blue_data_llm_source.types import (
     Outcome,
     ParseError,
     QueryError,
+    Range,
     TransportError,
     Usage,
 )
 from blue_data_llm_source.views import meta_view
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
 __all__ = [
     "Attr",
@@ -88,6 +89,7 @@ __all__ = [
     "QueryAnalyzer",
     "QueryError",
     "REASONING_EFFORTS",
+    "Range",
     "Reservation",
     "SchemaDefinition",
     "SchemaGenerator",

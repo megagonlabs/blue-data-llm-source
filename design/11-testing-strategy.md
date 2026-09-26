@@ -241,6 +241,12 @@ Every configuration key has a test proving that changing it changes observable b
 | `plan.exact_rows` | Stops a single leaf at the trusted count; a multi-leaf plan reports `exact_rows_not_leaf_bound` instead |
 | `plan.schema_mode`, `plan.planning_order` | Change accepted schema facts or the closed schedule and its stage counts |
 | `plan.expose_estimate` | Changes only the extraction prompt; planning facts, topology, and affordability stay the same |
+| `plan.leaf_prompt` | Selects the `keyed-leaf-fetch-1` or `keyed-leaf-fetch-2` leaf contract and its wire version; the default sends byte-identical prompts, both contracts execute, and the published call bounds do not move |
+| `plan.child_wording` | `canonical` changes only the children's retrieval wording, derived from the root request and validated filters; `parent` sends byte-identical prompts |
+| `plan.filter_enforcement` | `flag` keeps and counts contradicting records; `drop` removes them at the leaf before reduction, so they neither merge fields into a kept record nor appear in its origins |
+| `plan.range_filters` | Span values on an integer column become inclusive `Range` children that serialize, render and obey as ranges; other columns, caller-declared domains and the switch off keep exact text; overlapping or reversed spans refuse the proposal |
+| `plan.partition_guardrails` | Proposal prompts carry the `partition-2` rules and a count calibrated against each slice's estimate; a numeric key with bucketed values is refused with its reason in `meta.gaps`; off sends the 2.1.0 proposal prompt |
+| `plan.split_policy`, `plan.split_threshold_rows` | `always` sends byte-identical prompts; `evidence` probes the root once, splits only on an output-allowance stop or a shortfall, merges root records under origin `root`, seeds children with bounded probe keys, and stays within bounds that charge the probe in every accessor |
 | `plan.distribution_search`, `plan.identity_partitions`, `plan.max_strategy_candidates` | Change the bounded rule-backed candidates, accepted split, and optional planning receipt |
 
 An unknown `llm.*` key is asserted to raise `ConfigError` whose message lists the accepted names, and control keys are asserted not to appear in the provider call arguments.

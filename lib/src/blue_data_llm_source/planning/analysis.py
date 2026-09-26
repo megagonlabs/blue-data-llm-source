@@ -34,6 +34,7 @@ from blue_data_llm_source.types import (
     Exact,
     JsonScalar,
     OneOf,
+    Range,
     json_scalar,
     value_identity,
 )
@@ -78,11 +79,32 @@ def _freeze_constraints(
 def _constraint_dict(value: Constraint) -> dict[str, object]:
     if isinstance(value, OneOf):
         return {"kind": "one_of", "values": list(value.values)}
+    if isinstance(value, Range):
+        return {"kind": "range", "lo": value.lo, "hi": value.hi}
     return {"kind": "exact", "value": value.value}
+
+
+def _within(value: JsonScalar, span: Range) -> bool:
+    return span.contains(value)
+
+
+def _intersect_range(span: Range, other: Constraint) -> Constraint:
+    if isinstance(other, Range):
+        lo, hi = max(span.lo, other.lo), min(span.hi, other.hi)
+        return Range(lo, hi) if lo <= hi else OneOf(())
+    if isinstance(other, Exact):
+        return other if _within(other.value, span) else OneOf(())
+    return OneOf(tuple(value for value in other.values if _within(value, span)))
 
 
 def intersect_constraints(left: Constraint, right: Constraint) -> Constraint:
     """Intersect constraints using the typed identities used by execution."""
+    # A range holds numbers; a value written as text is outside it rather than read as one,
+    # the same identity rule the alternatives below use.
+    if isinstance(left, Range):
+        return _intersect_range(left, right)
+    if isinstance(right, Range):
+        return _intersect_range(right, left)
     if isinstance(left, Exact):
         if isinstance(right, Exact):
             return left if value_identity(left.value) == value_identity(right.value) else OneOf(())

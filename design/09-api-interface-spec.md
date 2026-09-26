@@ -297,7 +297,13 @@ class Exact:
 class OneOf:
     values: tuple[JsonScalar, ...]
 
-Constraint = Exact | OneOf
+
+@dataclass(frozen=True)
+class Range:
+    lo: int
+    hi: int
+
+Constraint = Exact | OneOf | Range
 
 
 @dataclass
@@ -334,6 +340,8 @@ class ExecMeta:
     incomplete_key_records: int = 0
     normalization_collisions: list[dict[str, Any]] = ...
     repaired_numbers: int = 0
+    split_decision: str | None = None
+    filter_contradictions: int = 0
     observed_keys: list[str] = ...
     unmapped_keys: list[str] = ...
     remapped_keys: dict[str, str] = ...
@@ -376,9 +384,11 @@ JSON scalar values. A `PlanningReceipt` serializes exactly `contract_version`,
 `planning-receipt-1`. The receipt checks agreement among those structures, not authenticity,
 factual truth, completeness, or quality.
 
-`cardinality_estimate` carries the accepted non-flat bootstrap estimate as `expected`, `lower`, `upper`, `row_unit`, `source`, `parse_status`, and `diagnostics`; `row_estimate` is its `expected` compatibility value. `primary_keys` lists the ordered identifying attributes used by execution and reduction. `observed_key_count` counts distinct complete keys in the final returned records, after reduction, deduplication, and row capping. `marginal_key_yields` gives the new normalized key identities from each extraction attempt in leaf order, or new exact records when no primary key exists. `incomplete_key_records` counts distinct per-leaf records missing at least one primary-key value. Each entry in `normalization_collisions` contains `primary_keys`, `kept`, and `collided` for two per-leaf key spellings that normalize to the same identity. `repaired_numbers` counts numbers written with thousands separators in an object value, such as `4,470`, that were read as `4470` after strict parsing failed. The estimate and observed counts do not state that the result is complete.
+`cardinality_estimate` carries the accepted non-flat bootstrap estimate as `expected`, `lower`, `upper`, `row_unit`, `source`, `parse_status`, and `diagnostics`; `row_estimate` is its `expected` compatibility value. `primary_keys` lists the ordered identifying attributes used by execution and reduction. `observed_key_count` counts distinct complete keys in the final returned records, after reduction, deduplication, and row capping. `marginal_key_yields` gives the new normalized key identities from each extraction attempt in leaf order, or new exact records when no primary key exists. `incomplete_key_records` counts distinct per-leaf records missing at least one primary-key value. Each entry in `normalization_collisions` contains `primary_keys`, `kept`, and `collided` for two per-leaf key spellings that normalize to the same identity. `repaired_numbers` counts numbers written with thousands separators in an object value, such as `4,470`, that were read as `4470` after strict parsing failed. `filter_contradictions` counts records whose checkable filter column contradicts the filter of the leaf that returned them, once per record and before reduction; `plan.filter_enforcement` decides whether they are kept (`flag`) or removed at the leaf (`drop`), and zero means none was observed, not that every leaf obeyed. `split_decision` says what the root probe decided under `plan.split_policy="evidence"`: `probe_accepted`, `probe_split_length`, `probe_split_incomplete`, `probe_split_shortfall` or `probe_split_failed`; it is `None` under the default policy or when the root could not split and was not probed. The estimate and observed counts do not state that the result is complete.
 
 `Exact` and `OneOf` are how a plan says what one part filters on. A part narrowed to a single value carries `Exact`; a part covering several alternatives carries `OneOf`. Values use the finite JSON scalar types: string, integer, finite number, and boolean. Null, non-finite numbers, and empty or whitespace-only strings are rejected. They are tagged, not held as an untagged scalar or list, because an absent-minded `join` can ask a different question: joined on `", "`, the alternatives `['A, B', 'C']` and `['A', 'B', 'C']` render identically, so a request about one region whose name contains a comma and a request about two regions become the same prompt, and the result says nothing about which was answered. With the tag, that mistake stops type-checking.
+
+`Range` is a third kind that only the planner builds, and only under `plan.range_filters`: an inclusive integer span read from a model proposal value such as `"1946–1952"` on a column declared an integer, or from numeric bucketing. The spans of one proposal must be pairwise disjoint and each must start at or below its end, or the proposal is refused. A range travels only on leaf-task wire version 5.
 
 A caller's own one-element list stays a `OneOf`. Writing a list of one says alternatives were expected, which is a different statement from naming a value outright, and collapsing it would discard the only signal that says so. A part the planner derived from a single value carries `Exact`, because there the count is the plan's own arithmetic and no alternative was dropped.
 
@@ -467,8 +477,8 @@ The price table itself stays internal. It is a mutable snapshot of time-sensitiv
 
 `meta_view` publishes three field tiers:
 
-- Always present: `outcome`, `model`, `calls`, `prompt_tokens`, `completion_tokens`, `cost`, `elapsed_seconds` (the `latency_seconds` field under the name the CLI and MCP JSON use), `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records`, `gaps`, `stop_reasons`, and `requested_attrs`.
-- Present when populated: `normalization_collisions`, `repaired_numbers`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to`, `cache_hits`, and `accounting_known` when false.
+- Always present: `outcome`, `model`, `calls`, `prompt_tokens`, `completion_tokens`, `cost`, `elapsed_seconds` (the `latency_seconds` field under the name the CLI and MCP JSON use), `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records`, `filter_contradictions`, `gaps`, `stop_reasons`, and `requested_attrs`.
+- Present when populated: `normalization_collisions`, `repaired_numbers`, `split_decision`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to`, `cache_hits`, and `accounting_known` when false.
 - Verbose only: `unmapped_keys`, `remapped_keys`, `type_mismatches`, and `key_collisions`.
 
 `observed_keys` is omitted because it grows with the answer and `observed_key_count` carries the usable count. The MCP server requests the verbose view; the CLI exposes it through `--verbose`.
@@ -667,6 +677,51 @@ The server uses the low-level API because tool schemas are maintained explicitly
         "type": "integer",
         "description": "Most encoded bytes of whole key exclusions in one continuation.",
         "minimum": 0
+      },
+      "plan.leaf_prompt": {
+        "type": "string",
+        "enum": [
+          "keyed-leaf-fetch-1",
+          "keyed-leaf-fetch-2"
+        ],
+        "description": "Leaf prompt contract for non-flat modes. `keyed-leaf-fetch-1` is the default; `keyed-leaf-fetch-2` asks for every matching record, states the expected count as a sentence, and allows an empty answer only when nothing matches. Refused in flat mode."
+      },
+      "plan.child_wording": {
+        "type": "string",
+        "enum": [
+          "parent",
+          "canonical"
+        ],
+        "description": "How a child part is worded in partitioned mode: `parent` (default) copies the parent's wording; `canonical` derives it from the request and the child's filters."
+      },
+      "plan.filter_enforcement": {
+        "type": "string",
+        "enum": [
+          "flag",
+          "drop"
+        ],
+        "description": "Records that contradict their part's filter are kept (`flag`, default) or removed at the part before merging (`drop`). Both count them in meta.filter_contradictions. `drop` is refused in flat mode."
+      },
+      "plan.range_filters": {
+        "type": "boolean",
+        "description": "Read partition values written as integer spans, on an integer column, as range filters. Requires partitioned mode and plan.leaf_prompt `keyed-leaf-fetch-2`."
+      },
+      "plan.partition_guardrails": {
+        "type": "boolean",
+        "description": "Send partition proposals with key and value rules and refuse a numeric key bucketed like a measurement. Requires partitioned mode."
+      },
+      "plan.split_policy": {
+        "type": "string",
+        "enum": [
+          "always",
+          "evidence"
+        ],
+        "description": "`always` (default) splits the root of a partitioned plan whatever it holds. `evidence` asks the root once first and splits only when that answer was cut off or failed, or holds fewer than half the keys a large estimate expects; otherwise that answer is the result. Requires partitioned mode."
+      },
+      "plan.split_threshold_rows": {
+        "type": "integer",
+        "description": "Under plan.split_policy `evidence`, the estimate above which a short root answer splits. Default: 120.",
+        "minimum": 0
       }
     },
     "required": [],
@@ -675,9 +730,9 @@ The server uses the low-level API because tool schemas are maintained explicitly
 }
 ```
 
-The fourteen plan settings and the three ceilings are the library's own property names, unrenamed. They are passed through as the call's properties, which is the same route `optional_properties` takes on the query surface and `--limit-*` takes on the command line: merged over the source's properties for this call and not written back, so one agent's ceiling cannot bind the next call over the same server. A key this layer did not recognise would never reach the library's own limit validation, so a translated name would have been dropped in silence rather than refused.
+The twenty-one plan settings and the three ceilings are the library's own property names, unrenamed. They are passed through as the call's properties, which is the same route `optional_properties` takes on the query surface and `--limit-*` takes on the command line: merged over the source's properties for this call and not written back, so one agent's ceiling cannot bind the next call over the same server. A key this layer did not recognise would never reach the library's own limit validation, so a translated name would have been dropped in silence rather than refused.
 
-**Returns:** JSON text content, `{"records": [...], "meta": {...}}`. The meta object always carries `outcome`, accounting fields, `gaps`, `stop_reasons`, `requested_attrs`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, and `incomplete_key_records`. `normalization_collisions` appears when non-empty, and `repaired_numbers` when non-zero. The cardinality estimate is accepted non-flat bootstrap evidence or JSON `null`; neither it nor the observed-key fields is a completeness measure. `gaps` contains operational diagnostics and an empty list means only that none fired. `stop_reasons` is the ordered list of simultaneous extraction limits; `stopped_by`, when present, is its first member. `accounting_known` appears only when false, and format diagnostics, `truncated_to`, `record_origins`, and `asked` appear when applicable.
+**Returns:** JSON text content, `{"records": [...], "meta": {...}}`. The meta object always carries `outcome`, accounting fields, `gaps`, `stop_reasons`, `requested_attrs`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records`, and `filter_contradictions`. `normalization_collisions` appears when non-empty, `repaired_numbers` when non-zero, and `split_decision` when a root probe ran. The cardinality estimate is accepted non-flat bootstrap evidence or JSON `null`; neither it nor the observed-key fields is a completeness measure. `gaps` contains operational diagnostics and an empty list means only that none fired. `stop_reasons` is the ordered list of simultaneous extraction limits; `stopped_by`, when present, is its first member. `accounting_known` appears only when false, and format diagnostics, `truncated_to`, `record_origins`, and `asked` appear when applicable.
 
 An empty result is not an error. A budget refusal before any extraction answer returns no records
 with `outcome` of `stopped_by_limit`; a later refusal after an extraction answered retains those
@@ -874,9 +929,9 @@ These tools let clients check pricing support before a query is refused under `l
 }
 ```
 
-**Returns:** JSON text content, `{"protocol": "llm", "variant": "openai", "version": "2.1.0"}`.
+**Returns:** JSON text content, `{"protocol": "llm", "variant": "openai", "version": "2.2.0"}`.
 
-The MCP schema exposes the same 14 standard planning controls as the CLI. It intentionally omits the
+The MCP schema exposes the same 21 standard planning controls as the CLI. It intentionally omits the
 three distribution-search properties, and `llmdb_query` does not return the direct-Python planning
 receipt.
 
@@ -939,7 +994,7 @@ blue-llmdb [--version] [-h|--help] [--profile NAME] COMMAND
 
 ### Configuration
 
-Precedence is **command option > environment variable > profile > built-in default**, stated in `blue-llmdb --help` and in each affected command's help. The resolver owns the bottom three tiers and exports them into the environment before any command body runs, which is where the provider SDK reads its own configuration from; a command option is applied on top and never reaches the resolver. `profile inspect` therefore reports `environment`, `profile:<name>`, `default` or `unset`, and can never report `flag`. The chain covers the settings the spec declares a parameter for, which is what `profile inspect` lists. The fourteen `--plan-*` controls are outside it by decision, not by omission: a plan setting describes one ask, not a deployment, and a partition key or a row target left in a profile would apply itself to the next, unrelated query. `--effort` is the exception among the planning-adjacent options, because a continuation allowance is an appetite for spending rather than a shape.
+Precedence is **command option > environment variable > profile > built-in default**, stated in `blue-llmdb --help` and in each affected command's help. The resolver owns the bottom three tiers and exports them into the environment before any command body runs, which is where the provider SDK reads its own configuration from; a command option is applied on top and never reaches the resolver. `profile inspect` therefore reports `environment`, `profile:<name>`, `default` or `unset`, and can never report `flag`. The chain covers the settings the spec declares a parameter for, which is what `profile inspect` lists. The twenty-one `--plan-*` controls are outside it by decision, not by omission: a plan setting describes one ask, not a deployment, and a partition key or a row target left in a profile would apply itself to the next, unrelated query. `--effort` is the exception among the planning-adjacent options, because a continuation allowance is an appetite for spending rather than a shape.
 
 Four family parameters — `OPENAI_API_KEY` (secret), `BLUE_DATA_LLM_MODEL`, `BLUE_DATA_CLI_FORMAT`, `BLUE_DATA_CLI_LOG_LIMIT` — plus fifteen `BLUE_DATA_LLM_SOURCE_*` parameters, one per request setting the CLI exposes. Only the first two are walked by `blue-llmdb profile config` with no argument, and none of them gates a command: `profile`, `model`, `metadata` and `data estimate` contact no provider and run against an empty profile.
 
@@ -965,6 +1020,11 @@ blue-llmdb data query QUERY [--attr NAME[:TYPE]]... [--context TEXT] [--max-reco
                 [--plan-schema-mode preserve|enrich]
                 [--plan-planning-order ORDER]
                 [--plan-expose-estimate|--no-plan-expose-estimate]
+                [--plan-leaf-prompt CONTRACT] [--plan-child-wording parent|canonical]
+                [--plan-filter-enforcement flag|drop]
+                [--plan-range-filters|--no-plan-range-filters]
+                [--plan-partition-guardrails|--no-plan-partition-guardrails]
+                [--plan-split-policy always|evidence] [--plan-split-threshold-rows N]
                 [--format table|json|nl|csv] [-v|--verbose] [-l|--log] [--log-limit N]
 ```
 
@@ -987,7 +1047,7 @@ blue-llmdb data query QUERY [--attr NAME[:TYPE]]... [--context TEXT] [--max-reco
 | `--max-retries N` | `limits.max_retries` | Retries allowed per ask |
 | `--effort LEVEL` | `plan.max_continuations` = 0/1/2 | A CLI convenience over the plan setting, not library policy. An explicit `--plan-continuations` wins. Flat `medium`/`high` requires a requested `--plan-key` or `--plan-keys` and fails before source construction when none is supplied |
 | `--variant NAME` | `connection.variant` | Source variant within the `llm` protocol |
-| the 14 `--plan-*` options | `plan.*` | One option per planning control, passed through under the library's own key; see the planning controls above |
+| the 21 `--plan-*` options | `plan.*` | One option per planning control, passed through under the library's own key; see the planning controls above |
 | `--rate-limit` | — | Refused as `ERROR: USAGE`, exit 2, carrying the library's own reason. Declared so the refusal can name the remedy rather than producing Click's generic "no such option" |
 | `--format` | — | `table`, `json`, `nl` or `csv`. Default from `BLUE_DATA_CLI_FORMAT`, else `table` |
 | `-v`, `--verbose` | — | Adds key alignment, type mismatch and collision details. Gaps and stop reasons are visible without it |
@@ -1012,7 +1072,7 @@ settings: llm.cache_dir=~/.blue-llmdb/cache (default), llm.model=gpt-6-luna (def
 
 Under `--format json` the same run prints one object with **three** keys, `records`, `meta` and `settings`. This replaces the two-key object v1.2.0 printed; the MCP tool result is unchanged and stays two-key.
 
-`meta` is `meta_view(result.meta, verbose=...)` and follows the three-tier policy in §1. It always carries `outcome`, the accounting fields, `gaps`, `stop_reasons`, `requested_attrs`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, and `incomplete_key_records`. `normalization_collisions`, `repaired_numbers`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to` and `cache_hits` appear when populated; `accounting_known` appears only when false. `--verbose` adds `unmapped_keys`, `remapped_keys`, `type_mismatches` and `key_collisions`. The table footer prints the point row estimate or `unknown`, and `stopped_by` is not gated on `--verbose`.
+`meta` is `meta_view(result.meta, verbose=...)` and follows the three-tier policy in §1. It always carries `outcome`, the accounting fields, `gaps`, `stop_reasons`, `requested_attrs`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records`, and `filter_contradictions`. `normalization_collisions`, `repaired_numbers`, `split_decision`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to` and `cache_hits` appear when populated; `accounting_known` appears only when false. `--verbose` adds `unmapped_keys`, `remapped_keys`, `type_mismatches` and `key_collisions`. The table footer prints the point row estimate or `unknown`, and `stopped_by` is not gated on `--verbose`.
 
 `settings` is the CLI's own envelope, with a fixed two-map schema:
 

@@ -26,6 +26,7 @@ ALWAYS = {
     "observed_key_count",
     "marginal_key_yields",
     "incomplete_key_records",
+    "filter_contradictions",
     "gaps",
     "stop_reasons",
     "requested_attrs",
@@ -34,6 +35,7 @@ ALWAYS = {
 WHEN_POPULATED = {
     "normalization_collisions",
     "repaired_numbers",
+    "split_decision",
     "unchecked_types",
     "record_origins",
     "asked",
@@ -67,6 +69,7 @@ def populated() -> ExecMeta:
         incomplete_key_records=1,
         normalization_collisions=[{"kept": "France"}],
         repaired_numbers=2,
+        split_decision="probe_accepted",
         observed_keys=["France", "Germany"],
         unmapped_keys=["capital"],
         remapped_keys={"Country": "country"},

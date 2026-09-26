@@ -112,7 +112,7 @@ Direct Python callers can opt into rule-backed distribution search over declared
 domains. `PartitionSafety` must establish containment, pairwise disjointness, and coverage before a
 split is accepted. The plan records each applied decision, and an optional planning receipt binds
 configured rule digests, planning facts, and plan serialization. This checks internal agreement,
-not factual truth or completeness. CLI and MCP expose the 14 standard controls and omit rule-backed
+not factual truth or completeness. CLI and MCP expose the 21 standard controls and omit rule-backed
 distribution search and the receipt.
 
 ### Model Boundary

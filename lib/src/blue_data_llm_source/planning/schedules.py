@@ -45,6 +45,7 @@ from blue_data_llm_source.types import (
     ConfigError,
     Constraint,
     OneOf,
+    Range,
     Usage,
 )
 
@@ -62,10 +63,13 @@ def schema_payload(schema: Schema) -> dict[str, object]:
 
 
 def constraint_payload(constraints: Mapping[str, Constraint]) -> dict[str, object]:
+    """The filters as a planning prompt shows them, with a range in the form leaf prompts use."""
     return {
         name: (
             {"kind": "one_of", "values": list(value.values)}
             if isinstance(value, OneOf)
+            else {"kind": "range", "min": value.lo, "max": value.hi}
+            if isinstance(value, Range)
             else {"kind": "exact", "value": value.value}
         )
         for name, value in constraints.items()

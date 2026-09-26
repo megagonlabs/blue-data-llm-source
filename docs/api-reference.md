@@ -4,7 +4,7 @@ Reference to the public methods, parameters, and return types in `blue_data_llm_
 
 Contributor-oriented interface rationale is in [`design/09-api-interface-spec.md`](../design/09-api-interface-spec.md). If this page and that document disagree, the implementation decides and the design document must be corrected.
 
-Version 2.1.0. `blue_data_llm_source.__version__` carries it.
+Version 2.2.0. `blue_data_llm_source.__version__` carries it.
 
 The fenced blocks on this page are signatures rather than programs: each shows a declaration, not something to paste and run. Runnable examples live in [guide.md](guide.md), [features.md](features.md), and [extending.md](extending.md).
 
@@ -24,7 +24,8 @@ Fifty names, all importable from `blue_data_llm_source` directly.
 | `Capability` | class | The closed vocabulary a client declares from |
 | `Exact` | dataclass | A filter satisfied by one value |
 | `OneOf` | dataclass | A filter satisfied by any one of several |
-| `Constraint` | type alias | `Exact | OneOf` |
+| `Range` | dataclass | A filter satisfied by any integer from `lo` to `hi`, both included |
+| `Constraint` | type alias | `Exact | OneOf | Range` |
 | `JsonScalar` | type alias | `str | int | float | bool` |
 | `Budget` | class | Spend tracked against `Limits` |
 | `Limits` | dataclass | The configured ceiling on each axis |
@@ -64,7 +65,7 @@ Fifty names, all importable from `blue_data_llm_source` directly.
 | `CardinalityEstimator` | class | Parser for the cardinality stage |
 | `CardinalityEstimate` | dataclass | Its result |
 | `redact` | function | Masks credential-shaped text before it is written out |
-| `__version__` | `str` | `"2.1.0"` |
+| `__version__` | `str` | `"2.2.0"` |
 
 ### `redact`
 
@@ -275,7 +276,7 @@ A configured ceiling on an axis the resolved client does not declare raises `Con
 
 ### `plan.*` properties
 
-Eighteen accepted names. An unknown `plan.*` key raises `ConfigError`.
+Twenty-five accepted names. An unknown `plan.*` key raises `ConfigError`.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -294,11 +295,18 @@ Eighteen accepted names. An unknown `plan.*` key raises `ConfigError`.
 | `plan.schema_mode` | `str` | `"preserve"` | `preserve` keeps declared attributes; `enrich` lets the planning stages append inferred ones. `flat` plus `enrich` is rejected, because flat makes no planning call |
 | `plan.planning_order` | `str` | `"planning.schema_first"` | One of five schedules. [Below](#planning-schedules) |
 | `plan.expose_estimate` | `bool` | `True` | Whether extraction prompts include the soft estimate. Planning facts and task transport retain it either way |
+| `plan.leaf_prompt` | `str` | `"keyed-leaf-fetch-1"` | Leaf prompt contract for non-flat modes. `"keyed-leaf-fetch-2"` asks for every matching record, states the expected count as a sentence, sends constraints that partitioning introduced on a schema column as column filters and every other constraint, including every request-level one, as request scope, and allows `[]` only when nothing matches the column filters within the request scope; it travels on wire version 5. Refused in `flat` |
+| `plan.child_wording` | `str` | `"parent"` | `"canonical"` derives each child's retrieval wording from the root request and its validated filters instead of copying the parent's. Requires `partitioned` |
+| `plan.filter_enforcement` | `str` | `"flag"` | `"flag"` keeps records that contradict their leaf's filter; `"drop"` removes them at the leaf, before reduction. Both count them in `meta.filter_contradictions`. `"drop"` is refused in `flat` |
+| `plan.range_filters` | `bool` | `False` | Reads a partition proposal written as integer spans, on a column declared an integer, as `Range` filters instead of exact text. Requires `partitioned` and `plan.leaf_prompt="keyed-leaf-fetch-2"`, whose wire version is the only one that carries a range |
+| `plan.partition_guardrails` | `bool` | `False` | Sends the `partition-2` proposal prompt, with rules against identifier or continuous-measurement keys and placeholder or catch-all values and a value count calibrated against the slice's estimate, and refuses a key declared numeric whose values are not integers or integer spans covering at most 1,000 integers. Requires `partitioned` |
+| `plan.split_policy` | `str` | `"always"` | `"evidence"` runs the root leaf once as a probe, a single ask even when continuations are configured, and splits only on an output-allowance stop, a response cut mid-document, a failed probe, or a shortfall against a large estimate; otherwise the probe's answer is the result. A probe that meets `plan.exact_rows` is accepted unless its answer was cut; a target of zero asks nothing and reports no `split_decision`. Adds one logical call to every published bound. Requires `partitioned` |
+| `plan.split_threshold_rows` | `int` | `120` | Under `"evidence"`, the estimate above which fewer than half the expected keys triggers a split |
 | `plan.distribution_search` | `bool` | `False` | Opt-in for rule-backed distribution selection. Requires `partitioned`. Direct Python only |
 | `plan.identity_partitions` | `list[dict]` | empty | Versioned finite-domain rule mappings. Direct Python only |
 | `plan.max_strategy_candidates` | `int` | `5` | Distribution candidate bound. At least `1` when distribution search is enabled. Direct Python only |
 
-The command-line interface and the MCP server expose the fourteen standard controls. They do not expose distribution search, its rules, its candidate bound, or the receipt; those four reach only a direct Python caller.
+The command-line interface and the MCP server expose the twenty-one standard controls. They do not expose distribution search, its rules, its candidate bound, or the receipt; those four reach only a direct Python caller.
 
 #### Planning schedules
 
@@ -378,6 +386,8 @@ Every field, in declaration order.
 | `observed_key_count` | `int` | `0` | Distinct complete keys seen |
 | `marginal_key_yields` | `list[int]` | `[]` | New keys added by each successive ask |
 | `incomplete_key_records` | `int` | `0` | Records with a key component missing |
+| `split_decision` | `str \| None` | `None` | What the root probe decided under `plan.split_policy="evidence"`: `probe_accepted`, `probe_split_length`, `probe_split_incomplete`, `probe_split_shortfall` or `probe_split_failed`. `None` when no probe ran |
+| `filter_contradictions` | `int` | `0` | Records whose checkable filter column contradicts their leaf's filter, counted before reduction. Kept or removed by `plan.filter_enforcement`. `0` means none was observed, not that every leaf obeyed |
 | `normalization_collisions` | `list[dict[str, Any]]` | `[]` | Distinct raw key values that normalised together |
 | `observed_keys` | `list[str]` | `[]` | One entry per key seen. Grows with the answer, so `meta_view` omits it |
 | `unmapped_keys` | `list[str]` | `[]` | Returned keys that matched no requested attribute |
@@ -460,16 +470,19 @@ A value that will not coerce is returned as it arrived and reported in `meta.typ
 
 Only a genuine thousands grouping is stripped: three-digit groups, optionally signed, optionally with a dot decimal part.
 
-### `Exact`, `OneOf`, `Constraint`, `JsonScalar`
+### `Exact`, `OneOf`, `Range`, `Constraint`, `JsonScalar`
 
 ```text
 Exact(value: JsonScalar)
 OneOf(values: tuple[JsonScalar, ...])
-Constraint = Exact | OneOf
+Range(lo: int, hi: int)
+Constraint = Exact | OneOf | Range
 JsonScalar = str | int | float | bool
 ```
 
-Both are frozen and validate on construction: a value must be a finite JSON scalar and a string must not be empty, or `ConfigError` is raised. `OneOf` holds a tuple so the whole constraint is hashable and cannot be extended after the plan that sized itself against it was built.
+All three are frozen and validate on construction: a value must be a finite JSON scalar and a string must not be empty, or `ConfigError` is raised. `OneOf` holds a tuple so the whole constraint is hashable and cannot be extended after the plan that sized itself against it was built.
+
+`Range` holds two integers with `lo` not above `hi`, both included. Only the planner builds one, under `plan.range_filters`: from a model proposal value written as two unsigned integers joined by one dash, such as `"1946–1952"` or `"1946-1952"`, on a column the schema declares `int` or `integer`, or from numeric bucketing. A proposal that writes any span must be wholly typed: its other values must be integers, each span must start at or below its end, and no two values may share an integer; otherwise the proposal is refused with the reason. It holds only integer values: `contains(2.5)` is false for `Range(1, 3)`, and intersection keeps only integer-valued alternatives. A leaf task may carry a range only on an attribute declared `int` or `integer`, and only on wire version 5, as `{"kind": "range", "lo": 1946, "hi": 1952}`; a fetch plan carrying one is serialized as version 2 rather than 1. A leaf prompt shows it as `{"kind": "range", "min": 1946, "max": 1952}`.
 
 ## Protocols
 
@@ -690,8 +703,8 @@ The single serialization of `ExecMeta` published by every adapter, so a run has 
 
 | Tier | Keys |
 |---|---|
-| Always present | `outcome`, `model`, `calls`, `prompt_tokens`, `completion_tokens`, `cost` (rounded to 6 places), `elapsed_seconds` (`ExecMeta.latency_seconds`, rounded to 3), `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records`, `gaps`, `stop_reasons`, `requested_attrs` |
-| Present when populated | `normalization_collisions`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to`, `cache_hits`, and `accounting_known` in its false form only |
+| Always present | `outcome`, `model`, `calls`, `prompt_tokens`, `completion_tokens`, `cost` (rounded to 6 places), `elapsed_seconds` (`ExecMeta.latency_seconds`, rounded to 3), `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records`, `filter_contradictions`, `gaps`, `stop_reasons`, `requested_attrs` |
+| Present when populated | `normalization_collisions`, `split_decision`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to`, `cache_hits`, and `accounting_known` in its false form only |
 | Verbose only | `unmapped_keys`, `remapped_keys`, `type_mismatches`, `key_collisions` |
 
 `observed_keys` is in no tier: it grows with the answer, and `observed_key_count` already carries the fact a consumer acts on.

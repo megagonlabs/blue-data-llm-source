@@ -15,6 +15,7 @@ from blue_data_llm_source.planning.cardinality import (
     estimate_from_reported,
 )
 from blue_data_llm_source.planning.plan import Leaf
+from blue_data_llm_source.planning.ranges import is_ordinal
 from blue_data_llm_source.planning.schema import (
     KEY_FROM_CALLER,
     KEY_FROM_INFERRED,
@@ -22,6 +23,7 @@ from blue_data_llm_source.planning.schema import (
     Schema,
 )
 from blue_data_llm_source.prompts import (
+    COMPLETE_LEAF_FETCH_PROMPT_VERSION,
     KEYED_LEAF_FETCH_PROMPT_VERSION,
     LEGACY_LEAF_FETCH_PROMPT_VERSION,
 )
@@ -33,15 +35,46 @@ from blue_data_llm_source.types import (
     Exact,
     JsonScalar,
     OneOf,
+    Range,
     Usage,
     json_scalar,
+    resolve_attr,
 )
 
 WIRE_VERSION: Final = 2
 SAFETY_WIRE_VERSION: Final = 3
 REASONING_WIRE_VERSION: Final = 4
 LEGACY_WIRE_VERSION: Final = 1
+COMPLETE_WIRE_VERSION: Final = 5
+"""The wire version of a task built for the ``keyed-leaf-fetch-2`` contract.
+
+Its own number because each wire version admits exactly one prompt contract, and a receiver
+that accepted either on one number would answer a task with a prompt its sender did not plan
+against. It carries the partition-safety trace fields always (null when untraced) and
+``reasoning_effort`` optionally, so it does not need a variant for each of those."""
+HELD_WIRE_VERSION: Final = 6
+"""The wire version of a ``keyed-leaf-fetch-1`` task seeded with keys an earlier call holds.
+
+Under ``plan.split_policy="evidence"`` the children of a probed root are told which keys the
+probe already returned. That list is a field no older version has, so a task carrying one
+travels on its own number and an older receiver refuses it rather than dropping the list.
+Like wire version 5 it carries the partition-safety trace always and ``reasoning_effort``
+optionally. A ``keyed-leaf-fetch-2`` task carries the same fields on wire version 5."""
 PROMPT_VERSION: Final = KEYED_LEAF_FETCH_PROMPT_VERSION
+_PROMPT_FOR_WIRE: Final = {
+    LEGACY_WIRE_VERSION: LEGACY_LEAF_FETCH_PROMPT_VERSION,
+    WIRE_VERSION: KEYED_LEAF_FETCH_PROMPT_VERSION,
+    SAFETY_WIRE_VERSION: KEYED_LEAF_FETCH_PROMPT_VERSION,
+    REASONING_WIRE_VERSION: KEYED_LEAF_FETCH_PROMPT_VERSION,
+    COMPLETE_WIRE_VERSION: COMPLETE_LEAF_FETCH_PROMPT_VERSION,
+    HELD_WIRE_VERSION: KEYED_LEAF_FETCH_PROMPT_VERSION,
+}
+_TRACED_WIRE_VERSIONS: Final = frozenset(
+    {SAFETY_WIRE_VERSION, REASONING_WIRE_VERSION, COMPLETE_WIRE_VERSION, HELD_WIRE_VERSION}
+)
+"""Wire versions whose tasks carry the partition-safety trace fields."""
+_HELD_WIRE_VERSIONS: Final = frozenset({COMPLETE_WIRE_VERSION, HELD_WIRE_VERSION})
+"""Wire versions whose tasks carry ``held_exclusions`` and ``held_total``."""
 EXECUTION_SETTING_KEYS: Final = frozenset(
     {
         "empty_leaf_retry",
@@ -109,17 +142,10 @@ def _require_key_scalar(value: object, name: str) -> JsonScalar:
 
 def _check_versions(data: Mapping[str, Any]) -> int:
     wire_version = data.get("wire_version")
-    if type(wire_version) is not int or wire_version not in {
-        LEGACY_WIRE_VERSION,
-        WIRE_VERSION,
-        SAFETY_WIRE_VERSION,
-        REASONING_WIRE_VERSION,
-    }:
+    if type(wire_version) is not int or wire_version not in _PROMPT_FOR_WIRE:
         raise ConfigError(f"unsupported wire_version {data.get('wire_version')!r}")
     prompt_version = data.get("prompt_version")
-    expected_prompt = (
-        LEGACY_LEAF_FETCH_PROMPT_VERSION if wire_version == LEGACY_WIRE_VERSION else PROMPT_VERSION
-    )
+    expected_prompt = _PROMPT_FOR_WIRE[wire_version]
     if type(prompt_version) is not str or prompt_version != expected_prompt:
         raise ConfigError(f"unsupported prompt_version {data.get('prompt_version')!r}")
     return wire_version
@@ -189,15 +215,42 @@ def _check_settings(settings: Mapping[str, Any]) -> None:
             )
 
 
+def _partition_keys_from(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(
+        isinstance(item, str) for item in cast("list[Any]", value)
+    ):
+        raise ConfigError("partition_keys must be a list of strings")
+    return tuple(cast("list[str]", value))
+
+
+def _held_from(value: object) -> list[Any]:
+    if not isinstance(value, list):
+        raise ConfigError("held_exclusions must be a list")
+    return cast("list[Any]", value)
+
+
+def _held_total_from(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError("held_total must be an integer")
+    return value
+
+
 def _filter_to_dict(value: Constraint) -> dict[str, object]:
     if isinstance(value, Exact):
         return {"kind": "exact", "value": value.value}
+    if isinstance(value, Range):
+        return {"kind": "range", "lo": value.lo, "hi": value.hi}
     return {"kind": "one_of", "values": list(value.values)}
 
 
-def _filter_from_dict(value: object) -> Constraint:
+def _filter_from_dict(value: object, *, ranges: bool = False) -> Constraint:
     data = _require_object(value, "filter")
     kind = data.get("kind")
+    if kind == "range" and ranges and set(data) == {"kind", "lo", "hi"}:
+        lo, hi = data.get("lo"), data.get("hi")
+        if any(isinstance(end, bool) or not isinstance(end, int) for end in (lo, hi)):
+            raise ConfigError("range filter ends must be integers")
+        return Range(cast("int", lo), cast("int", hi))
     if kind == "exact" and set(data) == {"kind", "value"}:
         return Exact(_require_key_scalar(data.get("value"), "exact filter value"))
     if kind == "one_of" and set(data) == {"kind", "values"}:
@@ -345,12 +398,35 @@ class LeafTask:
     partition_rule_digest: str | None = None
     wire_version: int = WIRE_VERSION
     prompt_version: str = PROMPT_VERSION
+    partition_keys: tuple[str, ...] = ()
+    """The filter names partitioning introduced, which the completeness contract may present
+    as column filters. Carried on wire version 5 only; every other filter is request scope."""
+    held_exclusions: tuple[Any, ...] = ()
+    """Keys an earlier call of this request already returned, as the prompt's held list shows
+    them, already bounded by the exclusion settings. Carried on wire versions 5 and 6."""
+    held_total: int = 0
+    """How many keys that earlier call returned, of which ``held_exclusions`` is the tail."""
 
     def __post_init__(self) -> None:
         keys = clean_key_names(self.primary_keys)
         if keys != self.schema.primary_keys:
             raise ConfigError("task primary_keys disagree with schema primary_keys")
         filters = MappingProxyType(dict(self.filters))
+        ranged = [name for name, value in filters.items() if isinstance(value, Range)]
+        if ranged and self.prompt_version != COMPLETE_LEAF_FETCH_PROMPT_VERSION:
+            # Only the newest wire version admits the range kind. Sending one on an older
+            # version would hand its receivers a filter kind their grammar does not have.
+            raise ConfigError(
+                "range filters travel only on wire version 5, the keyed-leaf-fetch-2 contract"
+            )
+        for name in ranged:
+            # A range on any other column is a filter the obedience check cannot enforce and
+            # a model reads as a span over text, so it is refused rather than carried.
+            attr = resolve_attr(name, self.schema.attrs)
+            if attr is None or not is_ordinal(attr.type):
+                raise ConfigError(
+                    f"range filter on {name!r} must name an attribute declared int or integer"
+                )
         copied_settings = deepcopy(dict(self.settings))
         for name in ("reasoning_effort", "temperature"):
             if copied_settings.get(name) is None:
@@ -365,10 +441,40 @@ class LeafTask:
         ):
             raise ConfigError("task partition safety trace is malformed")
         object.__setattr__(self, "filters", filters)
+        split = tuple(self.partition_keys)
+        if split and self.prompt_version != COMPLETE_LEAF_FETCH_PROMPT_VERSION:
+            raise ConfigError("partition_keys travel only on wire version 5")
+        # The isinstance check stays for callers that bypass the type checker.
+        unnamed = any(
+            not isinstance(name, str)  # pyright: ignore[reportUnnecessaryIsInstance]
+            or name not in filters
+            for name in split
+        )
+        if unnamed or len(set(split)) != len(split):
+            raise ConfigError("partition_keys must be distinct names of the task's filters")
+        object.__setattr__(self, "partition_keys", split)
+        held = tuple(self.held_exclusions)
+        if not _primitive(list(held)):
+            raise ConfigError("held_exclusions must contain only primitive JSON values")
+        total = self.held_total
+        # Checked at runtime too: a caller may bypass the type checker.
+        unreadable = not isinstance(total, int)  # pyright: ignore[reportUnnecessaryIsInstance]
+        if isinstance(total, bool) or unreadable or total < len(held):
+            raise ConfigError("held_total must be an integer counting at least held_exclusions")
+        object.__setattr__(self, "held_exclusions", _freeze_json(deepcopy(list(held))))
         object.__setattr__(self, "primary_keys", keys)
         object.__setattr__(self, "settings", _freeze_json(copied_settings))
+        if self.prompt_version == COMPLETE_LEAF_FETCH_PROMPT_VERSION:
+            # Chosen by the contract, not derived from the payload: the payload variants the
+            # older numbers distinguish are all expressible on this one.
+            object.__setattr__(self, "wire_version", COMPLETE_WIRE_VERSION)
+            return
+        # Every other contract is normalized to the keyed one, as it was before there was a
+        # choice: a legacy wire task is upgraded to the keyed prompt on receipt.
         wire_version = (
-            REASONING_WIRE_VERSION
+            HELD_WIRE_VERSION
+            if total
+            else REASONING_WIRE_VERSION
             if "reasoning_effort" in copied_settings
             else SAFETY_WIRE_VERSION
             if traced
@@ -385,6 +491,10 @@ class LeafTask:
         caller_context: str,
         schema: Schema,
         settings: Mapping[str, Any],
+        prompt_version: str = PROMPT_VERSION,
+        partition_keys: tuple[str, ...] = (),
+        held_exclusions: tuple[Any, ...] = (),
+        held_total: int = 0,
     ) -> LeafTask:
         return cls(
             task_id=leaf.id,
@@ -404,6 +514,10 @@ class LeafTask:
             settings=dict(settings),
             partition_safety_status=leaf.partition_safety_status,
             partition_rule_digest=leaf.partition_rule_digest,
+            prompt_version=prompt_version,
+            partition_keys=partition_keys,
+            held_exclusions=held_exclusions,
+            held_total=held_total,
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -411,7 +525,7 @@ class LeafTask:
         _check_settings(settings)
         payload: dict[str, object] = {
             "wire_version": self.wire_version,
-            "prompt_version": PROMPT_VERSION,
+            "prompt_version": self.prompt_version,
             "task_id": self.task_id,
             "parent_id": self.parent_id,
             "original_query": self.original_query,
@@ -423,7 +537,12 @@ class LeafTask:
             "filters": {name: _filter_to_dict(value) for name, value in self.filters.items()},
             "settings": settings,
         }
-        if self.wire_version in {SAFETY_WIRE_VERSION, REASONING_WIRE_VERSION}:
+        if self.wire_version == COMPLETE_WIRE_VERSION:
+            payload["partition_keys"] = list(self.partition_keys)
+        if self.wire_version in _HELD_WIRE_VERSIONS:
+            payload["held_exclusions"] = _thaw_json(self.held_exclusions)
+            payload["held_total"] = self.held_total
+        if self.wire_version in _TRACED_WIRE_VERSIONS:
             payload["partition_safety_status"] = self.partition_safety_status
             payload["partition_rule_digest"] = self.partition_rule_digest
         return payload
@@ -444,10 +563,14 @@ class LeafTask:
             "filters",
             "settings",
         }
-        if wire_version in {WIRE_VERSION, SAFETY_WIRE_VERSION, REASONING_WIRE_VERSION}:
+        if wire_version != LEGACY_WIRE_VERSION:
             expected.update({"primary_keys", "estimate"})
-        if wire_version in {SAFETY_WIRE_VERSION, REASONING_WIRE_VERSION}:
+        if wire_version in _TRACED_WIRE_VERSIONS:
             expected.update({"partition_safety_status", "partition_rule_digest"})
+        if wire_version == COMPLETE_WIRE_VERSION:
+            expected.add("partition_keys")
+        if wire_version in _HELD_WIRE_VERSIONS:
+            expected.update({"held_exclusions", "held_total"})
         if set(data) != expected:
             raise ConfigError(f"leaf task fields do not match wire version {wire_version}")
         parent_id = data.get("parent_id")
@@ -481,6 +604,12 @@ class LeafTask:
                 raise ConfigError("reasoning wire version requires reasoning_effort")
             if (safety_status is None) != (rule_digest is None):
                 raise ConfigError("task partition safety trace must be complete or absent")
+        elif wire_version in _HELD_WIRE_VERSIONS:
+            if (safety_status is None) != (rule_digest is None):
+                raise ConfigError("task partition safety trace must be complete or absent")
+            if wire_version == HELD_WIRE_VERSION and data.get("held_total") == 0:
+                # An empty seed belongs on the version the task would otherwise use.
+                raise ConfigError("wire version 6 requires a non-empty held seed")
         elif "reasoning_effort" in settings:
             raise ConfigError("reasoning_effort requires reasoning wire version")
         return cls(
@@ -494,10 +623,17 @@ class LeafTask:
             schema=schema,
             primary_keys=keys,
             estimate=estimate,
-            filters={name: _filter_from_dict(item) for name, item in filters.items()},
+            filters={
+                name: _filter_from_dict(item, ranges=wire_version == COMPLETE_WIRE_VERSION)
+                for name, item in filters.items()
+            },
             settings=settings,
             partition_safety_status=safety_status if isinstance(safety_status, str) else None,
             partition_rule_digest=rule_digest if isinstance(rule_digest, str) else None,
+            prompt_version=_PROMPT_FOR_WIRE[wire_version],
+            partition_keys=_partition_keys_from(data.get("partition_keys", [])),
+            held_exclusions=tuple(_held_from(data.get("held_exclusions", []))),
+            held_total=_held_total_from(data.get("held_total", 0)),
         )
 
 
@@ -604,4 +740,25 @@ class LocalLeafExecutor:
             raise ConfigError(
                 f"task result id {result.task_id!r} does not match task {task.task_id!r}"
             )
+        check_result_contract(task, result)
         return result
+
+
+def check_result_contract(task: LeafTask, result: LeafTaskResult) -> None:
+    """Refuse a result answered under a different leaf contract from its task's.
+
+    A ``keyed-leaf-fetch-2`` task must come back on wire version 5, and a result on wire
+    version 5 answers only such a task. Tasks on the older wire versions keep their
+    historical result envelope, which does not echo the task's own number: a task on wire
+    version 3 or 4 is answered on 2, and wire version 1 remains readable.
+    """
+    task_complete = task.wire_version == COMPLETE_WIRE_VERSION
+    result_complete = result.wire_version == COMPLETE_WIRE_VERSION
+    if task_complete != result_complete or (
+        task_complete and result.prompt_version != task.prompt_version
+    ):
+        raise ConfigError(
+            f"task result contract {result.prompt_version!r} on wire version "
+            f"{result.wire_version} does not match task contract {task.prompt_version!r} "
+            f"on wire version {task.wire_version}"
+        )

@@ -67,7 +67,7 @@ unknown, flat, and rejected bootstrap results use `None`. The field is not a ret
 completeness estimate, and a valid empty answer alone does not create a gap.
 
 **Planning is bounded, and rule-backed distribution search is a direct-Python opt-in.** Python,
-CLI, and MCP share 14 standard planning controls. Python source and per-call properties additionally
+CLI, and MCP share 21 standard planning controls. Python source and per-call properties additionally
 accept `plan.max_excluded_keys` as a count bound on continuation exclusions. They also accept
 `plan.distribution_search`, `plan.identity_partitions`, and `plan.max_strategy_candidates`.
 Distribution search requires partitioned mode, explicit ordered keys, and declared finite-domain

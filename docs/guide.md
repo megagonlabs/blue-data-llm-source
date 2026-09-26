@@ -302,6 +302,61 @@ A planning stage whose response does not parse does not fail the request. It fal
 
 `meta.asked` is worth checking on a non-flat run. The analysis stage restates the request for retrieval, and that restated text becomes the query every part runs. The rewrite is what makes "I don't know how many countries are there?" answerable at all, and it is also what could broaden or narrow the question. The change is reported rather than prevented: when `meta.asked` is not `None`, that is the question the records answer.
 
+### Asking once before splitting
+
+`partitioned` mode splits the root whatever it holds. With `plan.split_policy="evidence"` it asks first: the whole request goes out once as a single leaf, the probe, and the plan splits only when the probe's answer was cut off, failed, or holds fewer than half the keys an estimate above `plan.split_threshold_rows` (default `120`) expects. Otherwise that one answer is the result. The probe is an ordinary leaf prompt that names no partition value, so in a scripted `answer` it reaches the last branch:
+
+```python
+import json
+
+from blue_data_llm_source import LlmSource
+
+AIRPORTS = {
+    "Île-de-France": [{"name": "Charles de Gaulle", "region": "Île-de-France"},
+                      {"name": "Orly", "region": "Île-de-France"}],
+    "Provence": [{"name": "Marseille Provence", "region": "Provence"}],
+}
+ALL = [record for records in AIRPORTS.values() for record in records]
+
+
+def answer_with(expected, probe_answer):
+    def answer(prompt: str) -> str:
+        if prompt.startswith("Your task is to prepare a data request"):
+            return json.dumps({"ask": "commercial airports in France", "constraints": {}})
+        if prompt.startswith("Resolve the output schema"):
+            return json.dumps({"attrs": [{"name": "name"}, {"name": "region"}],
+                               "primary_keys": ["name"]})
+        if prompt.startswith("Estimate the number of records"):
+            return json.dumps({"expected": expected, "lower": 2, "upper": expected + 5,
+                               "row_unit": "airports"})
+        if prompt.startswith("Propose one useful partition"):
+            return json.dumps({"key": "region", "values": list(AIRPORTS),
+                               "ambiguity": 0.1, "child_estimates": [2, 1]})
+        for region, records in AIRPORTS.items():
+            if region in prompt:
+                return json.dumps(records)
+        # The probe: the root's own ask, naming no region.
+        return json.dumps(probe_answer)
+    return answer
+
+
+settings = {"plan.mode": "partitioned", "plan.key": "name",
+            "plan.partition_key": "region", "plan.max_depth": 1,
+            "plan.split_policy": "evidence"}
+
+whole = LlmSource().fetch("commercial airports in France", attrs=["name", "region"],
+                          llm_fn=answer_with(3, ALL), properties=settings)
+print(whole.meta.split_decision, whole.meta.calls, len(whole.records))
+# probe_accepted 4 3
+
+short = LlmSource().fetch("commercial airports in France", attrs=["name", "region"],
+                          llm_fn=answer_with(200, ALL[:1]), properties=settings)
+print(short.meta.split_decision, short.meta.calls, len(short.records))
+# probe_split_shortfall 7 3
+```
+
+The first request is answered by the probe: three planning calls and one probe, where the default policy would have made six. In the second, the estimate of 200 is above the threshold and the probe holds one key, so the plan splits: the probe, one proposal and two leaves, with the probe's record merged into the result under the origin `root`. `meta.split_decision` names the outcome and is absent when no probe ran. The probe adds one call to every published bound. The setting is opt-in; the [changelog](../CHANGELOG.md#220--candidate) records what it was measured on.
+
 ## Asking again for what did not come back
 
 A model asked for two hundred records returns forty, stops at a plausible place, and reports nothing wrong. `plan.max_continuations` lets a part ask again, naming the records it already holds.

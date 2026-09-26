@@ -40,7 +40,7 @@ blue-llmdb metadata inspect
 ┡━━━━━━━━━━╇━━━━━━━━┩
 │ protocol │ llm    │
 │ variant  │ openai │
-│ version  │ 2.1.0  │
+│ version  │ 2.2.0  │
 └──────────┴────────┘
 ```
 
