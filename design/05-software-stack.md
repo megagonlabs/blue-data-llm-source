@@ -123,16 +123,16 @@ The `llm.cache` switch is separate from both stores and opens `diskcache`. That 
 
 | Concern | Choice |
 |---------|--------|
-| Library | `mcp==1.27.2`, the official MCP Python SDK |
+| Library | `mcp>=1.28.1,<2`, the official MCP Python SDK |
 | Server | Low-level server over stdio |
 | Tools | `llmdb_query`, `llmdb_estimate`, `llmdb_list_models`, `llmdb_inspect_model`, `llmdb_inspect_metadata` |
 | Entry point | `blue-data-llm-mcp` |
 | Configuration | `BLUE_DATA_LLM_MODEL` and nine `BLUE_DATA_LLM_SOURCE_*` request settings from the process environment, read on every call, plus three operator ceilings (`_LIMIT_COST`, `_LIMIT_CALLS`, `_LIMIT_SECONDS`) that a call can lower but not raise |
-| Dependencies | `blue-data-llm-source[llm]>=2.2.0`, `mcp==1.27.2` |
+| Dependencies | `blue-data-llm-source[llm]>=2.2.0`, `mcp>=1.28.1,<2` |
 
 The low-level server is used rather than the decorator-derived one because the tool schemas are written by hand. Deriving a schema from a handler signature would put the tool contract in a Python signature instead of in the JSON a client actually sees, and that JSON is the contract an agent reads.
 
-`mcp` is pinned rather than floored, which is unusual enough to state. The low-level server's decorator API this module is built on was removed in `mcp` 2.0, so a `>=1.0` constraint resolves to a release where the server cannot import at all. `blue-data-ops` pins the same version for the same reason.
+`mcp` is bounded below 2 rather than merely floored, which is unusual enough to state. The low-level server's decorator API this module is built on was removed in `mcp` 2.0, so a `>=1.0` constraint resolves to a release where the server cannot import at all. The floor of 1.28.1 excludes releases with a published advisory; `blue-data`'s MCP packages use the same `>=1.28.1,<2` bound.
 
 The `mcp` import is confined to the transport module. Tool definitions and argument translation live in a module that imports only the library, so both are exercised in CI with no SDK installed.
 

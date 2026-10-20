@@ -18,7 +18,7 @@ blue-data-llm-source/
 |---|---|---|---|
 | `blue-data-llm-source` | `lib/` | 2.2.0 | `blue-data>=0.1.0`, `tenacity>=9.0.0` |
 | `blue-data-llm-cli` | `platform/llm-cli/` | 2.2.0 | `blue-data-llm-source[llm]>=2.2.0`, `click>=8.0`, `rich>=13.0` |
-| `blue-data-llm-mcp` | `platform/llm-mcp/` | 2.2.0 | `blue-data-llm-source[llm]>=2.2.0`, `mcp==1.27.2` |
+| `blue-data-llm-mcp` | `platform/llm-mcp/` | 2.2.0 | `blue-data-llm-source[llm]>=2.2.0`, `mcp>=1.28.1,<2` |
 
 The `mcp` pin is exact rather than a floor. The low-level server API that component is built on was removed in `mcp` 2.0, so a floor would resolve to a release where the server cannot import.
 

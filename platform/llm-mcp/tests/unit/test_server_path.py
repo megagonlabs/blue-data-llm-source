@@ -238,12 +238,11 @@ def test_the_handshake_reports_this_package_and_not_the_sdk() -> None:
     assert options.instructions, "a client has nothing to read about what this server is for"
 
 
-def test_the_sdk_is_pinned_not_floored() -> None:
+def test_the_sdk_is_bounded_below_the_next_major() -> None:
     """A floor on a dependency whose major version removed the API is not a constraint."""
     pyproject = (PACKAGE.parents[1] / "pyproject.toml").read_text(encoding="utf-8")
 
-    assert "mcp==" in pyproject, "the SDK must be pinned to a version whose API this matches"
-    assert "mcp>=" not in pyproject
+    assert '"mcp>=1.28.1,<2"' in pyproject, "the SDK must stay below 2.0, which removed this API"
 
 
 def test_a_dotted_ceiling_name_survives_the_protocol_layer() -> None:
