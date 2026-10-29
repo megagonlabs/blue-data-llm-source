@@ -1,29 +1,31 @@
 """The default model client.
 
-Derived from the client shipped in the operator library. The behaviours kept from it
-are the ones worth keeping: a closed override key set so an unknown knob fails loudly,
-control keys that never reach the provider, reserved fields stripped after every merge,
-accounting that cannot raise, cache hits that cost nothing but still record latency, per-event-loop
-concurrency bounds, and response-shape validation before extraction.
-
-Two things are new. Injection is structural rather than an isinstance check against this
-class, so any object with ``complete`` and ``acomplete`` can be substituted. And spend is
-reserved before the provider is contacted rather than recorded afterwards.
+It validates override keys and response shapes, strips reserved fields after
+each merge and control fields before provider calls, and reserves spend before
+contact. Accounting cannot raise; cache hits cost nothing but record latency.
+Each event loop has its own concurrency bound. Clients implementing
+``complete`` and ``acomplete`` can be injected without subclassing this one.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import math
+import os
+import stat
+import threading
 import time
 from collections import OrderedDict
-from collections.abc import AsyncIterable, Callable, Iterable
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Iterator
+from pathlib import Path
 from typing import Any, ClassVar, Protocol, cast
 
 from tenacity import (
     AsyncRetrying,
+    AttemptManager,
     Retrying,
     retry_if_exception_type,
     stop_after_attempt,
@@ -43,9 +45,7 @@ from blue_data_llm_source.types import (
     Usage,
 )
 
-# Accepted llm.* overrides. An unknown key raises rather than passing through, because a
-# silently ignored setting is how the prior implementation ended up with recorded run
-# configs that did not describe what ran.
+# Reject unknown llm.* overrides so the recorded configuration describes the run.
 _ACCEPTED = {
     "model",
     "reasoning_effort",
@@ -97,18 +97,14 @@ def default_reasoning_effort_for(model: object) -> str | None:
     return contract.default_reasoning_effort if contract is not None else None
 
 
-def _must_retain_cost_bound(model: object, bound: float, properties: dict[str, Any]) -> bool:
-    """Whether response accounting is insufficient to release a hard-cost reservation.
+def _calculator_accounting_incomplete(
+    model: object, bound: float, properties: dict[str, Any]
+) -> bool:
+    """Whether response categories prevent treating the calculator cost as measured.
 
-    The provider library's calculator prices a response from its own map. That figure can
-    release a reservation only when the package's table knows the model and nothing the
-    response leaves out can change the bill. A model the table does not carry, or one priced
-    at the caller's rates, may be priced differently or not at all by the calculator. A cache
-    write or the long-context tier changes the charge, and neither is proven by a standard
-    response. Nor is the regional-processing uplift, which the calculator does not apply. In
-    those cases the calculator can still show that the call cost more than the
-    bound, so the higher figure wins, but it cannot lower the charge below the reservation.
-    Only :func:`_usage_bound` can, and only for a table model priced at the table's rates.
+    A ceiling retains its reservation in either case. Extra billing categories and
+    caller rates can make the calculator figure incomplete, so only a higher figure
+    can affect their ledger charge.
     """
     if bound <= 0:
         return False
@@ -141,25 +137,12 @@ def _count(value: Any) -> int | None:
 def _usage_bound(
     model: object, payload: dict[str, Any], properties: dict[str, Any]
 ) -> float | None:
-    """An upper bound on one call's charge from its reported usage, or None.
+    """A conservative charge from reported usage, or None.
 
-    Used where the calculator's figure cannot release a reservation: a call it could not
-    price, or one whose billed categories it cannot prove. Without it such a call is charged
-    its whole reservation, which at a reasoning model's output allowance is many times the
-    real cost and lets a ceiling admit only a handful of calls. The figure is built only
-    where each input to it is proven:
-
-    - the rates are this package's own row, so not for an unknown model or caller rates;
-    - the model that answered resolves to the same row as the one requested;
-    - the served tier is one billed at or below standard rates;
-    - the usage reports whole token counts, including the cached share of the prompt.
-
-    Each part is then priced at the highest rate it could have been billed at. Every
-    uncached prompt token is priced as a cache write where the model has that charge,
-    because the write count is not promised. The long-context rates apply to every call
-    on a model that has the tier, because no field says which tier was billed and hidden
-    tokens can cross the threshold. The regional uplift applies wherever the model is
-    subject to it.
+    The figure uses this package's rates, a matching answered model, a standard or
+    cheaper service tier, and valid token counts. It can raise a contacted attempt's
+    charge above its reservation. Without a ceiling it supplies an unmeasured figure
+    when the calculator cannot price the response.
     """
     if (
         properties.get("llm.price_per_input_token") is not None
@@ -208,12 +191,9 @@ def _retained_cost(
     reservation: float,
     reported: float,
 ) -> float:
-    """The charge for a retained call, never below the calculator's own figure.
-
-    That is the usage bound where one can be built, and the whole reservation otherwise.
-    """
+    """Keep the reservation and any higher readable accounting figure."""
     usage_bound = _usage_bound(model, payload, properties)
-    return max(reservation if usage_bound is None else usage_bound, reported)
+    return max(reservation, reported, usage_bound or 0.0)
 
 
 def accepted_adapter_keys() -> frozenset[str]:
@@ -223,6 +203,14 @@ def accepted_adapter_keys() -> frozenset[str]:
     which overrides exist.
     """
     return frozenset(f"llm.{name}" for name in _ACCEPTED)
+
+
+def _check_adapter_flag_types(properties: dict[str, Any]) -> None:
+    for name in ("llm.stream", "llm.cache"):
+        if name in properties and not isinstance(properties[name], bool):
+            raise ConfigError(f"{name!r} must be a bool")
+    if "llm.cache_dir" in properties and not isinstance(properties["llm.cache_dir"], str):
+        raise ConfigError("'llm.cache_dir' must be a string")
 
 
 def check_adapter_keys(properties: dict[str, Any]) -> None:
@@ -251,10 +239,7 @@ def check_adapter_keys(properties: dict[str, Any]) -> None:
     if parallel is not None and (
         isinstance(parallel, bool) or not isinstance(parallel, int) or parallel < 1
     ):
-        # Validated here rather than where the semaphore is built. A negative value escaped
-        # the public fetch as a raw `ValueError` from asyncio, outside this package's error
-        # hierarchy, and zero built a semaphore with no permits that waited for ever unless
-        # a time ceiling happened to be set.
+        # Reject zero before creating a semaphore with no permits.
         raise ConfigError(
             f"'llm.max_parallel' must be a whole number of at least 1, got {parallel!r}"
         )
@@ -289,6 +274,7 @@ def check_adapter_keys(properties: dict[str, Any]) -> None:
         raise ConfigError(
             f"'llm.timeout' must be a finite positive number of seconds, got {timeout!r}"
         )
+    _check_adapter_flag_types(properties)
     deferred = sorted(key for key in properties if key.startswith("llm.") and key[4:] in _DEFERRED)
     if deferred:
         first = deferred[0]
@@ -430,13 +416,8 @@ class DefaultLlmClient:
         self.budget = budget or Budget()
         self.last_usage: Usage | None = None
         self.usages: list[Usage] = []
-        # Ordered and bounded. Every distinct `llm.cache_dir` opens a diskcache backend
-        # holding SQLite descriptors, and nothing ever closed them: a retained client
-        # rotating cache directories — one per tenant, per day, per run — accumulated one
-        # open backend per directory until the process ran out of file descriptors, at which
-        # point unrelated `open()` calls elsewhere in the program started failing too. The
-        # least recently opened backend is closed when the bound is reached, and `close()`
-        # releases them all.
+        # Bound open diskcache backends, each of which holds SQLite descriptors. Eviction
+        # closes the least recently opened backend; close() releases the rest.
         self._caches: OrderedDict[str, Any] = OrderedDict()
         # Keyed by the loop object, not by its address: an address-keyed map grew without
         # bound and could hand a live call a semaphore belonging to a closed loop whose
@@ -453,13 +434,8 @@ class DefaultLlmClient:
         merged = {**self.properties, **(properties or {})}
         kwargs = self._call_kwargs(prompt, merged)
 
-        # Elapsed time is admitted before the cache is read, which is what `acomplete` does
-        # and what the architecture document promises for a cache hit: it consumes no
-        # attempt, no tokens and no cost, "and admission still checks elapsed time." Only
-        # the async path did it, so a run already past its deadline kept answering from
-        # cache through this one indefinitely. Reachable only by a caller driving the client
-        # directly, since the library's own path is async, but the two entry points should
-        # not disagree about whether a ceiling has been crossed.
+        # Check the deadline before serving a cache hit. A hit spends no call, tokens,
+        # or cost, but it cannot bypass the time ceiling.
         deadline_budget = self._budget_for(merged) or self.budget
         remaining_seconds = deadline_budget.remaining_seconds()
         # `is not None` rather than a truth test: a budget with no time left reports exactly
@@ -492,29 +468,15 @@ class DefaultLlmClient:
         return _extract_text(payload)
 
     async def acomplete(self, prompt: str, properties: dict[str, Any] | None = None) -> str:
-        """Answer *prompt*, cancelling any wait that outlives the run's time ceiling.
+        """Answer *prompt* within the available asynchronous wait time.
 
-        The deadline surrounds the whole awaited path rather than the retry loop alone.
-        Capping only retry backoff would leave the semaphore queue and provider wait outside it.
+        The deadline covers the semaphore queue, provider wait, and retries. It
+        cannot interrupt synchronous work that never yields or work that ignores
+        cancellation; the latter holds the call open until it acknowledges the
+        request. A caller requiring a hard stop must enforce it outside this library.
 
-        What this does not bound is work that never yields, and there is no way to bound it
-        from here: ``asyncio`` cannot interrupt code that is not awaiting, and a thread only
-        defers the cost to loop shutdown. ``max_seconds`` is therefore a bound on admission
-        and on waiting, not on the run. ADR-024 and the library README hold the one list of
-        exclusions; a caller needing a hard stop imposes it above this library.
-
-        A run that finished over its ceiling raises rather than returning a late answer as a
-        success: a ceiling that fails silently is worse than one that reports late.
-
-        The deadline cancels the wait and then waits for acknowledgement. Work that does not
-        acknowledge cancellation holds the call open; abandoning it would detach accounting
-        and caller cancellation from the provider work.
-
-        Expiry becomes ``BudgetExceeded`` naming ``max_seconds``, including when the work
-        ends in a transport failure after the deadline has already passed: the run was over
-        before the failure mattered, and reporting the transport error instead hides which
-        ceiling ended it. A ``TimeoutError`` raised from inside while budget remains is the
-        caller's own failure and propagates unchanged.
+        A late completion or transport failure raises ``BudgetExceeded`` for
+        ``max_seconds``. An inner ``TimeoutError`` propagates if budget remains.
         """
         merged = {**self.properties, **(properties or {})}
         budget = self._budget_for(merged) or self.budget
@@ -523,13 +485,8 @@ class DefaultLlmClient:
             return await self._answer(prompt, merged)
         if remaining <= 0:
             raise BudgetExceeded(_deadline_message(budget), limit="max_seconds")
-        # `wait_for` rather than a detached task. Detaching released the caller from work
-        # that declines cancellation, and cost more than it bought: cancelling the caller no
-        # longer reached the child, the child could be collected mid-flight or hold
-        # `asyncio.run` open at shutdown, and it settled real cost into the caller's budget
-        # after a result reporting zero had already been returned. A library sharing one
-        # loop with its caller has no isolation boundary to offer, so the honest move is the
-        # one ADR-024 already made: bound what can be bounded and document the rest.
+        # Keep cancellation and cost accounting attached to the caller's task.
+        # A detached task could continue spending after the caller returned.
         try:
             answer = await asyncio.wait_for(self._answer(prompt, merged), timeout=remaining)
         except (TimeoutError, asyncio.TimeoutError) as e:
@@ -545,11 +502,8 @@ class DefaultLlmClient:
             if expired is not None and expired <= 0:
                 raise BudgetExceeded(_deadline_message(budget), limit="max_seconds") from None
             raise
-        # `wait_for` waits for the cancellation to be acknowledged. Work that catches
-        # CancelledError and goes on to return hands back a normal answer from after the
-        # deadline, which is the ceiling failing silently rather than late. The work itself
-        # cannot be stopped from here, but a run that finished over its ceiling reports that
-        # rather than succeeding.
+        # Work may suppress cancellation and return late. Report the expired
+        # ceiling even when wait_for hands back a normal answer.
         left = budget.remaining_seconds()
         if left is not None and left <= 0:
             raise BudgetExceeded(_deadline_message(budget), limit="max_seconds")
@@ -566,7 +520,7 @@ class DefaultLlmClient:
             # any store written to the documented interface.
             #
             # Read directly. A cache store is a caller's object, and a blocking
-            # implementation cannot be bounded by the deadline from here: cancelling the
+            # implementation cannot be bounded by the deadline from here: canceling the
             # await does not stop the work, and moving it to a thread only defers the cost
             # to loop shutdown. The ceiling's scope is documented rather than overstated.
             payload = cache.get(key)
@@ -591,6 +545,7 @@ class DefaultLlmClient:
 
     # --------------------------------------------------------------- internals --
     def _call_kwargs(self, prompt: str, properties: dict[str, Any]) -> dict[str, Any]:
+        _check_adapter_flag_types(properties)
         kwargs: dict[str, Any] = {"messages": [{"role": "user", "content": prompt}]}
 
         for key, value in properties.items():
@@ -677,7 +632,7 @@ class DefaultLlmClient:
             )
         except Exception as error:
             raise ConfigError(
-                f"the installed LiteLLM does not recognise {lookup}. Install a "
+                f"the installed LiteLLM does not recognize {lookup}. Install a "
                 "LiteLLM release whose OpenAI adapter supports reasoning_effort and "
                 "max_completion_tokens for this model"
             ) from error
@@ -713,13 +668,46 @@ class DefaultLlmClient:
     ) -> tuple[Any | None, str | None]:
         store = properties.get("cache_store")
         if store is not None:
+            for name in ("get", "set"):
+                method = getattr(store, name, None)
+                if (
+                    not callable(method)
+                    or inspect.iscoroutinefunction(method)
+                    or inspect.isasyncgenfunction(method)
+                    or inspect.iscoroutinefunction(getattr(method, "__call__", None))
+                    or inspect.isasyncgenfunction(getattr(method, "__call__", None))
+                ):
+                    raise ConfigError(
+                        "cache_store must provide synchronous get(key) and "
+                        "set(key, value) callables"
+                    )
             return store, json.dumps(kwargs, sort_keys=True, default=str)
         if not properties.get("llm.cache"):
             return None, None
         # Bound per directory so a per-call cache_dir override gets its own cache
         # instead of silently reusing the first one opened.
         cache_dir = str(properties.get("llm.cache_dir", ".llm_cache"))
-        cache = self._caches.get(cache_dir)
+        expanded = os.path.expandvars(os.path.expanduser(cache_dir))
+        if "$" in expanded or (os.name == "nt" and "%" in expanded):
+            raise ConfigError("llm.cache_dir has an unresolved environment variable")
+        path = Path(expanded)
+        try:
+            path.mkdir(mode=0o700, parents=True, exist_ok=True)
+            path = path.resolve(strict=True)
+            mode = path.lstat()
+        except (OSError, RuntimeError):
+            raise ConfigError("llm.cache_dir cannot be opened") from None
+        if not stat.S_ISDIR(mode.st_mode) or (
+            os.name == "posix" and (mode.st_uid != os.getuid() or mode.st_mode & 0o077)
+        ):
+            raise ConfigError(
+                "llm.cache_dir must be an owned, private directory (mode 0700); "
+                "choose a private directory or change its permissions"
+            )
+        checked_dir = str(path)
+        if "$" in checked_dir or (os.name == "nt" and "%" in checked_dir):
+            raise ConfigError("llm.cache_dir has an unresolved environment variable")
+        cache = self._caches.get(checked_dir)
         if cache is None:
             try:
                 import diskcache  # pyright: ignore[reportMissingTypeStubs]
@@ -728,24 +716,19 @@ class DefaultLlmClient:
                     "llm.cache requested but diskcache is not installed "
                     "(pip install 'blue-data-llm-source[llm]')"
                 ) from e
-            cache = diskcache.Cache(cache_dir)
+            cache = diskcache.Cache(checked_dir)
             while len(self._caches) >= _MAX_OPEN_CACHES:
                 _, evicted = self._caches.popitem(last=False)
                 _close_quietly(evicted)
-            self._caches[cache_dir] = cache
+            self._caches[checked_dir] = cache
         else:
             # Most recently used, so the bound evicts the coldest backend rather than
             # whichever happened to be opened first.
-            self._caches.move_to_end(cache_dir)
+            self._caches.move_to_end(checked_dir)
         return cache, json.dumps(kwargs, sort_keys=True, default=str)
 
     def close(self) -> None:
-        """Release every cache backend this client has opened.
-
-        A library that documents itself as embeddable in a long-lived service has to give
-        callers a way to let go of its handles. Safe to call more than once, and the client
-        stays usable afterwards — a later call reopens what it needs.
-        """
+        """Close cache backends; later calls reopen them as needed."""
         while self._caches:
             _, cache = self._caches.popitem()
             _close_quietly(cache)
@@ -756,44 +739,43 @@ class DefaultLlmClient:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
-    # Shared by every instance, not per instance. `LlmSource` builds a fresh client for each
-    # fetch unless the caller injects one, so a per-instance registry gave every concurrent
-    # fetch its own full-permit semaphore and the ceiling bounded nothing at all on the
-    # default path — forty concurrent fetches at max_parallel=1 ran forty provider calls at
-    # once. The documented scope is per event loop, which is what this restores; the entries
-    # are keyed by loop and dropped when the loop closes, so sharing adds no lifetime.
+    # Share semaphores across client instances within an event loop so max_parallel bounds
+    # concurrent fetches. Closed loops are removed below.
     _semaphores: ClassVar[OrderedDict[asyncio.AbstractEventLoop, dict[int, asyncio.Semaphore]]] = (
         OrderedDict()
     )
 
+    _semaphore_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    @classmethod
+    def _release_loop(cls, loop: asyncio.AbstractEventLoop) -> None:
+        with cls._semaphore_lock:
+            cls._semaphores.pop(loop, None)
+
     def _semaphore(self, properties: dict[str, Any]) -> asyncio.Semaphore:
         max_parallel = int(properties.get("llm.max_parallel", 8))
         loop = asyncio.get_running_loop()
-        # A closed loop can have no live waiters, so its semaphores are dead weight and the
-        # only thing keeping it reachable. Dropped here rather than left for a weak
-        # reference that the semaphore itself prevents from ever firing.
-        for stale in [known for known in self._semaphores if known.is_closed()]:
-            del self._semaphores[stale]
-        per_loop = self._semaphores.get(loop)
-        if per_loop is None:
-            per_loop = {}
-            # Bounded, and least-recently-used first. Sweeping only closed loops was enough
-            # while this map lived on the instance and died with it; at class scope an entry
-            # outlives the client that made it, so a loop that is abandoned rather than
-            # closed is pinned alive by the map itself — and with it every selector and
-            # descriptor it holds. A hundred and fifty abandoned loops took a process from
-            # thirty-eight open descriptors to four hundred and eighty-eight. The sibling
-            # `_caches` map is bounded for exactly this reason.
-            while len(self._semaphores) >= _MAX_TRACKED_LOOPS:
-                self._semaphores.popitem(last=False)
-            self._semaphores[loop] = per_loop
-        else:
-            self._semaphores.move_to_end(loop)
-        sem = per_loop.get(max_parallel)
-        if sem is None:
-            sem = asyncio.Semaphore(max_parallel)
-            per_loop[max_parallel] = sem
-        return sem
+        with self._semaphore_lock:
+            # A closed loop can have no live waiters, so its semaphores are dead weight and the
+            # only thing keeping it reachable. Dropped here rather than left for a weak
+            # reference that the semaphore itself prevents from ever firing.
+            for stale in [known for known in self._semaphores if known.is_closed()]:
+                del self._semaphores[stale]
+            per_loop = self._semaphores.get(loop)
+            if per_loop is None:
+                per_loop = {}
+                # The class-level map pins loop resources, including abandoned loops.
+                # Evict the least recently used entry when it reaches the limit.
+                while len(self._semaphores) >= _MAX_TRACKED_LOOPS:
+                    self._semaphores.popitem(last=False)
+                self._semaphores[loop] = per_loop
+            else:
+                self._semaphores.move_to_end(loop)
+            sem = per_loop.get(max_parallel)
+            if sem is None:
+                sem = asyncio.Semaphore(max_parallel)
+                per_loop[max_parallel] = sem
+            return sem
 
     @staticmethod
     def _sink(properties: dict[str, Any]) -> list[Usage] | None:
@@ -804,10 +786,8 @@ class DefaultLlmClient:
     def _record_unpriced(self, kwargs: dict[str, Any], properties: dict[str, Any]) -> None:
         """Note a contacted attempt whose cost could not be read.
 
-        A failed attempt reached the provider and may have been billed, and it appended no
-        usage record at all — so a later successful retry was the only entry the result saw
-        and the whole fetch reported its accounting as measured. The entry carries no tokens
-        and no cost, because none are known; what it carries is that fact.
+        A failed provider attempt may have been billed. Record unknown tokens and cost so
+        a later successful retry does not make the fetch appear fully measured.
         """
         record = Usage(model=str(kwargs.get("model", "")), cost_known=False)
         self.last_usage = record
@@ -905,9 +885,8 @@ class DefaultLlmClient:
     def budget_capabilities(self) -> frozenset[str]:
         """Every axis. This client makes the provider call, so it can enforce all of them.
 
-        Cost is included because :func:`pricing.bound_cost` either produces a figure that
-        cannot be exceeded or refuses, and the refusal reaches the caller as a ConfigError
-        naming what is missing rather than as a ceiling that quietly does not hold.
+        Cost is included because :func:`pricing.bound_cost` bounds an attempt at the
+        package or configured rates, or refuses with a ConfigError before contact.
         """
         return Capability.ALL
 
@@ -961,76 +940,80 @@ class DefaultLlmClient:
         budget: Budget | None = None,
         merged: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], float, bool]:
-        # Reserved per attempt rather than per operation. Reserving once around the whole
-        # retry loop lets a run with two retries make three times the calls its limit
-        # allows, which is the difference between a limit and a suggestion.
+        # Reserve each attempt so retries consume the call limit.
         effective = budget or self.budget
         merged = merged or {}
-        for attempt in self._retryer(effective):
+        last_provider_error: TransportError | None = None
+
+        def attempts() -> Iterator[AttemptManager]:
+            try:
+                yield from self._retryer(effective)
+            except BudgetExceeded as limit:
+                if limit.limit != "max_calls" or last_provider_error is None:
+                    raise
+                # No answer exists, and the refusal only prevented another retry. Keep
+                # the provider failure as the visible cause without exposing its text.
+                raise TransportError(
+                    "Provider request failed; max_calls stopped retries.",
+                    code=last_provider_error.code,
+                    provider_error=last_provider_error.provider_error,
+                ) from limit
+
+        for attempt in attempts():
             with attempt:
-                # Everything that can fail locally happens before the reservation, so a
-                # failure there is genuinely uncharged.
-                #
-                # Admitted, then imported, then claimed. The bound needs no provider, and
-                # importing one is not free: the shipped adapter fetches a remote price map
-                # on first use, so a request a ceiling was always going to refuse should not
-                # reach the network to be told so. Claiming before the import instead was
-                # worse — the claim was visible to a sibling on a shared budget, which was
-                # then terminally refused on an allowance the final ledger said was free.
-                # This check takes nothing, so it cannot refuse anyone. The window it opens
-                # is that a call admitted here may be refused by `reserve` a moment later,
-                # after the import has run; that costs one wasted import and is the accepted
-                # side of the trade.
+                # Check the bound before importing the provider, whose first import may
+                # contact a price service. Claim the budget after import so another call
+                # does not see a reservation for an uncharged import failure. A concurrent
+                # claim can still exhaust the budget between the check and attempt().
                 bound = self._estimate(self._with_deadline(kwargs, effective), effective, merged)
                 effective.check_admissible(bound)
                 provider = self._import_provider()
                 self._check_provider_compatibility(provider, kwargs)
-                # Re-derived after the import rather than before it. Importing can
-                # consume part of the deadline without exhausting it, and the earlier
-                # figure then sent the provider a timeout longer than the run had left:
-                # one that honoured it answered at 1.8s under a 1.0s budget. The cost
-                # bound does not move, since it reads model, prompt and allowance.
+                # Provider import consumes time; pass the remaining deadline to the call.
+                # The cost bound depends on model, prompt, and allowance, so it is unchanged.
                 call_kwargs = self._with_deadline(kwargs, effective)
-                # `attempt`, not `reserve`. Its cleanup is installed before the claim
-                # is taken, so there is no instant in which a claim exists and nothing
-                # holds a handle that will resolve it — where an interrupt landed.
+                # attempt() installs cleanup before claiming the budget.
                 with effective.attempt(bound) as reservation:
                     try:
                         payload, cost = _call_provider(provider, call_kwargs)
-                    except TransportError:
+                    except TransportError as error:
                         # Contacted and failed. The estimate stands as the charge rather than
                         # being released, or every failed retry would be free.
                         reservation.keep_unpriced()
                         self._record_unpriced(kwargs, merged)
+                        last_provider_error = error
                         raise
                     except Exception as e:
                         reservation.keep_unpriced()
                         self._record_unpriced(kwargs, merged)
-                        raise TransportError(str(e), code="provider_error", provider_error=e) from e
+                        last_provider_error = TransportError(
+                            str(e), code="provider_error", provider_error=e
+                        )
+                        raise last_provider_error from e
                     except BaseException:
-                        # A cancelled task or an interrupt is still an attempt that reached the
+                        # A canceled task or an interrupt is still an attempt that reached the
                         # provider. Leaving its claim outstanding poisons a caller-owned budget
                         # for everything after it, so the estimate stands and the exit is
                         # re-raised unchanged.
                         reservation.keep_unpriced()
                         raise
                     if cost is None:
-                        # An unreadable cost is not a free call. Where the usage bounds it,
-                        # that bound is the charge; otherwise the reservation is.
                         usage_bound = _usage_bound(kwargs.get("model"), payload, merged)
                         if usage_bound is not None:
-                            reservation.settle(usage_bound)
-                            return payload, usage_bound, False
+                            charged = max(reservation.estimate, usage_bound)
+                            reservation.settle(charged)
+                            return payload, charged, False
                         reservation.keep_unpriced()
                         return payload, reservation.estimate, False
-                    if _must_retain_cost_bound(kwargs.get("model"), bound, merged):
+                    if _calculator_accounting_incomplete(kwargs.get("model"), bound, merged):
                         conservative_cost = _retained_cost(
                             kwargs.get("model"), payload, merged, reservation.estimate, cost
                         )
                         reservation.settle(conservative_cost)
                         return payload, conservative_cost, False
-                    reservation.settle(cost)
-                    return payload, cost, True
+                    charged = max(reservation.estimate, cost)
+                    reservation.settle(charged)
+                    return payload, charged, charged == cost
         raise TransportError("retry policy exhausted without a result", code="no_result")
 
     async def _acall(
@@ -1041,54 +1024,69 @@ class DefaultLlmClient:
     ) -> tuple[dict[str, Any], float, bool]:
         effective = budget or self.budget
         merged = merged or {}
-        async for attempt in self._aretryer(effective):
+        last_provider_error: TransportError | None = None
+
+        async def attempts() -> AsyncIterator[AttemptManager]:
+            try:
+                async for attempt in self._aretryer(effective):
+                    yield attempt
+            except BudgetExceeded as limit:
+                if limit.limit != "max_calls" or last_provider_error is None:
+                    raise
+                raise TransportError(
+                    "Provider request failed; max_calls stopped retries.",
+                    code=last_provider_error.code,
+                    provider_error=last_provider_error.provider_error,
+                ) from limit
+
+        async for attempt in attempts():
             with attempt:
-                # Admitted, imported, then claimed. The sync path above explains the order
-                # and what it costs; there is one account of it, not two.
+                # Use the same check, import, and claim order as the sync path.
                 bound = self._estimate(self._with_deadline(kwargs, effective), effective, merged)
                 effective.check_admissible(bound)
                 provider = self._import_provider()
                 self._check_provider_compatibility(provider, kwargs)
-                # Re-derived after the import rather than before it. Importing can
-                # consume part of the deadline without exhausting it, and the earlier
-                # figure then sent the provider a timeout longer than the run had left:
-                # one that honoured it answered at 1.8s under a 1.0s budget. The cost
-                # bound does not move, since it reads model, prompt and allowance.
+                # Provider import consumes time; pass the remaining deadline to the call.
+                # The cost bound depends on model, prompt, and allowance, so it is unchanged.
                 call_kwargs = self._with_deadline(kwargs, effective)
-                # `attempt`, not `reserve`. Its cleanup is installed before the claim
-                # is taken, so there is no instant in which a claim exists and nothing
-                # holds a handle that will resolve it — where an interrupt landed.
+                # attempt() installs cleanup before claiming the budget.
                 with effective.attempt(bound) as reservation:
                     try:
                         payload, cost = await _acall_provider(provider, call_kwargs)
-                    except TransportError:
+                    except TransportError as error:
                         reservation.keep_unpriced()
                         self._record_unpriced(kwargs, merged)
+                        last_provider_error = error
                         raise
                     except Exception as e:
                         reservation.keep_unpriced()
                         self._record_unpriced(kwargs, merged)
-                        raise TransportError(str(e), code="provider_error", provider_error=e) from e
+                        last_provider_error = TransportError(
+                            str(e), code="provider_error", provider_error=e
+                        )
+                        raise last_provider_error from e
                     except BaseException:
-                        # A cancelled task or an interrupt is still an attempt that reached the
+                        # A canceled task or an interrupt is still an attempt that reached the
                         # provider, so the estimate stands and the exit is re-raised unchanged.
                         reservation.keep_unpriced()
                         raise
                     if cost is None:
                         usage_bound = _usage_bound(kwargs.get("model"), payload, merged)
                         if usage_bound is not None:
-                            reservation.settle(usage_bound)
-                            return payload, usage_bound, False
+                            charged = max(reservation.estimate, usage_bound)
+                            reservation.settle(charged)
+                            return payload, charged, False
                         reservation.keep_unpriced()
                         return payload, reservation.estimate, False
-                    if _must_retain_cost_bound(kwargs.get("model"), bound, merged):
+                    if _calculator_accounting_incomplete(kwargs.get("model"), bound, merged):
                         conservative_cost = _retained_cost(
                             kwargs.get("model"), payload, merged, reservation.estimate, cost
                         )
                         reservation.settle(conservative_cost)
                         return payload, conservative_cost, False
-                    reservation.settle(cost)
-                    return payload, cost, True
+                    charged = max(reservation.estimate, cost)
+                    reservation.settle(charged)
+                    return payload, charged, charged == cost
         raise TransportError("retry policy exhausted without a result", code="no_result")
 
 
@@ -1174,13 +1172,9 @@ _USAGE_COUNTS = ("prompt_tokens", "completion_tokens", "total_tokens")
 def _carries_usage(chunk: Any) -> bool:
     """Whether one chunk brought the provider's own accounting with it.
 
-    Presence of a usage container is not accounting. A provider may stream an empty one, or
-    one whose counts are all zero, and the assembler then fills the figures in from a local
-    tokenizer — so reading presence as "the provider reported this" settles a number the
-    provider never sent. It is the same fabrication the raw-chunk check exists to avoid,
-    arriving through a container rather than through a missing key.
-
-    Only counts that are actually there count.
+    A provider may stream an empty usage container, or one with zero counts. The assembler
+    can fill those values from a local tokenizer. Only counts in the raw chunks attest
+    provider accounting.
     """
     reported = getattr(chunk, "usage", None)
     if reported is None and isinstance(chunk, dict):
@@ -1211,20 +1205,15 @@ def _materialize(response: Any, usage_reported: bool = True) -> tuple[dict[str, 
         raise TransportError(
             "provider returned a response with no choices list", code="bad_response"
         )
-    # Checked here, inside the guarded attempt, rather than when the text is pulled out.
-    # An empty list or a null content — what a refusal or a non-text completion looks like —
-    # passed this check, settled the attempt, and was written to the cache; only then did
-    # extraction raise, outside the retry loop. So the documented retries never ran and one
-    # transient malformed response became a permanently cached failure.
+    # Validate content inside the guarded attempt, before settlement and caching, so a
+    # malformed response can be retried.
     if not choices:
         raise TransportError("provider returned an empty choices list", code="bad_response")
     first: Any = cast("list[Any]", choices)[0]
     message: Any = cast("dict[str, Any]", first).get("message") if isinstance(first, dict) else None
     if not isinstance(message, dict):
         raise TransportError("provider response has no message content", code="bad_response")
-    # Text, not merely present. Rejecting only `None` let a list, mapping or number settle,
-    # cache, and then fail in `str()` outside the retry guard — so a transient anomaly became
-    # a permanently cached failure, which is the thing the check exists to prevent.
+    # Require text before settling or caching the provider response.
     if not isinstance(cast("dict[str, Any]", message).get("content"), str):
         raise TransportError("provider response message content is not text", code="bad_response")
     if not usage_reported:
@@ -1237,11 +1226,8 @@ def _materialize(response: Any, usage_reported: bool = True) -> tuple[dict[str, 
         return {key: value for key, value in payload.items() if key != "usage"}, None
     cost = _cost_of(response)
     if cost == 0.0:
-        # The calculator answers zero for a model its price map does not carry, and for a
-        # response whose usage block is missing or all zero. A contacted call is never free:
-        # every request sends a prompt, so a zero here is not an account of the call whatever
-        # the usage says. Read as a price, it releases every reservation under a ceiling while
-        # the running total stays where it started. A cache hit never reaches this point.
+        # Zero may mean missing pricing or usage. Keep the cost unknown for a contacted call
+        # rather than releasing its reservation as a free call.
         return payload, None
     return payload, cost
 
@@ -1271,8 +1257,7 @@ def _cost_of(response: Any) -> float | None:
         value = float(litellm.completion_cost(completion_response=response))
     except Exception:
         return None
-    # NaN arrives as a value rather than an exception, compares false against every
-    # ceiling, and passes max(0.0, NaN) as zero. Unreadable is the honest reading.
+    # NaN can arrive as a value and must not become a zero-cost measurement.
     if not math.isfinite(value) or value < 0:
         return None
     return value
@@ -1369,11 +1354,9 @@ class FunctionClient:
         that it was invoked once. It cannot know whether that function contacts a provider,
         how many times, what it is billed, or how to stop it at a deadline.
 
-        Calls were claimed here at first, on the reasoning that one invocation is one call.
-        That is the same guess as reporting its cost at zero: a callable may answer from
-        memory, contact one provider, or fan out to several, and none of that is visible
-        from here. ``limits.max_calls`` counts provider entries, so it is refused for a
-        callable rather than measured against something else and given the same name.
+        A callable may answer from memory, contact one provider, or fan out to several.
+        Provider calls and cost are not observable here, so ``limits.max_calls`` cannot be
+        enforced for a callable.
         """
         return frozenset({Capability.ROWS})
 

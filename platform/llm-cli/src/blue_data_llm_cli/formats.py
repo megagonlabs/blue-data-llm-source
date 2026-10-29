@@ -1,26 +1,14 @@
-"""One renderer, four formats, every command.
+"""Render command results as table, JSON, natural language, or CSV.
 
-"Every command honours every format" is a claim about every command that returns a result,
-and the only way to keep it is to have one implementation of it. So a command builds a
-:class:`Result` — the columns, the rows, the JSON object, and a sentence or two of prose —
-and hands it here.
-Adding a format is a branch in :func:`render`; adding a command costs nothing.
+Commands pass a :class:`Result` containing columns, rows, a JSON object, and prose.
+Model output is untrusted: control sequences are stripped from cells in every format.
+Rich's ``strip_control_codes`` leaves ESC in place, and ``markup=False`` only handles
+Rich markup. CSV also quotes cells starting with ``=``, ``+``, ``-``, ``@``, tab,
+or carriage return to prevent spreadsheet formula execution.
 
-The guard that is not optional: **model output is untrusted**. A record value is whatever a
-language model wrote, and a CSI escape sequence in it walks the terminal cursor, which is
-how a screen came to show one record under a footer reporting two. Rich's own
-`strip_control_codes` leaves ESC in place and `markup=False` defends only against Rich's own
-`[bold]` syntax, so the strip here is the one that matters, and it runs on every cell in
-every format. In `csv` it is followed by a second guard: a cell starting with `=`, `+`, `-`,
-`@`, tab or carriage return is prefixed with a quote, because a spreadsheet reads those as
-formulas and these cells hold model output.
-
-In `json` the strip runs on string *values*. Keys are left as `json.dumps` writes them: with
-`ensure_ascii` on, every control character in a key is escaped, and a key is a token a
-consumer matches on rather than text it prints, so rewriting one would break the match.
-
-Stdout carries the result and nothing else. Progress, logs, warnings and errors are the
-caller's other stream, so every format is safe to pipe.
+JSON string values are stripped. Keys keep ``json.dumps`` escaping with
+``ensure_ascii`` because consumers match keys exactly. Results go to stdout;
+progress, logs, warnings, and errors go to stderr.
 """
 
 from __future__ import annotations
@@ -42,7 +30,7 @@ FORMATS = ("table", "json", "nl", "csv")
 
 # C0 and C1 control characters, minus tab and newline, which are the two a cell can carry:
 # csv quotes them and json escapes them. A benign case needs no adversary — a model quoting
-# a CI log's colour codes corrupts column alignment, because Rich counts the escape bytes
+# a CI log's color codes corrupts column alignment, because Rich counts the escape bytes
 # toward the cell's width.
 _CONTROLS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
@@ -141,7 +129,7 @@ def console() -> Console:
     """The stdout console every format writes through.
 
     Markup off: a record value holding square brackets is data, not a style tag. Highlight
-    off: Rich's guesses about what a value *is* have no business colouring one.
+    off: Rich's guesses about what a value *is* have no business coloring one.
     """
     return Console(markup=False, highlight=False)
 
@@ -186,11 +174,22 @@ def _render_table(result: Result, out: Console) -> None:
     else:
         title = printable(result.title) if result.title else None
         table = Table(show_header=True, header_style="bold", title=title)
+        profile_table = result.columns == ("Parameter", "Value", "Source")
         for index, name in enumerate(result.columns):
             # Sanitised here rather than where the columns were chosen: the column name is
             # also the key each record is read by, and stripping it there turned a key
             # holding a control character into a lookup that matched nothing.
-            table.add_column(printable(str(name)), style="bold" if index == 0 else None)
+            minimum = (
+                max(len(str(row[index])) for row in result.rows)
+                if profile_table and name == "Parameter" and result.rows
+                else None
+            )
+            table.add_column(
+                printable(str(name)),
+                style="bold" if index == 0 else None,
+                min_width=minimum,
+                max_width={"Value": 12, "Source": 15}.get(name) if profile_table else None,
+            )
         for row in result.rows:
             table.add_row(*[cell(value) for value in row])
         out.print(table)

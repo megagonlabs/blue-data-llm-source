@@ -1,39 +1,34 @@
-"""``blue-llmdb profile`` — the profile command group, over the local config engine.
+"""The ``blue-llmdb profile`` commands over the shared configuration engine.
 
-A deliberate near-copy of `blue_data_user_cli.profile` and `blue_data_kb_cli.profile`: the
-CLI checklist requires `profile` to behave identically across the family, so the three are
-meant to read the same, and a fix to one belongs in all of them. The engine underneath
-(spec, `.profiles` I/O, precedence, secrets) is `configstore` here and
-`blue_data.utils.config` there; this module is the Click layer over it and holds nothing
-reusable but the prompting.
-
-Two deliberate differences from the siblings, both required by the compliance checklist:
-`--format` takes all four values rather than two, and a refusal is this CLI's coded error
-rather than a bare `ClickException`.
+``blue_data.utils.config`` handles the spec, profile files, precedence, and secrets. This
+module handles Click prompting and output. ``--format`` accepts four values, and
+profile failures use the CLI's coded errors.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import click
-from rich.console import Console
-
-from blue_data_llm_cli import config, formats
-from blue_data_llm_cli.configstore import (
+from blue_data.utils.config import (
     MASK,
-    ConfigResolver,
-    Parameter,
+    ConfigSpec,
+    ParamSpec,
     ProfileError,
-    ProfileStore,
-    SettingError,
-    Spec,
     base_spec,
     display,
     encode,
     load_spec,
 )
+from blue_data.utils.config import (
+    ConfigError as SettingError,
+)
+from rich.console import Console
+
+from blue_data_llm_cli import config, formats
+from blue_data_llm_cli.profile_adapter import ConfigResolver, ProfileStore, cast_value
 
 # Markup off: a profile name or a stored value is the user's text, not a style tag.
 console = Console(markup=False, highlight=False)
@@ -41,16 +36,33 @@ console = Console(markup=False, highlight=False)
 _SPEC_PATH = Path(__file__).with_name("profile_spec.json")
 
 
-def cli_spec() -> Spec:
-    """The family-wide parameters plus this CLI's own.
+def cli_spec() -> ConfigSpec:
+    """Shared parameters plus this CLI's own.
 
-    The cache directory's default is filled in here rather than written into the spec file.
-    It lives under the CLI home, and the home is an environment setting — a cache that
-    stayed in `~/.blue-llmdb` after the home moved would be a directory nobody asked for.
+    The default cache directory follows the CLI home, which comes from the environment.
     """
-    spec = base_spec().merged_with(load_spec(_SPEC_PATH))
-    return spec.with_default(
-        "BLUE_DATA_LLM_SOURCE_CACHE_DIR", str(Path(config.cli_home()) / "cache")
+    shared = base_spec()
+    names = (
+        "OPENAI_API_KEY",
+        "BLUE_DATA_LLM_MODEL",
+        "BLUE_DATA_CLI_FORMAT",
+        "BLUE_DATA_CLI_LOG_LIMIT",
+    )
+    spec = ConfigSpec({name: shared[name] for name in names}).merged_with(load_spec(_SPEC_PATH))
+    overrides = {
+        "OPENAI_API_KEY": {
+            "prompt": "OpenAI API key (the provider SDK reads it from the environment)",
+        },
+        "BLUE_DATA_LLM_MODEL": {
+            "default": "gpt-6-luna",
+            "required": True,
+            "prompt": "Model to call",
+        },
+        "BLUE_DATA_CLI_FORMAT": {"prompt": "Default output format: table, json, nl, or csv"},
+        "BLUE_DATA_LLM_SOURCE_CACHE_DIR": {"default": str(Path(config.cli_home()) / "cache")},
+    }
+    return ConfigSpec(
+        {param.name: replace(param, **overrides.get(param.name, {})) for param in spec}
     )
 
 
@@ -58,8 +70,12 @@ def profile_store(home: str) -> ProfileStore:
     return ProfileStore(home)
 
 
-def resolver_for(home: str, profile: str | None = None) -> ConfigResolver:
-    return ConfigResolver(cli_spec(), profile_store(home), profile=profile)
+def resolver_for(
+    home: str, profile: str | None = None, *, allow_missing: bool = False
+) -> ConfigResolver:
+    return ConfigResolver(
+        cli_spec(), profile_store(home), profile=profile, allow_missing=allow_missing
+    )
 
 
 def _target(obj: dict[str, Any], name: str | None) -> str:
@@ -67,8 +83,8 @@ def _target(obj: dict[str, Any], name: str | None) -> str:
     return name or str(obj["profile"])
 
 
-def _prompt_for(param: Parameter, current: str | None, walking: bool = False) -> str | None:
-    """Ask for one parameter's value, honouring its cast.
+def _prompt_for(param: ParamSpec, current: str | None, walking: bool = False) -> str | None:
+    """Ask for one parameter's value, honoring its cast.
 
     Returns None when the user accepts an empty value, which leaves the parameter unset
     rather than storing an empty string. When there is nothing to read from — a pipeline, a
@@ -95,7 +111,7 @@ def _prompt_for(param: Parameter, current: str | None, walking: bool = False) ->
         raise config.CliError(config.USAGE, _non_interactive_advice(param, walking)) from None
 
 
-def _non_interactive_advice(param: Parameter, walking: bool) -> str:
+def _non_interactive_advice(param: ParamSpec, walking: bool) -> str:
     if walking:
         return (
             f"there is nothing to read answers from. Set parameters one at a time with "
@@ -115,11 +131,18 @@ def _non_interactive_advice(param: Parameter, walking: bool) -> str:
     )
 
 
-def _store_value(param: Parameter, value: str) -> str:
+def _store_value(param: ParamSpec, value: str) -> str:
     """The form a value takes on disk — secrets encoded, everything else cast."""
+    ProfileStore.check_value(param.name, value)
     if param.is_secret:
         return encode(value)
-    return str(param.cast_value(value))
+    choices = {
+        "BLUE_DATA_CLI_FORMAT": formats.FORMATS,
+        "BLUE_DATA_LLM_SOURCE_EFFORT": config.EFFORTS,
+    }.get(param.name)
+    if choices is not None and value not in choices:
+        raise SettingError(f"{param.name} must be one of {', '.join(choices)}")
+    return str(cast_value(param, value))
 
 
 # ------------------------------------------------------------------ #
@@ -233,9 +256,14 @@ def profile_select(obj: dict[str, Any], name: str) -> None:
         try:
             profile_store(obj["home"]).select(name)
         except ProfileError as error:
+            hint = (
+                f" Run `{config.PROGRAM} profile list` to see them."
+                if str(error).startswith("no such profile:")
+                else ""
+            )
             raise config.CliError(
                 config.PROFILE,
-                f"{error}. Run `{config.PROGRAM} profile list` to see them.",
+                f"{error}.{hint}" if hint else str(error),
             ) from None
     console.print(f"Selected profile: {name}", style="bold")
 
@@ -280,7 +308,7 @@ def profile_inspect(obj: dict[str, Any], name: str | None, output_format: str | 
             {
                 "Parameter": param.name,
                 "Value": _shown(res, param, stored),
-                "Source": res.source_of(param.name),
+                "Source": _inspection_source(res, param, stored),
             }
             for param in spec
         ]
@@ -300,7 +328,7 @@ def profile_inspect(obj: dict[str, Any], name: str | None, output_format: str | 
     formats.render(result, fmt)
 
 
-def _shown(res: ConfigResolver, param: Parameter, stored: dict[str, str]) -> str:
+def _shown(res: ConfigResolver, param: ParamSpec, stored: dict[str, str]) -> str:
     if not param.is_secret:
         value = res.get(param.name)
         return "(unset)" if value is None else str(value)
@@ -314,8 +342,15 @@ def _shown(res: ConfigResolver, param: Parameter, stored: dict[str, str]) -> str
     if raw is not None:
         # Whatever the profile holds, including a reference that does not currently resolve:
         # naming the variable is how the user learns what to export.
-        return display(raw)
+        return display(raw, environ=res.environment)
     return "(unset)" if source == "unset" else MASK
+
+
+def _inspection_source(res: ConfigResolver, param: ParamSpec, stored: dict[str, str]) -> str:
+    source = res.source_of(param.name)
+    if source == "unset" and param.is_secret and param.name in stored:
+        return f"profile:{res.profile}"
+    return source
 
 
 def _inspect_sentence(target: str, rows: list[dict[str, Any]]) -> str:
@@ -353,12 +388,9 @@ def profile_config(
         store = profile_store(obj["home"])
         spec = cli_spec()
 
-        # The target is created by the write that needs it, not before. Creating it up
-        # front meant `profile config --profile typo NOT_A_PARAM x` refused the parameter
-        # with `typo` already made and left behind: a command that changed nothing it was
-        # asked to change, and one thing it was not.
+        # Create the target in the validated write, leaving no empty profile on refusal.
         existed = store.exists(target)
-        stored = store.values(target)
+        stored = store.values(target) if existed else {}
 
         if param is None:
             params = spec.required()
@@ -370,7 +402,11 @@ def profile_config(
             try:
                 params = [spec[param]]
             except SettingError as error:
-                raise config.CliError(config.PROFILE, str(error)) from None
+                raise config.CliError(
+                    config.PROFILE,
+                    f"{error}. Run `{config.PROGRAM} profile inspect --format json` "
+                    "to see parameter names.",
+                ) from None
 
         if value is not None:
             one = params[0]

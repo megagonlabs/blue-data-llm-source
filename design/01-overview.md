@@ -22,7 +22,7 @@ blue-data-llm-source presents a language model through the data-layer source int
 
 ## What It Depends On
 
-The package has two runtime dependencies: `blue-data>=0.1.0` and `tenacity>=9.0.0`. `blue-data` supplies the `DataSource` base class used by the other sources in the layer, so interface divergence can be detected by type checking. It also installs `pandas`, `numpy`, and `jsonpath-ng`, which this package does not use directly.
+The package has two runtime dependencies: `blue-data>=1.0.0,<2` and `tenacity>=9.0.0`. `blue-data` supplies the `DataSource` base class used by the other sources in the layer, so interface divergence can be detected by type checking. It also installs `pandas`, `numpy`, and `jsonpath-ng`, which this package does not use directly.
 
 The package depends on the data layer but not on its orchestration runtime. It imports neither `blue` nor `blue_data_ops`, and a test enforces that boundary.
 

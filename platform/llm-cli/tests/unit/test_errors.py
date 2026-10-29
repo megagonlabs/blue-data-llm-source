@@ -119,17 +119,171 @@ def test_an_error_after_the_body_starts_is_also_an_object_on_stdout(
             "message": "TransportError: provider refused the connection",
         }
     }
+
+
+def test_provider_failure_before_call_limit_exits_as_transport(
+    runner: CliRunner, install_raising_source: Any
+) -> None:
+    install_raising_source(
+        TransportError(
+            "Provider request failed; max_calls stopped retries.",
+            code="authentication_error",
+        )
+    )
+    result = runner.invoke(cli, ["data", "query", QUERY, "--limit-calls", "1"])
+    assert result.exit_code == config.EXIT_TRANSPORT
     assert "ERROR: TRANSPORT" in result.stderr
 
 
-def test_a_parse_failure_stays_plain_text_because_the_format_is_not_known_yet(
-    runner: CliRunner,
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["data", "query", QUERY, "--nope", "--format", "json"],
+        ["data", "query", QUERY, "--format", "json", "--nope"],
+        ["data", "query", QUERY, "--nope", "--format=json"],
+        ["data", "query", QUERY, "--max-tokens", "bad", "--format", "json"],
+        ["data", "query", "--format", "json"],
+        ["data", "query", QUERY, "--format", "table", "--format", "json", "--nope"],
+        ["model", "list", "--nope", "--format", "json"],
+        ["--nope", "data", "query", QUERY, "--format", "json"],
+        ["data", "--nope", "query", QUERY, "--format", "json"],
+    ],
+)
+def test_parse_failure_uses_explicit_json_format(args: list[str], runner: CliRunner) -> None:
+    result = runner.invoke(cli, args)
+    assert result.exit_code == config.EXIT_USAGE
+    assert json.loads(result.stdout) == {
+        "error": {
+            "code": "USAGE",
+            "message": result.stderr.removeprefix("ERROR: USAGE ").strip(),
+        }
+    }
+    assert result.stderr.startswith("ERROR: USAGE ")
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["data", "query", QUERY, "--nope"],
+        ["data", "--nope", "query", QUERY],
+        ["--nope", "data", "query", QUERY],
+    ],
+)
+def test_parse_failure_uses_exported_json_default(args: list[str], runner: CliRunner) -> None:
+    result = runner.invoke(cli, args, env={"BLUE_DATA_CLI_FORMAT": "json"})
+    assert result.exit_code == config.EXIT_USAGE
+    assert json.loads(result.stdout) == {
+        "error": {
+            "code": "USAGE",
+            "message": result.stderr.removeprefix("ERROR: USAGE ").strip(),
+        }
+    }
+
+
+@pytest.mark.parametrize("value", ["table", "invalid", ""])
+def test_explicit_non_json_format_overrides_exported_json_on_parse_failure(
+    value: str, runner: CliRunner
 ) -> None:
-    """Click refuses the flag before any command body runs, so there is no format to honour."""
-    result = runner.invoke(cli, ["data", "query", QUERY, "--nope", "--format", "json"])
+    result = runner.invoke(
+        cli,
+        ["data", "query", QUERY, "--format", value, "--nope"],
+        env={"BLUE_DATA_CLI_FORMAT": "json"},
+    )
     assert result.exit_code == config.EXIT_USAGE
     assert result.stdout == ""
-    assert "ERROR: USAGE" in result.stderr
+    assert result.stderr.startswith("ERROR: USAGE ")
+
+
+def test_format_flag_after_delimiter_does_not_override_exported_json(runner: CliRunner) -> None:
+    result = runner.invoke(
+        cli,
+        ["data", "query", QUERY, "--", "--format", "table"],
+        env={"BLUE_DATA_CLI_FORMAT": "json"},
+    )
+    assert result.exit_code == config.EXIT_USAGE
+    assert json.loads(result.stdout)["error"]["code"] == "USAGE"
+
+
+def test_command_without_format_keeps_parse_failure_text_under_json_default(
+    runner: CliRunner,
+) -> None:
+    result = runner.invoke(
+        cli,
+        ["profile", "config", "--nope"],
+        env={"BLUE_DATA_CLI_FORMAT": "json"},
+    )
+    assert result.exit_code == config.EXIT_USAGE
+    assert result.stdout == ""
+
+
+def test_invalid_exported_format_keeps_parse_failure_text(runner: CliRunner) -> None:
+    result = runner.invoke(
+        cli, ["data", "query", QUERY, "--nope"], env={"BLUE_DATA_CLI_FORMAT": "invalid"}
+    )
+    assert result.exit_code == config.EXIT_USAGE
+    assert result.stdout == ""
+    assert result.stderr.startswith("ERROR: USAGE ")
+
+
+def test_profile_json_default_applies_after_root_exports_it(runner: CliRunner) -> None:
+    assert runner.invoke(cli, ["profile", "config", "BLUE_DATA_CLI_FORMAT", "json"]).exit_code == 0
+    result = runner.invoke(cli, ["data", "query", QUERY, "--nope"])
+    assert result.exit_code == config.EXIT_USAGE
+    assert json.loads(result.stdout)["error"]["code"] == "USAGE"
+    assert result.stderr.startswith("ERROR: USAGE ")
+
+
+def test_profile_only_json_default_is_unavailable_to_root_parser(runner: CliRunner) -> None:
+    assert runner.invoke(cli, ["profile", "config", "BLUE_DATA_CLI_FORMAT", "json"]).exit_code == 0
+    result = runner.invoke(cli, ["--nope", "data", "query", QUERY])
+    assert result.exit_code == config.EXIT_USAGE
+    assert result.stdout == ""
+    assert result.stderr.startswith("ERROR: USAGE ")
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["data", "query", QUERY, "--format", "json", "--format", "table", "--nope"],
+        ["data", "query", QUERY, "--nope", "--", "--format", "json"],
+        ["profile", "config", "--nope", "--format", "json"],
+        ["data", "query", QUERY, "--context", "--format", "json", "--nope"],
+    ],
+)
+def test_parse_failure_without_effective_json_format_stays_text(
+    args: list[str], runner: CliRunner
+) -> None:
+    result = runner.invoke(cli, args)
+    assert result.exit_code == config.EXIT_USAGE
+    assert result.stdout == ""
+    assert result.stderr.startswith("ERROR: USAGE ")
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h", "--version"])
+def test_help_and_version_exit_normally_with_json_option(flag: str, runner: CliRunner) -> None:
+    result = runner.invoke(cli, [flag])
+    assert result.exit_code == 0
+    assert result.stderr == ""
+
+
+def test_command_help_still_exits_without_an_error_object(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["data", "query", "--format", "json", "--help"])
+    assert result.exit_code == 0
+    assert result.stdout.startswith("Usage:")
+    assert result.stderr == ""
+
+
+def test_json_parse_error_masks_an_environment_value_in_both_streams(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment_value = "test-environment-value"
+    monkeypatch.setenv("OPENAI_API_KEY", environment_value)
+    result = runner.invoke(
+        cli, ["data", "query", QUERY, "--max-tokens", environment_value, "--format", "json"]
+    )
+    assert result.exit_code == config.EXIT_USAGE
+    assert environment_value not in result.stdout + result.stderr
+    assert "***" in json.loads(result.stdout)["error"]["message"]
 
 
 @pytest.mark.parametrize(
@@ -145,8 +299,7 @@ def test_a_parse_failure_stays_plain_text_because_the_format_is_not_known_yet(
 def test_a_startup_failure_is_an_object_too(command: list[str], runner: CliRunner) -> None:
     """The root callback refuses the profile before Click has parsed `--format`.
 
-    It used to report that itself, in plain text, so the one failure a caller is most
-    likely to hit under `--format json` was the one that arrived as prose on stderr.
+    The selected format must also apply to this startup error.
     """
     result = runner.invoke(cli, [*command, "--format", "json"])
     assert result.exit_code == config.EXIT_PROFILE
@@ -154,8 +307,34 @@ def test_a_startup_failure_is_an_object_too(command: list[str], runner: CliRunne
     assert "ERROR: PROFILE" in result.stderr
 
 
+def test_startup_failure_uses_exported_json_default(runner: CliRunner) -> None:
+    result = runner.invoke(
+        cli,
+        ["--profile", "absent-profile", "metadata", "inspect"],
+        env={"BLUE_DATA_CLI_FORMAT": "json"},
+    )
+    assert result.exit_code == config.EXIT_PROFILE
+    assert json.loads(result.stdout) == {
+        "error": {
+            "code": "PROFILE",
+            "message": result.stderr.removeprefix("ERROR: PROFILE ").strip(),
+        }
+    }
+
+
+def test_explicit_table_keeps_startup_failure_text_under_json_default(runner: CliRunner) -> None:
+    result = runner.invoke(
+        cli,
+        ["--profile", "absent-profile", "metadata", "inspect", "--format", "table"],
+        env={"BLUE_DATA_CLI_FORMAT": "json"},
+    )
+    assert result.exit_code == config.EXIT_PROFILE
+    assert result.stdout == ""
+    assert result.stderr.startswith("ERROR: PROFILE ")
+
+
 def test_a_setting_read_before_the_result_is_an_object_too(runner: CliRunner) -> None:
-    """The log limit is read to build the reporter, which used to happen outside the contract."""
+    """A log-limit error uses the selected result format."""
     result = runner.invoke(
         cli,
         ["data", "estimate", QUERY, "--format", "json"],
@@ -186,19 +365,14 @@ def test_a_configured_format_that_is_not_a_format_is_reported_as_text(runner: Cl
 def test_every_closed_plan_set_refuses_an_unknown_value_the_same_way(
     flag: str, runner: CliRunner
 ) -> None:
-    """Three options over a set the library closes, and one answer between them.
-
-    `--plan-mode` was a bare string, so it travelled to the library and came back as
-    `ERROR: CONFIG`, exit 4, with a JSON error object; the other two were `click.Choice`
-    and came back as `ERROR: USAGE`, exit 2, with nothing on stdout.
-    """
+    """All closed plan options reject unknown values as CLI usage errors."""
     result = runner.invoke(cli, ["data", "query", QUERY, flag, "bogus", "--format", "json"])
     assert result.exit_code == config.EXIT_USAGE
     assert "ERROR: USAGE" in result.stderr
     assert f"Invalid value for '{flag}'" in result.stderr
 
 
-def test_the_closed_plan_sets_are_the_library_s_own(runner: CliRunner) -> None:
+def test_the_closed_plan_sets_match_the_library(runner: CliRunner) -> None:
     """`--help` lists what each one accepts, so the values are discoverable from the CLI."""
     from blue_data_llm_source.planning import MODES, PLANNING_ORDERS, SCHEMA_MODES
 

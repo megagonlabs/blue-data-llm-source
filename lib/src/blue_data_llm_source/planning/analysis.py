@@ -1,15 +1,7 @@
 """What is actually being asked, and roughly how much of it there is.
 
-Splitting the parse from the call is deliberate. Everything that can go wrong here is a
-question of reading an untrusted response, so that part is a pure function over text and
-its tests need no client at all.
-
-The contract on failure is the part worth stating. An unusable rewrite does not raise and
-does not silently pass the caller's words through as though the model had blessed them.
-It falls back to the caller's own ask and reports ``rewritten=False``. Failing a whole
-request because a *rewrite* did not parse would be worse than proceeding with what the
-caller wrote; passing it off as a refined ask would be the silent kind of wrong this
-package exists to remove.
+Parsing an untrusted response is a pure function over text. If a rewrite is unusable,
+the caller's ask is retained and ``rewritten=False`` is reported.
 """
 
 from __future__ import annotations
@@ -379,12 +371,7 @@ def _constraints_from(reported: object) -> dict[str, ConstraintValue]:
             # Every element must be a finite scalar. A mixed list would otherwise become
             # an entity set with holes in it, and row_by_row plans one leaf per element.
             #
-            # An *empty* list is carried through rather than dropped here. It is a malformed
-            # constraint and the planner already has the rule for one — drop the filter and
-            # say so — but that rule only runs on a value the planner receives. Discarding it
-            # at this seam meant the model narrowed the request, the narrowing was thrown
-            # away, and the wider question ran with nothing in the result saying it had. The
-            # planner's note is the report; this line is what lets it fire.
+            # Pass empty lists to the planner so it can report the dropped constraint.
             try:
                 values = [json_scalar(item) for item in items]
             except ConfigError:

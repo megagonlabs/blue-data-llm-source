@@ -411,7 +411,7 @@ def test_a_row_cap_trim_is_not_reported_as_a_continuation_cap() -> None:
 
 
 def test_a_leaf_refused_for_a_blank_query_gets_its_own_account() -> None:
-    """Neither neighbour is true of it. ``LEAF_EMPTY`` credits a model with an answer it
+    """Neither neighbor is true of it. ``LEAF_EMPTY`` credits a model with an answer it
     was never asked for, and ``LEAF_NOT_RUN`` throws away the reason."""
     plan = _plan(["0.0"])
     _, coverage = reduce_leaves(
@@ -776,9 +776,8 @@ class TestATruncatedResponseIsItsOwnGap:
         assert "output allowance" in detail
 
     def test_an_attestation_from_another_response_does_not_explain_this_one(self) -> None:
-        # The leaf holds an attestation and a recovery, and they belong to different
-        # responses. The run-level axis is still true; the cause sentence about this prefix
-        # is not, and saying it would be the defect the per-response ledger exists to stop.
+        # The attestation and recovery belong to different responses. The run-level
+        # limit remains true, but it does not explain this prefix.
         detail = self._truncation_detail(
             LeafOutcome(
                 "0.0",
@@ -829,8 +828,7 @@ class TestATruncatedResponseIsItsOwnGap:
         assert coverage.run_outcome == Outcome.OK
 
     def test_execution_and_the_account_agree_end_to_end(self) -> None:
-        """A flag set by one module and read
-        by the next, with no test crossing between them."""
+        """Exercise truncation reporting across execution and reduction."""
         plan = _plan(["0.0"], mode=MODE_FLAT)
         records = [{"id": n} for n in range(1, 6)]
         model = TruncatingModel(records, ceiling=cut_inside_record(records, after=2))

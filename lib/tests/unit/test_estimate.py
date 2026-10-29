@@ -44,6 +44,21 @@ def test_an_estimate_contacts_nothing() -> None:
     assert client.prompts == [], "estimating must not call the model"
 
 
+@pytest.mark.parametrize("amount", [-1, float("nan"), float("inf"), "0.1", True])
+def test_invalid_injected_attempt_bounds_are_unbounded(amount: object) -> None:
+    class InvalidBoundClient(ScriptedClient):
+        def bound_for_attempt(self, prompt: str, properties: dict[str, Any]) -> object:
+            return amount
+
+    client = InvalidBoundClient([])
+    estimate = LlmSource(client=client).estimate("who?")
+
+    assert estimate.bounded is False
+    assert estimate.max_cost is None
+    assert estimate.reason and "attempt bound" in estimate.reason
+    assert client.prompts == []
+
+
 def test_an_unpriceable_model_is_reported_rather_than_raised() -> None:
     """Asking what a request might cost is reasonable even where the answer is unknown."""
     source = LlmSource(properties={"llm.model": "brand-new-model"})
@@ -113,8 +128,7 @@ def test_a_request_sized_against_its_estimate_is_not_refused_when_it_runs(
 ) -> None:
     """The guarantee a caller actually relies on.
 
-    A ceiling set to exactly the estimate used to be consumed by one transient failure,
-    so the retry was refused and the fetch stopped on a limit the caller had sized for.
+    A ceiling set to the full estimate must allow the configured retry budget.
     """
     litellm_stub(LitellmStub(chat_payload(ONE_RECORD), cost=0.0, fail_times=1))
     source = LlmSource(properties={"llm.model": "gpt-4o-mini", "llm.max_tokens": 64})
@@ -175,11 +189,7 @@ def test_the_estimate_is_reachable_through_the_query_surface() -> None:
 
 
 def test_a_missing_model_estimate_does_not_report_a_model_it_did_not_select() -> None:
-    """An unbounded estimate naming the fallback contradicts its own reason.
-
-    The suite that missed the original contradiction could not have detected its return,
-    so the case is pinned on all three fields rather than on the outcome alone.
-    """
+    """An unbounded estimate must leave the model unset and give the refusal reason."""
     estimate = LlmSource(properties={"llm.model": None}).estimate("who?")
 
     assert not estimate.bounded
@@ -346,7 +356,7 @@ def test_a_client_that_will_not_respect_the_attempt_allowance_is_unestimable() -
     upper bound if the client makes at most that many attempts. A client with its own retry
     policy correctly reserving and settling four attempts against a three-attempt allowance
     spent past a figure the caller had sized a ceiling from. Declaring `Capability.ESTIMATE`
-    is the promise not to; omitting it is the honest alternative.
+    is a guarantee that it can honor; otherwise the capability is omitted.
     """
     from blue_data_llm_source.types import Capability
 
@@ -372,14 +382,12 @@ def test_a_client_that_will_not_respect_the_attempt_allowance_is_unestimable() -
     assert sized.reason
 
 
-def test_no_shipped_file_describes_the_whole_fetch_bound_as_a_product() -> None:
-    """The bound accumulates; nothing may tell a caller to multiply.
+# Local environments, including the Python 3.15 build directories docs/installation.md creates.
+_SKIP = frozenset({".venv", ".build315", ".native315", ".venv315", ".wheels315"})
 
-    Six files said "times the attempts" after one of them was corrected to say
-    "accumulated". Both phrasings name the same quantity and agree numerically below six
-    attempts, so nothing failed and no reader could tell which to size a ceiling against.
-    Fixing them one at a time is what let that happen twice, so the rule is a test.
-    """
+
+def test_no_shipped_file_describes_the_whole_fetch_bound_as_a_product() -> None:
+    """Shipped text must describe the whole fetch bound as accumulated."""
     import re
 
     root = Path(__file__).resolve().parents[3]
@@ -392,7 +400,7 @@ def test_no_shipped_file_describes_the_whole_fetch_bound_as_a_product() -> None:
     )
     offenders: list[str] = []
     for path in root.rglob("*"):
-        if path.suffix not in {".py", ".md", ".toml"} or ".venv" in path.parts:
+        if path.suffix not in {".py", ".md", ".toml"} or not _SKIP.isdisjoint(path.parts):
             continue
         if path.resolve() == Path(__file__).resolve():
             continue  # this file names the phrasings in order to forbid them

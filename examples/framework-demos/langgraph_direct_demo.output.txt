@@ -1,3 +1,5 @@
+Recorded sample from an earlier run. Its budget cost does not reflect the current cost settlement.
+
 task     Draft a one-line note naming the Paris airports a traveller can fly into.
 outcome  ok
 records  2

@@ -1,8 +1,6 @@
 """The shape of the CLI itself: the tree, the version, the formats, the precedence chain.
 
-These are the claims the compliance checklist makes about every command at once, so they
-are checked against every command at once rather than one at a time in the command's own
-file.
+These properties apply to every command, so the tests check the full command surface.
 """
 
 from __future__ import annotations
@@ -22,6 +20,7 @@ from click.testing import CliRunner
 from blue_data_llm_cli import config
 from blue_data_llm_cli.commands import cli
 from blue_data_llm_cli.formats import FORMATS
+from blue_data_llm_cli.profile_adapter import ProfileStore
 
 QUERY = "the member states of the European Union"
 PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
@@ -106,7 +105,7 @@ def test_the_chain_is_claimed_only_for_the_settings_that_have_one(runner: CliRun
         if option.startswith("--plan-")
     }
     assert len(plan_flags) == 21
-    assert not [name for name in cli_spec().names() if "PLAN" in name]
+    assert not [name for name in cli_spec().names if "PLAN" in name]
 
     text = " ".join(runner.invoke(cli, ["data", "query", "--help"]).stdout.split())
     assert "Every setting below" not in text
@@ -130,9 +129,7 @@ def test_version_prints_the_program_name_and_the_packaged_version(runner: CliRun
 # -------------------------------------------------------------- the formats --
 @pytest.mark.parametrize("command", RESULT_COMMANDS, ids=lambda c: "-".join(c[:2]))
 @pytest.mark.parametrize("fmt", FORMATS)
-def test_every_command_honours_every_format(
-    command: list[str], fmt: str, runner: CliRunner
-) -> None:
+def test_every_command_honors_every_format(command: list[str], fmt: str, runner: CliRunner) -> None:
     result = runner.invoke(cli, [*command, "--format", fmt])
     assert result.exit_code == 0, result.output
     assert result.stdout.strip(), f"{command} produced nothing in {fmt}"
@@ -160,12 +157,22 @@ def test_the_default_format_comes_from_the_profile(command: list[str], runner: C
     json.loads(result.stdout)
 
 
-def test_a_configured_format_the_cli_does_not_have_is_a_profile_error(runner: CliRunner) -> None:
-    assert runner.invoke(cli, ["profile", "config", "BLUE_DATA_CLI_FORMAT", "yaml"]).exit_code == 0
+def test_a_configured_format_the_cli_does_not_have_is_a_profile_error(
+    runner: CliRunner, cli_home: Path
+) -> None:
+    assert runner.invoke(cli, ["profile", "list"]).exit_code == 0
+    ProfileStore(cli_home).set_value("default", "BLUE_DATA_CLI_FORMAT", "yaml")
     result = runner.invoke(cli, ["model", "list"])
     assert result.exit_code == config.EXIT_PROFILE
     assert "ERROR: PROFILE" in result.stderr
     assert "BLUE_DATA_CLI_FORMAT" in result.stderr
+    assert "profile config BLUE_DATA_CLI_FORMAT VALUE" in result.stderr
+
+    repaired = runner.invoke(cli, ["profile", "config", "BLUE_DATA_CLI_FORMAT", "json"])
+    assert repaired.exit_code == 0, repaired.output
+    result = runner.invoke(cli, ["model", "list"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["models"]
 
 
 # ----------------------------------------------------------- the four tiers --
@@ -266,7 +273,7 @@ def test_the_same_refusal_reaches_the_variable(runner: CliRunner) -> None:
 # ------------------------------------------------------ stdout stays clean --
 @pytest.mark.parametrize("fmt", ["json", "csv"])
 def test_a_log_run_does_not_write_to_stdout(fmt: str, runner: CliRunner) -> None:
-    """Both siblings corrupt their JSON under `--log`. This one is checked, not assumed."""
+    """Machine output stays parseable under ``--log``."""
     result = runner.invoke(cli, ["data", "query", QUERY, "--format", fmt, "--log"])
     assert result.exit_code == 0, result.output
     if fmt == "json":

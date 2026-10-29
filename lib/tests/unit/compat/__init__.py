@@ -1,1 +1,1 @@
-"""Tests for the optional blue-data adapter."""
+"""Tests for the blue-data integration."""

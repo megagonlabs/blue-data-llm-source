@@ -1,10 +1,4 @@
-"""`fetch` routed through the planner, and the contract it had to keep while moving.
-
-The risk in this seam is not that decomposition fails; it is that routing a shipped entry
-point through a new pipeline changes what a caller already depends on. So most of what is
-pinned here is v1.1 behaviour surviving: one call by default, ceilings reported rather than
-raised, and the error hierarchy intact.
-"""
+"""`fetch` through the planner: one call by default, reported ceilings, and errors."""
 
 from __future__ import annotations
 
@@ -106,7 +100,7 @@ class TestTheNewSurface:
             fetch(Model(rows("Orly")), **{"plan.key": "iata"})
 
 
-class TestTheErrorContractSurvivedTheMove:
+class TestTheErrorContract:
     def test_an_unreadable_response_still_raises(self) -> None:
         """The mapper turns a failed leaf into a result so its siblings' rows survive. With
         no siblings that is just the request failing, and the caller is owed the exception."""
@@ -141,14 +135,14 @@ class Planner:
 
     def __init__(self, analysis: str = ANALYSIS) -> None:
         self.analysis = analysis
-        self.analyse_prompts: list[str] = []
+        self.analyze_prompts: list[str] = []
         self.proposal_prompts: list[str] = []
         self.entity_prompts: list[str] = []
         self.fetch_prompts: list[str] = []
 
     def __call__(self, prompt: str, properties: Any = None) -> str:
         if "Prepare a structured data request" in prompt:
-            self.analyse_prompts.append(prompt)
+            self.analyze_prompts.append(prompt)
             try:
                 payload = cast("dict[str, Any]", json.loads(self.analysis))
             except ValueError:
@@ -221,7 +215,7 @@ class TestDecompositionActuallyDecomposes:
         model = Planner()
         result = plan_fetch(model, **{"plan.mode": "partitioned"})
 
-        assert len(model.analyse_prompts) == 1
+        assert len(model.analyze_prompts) == 1
         assert len(model.fetch_prompts) == 3
         assert len(result.records) == 3
 
@@ -246,7 +240,7 @@ class TestDecompositionActuallyDecomposes:
         model = Planner()
         plan_fetch(model, **{"plan.mode": "flat"})
 
-        assert model.analyse_prompts == []
+        assert model.analyze_prompts == []
         assert len(model.fetch_prompts) == 1
 
     def test_the_estimate_from_the_analysis_reaches_the_plan(self) -> None:
@@ -281,7 +275,7 @@ class TestDecompositionActuallyDecomposes:
         assert len(result.records) == 1
         assert result.meta.outcome == Outcome.OK
 
-    def test_a_caller_named_partition_key_is_honoured(self) -> None:
+    def test_a_caller_named_partition_key_is_honored(self) -> None:
         model = Planner()
         result = plan_fetch(model, **{"plan.mode": "partitioned", "plan.partition_key": "region"})
         assert len(model.fetch_prompts) == 3
@@ -295,12 +289,8 @@ class TestDecompositionActuallyDecomposes:
         assert any("guard_collapsed" in g for g in result.meta.gaps)
 
 
-class TestTheSplitPreservesTheScopeItAnalysed:
-    """Every case here was reachable through `fetch` while the planning unit tests passed.
-
-    The unit tests asserted the plan; these assert the prompts and the result, which is
-    where a lost constraint or a re-asked question actually shows.
-    """
+class TestTheSplitPreservesTheScopeItAnalyzed:
+    """Check that planned constraints reach prompts and results through `fetch`."""
 
     def test_a_single_named_value_still_narrows_the_ask(self) -> None:
         """The guard declines to split on one value, which is a reason not to fan out and
@@ -379,7 +369,7 @@ class TestTheSplitPreservesTheScopeItAnalysed:
                 "plan.planning_order": "planning.combined",
             },
         )
-        assert "There means France." in model.analyse_prompts[0]
+        assert "There means France." in model.analyze_prompts[0]
 
 
 class TestAShortRunDoesNotReportItselfComplete:

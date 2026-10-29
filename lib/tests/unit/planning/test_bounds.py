@@ -156,7 +156,7 @@ class TestThePublishedBoundCoversEveryPlanThatCanBeBuilt:
 
 
 class TestTheRetryMultiplier:
-    """The defect that made an earlier formula wrong by the retry factor."""
+    """Retries multiply the number of logical calls."""
 
     def test_attempts_multiply_logical_calls(self) -> None:
         assert attempts(10, PlanLimits(max_retries=2)) == 30
@@ -187,7 +187,7 @@ class TestTheRetryMultiplier:
 
 class TestEachKnobChangesTheBound:
     """One test per knob. A setting that is accepted and then ignored is invisible to a
-    type checker and to a linter; only an assertion on behaviour catches it."""
+    type checker and to a linter; only an assertion on behavior catches it."""
 
     def test_max_leaves(self) -> None:
         base = worst_case_attempts(PlanLimits(max_leaves=10), MODE_PARTITIONED)
@@ -235,7 +235,7 @@ class TestFlatIsTheCheapShape:
     def test_a_flat_plan_pays_for_no_rewrite(self) -> None:
         """Its one leaf asks the refined question itself; there is nothing to rewrite."""
         limits = PlanLimits(max_leaves=20)
-        # analyse + estimate + schema pool + candidates + k enrichments
+        # analyze + estimate + schema pool + candidates + k enrichments
         assert planning_calls(limits, MODE_FLAT) == 2 + 2 + limits.max_schema_candidates
 
 
@@ -270,7 +270,7 @@ class TestImpossibleConfigurationIsRefused:
             PlanLimits(max_leaves=bad)  # pyright: ignore[reportArgumentType]
 
     def test_an_unknown_mode_is_refused_by_name(self) -> None:
-        """An unrecognised mode must be refused, not quietly treated as some default."""
+        """An unrecognized mode must be refused, not quietly treated as some default."""
         with pytest.raises(ConfigError, match="unknown mode"):
             planning_calls(PlanLimits(), "auto")
 

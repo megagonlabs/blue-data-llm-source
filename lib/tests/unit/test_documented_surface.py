@@ -92,12 +92,7 @@ def test_every_always_present_platform_field_appears_in_its_readme(
 
 
 def test_a_document_that_reproduces_the_outcome_class_reproduces_all_of_it() -> None:
-    """A code block claiming to be the class is a contract, not an illustration.
-
-    `06-library.md` published an `Outcome` class and `ALL` tuple that omitted a member its own
-    prose two paragraphs later described. A reader trusts the block over the prose, because a
-    block looks generated.
-    """
+    """The documented Outcome class includes every published outcome."""
     body = text("design/06-library.md")
     block = re.search(r"class Outcome:\n(.*?)\n```", body, re.S)
     assert block is not None, "06-library.md no longer publishes the Outcome class"
@@ -106,11 +101,6 @@ def test_a_document_that_reproduces_the_outcome_class_reproduces_all_of_it() -> 
 
 
 def test_the_published_outcome_vocabulary_is_closed() -> None:
-    """`ALL` is what every consumer switches on, so a member outside it is unreachable.
-
-    The mirror of the tests above: those refuse a member the documents have not heard of, and
-    this refuses one the code declares and does not publish in its own tuple.
-    """
     declared = {
         value
         for name, value in vars(Outcome).items()

@@ -1,24 +1,21 @@
-"""The stdio MCP server. This module holds the only ``mcp`` import in the package.
+"""The stdio MCP server and the package's only ``mcp`` import.
 
-The low-level server is used rather than FastMCP because the tool schemas are written by
-hand in ``tools.py``. FastMCP derives a schema from the handler signature, which would
-put the tool contract in a Python signature instead of the JSON the client actually sees.
-
-``mcp`` is a server-only dependency, so the type checker runs here with the SDK absent and
-nothing it exports carries a type. That is what every ``pyright: ignore`` below is for.
-Each one names its rule, so installing the SDK restores real checking.
+The low-level server publishes the schemas defined in ``tools.py``. FastMCP would
+derive different schemas from handler signatures. The SDK is absent during static
+checking, so its imports and untyped exports have targeted ``pyright: ignore`` rules.
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import contextlib
 import json
-import sys
-from typing import Any
+import logging
+import os
+from typing import Any, NoReturn
 
 import mcp.types as types  # pyright: ignore[reportMissingImports]
-from blue_data_llm_source import redact
 from mcp.server.lowlevel import (  # pyright: ignore[reportMissingImports]
     Server,  # pyright: ignore[reportUnknownVariableType]
 )
@@ -30,24 +27,49 @@ from blue_data_llm_mcp import __version__, tools
 
 SERVER_NAME = "blue-data-llm"
 
-# What a client reads during the handshake to decide what this server is for. The three
-# sentences are the three things a caller gets wrong otherwise: where the records come
-# from, which ceilings bind a call, and that pricing can be asked about for free before
-# anything is spent.
+
+class _SdkValidationFilter(logging.Filter):
+    """Replace SDK validation dumps before any stderr handler formats them."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.msg
+        if (
+            record.name == "root"
+            and isinstance(message, str)
+            and message.startswith(
+                (
+                    "Failed to validate request:",
+                    "Message that failed validation:",
+                    "Failed to validate notification:",
+                )
+            )
+        ):
+            record.msg = "MCP request validation failed."
+            record.args = ()
+            record.exc_info = None
+            record.exc_text = None
+            record.stack_info = None
+        return True
+
+
+class _ArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> NoReturn:
+        self.exit(2, f"{self.prog}: error: unsupported arguments; see --help\n")
+
+
+# Sent in the handshake: data origin, enforceable ceilings, and free pricing tools.
 SERVER_INSTRUCTIONS = (
     "Structured records from a language model's own knowledge, rather than from a store. "
     "llmdb_query asks the model and returns records with a meta object saying what the run "
     "cost and why rows may be missing. The operator may set ceilings for every call; a "
     "call's own limits.max_cost, limits.max_seconds or limits.max_calls can only lower them, "
-    "and without either a call has none. "
+    "and an axis has no ceiling when neither sets one. "
     "llmdb_estimate bounds what a query would cost, and llmdb_list_models and "
     "llmdb_inspect_model say which models can be bounded at all. Those three contact no "
     "provider and cost nothing."
 )
 
-# `version` is not optional in practice: without it the SDK reports its own package version
-# as this server's in every initialize response, so a client is told 1.27.2 while the tools
-# report the package version.
+# Pass the package version; otherwise the SDK reports its own version to clients.
 server = Server(  # pyright: ignore[reportUnknownVariableType]
     SERVER_NAME, version=__version__, instructions=SERVER_INSTRUCTIONS
 )
@@ -61,49 +83,47 @@ async def list_tools() -> list[types.Tool]:  # pyright: ignore[reportUnknownPara
     ]
 
 
-# validate_input=False because the SDK's prevalidator runs before this handler and answered
-# a deferred key with a generic schema error, losing the message that says what to use
-# instead. `tools._check_arguments` performs the advertised validation itself, deferred keys
-# first, and the schema tests assert the schemas use no construct it does not cover.
+# Disable SDK prevalidation so unsupported settings receive specific guidance.
+# `tools._check_arguments` validates the advertised schema inside the handler.
 @server.call_tool(validate_input=False)  # pyright: ignore[reportUnknownMemberType,reportUntypedFunctionDecorator]
 async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.TextContent]:  # pyright: ignore[reportUnknownParameterType,reportUnknownMemberType]
     try:
         payload = await tools.adispatch(name, arguments)
+        content = types.TextContent(type="text", text=json.dumps(payload, default=str))  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
     except tools.ToolError as error:
-        # The low-level server turns a raised exception into a tool result marked
-        # isError carrying str(exc), which is how the library's message reaches the
-        # caller unchanged. `ToolError` has already masked it.
-        raise ValueError(f"{error.kind}: {error.message}") from error
-    except Exception as error:
-        # Anything this package never classified travels the same way, so it leaves the
-        # same way: a provider SDK is free to put a request or a key fragment into an
-        # exception, and nothing else stands between that text and the caller. A cache
-        # backend can name its directory, which is the operator's, so that is masked too.
-        raise ValueError(tools.conceal(redact(f"{type(error).__name__}: {error}"))) from error
-    return [types.TextContent(type="text", text=json.dumps(payload, default=str))]  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        public_error = f"{error.kind}: {error.message}"
+    except Exception:
+        public_error = "InternalError: Tool failed."
+    else:
+        return [content]  # pyright: ignore[reportUnknownVariableType]
+    raise ValueError(public_error)
 
 
 async def serve() -> None:
-    """Run the server over stdio until the client disconnects.
+    """Run the stdio server, discarding unsolicited provider output for its lifetime.
 
-    Standard output is the JSON-RPC frame here, and the provider stack prints to it — a
-    cost-map warning, a version banner. Anything written there is not a message, and a
-    client is entitled to fail on it rather than resynchronise around it.
-
-    So interpreter-level stdout points at stderr for the whole run, entered *after* the
-    transport has taken its own handle to the real one. Wrapping each tool call instead was
-    worse than not wrapping it: ``redirect_stdout`` assigns the process-global ``sys.stdout``
-    and this server runs requests concurrently, so two overlapping calls exiting out of
-    order put the later one's output on the wire anyway and left ``sys.stdout`` pointing at
-    stderr afterwards. One redirect over the whole lifetime cannot nest, so it cannot race.
+    The transport holds the protocol output handle. A single process-wide redirect keeps
+    concurrent tool calls from changing it independently.
     """
     async with stdio_server() as (read_stream, write_stream):  # pyright: ignore[reportUnknownVariableType]
-        with contextlib.redirect_stdout(sys.stderr):
-            await server.run(read_stream, write_stream, server.create_initialization_options())  # pyright: ignore[reportUnknownMemberType]
+        sdk_filter = _SdkValidationFilter()
+        root_logger = logging.getLogger()
+        root_logger.addFilter(sdk_filter)
+        try:
+            with open(os.devnull, "w", encoding="utf-8") as sink:
+                with contextlib.redirect_stdout(sink):
+                    await server.run(  # pyright: ignore[reportUnknownMemberType]
+                        read_stream, write_stream, server.create_initialization_options()
+                    )
+        finally:
+            root_logger.removeFilter(sdk_filter)
 
 
 def main() -> None:
     """Console entry point."""
+    parser = _ArgumentParser(description="Serve blue-data-llm MCP over stdio.")
+    parser.add_argument("--version", action="version", version=__version__)
+    parser.parse_args()
     asyncio.run(serve())
 
 

@@ -1,54 +1,33 @@
-"""Provide one serialization of :class:`ExecMeta` for every adapter.
+"""Serialize execution metadata for the CLI and MCP adapters.
 
-The CLI and MCP server previously had separate ``meta_summary`` implementations with
-different fields. The CLI omitted ``truncated_to`` and ``cache_hits``; the MCP server
-omitted ``cache_hits`` and always published four alignment diagnostics that the CLI exposed
-only with ``--verbose``. A field added to ``ExecMeta`` could also be missed by one adapter.
-
-Fields are grouped into three tiers according to when consumers need them.
-
-*Always present.* Accounting and result facts. Consumers branch on their values, so an empty
-list is published as an empty list:
-``gaps: []`` says nothing was observed to be missing, which is a weaker claim than complete
-and the only one this package is allowed to make.
-
-*Present when populated.* Facts that exist only when something happens: a truncation, a
-cache hit, or a question rewritten by the model. An absent key means the event did not happen.
-``accounting_known`` belongs here in its false form only, so an ordinary result is
-unchanged and an unmeasured zero is never mistaken for a measured one.
-
-*Verbose only.* The four alignment diagnostics. They carry arbitrary model output — key
-names the model invented and values it returned — so a caller asks for them.
-
-``observed_keys`` is in no tier. It holds one entry per key the run saw, so it grows with
-the answer, and ``observed_key_count`` already carries the fact a consumer acts on.
-
-The ``redaction`` module defines what is masked on the way out: text this package narrates
-*about* a call passes through ``redact``; the answer itself does not. The
-model name, the rewritten ask, the attributes the caller asked for and an uncheckable
-declared type are narration. The records are the answer, and the key-level diagnostics
-index them — ``primary_keys``, ``unmapped_keys``, ``remapped_keys``, ``type_mismatches``
-and ``key_collisions`` name keys the model returned, so a name masked there would describe
-a record that no longer contains it.
-
-``requested_attrs`` could be treated as either narration or answer data, so it is masked.
-It indexes records, but it is also caller text returned as-is, like ``unchecked_types``.
-Masking it can make a diagnostic disagree with a record key when an attribute is named after
-a key literal. Leaving it unmasked could return a credential pasted into an argument in a
-transcript that outlives the call.
-
-When a field is added, a test checks that every string in this view is masked or has a
-documented reason to remain unmasked.
+Records remain unchanged. Metadata describes the call and may contain caller text, model
+text, or values discarded during reduction. Mask credential-shaped strings throughout
+that metadata before it enters a terminal or agent transcript. Ordinary diagnostic keys
+and values retain their original spelling.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from blue_data_llm_source.redaction import redact
 from blue_data_llm_source.types import ExecMeta
 
 __all__ = ["meta_view"]
+
+
+def _mask_metadata(value: Any) -> Any:
+    """Mask text recursively, including keys in diagnostic dictionaries."""
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, list):
+        return [_mask_metadata(item) for item in cast("list[Any]", value)]
+    if isinstance(value, dict):
+        return {
+            redact(key) if isinstance(key, str) else key: _mask_metadata(item)
+            for key, item in cast("dict[Any, Any]", value).items()
+        }
+    return value
 
 
 def meta_view(meta: ExecMeta, *, verbose: bool = False) -> dict[str, Any]:
@@ -110,4 +89,4 @@ def meta_view(meta: ExecMeta, *, verbose: bool = False) -> dict[str, Any]:
             view["type_mismatches"] = list(meta.type_mismatches)
         if meta.key_collisions:
             view["key_collisions"] = list(meta.key_collisions)
-    return view
+    return _mask_metadata(view)

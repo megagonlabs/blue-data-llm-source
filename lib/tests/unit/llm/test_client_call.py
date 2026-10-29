@@ -144,10 +144,10 @@ def test_luna_hard_cost_ceiling_keeps_a_higher_reported_cost(
     assert client.last_usage.cost_known is False
 
 
-def test_gpt_4o_hard_cost_ceiling_settles_reported_cost(
+def test_gpt_4o_hard_cost_ceiling_keeps_higher_reported_cost(
     litellm_stub: InstallStub,
 ) -> None:
-    litellm_stub(LitellmStub(chat_payload("[]"), cost=0.002))
+    litellm_stub(LitellmStub(chat_payload("[]"), cost=0.02))
     budget = Budget(Limits(max_cost=1.0))
     client = DefaultLlmClient(
         {"llm.model": "gpt-4o", "llm.max_tokens": 512},
@@ -156,8 +156,84 @@ def test_gpt_4o_hard_cost_ceiling_settles_reported_cost(
 
     client.complete("who?")
 
-    assert budget.cost == pytest.approx(0.002)
+    assert budget.cost == pytest.approx(0.02)
     assert client.last_usage is not None
+    assert client.last_usage.cost_known is True
+
+
+@pytest.mark.parametrize("invoke", [_complete, _acomplete], ids=["sync", "async"])
+def test_calculator_cost_equal_to_reservation_is_known(
+    litellm_stub: InstallStub, invoke: Callable[[DefaultLlmClient], str]
+) -> None:
+    properties = {"llm.model": "gpt-4o-mini", "llm.max_tokens": 64}
+    reservation = DefaultLlmClient(properties).bound_for_attempt("who?", {})
+    litellm_stub(LitellmStub(chat_payload("[]"), cost=reservation))
+    budget = Budget(Limits(max_cost=reservation))
+    client = DefaultLlmClient(properties, budget=budget)
+
+    invoke(client)
+
+    assert budget.cost == reservation
+    assert client.last_usage is not None
+    assert client.last_usage.cost_known is True
+
+
+@pytest.mark.parametrize("invoke", [_complete, _acomplete], ids=["sync", "async"])
+@pytest.mark.parametrize("model", ["gpt-4o-mini", "gpt-6-luna"])
+@pytest.mark.parametrize("readable", [False, True], ids=["unreadable", "readable"])
+def test_contacted_attempt_keeps_reservation_before_next_admission(
+    litellm_stub: InstallStub,
+    invoke: Callable[[DefaultLlmClient], str],
+    model: str,
+    readable: bool,
+) -> None:
+    payload = chat_payload(
+        "[]",
+        model=model,
+        usage={
+            "prompt_tokens": 2,
+            "completion_tokens": 1,
+            "prompt_tokens_details": {"cached_tokens": 0},
+        },
+    )
+    payload["service_tier"] = "default"
+    stub = LitellmStub(payload, cost=0.000_000_001)
+    if not readable:
+
+        def unreadable_cost(**_kwargs: object) -> float:
+            raise ValueError("no calculator price")
+
+        stub.completion_cost = unreadable_cost  # type: ignore[method-assign]
+    litellm_stub(stub)
+    properties = {"llm.model": model, "llm.max_tokens": 64}
+    probe = DefaultLlmClient(properties)
+    bound = probe.bound_for_attempt("who?", {})
+    parent = Budget(Limits(max_cost=bound * 1.5))
+    client = DefaultLlmClient(properties, budget=parent.derive())
+
+    invoke(client)
+
+    assert parent.cost == pytest.approx(bound)
+    assert client.last_usage is not None
+    assert client.last_usage.cost == pytest.approx(bound)
+    assert client.last_usage.cost_known is False
+    with pytest.raises(BudgetExceeded, match="cost limit"):
+        invoke(client)
+    assert len(stub.calls) == 1
+    assert parent.cost == pytest.approx(bound)
+
+
+@pytest.mark.parametrize("invoke", [_complete, _acomplete], ids=["sync", "async"])
+def test_unlimited_cost_keeps_readable_calculator_figure(
+    litellm_stub: InstallStub, invoke: Callable[[DefaultLlmClient], str]
+) -> None:
+    litellm_stub(LitellmStub(chat_payload("[]"), cost=0.000_000_001))
+    client = DefaultLlmClient({"llm.model": "gpt-4o-mini", "llm.max_tokens": 64})
+
+    invoke(client)
+
+    assert client.last_usage is not None
+    assert client.last_usage.cost == 0.000_000_001
     assert client.last_usage.cost_known is True
 
 
@@ -233,3 +309,59 @@ def test_an_empty_choices_list_is_rejected(litellm_stub: InstallStub) -> None:
 
     with pytest.raises(TransportError, match="empty choices list"):
         DefaultLlmClient().complete("who?")
+
+
+def test_simultaneous_loop_map_access_reuses_only_its_own_semaphore() -> None:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    barrier = threading.Barrier(4, timeout=5)
+
+    def worker(_index: int) -> tuple[asyncio.AbstractEventLoop, asyncio.Semaphore]:
+        loop = asyncio.new_event_loop()
+
+        async def check() -> asyncio.Semaphore:
+            client = DefaultLlmClient()
+            barrier.wait()
+            first = client._semaphore({"llm.max_parallel": 2})  # pyright: ignore[reportPrivateUsage]
+            for _ in range(100):
+                assert client._semaphore({"llm.max_parallel": 2}) is first  # pyright: ignore[reportPrivateUsage]
+                assert DefaultLlmClient()._semaphore({"llm.max_parallel": 2}) is first  # pyright: ignore[reportPrivateUsage]
+            barrier.wait()
+            return first
+
+        try:
+            semaphore = loop.run_until_complete(check())
+        finally:
+            loop.close()
+        DefaultLlmClient._release_loop(loop)  # pyright: ignore[reportPrivateUsage]
+        with DefaultLlmClient._semaphore_lock:  # pyright: ignore[reportPrivateUsage]
+            assert loop not in DefaultLlmClient._semaphores  # pyright: ignore[reportPrivateUsage]
+        return loop, semaphore
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(worker, range(4)))
+    assert len({id(sem) for _, sem in results}) == 4
+    assert all(loop.is_closed() for loop, _ in results)
+
+
+async def test_same_loop_parallel_bound_is_shared_by_clients(litellm_stub: InstallStub) -> None:
+    release = asyncio.Event()
+    stub = litellm_stub(LitellmStub(chat_payload("[]"), hold=release))
+    stub.expected = 2
+    stub.all_entered = asyncio.Event()
+    clients = [DefaultLlmClient({"llm.max_parallel": 2}) for _ in range(6)]
+    jobs = [asyncio.create_task(client.acomplete("items")) for client in clients]
+    await asyncio.wait_for(stub.all_entered.wait(), timeout=5)
+    assert stub.entered == 2
+    semaphores = [client._semaphore({"llm.max_parallel": 2}) for client in clients]  # pyright: ignore[reportPrivateUsage]
+    assert all(sem is semaphores[0] for sem in semaphores)
+    release.set()
+    assert await asyncio.gather(*jobs) == ["[]"] * 6
+    assert stub.entered == 6
+    loop = asyncio.get_running_loop()
+    closed = asyncio.new_event_loop()
+    closed.close()
+    DefaultLlmClient._release_loop(closed)  # pyright: ignore[reportPrivateUsage]
+    with DefaultLlmClient._semaphore_lock:  # pyright: ignore[reportPrivateUsage]
+        assert loop in DefaultLlmClient._semaphores  # pyright: ignore[reportPrivateUsage]

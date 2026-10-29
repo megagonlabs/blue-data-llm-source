@@ -1,8 +1,7 @@
-"""The six `profile` subcommands, which the family requires to behave identically.
+"""Click behavior for the six profile subcommands.
 
-The store's own rules are checked in `test_configstore`. What is checked here is the Click
-layer over it: the three `config` forms, the messages, the confirmation, and the two things
-the checklist adds to the family shape — coded errors and four output formats.
+The tests cover config forms, messages, confirmation, coded errors, and output formats.
+Store rules are covered in ``test_profile_adapter``.
 """
 
 from __future__ import annotations
@@ -16,7 +15,7 @@ from click.testing import CliRunner
 
 from blue_data_llm_cli import config
 from blue_data_llm_cli.commands import cli
-from blue_data_llm_cli.configstore import ProfileError, ProfileStore
+from blue_data_llm_cli.profile_adapter import ProfileError, ProfileStore
 
 
 def profiles(home: Path) -> str:
@@ -39,12 +38,116 @@ def test_a_deliberately_removed_profile_is_not_resurrected(runner: CliRunner) ->
     assert payload["profiles"] == ["staging"]
 
 
-def test_an_empty_export_is_refused_rather_than_dropped_to_the_profile(runner: CliRunner) -> None:
-    """The evidence case: a profile value reported as the winner under an empty export.
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["data", "query", "q", "--format", "json"],
+        ["data", "estimate", "q", "--format", "json"],
+        ["model", "list", "--format", "json"],
+        ["metadata", "inspect", "--format", "json"],
+    ],
+)
+def test_a_stale_selection_refuses_normal_commands_before_source_construction(
+    runner: CliRunner,
+    cli_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: list[str],
+) -> None:
+    assert runner.invoke(cli, ["profile", "list"]).exit_code == 0
+    (cli_home / ".selected.profile").write_text("missing")
 
-    `BLUE_DATA_LLM_MODEL=''` looked like an unset variable to the lookup, so the profile
-    answered and the run reported `profile:default` for a setting the caller had blanked.
-    """
+    def unexpected_source(*args: object, **kwargs: object) -> None:
+        pytest.fail("a missing profile reached source construction")
+
+    monkeypatch.setattr(config, "build_source", unexpected_source)
+    result = runner.invoke(cli, command, env={"OPENAI_API_KEY": "test-only"})
+    assert result.exit_code == config.EXIT_PROFILE, result.output
+    assert json.loads(result.stdout)["error"]["code"] == config.PROFILE
+    assert "'missing' from .selected.profile" in result.stderr
+    assert "profile list" in result.stderr
+    assert "profile select NAME" in result.stderr
+
+
+def test_a_missing_implicit_default_is_refused_without_reinitializing(
+    runner: CliRunner, cli_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert runner.invoke(cli, ["profile", "list"]).exit_code == 0
+    (cli_home / ".profiles").write_text("")
+    (cli_home / ".selected.profile").unlink()
+
+    def unexpected_source(*args: object, **kwargs: object) -> None:
+        pytest.fail("a missing profile reached source construction")
+
+    monkeypatch.setattr(config, "build_source", unexpected_source)
+    result = runner.invoke(cli, ["data", "query", "q", "--format", "json"])
+    assert result.exit_code == config.EXIT_PROFILE
+    assert json.loads(result.stdout)["error"]["code"] == config.PROFILE
+    assert "'default' from the implicit default" in result.stderr
+    assert not (cli_home / ".selected.profile").exists()
+    assert profiles(cli_home) == ""
+
+    repaired = runner.invoke(cli, ["profile", "config", "BLUE_DATA_LLM_MODEL", "restored"])
+    assert repaired.exit_code == 0, repaired.output
+    assert ProfileStore(cli_home).values("default")["BLUE_DATA_LLM_MODEL"] == "restored"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["profile", "list", "--format", "json"],
+        ["profile", "select", "staging"],
+        ["profile", "add", "new"],
+        ["profile", "config", "BLUE_DATA_LLM_MODEL", "repaired"],
+        ["profile", "remove", "default", "--confirm"],
+    ],
+)
+def test_profile_recovery_commands_work_with_a_stale_selection(
+    runner: CliRunner, cli_home: Path, command: list[str]
+) -> None:
+    assert runner.invoke(cli, ["profile", "add", "staging"]).exit_code == 0
+    (cli_home / ".selected.profile").write_text("missing")
+
+    result = runner.invoke(cli, command)
+    assert result.exit_code == 0, result.output
+    if command[1] == "config":
+        assert ProfileStore(cli_home).values("missing")["BLUE_DATA_LLM_MODEL"] == "repaired"
+    if command[1] == "select":
+        assert ProfileStore(cli_home).selected() == "staging"
+
+
+def test_a_valid_override_keeps_its_precedence_over_a_stale_selection(
+    runner: CliRunner, cli_home: Path
+) -> None:
+    assert runner.invoke(cli, ["profile", "add", "staging"]).exit_code == 0
+    assert (
+        runner.invoke(
+            cli, ["profile", "config", "--profile", "staging", "BLUE_DATA_LLM_MODEL", "stored"]
+        ).exit_code
+        == 0
+    )
+    (cli_home / ".selected.profile").write_text("missing")
+
+    selected_by_environment = runner.invoke(
+        cli, ["data", "query", "q", "--format", "json"], env={"BLUE_DATA_PROFILE": "staging"}
+    )
+    assert selected_by_environment.exit_code == 0, selected_by_environment.output
+    assert json.loads(selected_by_environment.stdout)["settings"]["source"]["llm.model"] == (
+        "profile:staging"
+    )
+
+    selected_by_flag = runner.invoke(
+        cli,
+        ["--profile", "default", "data", "query", "q", "--format", "json"],
+        env={"BLUE_DATA_PROFILE": "staging", "BLUE_DATA_LLM_MODEL": "from-environment"},
+    )
+    assert selected_by_flag.exit_code == 0, selected_by_flag.output
+    settings = json.loads(selected_by_flag.stdout)["settings"]
+    assert settings["source"]["llm.model"] == "environment"
+    assert settings["applied"]["llm.model"] == "from-environment"
+
+
+def test_an_empty_export_is_refused_rather_than_dropped_to_the_profile(runner: CliRunner) -> None:
+    """An empty export must be refused, even when the profile has a value."""
     runner.invoke(cli, ["profile", "config", "BLUE_DATA_LLM_MODEL", "profile-model"])
     result = runner.invoke(
         cli,
@@ -72,6 +175,128 @@ def test_the_home_is_taken_from_the_environment(runner: CliRunner, tmp_path: Pat
     assert (elsewhere / ".profiles").exists()
 
 
+@pytest.mark.parametrize(
+    ("parameter", "value"),
+    [("BLUE_DATA_CLI_FORMAT", "xml"), ("BLUE_DATA_LLM_SOURCE_EFFORT", "ultra")],
+)
+def test_profile_config_refuses_invalid_enums_before_storing(
+    runner: CliRunner, cli_home: Path, parameter: str, value: str
+) -> None:
+    result = runner.invoke(cli, ["profile", "config", parameter, value])
+    assert result.exit_code == config.EXIT_PROFILE
+    assert parameter in result.stderr
+    assert value not in profiles(cli_home)
+
+
+@pytest.mark.parametrize(
+    ("parameter", "bad", "good"),
+    [
+        ("BLUE_DATA_CLI_FORMAT", "xml", "json"),
+        ("BLUE_DATA_LLM_SOURCE_EFFORT", "ultra", "low"),
+    ],
+)
+def test_existing_invalid_enum_can_be_repaired_with_profile_config(
+    runner: CliRunner, cli_home: Path, parameter: str, bad: str, good: str
+) -> None:
+    assert runner.invoke(cli, ["profile", "list"]).exit_code == 0
+    ProfileStore(cli_home).set_value("default", parameter, bad)
+
+    broken = runner.invoke(cli, ["data", "query", "q"])
+    assert broken.exit_code == config.EXIT_PROFILE
+    assert f"profile config {parameter} VALUE" in broken.stderr
+
+    repaired = runner.invoke(cli, ["profile", "config", parameter, good])
+    assert repaired.exit_code == 0, repaired.output
+    assert ProfileStore(cli_home).values("default")[parameter] == good
+    assert runner.invoke(cli, ["data", "estimate", "q", "--format", "json"]).exit_code == 0
+
+
+def test_profile_inspect_table_shows_full_parameter_names(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["profile", "inspect"])
+    assert result.exit_code == 0
+    assert "BLUE_DATA_LLM_SOURCE_PRICE_PER_OUTPUT_TOKEN" in result.stdout
+    assert "Source" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["metadata", "inspect", "--format", "json"],
+        ["model", "list", "--format", "json"],
+        ["model", "inspect", "gpt-4o", "--format", "json"],
+        ["data", "estimate", "q", "--format", "json"],
+    ],
+)
+def test_read_only_commands_use_defaults_if_absent_home_cannot_be_created(
+    runner: CliRunner, tmp_path: Path, command: list[str]
+) -> None:
+    parent = tmp_path / "read-only"
+    parent.mkdir(mode=0o555)
+    parent.chmod(0o555)
+    home = parent / "home"
+    try:
+        result = runner.invoke(cli, command, env={config.HOME_VARIABLE: str(home)})
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)
+        assert not home.exists()
+    finally:
+        parent.chmod(0o700)
+
+
+def test_absent_uncreatable_home_still_refuses_a_query_and_explicit_profile(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    parent = tmp_path / "read-only"
+    parent.mkdir(mode=0o555)
+    parent.chmod(0o555)
+    home = parent / "home"
+    try:
+        for command in (
+            ["data", "query", "q", "--format", "json"],
+            ["--profile", "named", "metadata", "inspect", "--format", "json"],
+        ):
+            result = runner.invoke(cli, command, env={config.HOME_VARIABLE: str(home)})
+            assert result.exit_code == config.EXIT_PROFILE
+            assert json.loads(result.stdout)["error"]["code"] == config.PROFILE
+        assert not home.exists()
+    finally:
+        parent.chmod(0o700)
+
+
+def test_existing_unsafe_home_is_not_treated_as_an_empty_profile(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    home = tmp_path / "unsafe"
+    home.mkdir(mode=0o777)
+    home.chmod(0o777)
+    try:
+        for command in (
+            ["metadata", "inspect", "--format", "json"],
+            ["model", "inspect", "gpt-4o", "--format", "json"],
+        ):
+            result = runner.invoke(cli, command, env={config.HOME_VARIABLE: str(home)})
+            assert result.exit_code == config.EXIT_PROFILE
+            assert json.loads(result.stdout)["error"]["code"] == config.PROFILE
+        assert not (home / ".profiles").exists()
+    finally:
+        home.chmod(0o700)
+
+
+def test_profile_select_write_failure_has_no_missing_profile_hint(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert runner.invoke(cli, ["profile", "add", "staging"]).exit_code == 0
+
+    def refused(_store: ProfileStore, _name: str) -> None:
+        raise ProfileError("cannot write selection: Permission denied")
+
+    monkeypatch.setattr(ProfileStore, "select", refused)
+    result = runner.invoke(cli, ["profile", "select", "staging"])
+    assert result.exit_code == config.EXIT_PROFILE
+    assert "cannot write selection" in result.stderr
+    assert "profile list" not in result.stderr
+
+
 # --------------------------------------------------------------------- add --
 def test_add_reports_the_name_and_how_to_configure_it(runner: CliRunner) -> None:
     result = runner.invoke(cli, ["profile", "add", "staging"])
@@ -87,6 +312,10 @@ def test_adding_a_profile_twice_is_a_profile_error(runner: CliRunner) -> None:
     assert result.exit_code == config.EXIT_PROFILE
     assert "ERROR: PROFILE" in result.stderr
     assert "already exists" in result.stderr
+    assert "blue-llmdb profile select NAME" in result.stderr
+    assert runner.invoke(cli, ["profile", "select", "staging"]).exit_code == 0
+    selected = json.loads(runner.invoke(cli, ["profile", "list", "--format", "json"]).stdout)
+    assert selected["selected"] == "staging"
 
 
 # ------------------------------------------------------------------ remove --
@@ -98,8 +327,7 @@ def test_remove_asks_first(runner: CliRunner) -> None:
 
 
 def test_declining_removes_nothing_and_is_not_a_failure(runner: CliRunner) -> None:
-    """A question asked and answered. It used to exit 1, which this CLI reserves for
-    INTERNAL, and print Click's bare `Aborted!` instead of the error vocabulary."""
+    """Declining removal leaves the profile in place and exits successfully."""
     runner.invoke(cli, ["profile", "add", "staging"])
     result = runner.invoke(cli, ["profile", "remove", "staging"], input="n\n")
     assert result.exit_code == 0, result.output
@@ -156,12 +384,7 @@ def test_removing_the_selected_profile_says_the_selection_moved(runner: CliRunne
 
 
 def test_the_last_profile_cannot_be_removed(runner: CliRunner) -> None:
-    """`remove default` used to leave `{"selected": "default", "profiles": []}`.
-
-    The selection fell back to `default` unconditionally, so the store reported a selected
-    profile that was not in its own list and every later run resolved against a section
-    that was not there.
-    """
+    """The last profile cannot be removed while it is the selected profile."""
     result = runner.invoke(cli, ["profile", "remove", "default", "--confirm"])
     assert result.exit_code == config.EXIT_PROFILE
     assert "only profile" in result.stderr
@@ -324,6 +547,10 @@ def test_an_unknown_parameter_is_a_profile_error(runner: CliRunner) -> None:
     result = runner.invoke(cli, ["profile", "config", "NOT_A_PARAM", "x"])
     assert result.exit_code == config.EXIT_PROFILE
     assert "unknown configuration parameter" in result.stderr
+    assert "blue-llmdb profile inspect --format json" in result.stderr
+    inspect = runner.invoke(cli, ["profile", "inspect", "--format", "json"])
+    assert inspect.exit_code == 0
+    assert "BLUE_DATA_LLM_SOURCE_PRICE_PER_OUTPUT_TOKEN" in json.loads(inspect.stdout)["values"]
 
 
 @pytest.mark.parametrize(
@@ -338,7 +565,7 @@ def test_an_unknown_parameter_is_a_profile_error(runner: CliRunner) -> None:
 def test_a_refused_argument_leaves_no_profile_behind(
     argument: list[str], runner: CliRunner
 ) -> None:
-    """It created the target first and refused afterwards, so a typo in `--profile` left one."""
+    """A rejected setting leaves no newly created target profile."""
     result = runner.invoke(cli, ["profile", "config", "--profile", "typo", *argument])
     assert result.exit_code == config.EXIT_PROFILE
     assert "Created profile" not in result.stdout
@@ -346,10 +573,20 @@ def test_a_refused_argument_leaves_no_profile_behind(
     assert "typo" not in payload["profiles"]
 
 
-def test_a_cast_failure_names_the_parameter(runner: CliRunner) -> None:
-    result = runner.invoke(cli, ["profile", "config", "BLUE_DATA_LLM_SOURCE_MAX_RECORDS", "many"])
+@pytest.mark.parametrize(
+    ("name", "value", "expected"),
+    [
+        ("BLUE_DATA_LLM_SOURCE_MAX_RECORDS", "many", "a whole number"),
+        ("BLUE_DATA_LLM_SOURCE_TEMPERATURE", "warm", "a number"),
+        ("BLUE_DATA_LLM_SOURCE_CACHE", "maybe", "true or false"),
+    ],
+)
+def test_a_cast_failure_names_the_parameter(
+    runner: CliRunner, name: str, value: str, expected: str
+) -> None:
+    result = runner.invoke(cli, ["profile", "config", name, value])
     assert result.exit_code == config.EXIT_PROFILE
-    assert "BLUE_DATA_LLM_SOURCE_MAX_RECORDS" in result.stderr
+    assert f"{name} must be {expected}, got {value!r}" in result.stderr
 
 
 def test_config_with_nothing_to_read_says_to_pass_the_value(runner: CliRunner) -> None:
@@ -409,6 +646,64 @@ def test_the_prompt_hides_the_secret_it_is_reading(runner: CliRunner) -> None:
     assert typed not in result.stdout
 
 
+def test_the_key_prompt_describes_this_cli(runner: CliRunner) -> None:
+    """The shared prompt mentions embeddings, which this CLI does not use."""
+    result = runner.invoke(cli, ["profile", "config", "OPENAI_API_KEY"], input="\n")
+    assert result.exit_code == 0, result.output
+    assert "OpenAI API key (the provider SDK reads it from the environment)" in result.stdout
+    assert "embeddings" not in result.stdout
+
+
+# -------------------------------------------------------------- hand edits --
+@pytest.mark.parametrize(
+    ("line", "repair", "answer"),
+    [
+        ("BLUE_DATA_LLM_SOURCE_LIMIT_COST =", ["BLUE_DATA_LLM_SOURCE_LIMIT_COST", "1"], None),
+        # Valid base64 that does not decode as UTF-8.
+        ("OPENAI_API_KEY = enc:/w==", ["OPENAI_API_KEY"], "replacement-key\n"),
+    ],
+    ids=["blank-value", "undecodable-secret"],
+)
+def test_profile_commands_repair_what_data_commands_refuse(
+    runner: CliRunner, cli_home: Path, line: str, repair: list[str], answer: str | None
+) -> None:
+    """A hand-edited value that cannot apply stops a request, not the commands that fix it."""
+    assert runner.invoke(cli, ["profile", "list"]).exit_code == 0
+    (cli_home / ".profiles").write_text(f"{profiles(cli_home).rstrip()}\n{line}\n")
+
+    refused = runner.invoke(cli, ["data", "estimate", "q", "--format", "json"])
+    assert refused.exit_code == config.EXIT_PROFILE
+    assert repair[0] in json.loads(refused.stdout)["error"]["message"]
+
+    for command in (
+        ["profile", "list"],
+        ["profile", "add", "spare"],
+        ["profile", "select", "default"],
+    ):
+        result = runner.invoke(cli, command)
+        assert result.exit_code == 0, (command, result.output)
+    assert runner.invoke(cli, ["profile", "remove", "spare", "--confirm"]).exit_code == 0
+    fixed = runner.invoke(cli, ["profile", "config", *repair], input=answer)
+    assert fixed.exit_code == 0, fixed.output
+
+    estimate = runner.invoke(cli, ["data", "estimate", "q", "--format", "json"])
+    assert estimate.exit_code == 0, estimate.output
+
+
+def test_a_blank_stored_value_names_its_profile_and_file(runner: CliRunner, cli_home: Path) -> None:
+    assert runner.invoke(cli, ["profile", "add", "staging"]).exit_code == 0
+    path = cli_home / ".profiles"
+    path.write_text(f"{profiles(cli_home).rstrip()}\nBLUE_DATA_LLM_SOURCE_LIMIT_CALLS =\n")
+
+    result = runner.invoke(cli, ["--profile", "staging", "data", "estimate", "q"])
+    assert result.exit_code == config.EXIT_PROFILE
+    assert "BLUE_DATA_LLM_SOURCE_LIMIT_CALLS is blank in profile 'staging'" in result.stderr
+    assert "/.blue-llmdb/.profiles;" in result.stderr
+    assert "profile config BLUE_DATA_LLM_SOURCE_LIMIT_CALLS VALUE --profile NAME" in result.stderr
+    # The selected profile holds no blank, so it still runs.
+    assert runner.invoke(cli, ["data", "estimate", "q"]).exit_code == 0
+
+
 # ----------------------------------------------------------------- storage --
 def test_the_profile_files_are_private(runner: CliRunner, cli_home: Path) -> None:
     runner.invoke(cli, ["profile", "config", "BLUE_DATA_LLM_MODEL", "gpt-4o-mini"])
@@ -423,7 +718,7 @@ def test_a_run_leaves_no_temporary_files_in_the_home(runner: CliRunner, cli_home
 
 
 @pytest.mark.parametrize("fmt", ["table", "json", "nl", "csv"])
-def test_the_profile_listings_honour_every_format(fmt: str, runner: CliRunner) -> None:
+def test_the_profile_listings_honor_every_format(fmt: str, runner: CliRunner) -> None:
     for command in (["profile", "list"], ["profile", "inspect"]):
         result = runner.invoke(cli, [*command, "--format", fmt])
         assert result.exit_code == 0, result.output

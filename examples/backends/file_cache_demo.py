@@ -18,6 +18,7 @@ Run from the repository root:
     python3 examples/backends/file_cache_demo.py
 """
 
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -27,6 +28,7 @@ from blue_data_llm_source import (
     FetchResult,
     LlmSource,
     LlmSourceError,
+    Outcome,
 )
 
 QUERY = "the four largest lakes in Switzerland by surface area"
@@ -45,6 +47,8 @@ def report(label: str, result: FetchResult) -> None:
 
 
 def main() -> None:
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise SystemExit("Set OPENAI_API_KEY before running this example.")
     cache_dir = Path(tempfile.mkdtemp(prefix="llmdb-file-cache-"))
     properties = {
         "llm.model": "gpt-4o-mini",
@@ -60,10 +64,20 @@ def main() -> None:
             source = LlmSource(properties=properties, client=client)
             try:
                 first = source.fetch(QUERY, attrs=ATTRS)
+                if first.meta.outcome != Outcome.OK or not first.records:
+                    report("first fetch (provider)", first)
+                    raise SystemExit("first fetch did not return records")
                 second = source.fetch(QUERY, attrs=ATTRS)
+                if (
+                    second.meta.outcome != Outcome.OK
+                    or second.meta.cache_hits < 1
+                    or second.records != first.records
+                ):
+                    report("second fetch (same question)", second)
+                    raise SystemExit("second fetch was not the expected cache hit")
             except LlmSourceError as error:
                 print(f"{type(error).__name__}: {error}")
-                return
+                raise SystemExit(1) from error
 
         report("first fetch (provider)", first)
         print()

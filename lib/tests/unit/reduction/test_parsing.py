@@ -54,8 +54,7 @@ def test_an_envelope_key_holding_a_non_list_is_kept_as_one_record() -> None:
 
 
 def test_a_value_containing_the_word_json_survives_intact() -> None:
-    # The implementation this replaces stripped every occurrence of the substring
-    # "json" from the response, which silently corrupted data that mentioned it.
+    # Strip the Markdown fence marker without changing "json" inside the payload.
     text = '```json\n[{"note": "the json file is at /tmp/json/data.json"}]\n```'
     assert parse_records(text) == [{"note": "the json file is at /tmp/json/data.json"}]
 
@@ -123,13 +122,9 @@ def test_the_same_key_in_two_different_objects_is_fine() -> None:
 
 
 def test_a_wrapper_with_metadata_siblings_is_still_a_wrapper() -> None:
-    """The shape the sole-key rule broke, which is the commonest envelope a model returns.
+    """A wrapper may carry metadata alongside its record list.
 
-    `{"items": [...], "count": 2}` and `{"country": "France", "data": [...]}` are structurally
-    identical: a magic key holding a list, plus one sibling. Matching on the key alone threw
-    away `country`; requiring a sole key threw away the records under `items`. Both readings
-    failed silently, reporting that the model had returned nothing. What separates them is
-    the request — the reading that answers more of the requested attributes is the one meant.
+    Attribute matches distinguish it from a record with a list-valued column.
     """
     wanted = ["name"]
     assert parse_records('{"items": [{"name": "Ada"}, {"name": "Grace"}], "count": 2}', wanted) == [
@@ -150,17 +145,14 @@ def test_a_wrapper_with_metadata_siblings_is_still_a_wrapper() -> None:
 
 
 def test_an_envelope_key_with_siblings_is_a_record_not_a_wrapper() -> None:
-    """`data`, `results`, `rows` and `items` are ordinary column names.
+    """`data`, `results`, `rows`, and `items` can be ordinary column names.
 
-    Unwrapping on the key alone discarded every sibling. A single-object answer is a shape
-    this package deliberately supports, so a model answering one record that happens to
-    carry a list under one of those names had the rest of the record thrown away — and the
-    caller was told the model had returned nothing.
+    Keep the whole record when its requested attributes favor the record reading.
     """
     kept = parse_records('{"country": "France", "data": [{"year": 2024}]}', ["country"])
     assert kept == [{"country": "France", "data": [{"year": 2024}]}]
 
-    # A list of scalars under that name used to fail the whole request, after it was billed.
+    # A list of scalars under this key belongs to the record, not a wrapper.
     assert parse_records('{"build": 42, "results": ["pass", "fail"]}', ["build", "results"]) == [
         {"build": 42, "results": ["pass", "fail"]}
     ]

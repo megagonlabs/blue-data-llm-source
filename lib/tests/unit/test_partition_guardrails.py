@@ -2,7 +2,7 @@
 
 `plan.partition_guardrails` sends a proposal prompt with generic rules about which keys and
 values make a usable split, and refuses a model-proposed key the schema declares numeric
-whose values are not a small ordinal set. Off, the proposal prompt and the checks are 2.1.0's.
+whose values are not a small ordinal set. Off, the proposal prompt and the checks are 0.2.1.0's.
 """
 
 from __future__ import annotations

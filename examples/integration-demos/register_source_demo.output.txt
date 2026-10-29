@@ -1,6 +1,6 @@
 registered sources  ['llm']
 recorded class      blue_data_llm_source.source.LlmSource
-recorded connection {'protocol': 'llm', 'variant': 'openai', 'host': '', 'port': None, 'user': '', 'password': ''}
+recorded connection {'protocol': 'llm', 'variant': 'openai'}
 recorded model      gpt-4o-mini
 
 execute_query_nl: a plain string in, a list of dicts out

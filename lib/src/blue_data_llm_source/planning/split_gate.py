@@ -1,7 +1,7 @@
 """Whether a partitioned request should split at all, decided from one root answer.
 
 Under ``plan.split_policy="always"`` the root of a partitioned plan is split whatever it
-holds, which is 2.1.0's behaviour. Many requests are answered whole by one call, and
+holds, which is 0.2.1.0's behavior. Many requests are answered whole by one call, and
 splitting those asks each child a narrower question and merges back less than the root would
 have returned. Under ``"evidence"`` the root leaf is asked once first, as a probe, and the
 plan splits only when that answer shows the one call did not hold the request: the provider

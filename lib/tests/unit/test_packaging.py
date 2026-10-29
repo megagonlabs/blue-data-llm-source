@@ -1,14 +1,4 @@
-"""What this package depends on, and what it must not start depending on.
-
-The source layer takes ``blue-data`` as a declared dependency, matching every other data
-source in the layer: they inherit its ``DataSource`` base class rather than matching its
-shape, so the contract is checked by the type system instead of by hope.
-
-That is a deliberate widening of an earlier position that took no dependency at all. What
-this file guards is the line that remains: the *orchestration* layer is still out of bounds.
-Depending on ``blue-data`` is the data layer; depending on ``blue`` or ``blue_data_ops``
-would put a data source inside the runtime that calls it.
-"""
+"""Keep the source package independent of the orchestration layer."""
 
 from __future__ import annotations
 

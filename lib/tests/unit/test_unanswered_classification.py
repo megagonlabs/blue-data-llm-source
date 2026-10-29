@@ -102,8 +102,7 @@ class TestClassificationDoesNotDependOnLeafOrder:
     """The property no single-ordering test can state."""
 
     def test_a_mixed_run_reports_the_same_thing_in_either_order(self) -> None:
-        # The defect, as the caller met it: reversing two enumerated values turned a raised
-        # provider failure into a budget-stop result carrying no gap.
+        # Classification is independent of leaf order.
         mixed = {FIRST: FAILED, SECOND: REFUSED}
         assert outcome_of([FIRST, SECOND], mixed) == outcome_of([SECOND, FIRST], mixed)
 
@@ -141,7 +140,7 @@ class TestAMixedRunKeepsBothFacts:
 
 
 class TestAPartialRunIsStillNotThisCase:
-    """The neighbour that must not be swept into it."""
+    """The neighbor that must not be swept into it."""
 
     def test_one_part_answering_keeps_the_run_a_partial_result(self) -> None:
         # `PARTIAL` is defined over the plan and needs something to have come back. Nothing

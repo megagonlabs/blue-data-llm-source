@@ -9,7 +9,7 @@ call at all.
 again for records it did not get. It needs ``plan.key``, because without an identifying
 column the parts cannot be merged and continuation is disabled with a gap saying so.
 
-The planners below use fixed scripts and recognise planning prompts by their opening
+The planners below use fixed scripts and recognize planning prompts by their opening
 lines, so their call sequences are deterministic and no provider is contacted.
 ``plan.planning_order`` is set to ``planning.combined`` for the two
 non-flat modes, the single-call bootstrap schedule; the shipped default asks for the same

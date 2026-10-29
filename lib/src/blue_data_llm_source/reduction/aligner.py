@@ -18,7 +18,7 @@ def _unambiguous(
 
     A fuzzy index exists to rescue a key that does not match exactly. Where two requested
     names share a fuzzy form it cannot do that, so the entry is removed and the exact index
-    answers instead — or the key is reported unmapped, which is the truthful outcome.
+    answers instead — or the key is reported unmapped.
     """
     counts: dict[str, int] = {}
     for name in wanted:
@@ -39,17 +39,10 @@ def normalized_key(key: str) -> str:
 def _normalize(key: str) -> str:
     """A key with separators, case and punctuation removed, for fuzzy matching.
 
-    Unicode-aware. Restricting it to ASCII deleted every character of a non-Latin name, so
-    two distinct names both normalised to the empty string and the request was refused as
-    ambiguous before any answer was looked at — for a schema whose returned keys matched the
-    requested ones exactly and needed no fuzzy matching at all.
-
-    ``casefold`` rather than ``lower`` because it is the comparison this is actually for.
+    Unicode-aware so non-Latin names remain distinct. ``casefold`` supports case-insensitive
+    comparison.
     """
-    # NFKC first: the same name can arrive precomposed (one character) or decomposed
-    # (a letter plus a combining accent). They render identically, but a combining mark is
-    # not a word character, so the strip below deleted it and the two spellings normalized
-    # to different keys — an attribute the model had answered came back unmapped.
+    # NFKC makes precomposed and decomposed spellings comparable before stripping marks.
     return re.sub(
         r"[^\w]+", "", unicodedata.normalize("NFKC", key).casefold(), flags=re.UNICODE
     ).replace("_", "")
@@ -78,8 +71,7 @@ def align(records: list[dict[str, Any]], attrs: list[Attr]) -> Alignment:
     """Map each record's keys onto the requested attribute names.
 
     With no requested attributes the records pass through unchanged, since there is
-    nothing to align to. Keys that cannot be matched are reported rather than dropped
-    silently, which is the failure mode in the implementation this replaces.
+    nothing to align to. Keys that cannot be matched are reported.
     """
     observed: list[str] = []
     for record in records:
@@ -102,10 +94,7 @@ def align(records: list[dict[str, Any]], attrs: list[Attr]) -> Alignment:
 
     exact = {name: name for name in wanted}
     lowered = _unambiguous({name.lower(): name for name in wanted}, wanted, str.lower)
-    # Fuzzy forms that collide are simply not used, rather than refusing the request. Two
-    # distinct names whose normalised forms happen to coincide — `क` and `कि`, where the
-    # combining mark is stripped — were rejected before any answer was examined, even when
-    # the returned keys matched the requested ones exactly and needed no fuzzy matching.
+    # Ignore colliding fuzzy forms; exact matches still work for those names.
     normalized = _unambiguous({_normalize(name): name for name in wanted}, wanted, _normalize)
 
     remapped: dict[str, str] = {}
@@ -127,9 +116,7 @@ def align(records: list[dict[str, Any]], attrs: list[Attr]) -> Alignment:
             if target != key and key not in remapped:
                 remapped[key] = target
             if target in answered:
-                # Keep the first answer. Overwriting made the surviving value depend on
-                # the order the model happened to emit its keys, which is not a property
-                # a caller can reason about.
+                # JSON key order determines which value survives a collision.
                 collisions.append(
                     {
                         "record_index": index,

@@ -1,4 +1,4 @@
-"""The published contracts: the exception tree and the two structural protocols."""
+"""The published exception tree and structural protocols."""
 
 from __future__ import annotations
 

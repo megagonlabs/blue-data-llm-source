@@ -455,8 +455,8 @@ def test_a_probe_record_without_a_key_never_reaches_a_child_prompt() -> None:
 
 def test_a_failed_probe_gap_names_the_failure_type_and_nothing_the_provider_said() -> None:
     answer = responder(estimate=40, root=rows(["a"]))
-    # Assembled at run time, so the source holds no credential-shaped literal for the
-    # repository's content check to flag; the value the provider "says" still has that shape.
+    # Assemble the opaque token at run time; the simulated provider error must
+    # still have the shape that redaction protects.
     token = "-".join(["sk", "live", "0123456789abcdef" + "ABCDEF"])
     leaked = f"{token} https://internal.example.test/v1/trace?token=abc"
 

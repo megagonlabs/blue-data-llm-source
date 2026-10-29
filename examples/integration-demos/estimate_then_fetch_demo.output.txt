@@ -36,5 +36,5 @@ the ceiling this caller is willing to spend on one request: 0.004
   budget committed     0.00066748
   budget headroom      0.00333252
 
-The overshoot between the reservation and the settled cost is released back to
-the budget, so the next request under it is sized against what is really left.
+This double releases the unused part of its reservation back to
+the budget. A built-in client keeps the full reservation after provider contact.

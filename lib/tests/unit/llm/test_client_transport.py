@@ -73,18 +73,22 @@ def test_failed_retries_cannot_outrun_the_call_ceiling(litellm_stub: InstallStub
     make every failed retry free, which is how a run with two retries reaches the
     provider three times under a ceiling of one.
     """
-    stub = litellm_stub(LitellmStub(error=RuntimeError("boom")))
-    budget = Budget(Limits(max_calls=1, max_retries=2))
+    boom = RuntimeError("private provider error")
+    stub = litellm_stub(LitellmStub(error=boom))
+    budget = Budget(Limits(max_calls=1, max_cost=1.0, max_retries=2))
     client = DefaultLlmClient({"llm.model": "gpt-4o-mini", "llm.max_tokens": 512}, budget=budget)
+    reservation = client.bound_for_attempt("who?", {})
 
-    with pytest.raises(BudgetExceeded) as caught:
+    with pytest.raises(TransportError) as caught:
         client.complete("who?")
 
     assert len(stub.calls) == 1, "the ceiling must bound provider entries, not successes"
-    assert caught.value.limit == "max_calls"
+    assert caught.value.code == "provider_error"
+    assert caught.value.provider_error is boom
+    assert "private provider error" not in str(caught.value)
+    assert "max_calls" in str(caught.value)
     assert budget.calls == 1
-    # No cost ceiling here, so no bound was computed and nothing is charged. The attempt
-    # is still consumed, which is what stops the retry outrunning max_calls.
+    assert budget.cost == pytest.approx(reservation)
 
 
 async def test_failed_async_retries_cannot_outrun_the_call_ceiling(
@@ -94,11 +98,66 @@ async def test_failed_async_retries_cannot_outrun_the_call_ceiling(
     budget = Budget(Limits(max_calls=1, max_retries=2))
     client = DefaultLlmClient({"llm.model": "gpt-4o-mini", "llm.max_tokens": 512}, budget=budget)
 
-    with pytest.raises(BudgetExceeded):
+    with pytest.raises(TransportError) as caught:
         await client.acomplete("who?")
 
+    assert "boom" not in str(caught.value)
     assert len(stub.calls) == 1
     assert budget.calls == 1
+
+
+@pytest.mark.parametrize(
+    ("limits", "axis"),
+    [(Limits(max_calls=0), "max_calls"), (Limits(max_seconds=0), "max_seconds")],
+)
+def test_an_initial_call_refusal_remains_a_limit(
+    litellm_stub: InstallStub, limits: Limits, axis: str
+) -> None:
+    stub = litellm_stub(LitellmStub(error=RuntimeError("boom")))
+    budget = Budget(limits)
+
+    with pytest.raises(BudgetExceeded) as caught:
+        DefaultLlmClient(budget=budget).complete("who?")
+
+    assert caught.value.limit == axis
+    assert stub.calls == []
+
+
+def test_prior_success_does_not_supply_a_failure_to_the_next_call(
+    litellm_stub: InstallStub,
+) -> None:
+    stub = litellm_stub(LitellmStub(chat_payload("[]")))
+    budget = Budget(Limits(max_calls=1))
+    client = DefaultLlmClient(budget=budget)
+    client.complete("first")
+
+    with pytest.raises(BudgetExceeded) as caught:
+        client.complete("second")
+
+    assert caught.value.limit == "max_calls"
+    assert len(stub.calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("property_name", "bad_value"),
+    [
+        ("llm.stream", "false"),
+        ("llm.stream", 1),
+        ("llm.cache", "false"),
+        ("llm.cache", 1),
+        ("llm.cache_dir", 123),
+    ],
+)
+def test_invalid_adapter_flag_type_is_refused_before_provider_contact(
+    litellm_stub: InstallStub, property_name: str, bad_value: object
+) -> None:
+    stub = litellm_stub(LitellmStub(chat_payload("[]")))
+    client = DefaultLlmClient({property_name: bad_value})
+
+    with pytest.raises(ConfigError, match=property_name):
+        client.complete("who?")
+
+    assert stub.calls == []
 
 
 def test_every_failed_attempt_is_charged_when_no_ceiling_stops_it(
@@ -147,7 +206,7 @@ def test_a_call_that_succeeds_is_not_retried(litellm_stub: InstallStub) -> None:
     assert len(stub.calls) == 1
 
 
-def test_max_retries_is_honoured_by_the_client(litellm_stub: InstallStub) -> None:
+def test_max_retries_is_honored_by_the_client(litellm_stub: InstallStub) -> None:
     stub = litellm_stub(LitellmStub(error=RuntimeError("boom")))
     budget = Budget(Limits(max_retries=0))
     client = DefaultLlmClient({"llm.model": "gpt-4o-mini", "llm.max_tokens": 512}, budget=budget)
@@ -161,8 +220,7 @@ def test_max_retries_is_honoured_by_the_client(litellm_stub: InstallStub) -> Non
 def test_a_missing_provider_extra_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     """A missing optional extra is a configuration problem, not a transport failure.
 
-    The cache import already says this; the provider import used to raise the raw
-    ModuleNotFoundError, so the two optional extras failed differently.
+    Missing provider and cache extras both produce configuration errors.
     """
     import builtins
 

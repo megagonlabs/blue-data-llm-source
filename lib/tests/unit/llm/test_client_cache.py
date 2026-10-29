@@ -9,7 +9,7 @@ import pytest
 
 from blue_data_llm_source.llm.budget import Budget, Limits
 from blue_data_llm_source.llm.client import DefaultLlmClient
-from blue_data_llm_source.types import BudgetExceeded, CacheStore
+from blue_data_llm_source.types import BudgetExceeded, CacheStore, ConfigError
 from tests.doubles import LitellmStub, MemoryCache, chat_payload
 
 InstallStub = Callable[[LitellmStub], LitellmStub]
@@ -26,6 +26,18 @@ class ProtocolOnlyCache:
 
     def set(self, key: str, value: Any) -> None:
         self.data[key] = value
+
+
+class GetOnlyCache:
+    def get(self, key: str) -> None:
+        return None
+
+
+class NoGetCache:
+    get: None = None
+
+    def set(self, key: str, value: object) -> None:
+        pass
 
 
 def test_a_repeated_call_is_answered_from_the_cache(
@@ -136,6 +148,53 @@ def test_a_store_built_to_the_declared_protocol_can_be_used(
     assert client.complete("who?") == "[]"
 
 
+@pytest.mark.parametrize(
+    "store",
+    [
+        {},
+        GetOnlyCache(),
+        NoGetCache(),
+    ],
+)
+def test_invalid_cache_methods_fail_before_provider_contact(
+    litellm_stub: InstallStub, store: object
+) -> None:
+    stub = litellm_stub(LitellmStub(chat_payload("[]")))
+    client = DefaultLlmClient({"cache_store": store})
+
+    with pytest.raises(ConfigError, match="cache_store.*synchronous get.*set"):
+        client.complete("who?")
+    assert stub.calls == []
+
+
+@pytest.mark.parametrize("asynchronous_method", ["get", "set"])
+async def test_async_cache_methods_fail_before_provider_contact(
+    litellm_stub: InstallStub, asynchronous_method: str
+) -> None:
+    class AsyncGet:
+        async def get(self, key: str) -> None:
+            return None
+
+        def set(self, key: str, value: object) -> None:
+            pass
+
+    class AsyncSet:
+        def get(self, key: str) -> None:
+            return None
+
+        async def set(self, key: str, value: object) -> None:
+            pass
+
+    stub = litellm_stub(LitellmStub(chat_payload("[]")))
+    client = DefaultLlmClient(
+        {"cache_store": AsyncGet() if asynchronous_method == "get" else AsyncSet()}
+    )
+
+    with pytest.raises(ConfigError, match="cache_store.*synchronous get.*set"):
+        await client.acomplete("who?")
+    assert stub.calls == []
+
+
 def test_a_cache_that_cannot_store_does_not_destroy_a_paid_answer(
     litellm_stub: InstallStub,
 ) -> None:
@@ -154,13 +213,9 @@ def test_a_cache_that_cannot_store_does_not_destroy_a_paid_answer(
 
 
 def test_a_cache_hit_checks_the_deadline_on_both_entry_points() -> None:
-    """The architecture document promises this for a cache hit, and only async did it.
+    """Both entry points check the deadline before serving a cache hit.
 
-    A hit consumes no attempt, no tokens and no cost, "and admission still checks elapsed
-    time." The synchronous path read the cache before touching the budget, so a run already
-    past its deadline kept answering from cache through it. Reachable only by a caller
-    driving the client directly, since the library's own path is async, but the two entry
-    points should not disagree about whether a ceiling has been crossed.
+    A hit consumes no attempt, tokens, or cost, but still obeys the time ceiling.
     """
     import asyncio
 

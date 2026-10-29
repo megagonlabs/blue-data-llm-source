@@ -1,7 +1,6 @@
 """Budget, one test per axis.
 
-The implementation this replaces accepted every one of these settings and enforced none
-of them, so each axis is checked on its own.
+Each configured limit is checked on its own axis.
 """
 
 from __future__ import annotations
@@ -30,12 +29,7 @@ class FakeClock:
 
 
 class SlowClock:
-    """A clock that takes its time.
-
-    reserve reads the clock between checking the call ceiling and claiming the
-    call. A clock that blocks there widens that window from nanoseconds to milliseconds,
-    which is what makes the concurrency test below able to see a missing lock.
-    """
+    """Delay clock reads to expose a gap between checking and claiming a call."""
 
     def __init__(self, delay: float = 0.005) -> None:
         self.delay = delay
@@ -191,9 +185,7 @@ def test_settle_refuses_a_negative_cost() -> None:
     with pytest.raises(ConfigError, match="settled cost"):
         reservation.settle(-5.0)
 
-    # Charged at the estimate, not refunded. Leaving the handle resolvable was the earlier
-    # contract, and it meant `attempt`'s cleanup gave the claim back: the provider had been
-    # contacted and the ledger recorded nothing.
+    # A refused settlement resolves the contacted attempt at its estimate.
     assert reservation.resolved
     assert budget.cost == 0.0, "this reservation was taken at an estimate of nothing"
 
@@ -202,24 +194,15 @@ def test_settle_refuses_a_negative_cost() -> None:
 def test_a_settlement_that_is_not_an_amount_is_refused_and_charged_at_the_estimate(
     bad: object,
 ) -> None:
-    """The lifecycle boundary a custom client reaches.
-
-    Validating only the reservation left this side open: a non-finite actual passed through
-    max(0.0, x) as zero and restored the whole ceiling, an infinite one corrupted the ledger,
-    and a non-number raised only after the handle was spent and its reservation removed.
-    """
+    """Invalid actual costs are refused while the claim settles at its estimate."""
     budget = Budget(Limits(max_cost=0.10))
     reservation = budget.reserve(0.05)
 
     with pytest.raises(ConfigError):
         reservation.settle(bad)  # pyright: ignore[reportArgumentType]
 
-    # The amount is refused *and* the claim is resolved, at the estimate. Validating before
-    # resolving is still right — settling an unchecked amount corrupts the ledger — but
-    # leaving the handle outstanding let `attempt`'s cleanup refund a contacted call, so
-    # under max_calls=1 a provider could be contacted repeatedly with the ledger reading
-    # zero. `None` matters most: it is what this package's own `_cost_of` returns when a
-    # cost cannot be read.
+    # Refuse the invalid amount and resolve the claim at its estimate. `None` is the
+    # value `_cost_of` returns when a cost cannot be read.
     assert reservation.resolved
     assert budget.cost == 0.05, "charged at the estimate, exactly as keep_unpriced would"
     assert budget.reserved == 0.0
@@ -450,7 +433,7 @@ def test_a_spent_cost_ceiling_is_crossed_for_every_later_call_too() -> None:
 
 
 def test_an_admission_refusal_does_not_reach_a_call_it_did_not_refuse() -> None:
-    """The regression this replaced: a third sibling's refusal marked two admitted calls."""
+    """A refused sibling leaves admitted calls unchanged."""
     parent = Budget(Limits(max_calls=2))
     admitted = [parent.derive(), parent.derive()]
     for child in admitted:
@@ -545,16 +528,10 @@ def test_cleanup_does_not_replace_the_exception_it_is_cleaning_up() -> None:
 
 
 def test_an_unrepresentable_total_is_left_to_the_caller_who_asked_for_it() -> None:
-    """Documented rather than guarded, after guarding it broke a ceiling that matters.
+    """Extreme finite claims may sum beyond the float range without losing call counts.
 
-    Every amount is validated finite where it enters; a finite sum of finite amounts can
-    still exceed a float, and reaching that needs a total near 1e308. No real pricing gets
-    there — the bound is an output allowance times a rate around a millionth — so it takes a
-    caller passing deliberate nonsense through a custom client. What they get is `inf` in
-    their own metadata, and the call and cost ceilings keep working for everyone else.
-
-    The guard that used to be here could not refuse a settlement without leaving the attempt
-    unresolved, and the cleanup then refunded a call that had reached the provider.
+    A custom client can supply amounts near 1e308. The committed total then becomes
+    ``inf``, while call and cost ceilings still apply to subsequent work.
     """
     budget = Budget(Limits(max_calls=4))
     first = budget.reserve(1e308)
@@ -659,13 +636,7 @@ def test_a_forged_handle_cannot_free_a_live_claim() -> None:
 
 
 def test_an_interruption_inside_the_transaction_leaves_the_family_usable() -> None:
-    """No cleanup assignment to interrupt, because there is nothing to clear.
-
-    A boolean marking the transaction was tried first and was the wrong shape: an interrupt
-    landing before the clearing assignment left every later attempt on the whole family
-    refused for good, and one landing before the release left the lock held. The version
-    counter needs no cleanup — a frame that unwinds simply never bumps it again.
-    """
+    """An interrupted admission leaves no held lock or stale transaction state."""
     budget = Budget(Limits(max_calls=3, max_cost=1.0))
     real_admit = budget._admit  # pyright: ignore[reportPrivateUsage]
     fired: list[str] = []

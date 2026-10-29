@@ -1,7 +1,7 @@
 """The renderer, below the commands.
 
 Every command routes through here, so the guards are checked once, here, against a result
-built by hand. The per-command tests then check that each command honours all four formats
+built by hand. The per-command tests then check that each command honors all four formats
 rather than re-checking what a format does.
 """
 

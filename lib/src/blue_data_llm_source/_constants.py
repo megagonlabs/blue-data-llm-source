@@ -18,7 +18,7 @@ OP_ESTIMATE = "LLM.ESTIMATE"
 OPS = (OP_FETCH, OP_MODELS, OP_ESTIMATE)
 
 # The virtual hierarchy the registry walks. An LLM has no databases or collections,
-# so one of each is synthesised, named for the family rather than the vendor.
+# so one of each is synthesized, named for the family rather than the vendor.
 DATABASE = "llm"
 COLLECTION = "public"
 ENTITY = "llm_entity"

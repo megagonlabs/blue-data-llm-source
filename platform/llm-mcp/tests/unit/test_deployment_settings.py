@@ -303,7 +303,7 @@ def test_a_malformed_value_is_masked_in_the_error(monkeypatch: pytest.MonkeyPatc
 
 
 # ------------------------------------------------ no configured value comes back --
-SENTINEL = "contoso-payroll-alpha"
+SENTINEL = "private-value-canary"
 """Not credential-shaped, so masking credential shapes alone would let it through."""
 
 
@@ -529,3 +529,72 @@ def test_a_retry_allowance_cannot_be_raised_over_mcp(
         tools.dispatch(tool, {"query": QUERY, "limits.max_retries": 10**309})
     assert caught.value.kind == "InvalidArguments"
     assert provider.calls == []
+
+
+@pytest.mark.parametrize("variable", LIMIT_VARIABLES)
+@pytest.mark.parametrize("value", ["", " ", "\t\n"])
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_blank_operator_limits_fail_before_contact_and_recover(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: RecordingProvider,
+    variable: str,
+    value: str,
+    asynchronous: bool,
+) -> None:
+    import asyncio
+
+    def call() -> Any:
+        args = {"query": QUERY}
+        if asynchronous:
+            return asyncio.run(tools.adispatch("llmdb_query", args))
+        return tools.dispatch("llmdb_query", args)
+
+    monkeypatch.setenv(variable, value)
+    with pytest.raises(tools.ToolError) as caught:
+        call()
+    assert caught.value.kind == "ConfigError"
+    assert variable in str(caught.value)
+    assert not provider.calls
+    monkeypatch.delenv(variable)
+    assert call()["records"]
+    assert len(provider.calls) == 1
+
+
+@pytest.mark.parametrize("variable", LIMIT_VARIABLES)
+@pytest.mark.parametrize("value", ["-1", "nan", "inf", "-inf", "malformed"])
+def test_every_operator_axis_rejects_invalid_values_safely(variable: str, value: str) -> None:
+    with pytest.raises(tools.ToolError) as caught:
+        tools.operator_limits({variable: value})
+    assert caught.value.kind == "ConfigError"
+    assert variable in str(caught.value)
+    assert value not in str(caught.value)
+
+
+@pytest.mark.parametrize("variable", LIMIT_VARIABLES)
+def test_every_operator_axis_accepts_zero_and_distinguishes_absence(variable: str) -> None:
+    assert tools.operator_limits({}) == {}
+    result = tools.operator_limits({variable: "0"})
+    assert len(result) == 1
+    assert next(iter(result.values())) == 0
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_operator_call_and_source_ceilings_compose(
+    monkeypatch: pytest.MonkeyPatch, make_source: Any, asynchronous: bool
+) -> None:
+    import asyncio
+
+    monkeypatch.setenv("BLUE_DATA_LLM_SOURCE_LIMIT_COST", "1")
+    source, client = make_source()
+    source.properties["limits.max_cost"] = 0
+    arguments = {"query": QUERY, "limits.max_cost": 2}
+    result = (
+        asyncio.run(tools.adispatch("llmdb_query", arguments, source=source))
+        if asynchronous
+        else tools.dispatch("llmdb_query", arguments, source=source)
+    )
+    assert result["records"] == []
+    assert result["meta"]["stopped_by"] == "max_cost"
+    assert not client.prompts
+    assert source.properties["limits.max_cost"] == 0
+    assert arguments["limits.max_cost"] == 2

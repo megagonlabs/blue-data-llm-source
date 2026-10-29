@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blue-data-llm-source"
-version = "2.2.0"
-description = "Blue Data LLM Source Layer"
+version = "1.0.0"
+description = "Blue data source for generating typed records with a language model"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "blue-data>=0.1.0",
+    "blue-data>=1.0.0,<2",
     "tenacity>=9.0.0",
 ]
 
@@ -17,6 +17,9 @@ dependencies = [
 llm  = ["litellm>=1.102.0,<2", "diskcache>=5.6,<6"]
 dev  = ["pytest", "pytest-asyncio", "pytest-cov", "ruff", "pyright", "build", "twine"]
 all  = ["litellm>=1.102.0,<2", "diskcache>=5.6,<6"]
+
+[tool.setuptools]
+license-files = ["LICENSE", "NOTICE"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -36,6 +39,7 @@ pythonVersion = "3.10"
 typeCheckingMode = "strict"
 venvPath = "."
 venv = ".venv"
+extraPaths = ["../../blue-data/lib/src"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

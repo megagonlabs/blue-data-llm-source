@@ -68,23 +68,24 @@ def test_the_table_carries_the_settings_footer(runner: CliRunner, install_source
     assert "limits.max_cost=0.5 (flag)" in result.stdout
 
 
-def test_the_prose_says_the_figure_is_per_call(runner: CliRunner, install_source: Any) -> None:
-    """Both sentences exist because both are ways to read the number wrongly."""
+def test_the_prose_limits_the_figure_to_a_flat_fetch(
+    runner: CliRunner, install_source: Any
+) -> None:
     install_source(RecordingSource())
     result = runner.invoke(cli, ["data", "estimate", QUERY, "--format", "nl"])
     assert "$0.1200" in result.stdout
-    assert "once per call it makes" in result.stdout
+    assert "does not bound their total cost" in result.stdout
 
 
-def test_the_help_warns_about_both_misreadings(runner: CliRunner) -> None:
+def test_the_help_limits_the_figure_to_a_flat_fetch(runner: CliRunner) -> None:
     text = runner.invoke(cli, ["data", "estimate", "--help"]).stdout
-    assert "once per call it makes" in text
+    assert "does not bound their total" in text
     assert "--limit-calls" in text
     assert "--max-retries" in text
 
 
 def test_an_unbounded_estimate_gives_the_reason(runner: CliRunner) -> None:
-    """The default fake client cannot price an attempt, which is the honest unbounded case."""
+    """An unpriced attempt produces an unbounded estimate with a reason."""
     result = runner.invoke(cli, ["data", "estimate", QUERY, "--format", "json"])
     assert result.exit_code == 0, result.output
     body = json.loads(result.stdout)

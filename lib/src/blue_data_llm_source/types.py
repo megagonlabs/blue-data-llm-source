@@ -188,16 +188,9 @@ class Range:
 Constraint = Exact | OneOf | Range
 """What a leaf may say about a field, tagged with which kind it is.
 
-The tag is the point. A filter held as an untagged scalar or list is one absent-minded
-``join``, ``str()``, or "treat every entry as required" away from asking a different
-question than the caller asked, and each of those reads as ordinary code. Held as a tagged
-pair, the same mistakes stop type-checking: there is no string to join and no sequence to
-iterate without first saying which kind of constraint is in hand.
-
-That is not hypothetical tidiness. Joined with ``", "``, the alternatives ``['A, B', 'C']``
-and ``['A', 'B', 'C']`` produce one identical prompt, so a request about one region whose
-name contains a comma and a request about two regions become the same question, and nothing
-in the result says which was answered.
+Tagged constraints keep exact values, alternatives, and ranges distinct through prompt
+rendering. Joining alternatives with a comma would make ``['A, B', 'C']`` and
+``['A', 'B', 'C']`` indistinguishable.
 """
 
 
@@ -219,8 +212,8 @@ class Usage:
     reason. A planning response is discarded after its proposal is read, so its finish reason
     remains diagnostic usage metadata rather than a result stop reason. ``"stop"`` and ``None``
     are absence of evidence rather than evidence of absence: the provider layer defaults a
-    termination reason it does not recognise to ``"stop"``, so believing it would turn an
-    unrecognised truncation into a claim that the answer is complete.
+    termination reason it does not recognize to ``"stop"``, so believing it would turn an
+    unrecognized truncation into a claim that the answer is complete.
 
     None rather than ``"stop"`` when the field is missing or malformed. A provider that said
     nothing and a provider that reported a clean stop are different facts, and defaulting one
@@ -229,11 +222,10 @@ class Usage:
     cost_known: bool = True
     """Whether ``cost`` is what the provider charged.
 
-    False when the provider's own accounting could not be read for this attempt. The
-    reservation's bound then stands as the charge for enforcement, which is the safe thing to
-    do with a ceiling, but it is not a measurement — and where no cost ceiling is configured
-    there is no bound either, so the figure is zero and means nothing. Reporting that zero as
-    a known cost is how an unpriced call comes to look free."""
+    False when a reservation or usage bound sets the ledger charge, provider accounting
+    cannot be read, or the calculator cannot prove every billed category. Under a cost
+    ceiling, a contacted attempt keeps at least its reservation. Without a ceiling, an
+    unpriced call may report zero; that means unmeasured, not free."""
 
 
 class Outcome:
@@ -374,22 +366,9 @@ class ExecMeta:
     asked: str | None = None
     """The request as it was actually sent, when a model rewrote it. None when nothing did.
 
-    Outside ``flat``, an analysis call restates the request for retrieval, and that restated
-    text becomes the query every part runs. It has to *be* the query rather than sit beside
-    the caller's original, because a request like "I don't know how many countries are
-    there?" is a statement of ignorance shaped like a question and is not retrievable as
-    written; the rewrite is what makes it answerable.
-
-    Which means the rewrite can also broaden or narrow what was asked, and the only thing
-    against that is a sentence in the analysis prompt telling the model not to. That is an
-    instruction, not a check. Nothing here guards it: the example that makes the rewrite
-    worth keeping is precisely the one that defeats any cheap relatedness test, since a
-    useful rewrite of it shares almost no words with the original, and a guard loose enough
-    to pass it would catch nothing.
-
-    So the change is reported instead of prevented. Reporting costs nothing, cannot misfire,
-    and turns an invisible substitution into one a caller can see — which is the same move
-    as publishing attribution, and the honest half of a limitation that stays published."""
+    Outside ``flat``, analysis may rewrite the request for retrieval; every part runs the
+    rewritten query. The prompt asks the model to preserve scope, but this is not checked.
+    Publishing the rewrite lets callers inspect any broadening or narrowing."""
 
     record_origins: list[list[str]] = field(default_factory=list[list[str]])
     """Which parts of a split request produced each record, parallel to ``records``.
@@ -426,9 +405,7 @@ class ExecMeta:
 
     False when the answer came from a caller-supplied ``llm_fn``. That callable may answer
     from memory, contact one provider, or fan out to several, and none of it is visible from
-    here — which is why ``FunctionClient`` declares only the row capability. Reporting
-    ``calls=1`` and ``cost=0.0`` for it looked exact and was invented: a callable making five
-    provider calls and spending real money reported one call and nothing spent. When this is
+    here. ``FunctionClient`` therefore declares only the row capability. When this is
     False the accounting fields describe this library's own bookkeeping and nothing else, and
     a planner or audit log should treat provider spend as unknown rather than zero.
     """
@@ -436,25 +413,19 @@ class ExecMeta:
 
 @dataclass
 class Estimate:
-    """What one flat fetch could cost at most, computed without contacting the provider.
+    """What one flat fetch could cost at the configured rates, without provider contact.
 
     For a caller deciding whether to run a request at all — a planner sizing a fan-out, or
     an operator checking a request against a ceiling before spending anything on it.
 
-    ``max_cost`` is an upper bound, not a prediction. It reserves the whole output
-    allowance at the model's output rate and bounds the prompt by its encoded length, so a
-    typical call costs a fraction of it. Being wrong high is the only safe direction: a
-    figure that can be exceeded is not a bound, and a decision made against one is a
-    decision made against a guess.
+    ``max_cost`` is an upper bound at the package or configured rates, not a prediction. It
+    reserves the whole output allowance at the model's output rate and bounds the prompt by
+    its encoded length, so a typical call costs a fraction of it. A figure exceeded at
+    those rates is not a bound, and a decision made against one is a guess.
 
-    ``max_cost`` bounds the whole of a ``flat`` fetch: the per-attempt figure accumulated once per
-    attempt, added the way the budget ledger adds it rather than multiplied. A fetch may
-    retry, so the per-attempt figure each reservation claims is not what a caller should
-    size a ceiling against — reporting it as the fetch's meant a request sized against its
-    own estimate was refused when a single transient failure consumed the ceiling. The
-    accumulation is not pedantry: repeated addition and multiplication diverge above five
-    attempts, and a ceiling set from the product would refuse the final attempt of a
-    request sized against its own estimate.
+    ``max_cost`` bounds the whole of a ``flat`` fetch, including retries. It accumulates
+    the per-attempt figure by repeated addition, as the budget ledger does. Multiplication
+    can round differently above five attempts and yield a bound below the ledger's charge.
 
     ``bounded`` is False when no bound can be established at all, with ``reason`` saying
     what is missing. That is a normal answer rather than an error, because "how much might
@@ -535,11 +506,9 @@ class LlmClientProtocol(Protocol):
 class Capability:
     """What a client can be held to, per axis.
 
-    Declared rather than inferred. An earlier version accepted any client carrying an
-    attribute named ``budget`` as evidence that ceilings would bind, which a client with
-    ``budget = None`` satisfied while making unbounded calls. Attribute presence is not
-    evidence of behaviour, and the axes differ: a wrapper around a caller's function can
-    prove it made one call and cannot prove what that call cost or how long it may run.
+    Capabilities must be declared; a ``budget`` attribute alone does not prove that
+    a client enforces a ceiling. A wrapper around a caller's function may bound
+    calls without being able to bound cost or time.
     """
 
     CALLS = "calls"
@@ -564,15 +533,14 @@ class Capability:
        caller sizing a ceiling from that estimate then has an attempt refused.
 
     A client that cannot commit to the second simply omits this capability: the estimate then
-    reports ``bounded=False`` with a reason, which is the honest answer rather than a figure
-    the run can exceed."""
+    reports ``bounded=False`` with a reason instead of a figure the run can exceed."""
 
     ALL = frozenset({CALLS, ROWS, SECONDS, COST, ESTIMATE})
 
 
 @runtime_checkable
 class BudgetAwareClient(Protocol):
-    """A client that states which ceilings it can be held to, and honours them.
+    """A client that states which ceilings it can be held to, and honors them.
 
     ``budget_capabilities`` is a method rather than an attribute so that satisfying this
     protocol takes a deliberate implementation instead of a name that happens to match. It

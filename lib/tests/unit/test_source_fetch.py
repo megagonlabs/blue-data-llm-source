@@ -258,10 +258,11 @@ def test_max_records_above_the_row_count_changes_nothing() -> None:
     assert result.meta.stopped_by is None
 
 
-def test_max_records_overrides_a_configured_row_limit() -> None:
+def test_max_records_is_clamped_by_a_configured_row_limit() -> None:
     source = LlmSource(properties={"limits.max_rows": 1}, client=ScriptedClient([THREE_RECORDS]))
     result = source.fetch("who?", max_records=3)
-    assert len(result) == 3
+    assert len(result) == 1
+    assert result.meta.truncated_to == 1
 
 
 def test_a_partial_truncation_reports_truncated() -> None:
@@ -284,29 +285,23 @@ def test_a_row_cap_that_removes_every_record_reports_the_limit_not_a_filter() ->
 
 
 # ------------------------------------------------------------- loop discipline --
-# fetch() checks for a running loop before it builds the coroutine, so the refusal leaks
-# nothing. These two turn the old leak's warning into an error rather than ignoring it,
-# so a regression that reintroduces it fails here instead of passing quietly.
+# Treat leaked coroutines as errors on the sync bridge's success and failure paths.
 LEAKED_COROUTINE = "error:coroutine .* was never awaited:RuntimeWarning"
 
 
 @pytest.mark.filterwarnings(LEAKED_COROUTINE)
-async def test_fetch_inside_a_running_loop_says_to_use_afetch() -> None:
+async def test_fetch_inside_a_running_loop_returns_records() -> None:
     source = LlmSource(client=ScriptedClient([ONE_RECORD]))
-    # ConfigError, not a bare RuntimeError: the documented guarantee is that nothing but
-    # LlmSourceError escapes fetch, and this is the refusal a caller is most likely to meet
-    # while porting synchronous code into an async service.
-    with pytest.raises(ConfigError, match="afetch"):
-        source.fetch("who?")
+    assert source.fetch("who?").records == json.loads(ONE_RECORD)
 
 
 @pytest.mark.filterwarnings(LEAKED_COROUTINE)
-async def test_fetch_inside_a_running_loop_does_not_call_the_model() -> None:
+async def test_invalid_settings_inside_a_running_loop_do_not_call_the_model() -> None:
     client = ScriptedClient([ONE_RECORD])
     source = LlmSource(client=client)
 
-    with pytest.raises(ConfigError):
-        source.fetch("who?")
+    with pytest.raises(ConfigError, match="limits.max_calls"):
+        source.fetch("who?", properties={"limits.max_calls": True})
 
     assert client.prompts == []
 
@@ -381,7 +376,7 @@ def _a_partly_answered_run() -> str:
 
 
 def test_every_outcome_value_is_reachable_from_the_fetch_path() -> None:
-    """A closed vocabulary that advertises a branch the code cannot produce is a lie."""
+    """Every advertised outcome must be reachable through fetch."""
     produced = {
         _a_partly_answered_run(),
         LlmSource(client=ScriptedClient(['[{"name": "Ada"}]'])).fetch("who?").meta.outcome,
@@ -425,17 +420,13 @@ def test_a_declared_type_does_not_turn_a_null_answer_into_an_absence() -> None:
         ([], [{"b": 1}], False, None, Outcome.FILTERED_TO_EMPTY),
         ([{"a": 1}], [{"a": 1}, {"a": 2}], True, "max_rows", Outcome.TRUNCATED),
         ([], [{"a": 1}], True, "max_rows", Outcome.STOPPED_BY_LIMIT),
-        # A ceiling crossed after the work ran outranks what the work produced, whatever
-        # shape the result has. These four were the combinations that used to disagree.
+        # A crossed ceiling takes precedence over the result shape.
         ([{"a": 1}], [{"a": 1}], False, "max_cost", Outcome.STOPPED_BY_LIMIT),
         ([], [], False, "max_seconds", Outcome.STOPPED_BY_LIMIT),
         ([], [{"b": 1}], False, "max_cost", Outcome.STOPPED_BY_LIMIT),
         ([], [], False, "max_calls", Outcome.STOPPED_BY_LIMIT),
-        # The row cap fired AND a harder axis was crossed. Missing from this matrix while it
-        # called itself total, and the reason the defect survived: `truncated` is the one
-        # outcome the data model defines as leaving a usable result, so reporting it for a
-        # run whose deadline had been blown told a caller the answer was merely short.
-        # 10-data-model.md already stated the rule these rows pin.
+        # A crossed call, cost, or time ceiling takes precedence over a row cap.
+        # The data model treats `truncated` as usable; these runs must not report it.
         ([{"a": 1}], [{"a": 1}, {"a": 2}], True, "max_seconds", Outcome.STOPPED_BY_LIMIT),
         ([{"a": 1}], [{"a": 1}, {"a": 2}], True, "max_cost", Outcome.STOPPED_BY_LIMIT),
         ([{"a": 1}], [{"a": 1}, {"a": 2}], True, "max_calls", Outcome.STOPPED_BY_LIMIT),
@@ -486,9 +477,7 @@ def test_a_row_cap_and_harder_limit_remain_stopped_without_interruption() -> Non
 def test_a_child_does_not_inherit_a_parents_earlier_refusal() -> None:
     """A budget's history is not this request's stop.
 
-    An oversized request refused against a shared budget used to leave stopped_by set on
-    the parent, so the next affordable request copied it and reported a ceiling that never
-    fired for it.
+    A later affordable request must not inherit the parent budget's earlier stop reason.
     """
     budget = Budget(Limits(max_rows=2))
     source = LlmSource(client=ScriptedClient([THREE_RECORDS, ONE_RECORD, ONE_RECORD]))

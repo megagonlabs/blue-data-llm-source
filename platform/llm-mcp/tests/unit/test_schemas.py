@@ -149,7 +149,7 @@ def test_estimate_schema_declares_the_request_and_the_ceilings() -> None:
 def test_the_ceilings_are_named_the_way_the_library_names_them() -> None:
     """The keys are property names the library reads, not an interface vocabulary.
 
-    Renaming them here would not be a translation; nothing downstream would recognise the
+    Renaming them here would not be a translation; nothing downstream would recognize the
     result. A tool argument the handlers do not pass on never reaches the library's own key
     validation, so a misspelling arrives as an unbounded run rather than as a refusal.
     """
@@ -198,7 +198,7 @@ def test_the_declared_enums_are_the_library_closed_sets() -> None:
 def test_the_open_attribute_type_set_is_not_declared_closed() -> None:
     """An enum here would refuse a declared type the library accepts and reports.
 
-    `unchecked_types` exists precisely so an unrecognised type name is answered rather than
+    `unchecked_types` exists precisely so an unrecognized type name is answered rather than
     refused, and the CLI leaves `--attr` types open for the same reason.
     """
     declared = tools.ATTR_SCHEMA["oneOf"][1]["properties"]["type"]
@@ -289,12 +289,7 @@ def test_an_empty_call_validates_because_the_server_accepts_one() -> None:
 
 
 def test_the_fetch_schema_requires_nothing_because_the_server_enforces_nothing() -> None:
-    """A required key the server does not enforce is a contract two readers disagree on.
-
-    The README says a missing query succeeds with `outcome: empty_query`, and it does. The
-    schema said `query` was required, so a generated client and a direct caller would have
-    disagreed about the tool surface.
-    """
+    """A missing query is valid and produces an ``empty_query`` outcome."""
     assert tools.QUERY_INPUT_SCHEMA["required"] == []
     assert "query" in tools.QUERY_INPUT_SCHEMA["properties"]
 
@@ -302,6 +297,27 @@ def test_the_fetch_schema_requires_nothing_because_the_server_enforces_nothing()
 def test_a_call_with_no_query_succeeds_as_the_readme_says(source: Any) -> None:
     result = tools.dispatch("llmdb_query", {}, source=source)
     assert result["meta"]["outcome"] == "empty_query"
+
+
+def test_an_empty_estimate_names_the_empty_query(source: Any) -> None:
+    result = tools.dispatch("llmdb_estimate", {}, source=source)
+    assert result["bounded"] is True
+    assert result["reason"] == "empty_query"
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_nonfinite_ceiling_names_the_field(value: float) -> None:
+    with pytest.raises(tools.ToolError, match="'limits.max_cost' must be a finite number"):
+        tools._check_arguments(  # pyright: ignore[reportPrivateUsage]
+            "llmdb_query", {"query": "q", "limits.max_cost": value}
+        )
+
+
+def test_bad_attribute_names_both_accepted_shapes() -> None:
+    with pytest.raises(tools.ToolError, match="non-blank string or an object"):
+        tools._check_arguments(  # pyright: ignore[reportPrivateUsage]
+            "llmdb_query", {"query": "q", "attrs": [{"type": "int"}]}
+        )
 
 
 def test_our_validator_rejects_everything_the_schema_rejects() -> None:
@@ -333,8 +349,7 @@ def test_our_validator_rejects_everything_the_schema_rejects() -> None:
         {"query": "q", "plan.mode": "flatt"},
         {"query": "q", "plan.schema_mode": "merge"},
         {"query": "q", "plan.planning_order": "schema_first"},
-        # Blank and repeated names. The library strips before it looks, so these used to
-        # validate against the published schema and be refused a moment later by the runtime.
+        # Blank and repeated names must be rejected by both schema and runtime.
         {"query": "q", "attrs": ["   "]},
         {"query": "q", "attrs": [{"name": "  "}]},
         {"query": "q", "plan.key": "   "},
@@ -507,16 +522,10 @@ def test_no_arguments_at_all_is_still_accepted(source: Any) -> None:
 
 
 SPEC = Path(__file__).resolve().parents[4] / "design" / "09-api-interface-spec.md"
-"""The interface specification, which embeds this server's tool JSON verbatim."""
 
 
 def _specified_tools() -> list[dict[str, Any]]:
-    """The tool objects the specification publishes, in the order it publishes them.
-
-    A list, not a mapping. Keyed by name straight out of the document, a second block under
-    an existing name replaced the first without a word, and the order the reader meets them
-    in was never compared to anything.
-    """
+    """Read tool JSON blocks in document order, retaining duplicate names."""
     body = SPEC.read_text(encoding="utf-8")
     blocks = cast("list[str]", re.findall(r"```json\n(.*?)\n```", body, re.DOTALL))
     objects: list[dict[str, Any]] = []
@@ -528,21 +537,11 @@ def _specified_tools() -> list[dict[str, Any]]:
 
 
 def test_the_interface_spec_publishes_this_server_verbatim() -> None:
-    """The specification embeds machine-readable JSON, so it can be diffed rather than read.
-
-    It had drifted from the code before this release in eight descriptions and in the order
-    it emits `limits.*` against `plan.*`, which a reader has no way to detect. Property
-    order is compared as well as content, because the document is read top to bottom.
-    """
+    """The specification matches the server's tools, schemas, and property order."""
     published_blocks = _specified_tools()
-    # Not a skip: the document's value here is that it publishes the schema in a form that
-    # can be checked. If it stops doing that, somebody has to decide where the keeper goes.
     assert published_blocks, f"{SPEC.name} no longer embeds any tool JSON for this check to read"
 
     published_names = [cast("str", block["name"]) for block in published_blocks]
-    # Counted and ordered before anything is keyed by name, which is what a mapping built
-    # straight from the blocks cannot tell you: two blocks under one name collapse into the
-    # later one, and a tool documented out of order reads as a different server.
     assert len(published_names) == len(set(published_names)), (
         f"{SPEC.name} publishes two blocks under one tool name"
     )

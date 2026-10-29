@@ -124,11 +124,8 @@ class TestConstraints:
         }
 
     def test_an_empty_list_reaches_the_planner_rather_than_being_dropped_here(self) -> None:
-        # It is not an entity set and the planner refuses to split on one. But refusing it
-        # *here* threw away the fact that the model had narrowed the request at all, so the
-        # wider question ran and nothing in the result said so. The planner already has the
-        # rule — drop the filter and report it — and that rule only runs on a value it
-        # receives. See `test_dropped_constraint_is_reported` for the contract this serves.
+        # An empty constraint is unsatisfiable. Preserve it so planning can report the
+        # empty constraint and avoid running the wider request; see test_dropped_constraint.py.
         got = analysis_from_response(response(ask="x", constraints={"c": []}), ASKED)
         assert got.constraints == {"c": []}
 

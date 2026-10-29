@@ -1,6 +1,6 @@
 # Quick Start
 
-Use the command line to inspect the installation, configure a provider, estimate cost, and query for records. `blue-data` and `blue-data-llm-source` are separate checkouts under the same parent directory:
+Use the command line to inspect the installation, estimate cost, configure a provider, and query for records. `blue-data` and `blue-data-llm-source` are separate checkouts under the same parent directory:
 
 ```text
 workspace/
@@ -8,25 +8,27 @@ workspace/
 └── blue-data-llm-source/
 ```
 
-Run the commands below from `blue-data-llm-source`; `../blue-data/lib` points to the sibling checkout. See [installation.md](installation.md) for `venv` and other installation paths.
+Run the commands below from `blue-data-llm-source` with Python 3.12; the package declares Python >=3.10; `../blue-data/lib` points to the sibling checkout. [installation.md](installation.md) covers the installers, optional extras, and the Conda alternative.
 
-Create the environment once; Conda may ask for confirmation. If `blue-llmdb` already exists, skip this block and activate it below.
+Create a new environment with the explicit Python 3.12 executable. If `.venv` already exists, activate it and check `python --version` before reusing it. For Python 3.15, prepare its compatibility wheels and use a separate environment; see [Python 3.15 installation](installation.md#python-315-installation).
 
 ```bash
 ls -d ../blue-data/lib &&
-conda create --name blue-llmdb python=3.12 pip
+test ! -e .venv &&
+python3.12 -m venv .venv
 ```
 
-Paste the next block after Conda finishes. The chain stops if activation or an install fails.
+Activate it and install the packages in dependency order. The chain stops if activation or an install fails.
 
 ```bash
-conda activate blue-llmdb &&
+source .venv/bin/activate &&
+python --version &&
 python -m pip install -e ../blue-data/lib &&
 python -m pip install -e "./lib[llm]" &&
 python -m pip install -e ./platform/llm-cli
 ```
 
-If Conda cannot activate the environment, run `conda init zsh` (or `conda init bash`) once, open a new terminal, return to this checkout, and rerun the second block. If the packages are already installed, activate their environment and continue at step 1.
+If the packages are already installed in this environment, activate it and continue at step 1.
 
 ## 1. Check what you installed
 
@@ -40,7 +42,7 @@ blue-llmdb metadata inspect
 ┡━━━━━━━━━━╇━━━━━━━━┩
 │ protocol │ llm    │
 │ variant  │ openai │
-│ version  │ 2.2.0  │
+│ version  │ 1.0.0  │
 └──────────┴────────┘
 ```
 
@@ -96,21 +98,7 @@ blue-llmdb model select gpt-4o
 Selected model: gpt-4o (profile default)
 ```
 
-## 4. Store the provider key, out of shell history
-
-The prompt hides what you type and writes it to `~/.blue-llmdb/.profiles` at mode `0600`. Enter `$OPENAI_API_KEY` instead of the key to store a reference to the environment variable.
-
-```bash
-blue-llmdb profile config OPENAI_API_KEY
-```
-
-## 5. Check what is set, and where each value came from
-
-```bash
-blue-llmdb profile inspect
-```
-
-## 6. Price the request before you run it
+## 4. Price the request before you run it
 
 `data estimate` contacts nothing, so this costs nothing and works without a key.
 
@@ -119,7 +107,21 @@ blue-llmdb data estimate "the member states of the European Union" --format nl
 ```
 
 ```text
-One flat fetch of this request costs at most $0.1293 against gpt-4o, across 3 attempt(s). A split request costs that figure once per call it makes. No ceiling was set.
+One flat fetch of this request is bounded at $0.1293 against the configured rates for gpt-4o, across 3 attempt(s). Non-flat requests may make planning and extraction calls with different prompts; this figure does not bound their total cost. No ceiling was set.
+```
+
+## 5. Store the provider key, out of shell history
+
+The prompt hides what you type and writes it to `~/.blue-llmdb/.profiles` at mode `0600`. Enter `$OPENAI_API_KEY` instead of the key to store a reference to the environment variable.
+
+```bash
+blue-llmdb profile config OPENAI_API_KEY
+```
+
+## 6. Check what is set, and where each value came from
+
+```bash
+blue-llmdb profile inspect
 ```
 
 ## 7. Ask for records (needs `OPENAI_API_KEY`)
@@ -130,6 +132,8 @@ Name the attributes you want and you get those columns; `NAME:TYPE` declares a t
 blue-llmdb data query "the member states of the European Union" \
     --attr country --attr accession_year:int --limit-cost 0.50
 ```
+
+This example shows the output format. Records, token use, charge, and elapsed time vary by run.
 
 ```text
 ┏━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┓
@@ -163,11 +167,12 @@ blue-llmdb data query "the member states of the European Union" \
 │ Spain          │ 1986           │
 │ Sweden         │ 1995           │
 └────────────────┴────────────────┘
-27 records | model gpt-4o-2024-08-06 | 1 call | 638 tokens | row estimate unknown | $0.0051 | 5.06s
+27 records | model gpt-4o-2024-08-06 | 1 call | 638 tokens | row estimate unknown | $0.0431 (unknown) | 7.56s
 settings: limits.max_cost=0.5 (flag), llm.cache_dir=~/.blue-llmdb/cache (default), llm.model=gpt-4o (profile:default), plan.max_continuations=0 (default)
 ```
 
 The settings footer lists each resolved value and its source. `llm.cache_dir` is your own path; the other values came from your settings or the package defaults.
+`unknown` means the charge is a conservative ledger value, at least the per-attempt reservation under a cost ceiling. It is not measured spend or an invoice amount; the provider's invoice may differ. The same rule applies to the JSON result's `meta.cost` when `meta.accounting_known` is `false`.
 
 ## 8. Take it somewhere else (needs `OPENAI_API_KEY`)
 
@@ -213,23 +218,24 @@ See [guide.md](guide.md) for the library task by task, and [api-reference.md](ap
 In the same environment, from the checkout root:
 
 ```bash
-python -m pip install -e ./platform/llm-mcp
+./platform/llm-mcp/scripts/install.sh
+command -v blue-data-llm-mcp
 ```
+
+Use the printed path as `command` below. Give the server `OPENAI_API_KEY` through the agent client's secret or inherited environment settings. Set an operator ceiling before providing the key:
 
 ```json
 {
   "mcpServers": {
     "blue-data-llm": {
-      "command": "blue-data-llm-mcp",
-      "env": {"OPENAI_API_KEY": "<YOUR_PROVIDER_KEY>"}
+      "command": "/absolute/path/to/blue-data-llm-mcp",
+      "env": {"BLUE_DATA_LLM_SOURCE_LIMIT_COST": "0.50"}
     }
   }
 }
 ```
 
-`<YOUR_PROVIDER_KEY>` is a placeholder. See [mcp.md](mcp.md) for the five tools and what a per-call ceiling does and does not cover.
-
-If the agent client starts outside the activated Conda shell, run `command -v blue-data-llm-mcp` in that environment and use the printed absolute path as its `command`.
+The operator ceiling applies to each tool call. It does not cap total spend across a sequence of calls. See [mcp.md](mcp.md) for the five tools and their settings.
 
 ---
 

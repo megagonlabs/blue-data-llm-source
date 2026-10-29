@@ -387,7 +387,7 @@ async def coordinate_plan(
 
     *leaf_prompt* is the leaf contract execution will send. It is read here only to price the
     prompts the plan commits to; it does not change which plan is built. *partition_policy*
-    decides how an accepted proposal becomes child leaves; the default is 2.1.0 behaviour.
+    decides how an accepted proposal becomes child leaves; the default is 0.2.1.0 behavior.
     """
     policy = partition_policy or PartitionPolicy()
     if leaf_prompt not in prompts.LEAF_PROMPT_VERSIONS:

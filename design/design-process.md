@@ -8,7 +8,7 @@ New repositories copy this file together with [repo-organization-template.md](re
 
 ## The Sequence
 
-Write the thirteen numbered documents in order because each establishes inputs for the next. For example, scenarios define the requirements against which the architecture is evaluated.
+Write documents 01 through 12 in order because each establishes inputs for the next. For example, scenarios define the requirements against which the architecture is evaluated. Keep document 13 as a place for decisions that need a separate record.
 
 | # | Document | The question it answers |
 |---|---|---|
@@ -33,7 +33,7 @@ Two unnumbered templates accompany the project-specific documents.
 | `design-process.md` | The sequence, writing rules, and review protocol |
 | `repo-organization-template.md` | A blank annotated skeleton a new repository copies |
 
-The documentation convention fixes the following structure across repositories. The overview contains Objective, What It Does, and Design Philosophy. The repository-organization document contains an annotated tree and a Layout Rationale table that maps modules to architecture components. The coding-style document begins with a tooling table. The decision log uses one `## ADR-NNN — <Title>` section per decision with all five fields.
+The documentation convention fixes the following structure across repositories. The overview contains Objective, What It Does, and Design Philosophy. The repository-organization document contains an annotated tree and a Layout Rationale table that maps modules to architecture components. The coding-style document begins with a tooling table. When the decision log has entries, each uses one `## ADR-NNN — <Title>` section with all five fields.
 
 ---
 
@@ -44,11 +44,11 @@ The documentation convention fixes the following structure across repositories. 
 | Before the first line of code | 01 through 05 | They decide what is being built and with what. Writing them after the fact turns them into a description of whatever happened |
 | Alongside the first implementation | 06 through 10 | They describe structures, so they need structures to describe, and they are written as those structures settle rather than after |
 | Before the first release | 11 and 12 | The testing strategy and the operational story are what a release is judged against |
-| From the first decision onward | 13 | Created empty at the start and appended to for the life of the repository |
+| When a separate decision record is needed | 13 | Kept as an empty placeholder until there is an entry to publish |
 
-Create the decision log at the start of the project and append decisions when they are made. Each entry records the alternatives, rationale, and consequences; reconstructing a decision later often preserves the outcome but loses its rationale.
+Create the decision log at the start of the project. Record decisions in the numbered design documents; add a decision-log entry when its alternatives, rationale, and consequences need a separate durable record. An empty log is valid.
 
-The user-facing directories follow the design documents instead of preceding them. `docs/` tracks current code behaviour and is written once there is behaviour to track. `examples/` holds runnable scripts with their real captured output, so an example cannot be written before the thing it runs.
+The user-facing directories follow the design documents instead of preceding them. `docs/` tracks current code behavior and is written once there is behavior to track. `examples/` holds runnable scripts with their real captured output, so an example cannot be written before the thing it runs.
 
 ---
 
@@ -58,7 +58,7 @@ These are binding on every document in `design/`, and on the user-facing documen
 
 - Lead with one sentence saying what the document is and what problem it solves. No throat-clearing, no restating the title.
 - Use a table wherever the content has two or more parallel attributes: tool and configuration, construct and convention, command and purpose. Prose for a table's worth of content is prose a reader has to sort themselves.
-- Make every code example copy-pasteable and runnable as shown, not a fragment with an implied surrounding.
+- Make runnable examples self-contained. Label API signatures, test fragments, and examples that share setup or require provider access so readers know what they need to run them.
 - Cross-link with relative markdown links, never a bare filename. A filename in prose is a link a reader has to resolve by hand, and a broken one is invisible.
 - Identify the authoritative copy wherever one document duplicates another. A synchronized copy states which document it mirrors.
 - State a placeholder plainly ("not built yet, this points at the design sketch") rather than omitting it and leaving the reader to infer that a gap is an oversight.
@@ -89,9 +89,9 @@ Repeat the implementation review whenever a document's subject changes and acros
 ## Bootstrapping a New Repository
 
 1. Copy `design-process.md` and `repo-organization-template.md` into `design/`. They carry the process and the skeleton, and neither needs adapting to start.
-2. Create `13-decision-log.md` with its heading and nothing else. Every decision from here on gets an entry as it is made.
+2. Create an empty `13-decision-log.md`. Add an entry when a decision needs a separate record.
 3. Lay out the directories from the template: `design/`, `docs/`, `examples/`, `lib/`, and one `platform/<service>/` per interface. Create them empty rather than deferring them; a directory that appears late tends to appear in the wrong place.
-4. Write `01-overview.md` through `05-software-stack.md`. The stack document is the last one that can be written without code, and the decisions it records (language, runtime floor, dependencies, extras) are the first entries the decision log earns.
+4. Write `01-overview.md` through `05-software-stack.md`. The stack document is the last one that can be written without code; it records the language, runtime floor, dependencies, and extras.
 5. Build the library, writing `06-library.md` through `10-data-model.md` as the structures settle.
 6. Add each interface under `platform/<service>/` as a thin adapter, with its own README, and give it a document under `docs/`.
 7. Write `11-testing-strategy.md` and `12-deployment-ops.md`, then the user-facing `docs/` and `examples/`.

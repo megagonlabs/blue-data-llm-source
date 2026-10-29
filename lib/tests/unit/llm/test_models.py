@@ -404,7 +404,7 @@ def test_a_cacheable_prompt_is_bounded_at_the_cache_write_rate(
     prompt = "x" * 2_000
     tokens = len(prompt) + pricing.FRAMING_TOKENS
     assert pricing.bound_cost(prompt, model, 100) == pytest.approx(
-        (tokens * write / M + 100 * output / M) * UPLIFT
+        (tokens * write * 2 / M + 100 * output * 1.5 / M) * UPLIFT
     )
 
 
@@ -421,7 +421,7 @@ def test_a_model_with_no_cache_write_charge_is_bounded_at_its_input_rate(
     prompt = "x" * 2_000
     tokens = len(prompt) + pricing.FRAMING_TOKENS
     assert pricing.bound_cost(prompt, model, 100) == pytest.approx(
-        (tokens * input_rate / M + 100 * output / M) * UPLIFT
+        (tokens * input_rate * 2 / M + 100 * output * 1.5 / M) * UPLIFT
     )
 
 
@@ -475,7 +475,7 @@ def test_supplied_rates_for_a_known_model_carry_its_billing_modifiers() -> None:
     prompt = "x" * 2_000
     tokens = len(prompt) + pricing.FRAMING_TOKENS
     # Sol's cache write is 1.25 times its input rate.
-    expected = (tokens * 4.00 * 1.25 / M + 100 * 20.00 / M) * UPLIFT
+    expected = (tokens * 4.00 * 1.25 * 2 / M + 100 * 20.00 * 1.5 / M) * UPLIFT
     assert pricing.bound_cost(prompt, "gpt-6-sol", 100, _supplied(4.00, 20.00)) == pytest.approx(
         expected
     )
@@ -597,28 +597,27 @@ def test_a_cache_hit_still_costs_a_measured_zero(litellm_stub: InstallStub) -> N
     ids=["sync", "async"],
 )
 @pytest.mark.parametrize(
-    ("model", "properties", "retained"),
+    ("model", "properties"),
     [
-        ("gpt-6-sol", {}, True),
-        ("gpt-6-astra", {}, True),
-        ("gpt-5.6", {}, True),
-        ("gpt-5.5", {}, True),
-        ("gpt-5.4", {}, True),
-        ("openai/gpt-6-sol", {}, True),
+        ("gpt-6-sol", {}),
+        ("gpt-6-astra", {}),
+        ("gpt-5.6", {}),
+        ("gpt-5.5", {}),
+        ("gpt-5.4", {}),
+        ("openai/gpt-6-sol", {}),
         # The regional uplift is not in the calculator's figure either.
-        ("gpt-5.4-mini", {}, True),
-        ("gpt-5.4-nano", {}, True),
-        ("gpt-5", {}, False),
-        ("gpt-4.1", {}, False),
-        ("gpt-4o", {}, False),
-        ("gpt-4o-2024-05-13", {}, False),
-        ("o3", {}, False),
-        ("openai/gpt-4o", {}, False),
-        ("gpt-4o", {"llm.price_per_input_token": 1e-5, "llm.price_per_output_token": 1e-5}, True),
+        ("gpt-5.4-mini", {}),
+        ("gpt-5.4-nano", {}),
+        ("gpt-5", {}),
+        ("gpt-4.1", {}),
+        ("gpt-4o", {}),
+        ("gpt-4o-2024-05-13", {}),
+        ("o3", {}),
+        ("openai/gpt-4o", {}),
+        ("gpt-4o", {"llm.price_per_input_token": 1e-5, "llm.price_per_output_token": 1e-5}),
         (
             "gpt-7-foo",
             {"llm.price_per_input_token": 1e-5, "llm.price_per_output_token": 1e-5},
-            True,
         ),
     ],
 )
@@ -627,7 +626,6 @@ def test_a_ceiling_keeps_the_reservation_when_the_response_cannot_prove_the_char
     invoke: Callable[[DefaultLlmClient], str],
     model: str,
     properties: dict[str, Any],
-    retained: bool,
 ) -> None:
     reported = 1e-9
     litellm_stub(LitellmStub(chat_payload("[]", usage=USAGE), cost=reported))
@@ -639,12 +637,8 @@ def test_a_ceiling_keeps_the_reservation_when_the_response_cannot_prove_the_char
     invoke(client)
 
     assert client.last_usage is not None
-    if retained:
-        assert budget.cost == pytest.approx(client.bound_for_attempt("who?", {}))
-        assert client.last_usage.cost_known is False
-    else:
-        assert budget.cost == pytest.approx(reported)
-        assert client.last_usage.cost_known is True
+    assert budget.cost == pytest.approx(client.bound_for_attempt("who?", {}))
+    assert client.last_usage.cost_known is False
 
 
 def test_without_a_ceiling_a_retained_model_settles_at_the_reported_figure(
@@ -750,7 +744,7 @@ def _bound(
     ],
 )
 @pytest.mark.parametrize("cached", [0, 600])
-def test_a_retained_call_is_charged_its_usage_bound(
+def test_a_retained_call_keeps_its_reservation_above_the_usage_bound(
     litellm_stub: InstallStub,
     invoke: Callable[[DefaultLlmClient], str],
     model: str,
@@ -763,8 +757,8 @@ def test_a_retained_call_is_charged_its_usage_bound(
     charged, reservation, known = _charged(model, invoke)
 
     expected = _bound(*rates, prompt=1_000, cached=cached, completion=200)
-    assert charged == pytest.approx(expected)
-    assert charged < reservation
+    assert expected < reservation
+    assert charged == pytest.approx(reservation)
     assert known is False
 
 
@@ -843,19 +837,44 @@ def test_a_usage_bound_above_the_reservation_wins(litellm_stub: InstallStub) -> 
     assert known is False
 
 
-def test_a_calculator_figure_above_the_usage_bound_wins(litellm_stub: InstallStub) -> None:
-    litellm_stub(LitellmStub(_served("gpt-6-sol"), cost=0.02))
+@pytest.mark.parametrize("model", sorted(models.MODELS))
+@pytest.mark.parametrize("prompt_size", [603, 1_023, 1_024, 272_001])
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_reservation_bounds_conservative_settlement_for_supported_usage(
+    litellm_stub: InstallStub,
+    model: str,
+    prompt_size: int,
+    async_mode: bool,
+) -> None:
+    """A valid capped reply cannot raise the ledger charge above its reservation."""
+    prompt = "x" * prompt_size
+    output_cap = 32
+    payload = _served(model, prompt=prompt_size, completion=output_cap)
+    litellm_stub(LitellmStub(payload, cost=1e-9))
+    budget = Budget(Limits(max_cost=100.0, max_retries=0))
+    client = DefaultLlmClient({"llm.model": model, "llm.max_tokens": output_cap}, budget=budget)
+    estimate = client.bound_for_attempt(prompt, {})
+
+    if async_mode:
+        asyncio.run(client.acomplete(prompt))
+    else:
+        client.complete(prompt)
+
+    assert budget.calls == 1
+    assert budget.cost <= estimate
+
+
+def test_a_calculator_figure_above_the_reservation_wins(litellm_stub: InstallStub) -> None:
+    litellm_stub(LitellmStub(_served("gpt-6-sol"), cost=0.9))
     charged, _, known = _charged("gpt-6-sol")
-    assert charged == pytest.approx(0.02)
+    assert charged == pytest.approx(0.9)
     assert known is False
 
 
 def test_a_flex_tier_is_bounded_at_standard_rates(litellm_stub: InstallStub) -> None:
     litellm_stub(LitellmStub(_served("gpt-6-sol", tier="flex"), cost=1e-9))
-    charged, _, _ = _charged("gpt-6-sol")
-    assert charged == pytest.approx(
-        _bound(2.50, 0.20, 10.00, prompt=1_000, cached=0, completion=200)
-    )
+    charged, reservation, _ = _charged("gpt-6-sol")
+    assert charged == pytest.approx(reservation)
 
 
 @pytest.mark.parametrize(
@@ -884,8 +903,8 @@ def test_a_regional_model_without_other_modifiers_settles_with_the_uplift(
     charged, reservation, known = _charged(model, invoke)
 
     expected = _bound(*rates, prompt=1_000, cached=600, completion=200, tiered=False)
-    assert charged == pytest.approx(expected)
-    assert charged < reservation
+    assert expected < reservation
+    assert charged == pytest.approx(reservation)
     assert known is False
 
 
@@ -899,13 +918,14 @@ def test_a_regional_model_keeps_its_reservation_when_usage_cannot_bound_it(
     assert known is False
 
 
-def test_a_model_that_is_not_retained_still_settles_at_the_calculator_figure(
+def test_a_simple_model_keeps_the_reservation_above_the_calculator_figure(
     litellm_stub: InstallStub,
 ) -> None:
     litellm_stub(LitellmStub(_served("gpt-5-mini"), cost=0.000_7))
-    charged, _, known = _charged("gpt-5-mini")
-    assert charged == pytest.approx(0.000_7)
-    assert known is True
+    charged, reservation, known = _charged("gpt-5-mini")
+    assert charged == pytest.approx(reservation)
+    assert reservation > 0.000_7
+    assert known is False
 
 
 @pytest.mark.parametrize(
@@ -924,8 +944,12 @@ def test_the_admission_bound_carries_the_regional_uplift_where_it_applies(
     model: str, input_rate: float, output: float, uplift: float
 ) -> None:
     tokens = 1 + pricing.FRAMING_TOKENS
+    entry = models.entry_for(model)
+    tier = entry.long_context if entry is not None else None
+    input_factor = tier.input_multiplier if tier is not None else 1.0
+    output_factor = tier.output_multiplier if tier is not None else 1.0
     assert pricing.bound_cost("x", model, 100) == pytest.approx(
-        (tokens * input_rate / M + 100 * output / M) * uplift
+        (tokens * input_rate * input_factor / M + 100 * output * output_factor / M) * uplift
     )
 
 
@@ -944,18 +968,14 @@ _UNPRICED = [
 )
 @pytest.mark.parametrize(("model", "rates"), _UNPRICED)
 @pytest.mark.parametrize("ceiling", [True, False], ids=["ceiling", "no-ceiling"])
-def test_a_call_the_calculator_cannot_price_is_charged_its_usage_bound(
+def test_a_call_the_calculator_cannot_price_keeps_the_reservation_under_a_ceiling(
     litellm_stub: InstallStub,
     invoke: Callable[[DefaultLlmClient], str],
     model: str,
     rates: tuple[float, float, float, bool, float],
     ceiling: bool,
 ) -> None:
-    """A calculator zero for a model its map lacks settles at the usage bound.
-
-    Without a ceiling the result carries a bounded figure rather than zero; with one, the
-    reservation settles at that figure. Either way the charge is reported as unknown.
-    """
+    """A calculator zero is unpriced; a ceiling retains its reservation."""
     uncached, cached_rate, output, tiered, uplift = rates
     litellm_stub(LitellmStub(_served(model, cached=600), cost=0.0))
     budget = Budget(Limits(max_cost=100.0)) if ceiling else Budget()
@@ -973,12 +993,11 @@ def test_a_call_the_calculator_cannot_price_is_charged_its_usage_bound(
         tiered=tiered,
         uplift=uplift,
     )
-    assert budget.cost == pytest.approx(expected)
+    charged = max(expected, client.bound_for_attempt("who?", {})) if ceiling else expected
+    assert budget.cost == pytest.approx(charged)
     assert client.last_usage is not None
-    assert client.last_usage.cost == pytest.approx(expected)
+    assert client.last_usage.cost == pytest.approx(charged)
     assert client.last_usage.cost_known is False
-    if ceiling:
-        assert expected < client.bound_for_attempt("who?", {})
 
 
 def test_a_calculator_that_raises_is_bounded_the_same_way(litellm_stub: InstallStub) -> None:
@@ -990,11 +1009,9 @@ def test_a_calculator_that_raises_is_bounded_the_same_way(litellm_stub: InstallS
     stub.completion_cost = unreadable  # type: ignore[method-assign]
     litellm_stub(stub)
 
-    charged, _, known = _charged("gpt-6-sol")
+    charged, reservation, known = _charged("gpt-6-sol")
 
-    assert charged == pytest.approx(
-        _bound(2.50, 0.20, 10.00, prompt=1_000, cached=0, completion=200)
-    )
+    assert charged == pytest.approx(reservation)
     assert known is False
 
 
@@ -1106,13 +1123,8 @@ def test_counts_that_cannot_describe_the_call_keep_the_reservation(
 
     charged, reservation, known = _charged(model, invoke)
 
-    if calculator == "positive" and model == "gpt-4o-mini":
-        # Not retained: a readable positive figure settles the call as a measured cost.
-        assert charged == pytest.approx(1e-9)
-        assert known is True
-    else:
-        assert charged == pytest.approx(reservation)
-        assert known is False
+    assert charged == pytest.approx(reservation)
+    assert known is False
 
 
 def test_counts_that_cannot_describe_the_call_are_unknown_without_a_ceiling(
@@ -1128,7 +1140,7 @@ def test_counts_that_cannot_describe_the_call_are_unknown_without_a_ceiling(
 
 
 @pytest.mark.parametrize("calculator", ["zero", "unreadable"])
-def test_the_smallest_real_counts_still_settle_at_the_usage_bound(
+def test_the_smallest_real_counts_do_not_lower_the_reservation(
     litellm_stub: InstallStub, calculator: str
 ) -> None:
     stub = LitellmStub(_served("gpt-6-sol", prompt=1, cached=0, completion=1), cost=0.0)
@@ -1139,8 +1151,8 @@ def test_the_smallest_real_counts_still_settle_at_the_usage_bound(
     charged, reservation, known = _charged("gpt-6-sol")
 
     expected = _bound(2.50, 0.20, 10.00, prompt=1, cached=0, completion=1)
-    assert 0 < charged == pytest.approx(expected)
-    assert charged < reservation
+    assert 0 < expected < reservation
+    assert charged == pytest.approx(reservation)
     assert known is False
 
 
@@ -1149,9 +1161,9 @@ def test_an_empty_answer_may_report_no_output_tokens(litellm_stub: InstallStub) 
     payload["choices"][0]["message"]["content"] = ""
     litellm_stub(LitellmStub(payload, cost=0.0))
 
-    charged, _, _ = _charged("gpt-6-sol")
+    charged, reservation, _ = _charged("gpt-6-sol")
 
-    assert charged == pytest.approx(_bound(2.50, 0.20, 10.00, prompt=1_000, cached=0, completion=0))
+    assert charged == pytest.approx(reservation)
 
 
 # ------------------------------------------------------- published defaults --

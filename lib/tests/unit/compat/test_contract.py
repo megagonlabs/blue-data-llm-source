@@ -45,6 +45,11 @@ CONTRACT = [
     "fetch_database_collection_metadata",
     "fetch_database_collection_entities",
     "fetch_database_collection_relations",
+    "fetch_database_collection_entity_metadata",
+    "fetch_database_collection_entity_attributes",
+    "fetch_database_collection_relation_metadata",
+    "fetch_database_collection_relation_attributes",
+    "fetch_relation_stats",
     "fetch_source_stats",
     "fetch_database_stats",
     "fetch_collection_stats",
@@ -135,7 +140,7 @@ INTENDED_VARIANCE = {
     ("execute_nl_tool", "->"): (
         "Any",
         "upstream leaves the return unannotated because each tool returns its own shape, "
-        "and the four served here return three different ones",
+        "and the five served here return several different shapes",
     ),
     ("execute_query_nl_tools", "llm_fn"): ("Any", "same as execute_query_nl"),
     ("execute_query_nl_tools", "extra_tool_fn"): (
@@ -241,7 +246,15 @@ def test_signature_matches_blue_data(method: str) -> None:
             "entry to INTENDED_VARIANCE saying why the difference is deliberate."
         )
 
-    assert _params(ours) == _params(upstream), (
+    expected_params = _params(upstream)
+    if method == "fetch_entity_stats":
+        expected_params = [
+            *expected_params,
+            ("row_sample_size", inspect.Parameter.KEYWORD_ONLY, 10),
+        ]
+        assert mine["row_sample_size"] == "int"
+    assert set(mine) == {name for name, _, _ in expected_params} | {"->"}
+    assert _params(ours) == expected_params, (
         f"{method} signature has drifted from blue-data.\n"
         f"  blue-data: {_params(upstream)}\n"
         f"  here:      {_params(ours)}\n"
@@ -252,7 +265,7 @@ def test_signature_matches_blue_data(method: str) -> None:
 
 
 # Methods `blue-data`'s DataSource has that this source deliberately does not override, each
-# with the reason. Being listed here is a claim that inheriting the base behaviour is correct,
+# with the reason. Being listed here is a claim that inheriting the base behavior is correct,
 # not that the method was overlooked.
 OUT_OF_SCOPE = {
     "begin_transaction": "upstream refuses it by name; nothing here is transactional",

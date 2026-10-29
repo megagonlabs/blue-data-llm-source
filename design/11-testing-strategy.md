@@ -2,7 +2,7 @@
 
 ## Overview
 
-LlmSource uses one test tier: **unit tests**. The source has no backing store, and tests must not contact the only external system, the model provider. Each I/O boundary has a test double. The suite runs offline without a provider SDK. It currently runs manually; the proposed CI pipeline would run it on every push.
+LlmSource has offline unit tests and a separate example smoke suite. The source has no backing store, and tests must not contact the model provider. Each unit-test I/O boundary has a test double; those suites run without a provider SDK. The example suite starts isolated processes with Python socket connections, datagram sends and subprocess helpers blocked and compares the 14 no-key examples with their captured output. Both suites currently run manually.
 
 The model boundary is a structural protocol, and the provider package is imported lazily inside the call that uses it. Tests can supply a scripted client without patching a vendor SDK, and the package remains importable and testable without the provider dependency.
 
@@ -55,7 +55,7 @@ lib/tests/
     test_source_fetch.py       # the fetch path: prompt, parse, align, verify, dedupe, meta
     test_source_surface.py     # execute_query op dispatch, execute_query_nl, the tool path, metadata
     test_source_budget.py      # limits reaching the result, stopped_by, which clients they bind
-    test_source_fixtures.py    # the worked examples from the source specification
+    test_source_fixtures.py    # source behavior examples
     test_cassette_fixtures.py  # the same examples replayed from the recordings
     test_estimate.py           # the cost bound answered before a call, and the op that reaches it
     test_checks.py             # argument validation and message content
@@ -152,9 +152,9 @@ A plain callable covers the `llm_fn` path, which reaches the model through `Func
 
 `DefaultLlmClient` is below the client protocol, so a scripted client cannot reach it. `LitellmStub` stands in for the provider module and is installed over the lazy import, which is exactly the seam the lazy import creates. It records the call arguments it received, returns a constructed chat payload, and can be told to fail.
 
-Because the import is lazy and the stub replaces it, the client's whole surface is testable with the provider package absent. The manual gate uses that configuration today, and the proposed CI pipeline keeps it.
+Because the import is lazy and the stub replaces it, the client's whole surface is testable with the provider package absent.
 
-Response-shape defences use constructed payloads, not recordings, because the interesting cases are the ones a provider produces rarely: a response with no `choices` list, an empty `choices` list, and a choice with no message content. Each must raise a `TransportError` naming the shape.
+Response-shape defenses use constructed payloads, not recordings, because the interesting cases are the ones a provider produces rarely: a response with no `choices` list, an empty `choices` list, and a choice with no message content. Each must raise a `TransportError` naming the shape.
 
 The same stub answers a call that asked for a stream, yielding the chunks it was built with through an ordinary iterator on the synchronous path and an asynchronous one on the other. It also carries the chunk assembler the client calls. The assembler always attaches a usage block, counting the assembled text itself when the chunks carried none, because the real one does. A double that left usage out would let a client that priced the assembled block pass here and settle an invented figure against a real provider. Removing this behavior is enough to stop the accounting tests from detecting a regression in the client's handling of it.
 
@@ -170,11 +170,11 @@ An autouse guard replaces network, subprocess, and database entry points for eve
 
 ## 4. The Cassettes
 
-Four provider responses are recorded once and committed under `lib/tests/cassettes/`. A receipt beside them states the model, the per-cassette cost, and the ceiling the recording round ran under. They cover the four worked examples the source specification gives, and `test_cassette_fixtures.py` replays them through the real pipeline: real prompt, real parse, real alignment, real verification.
+Four provider responses are recorded under `lib/tests/cassettes/`. A receipt beside them states the model, the per-cassette cost, and the recording ceiling. `test_cassette_fixtures.py` replays them through the real pipeline: prompt, parse, alignment, and verification.
 
 The recorder is `lib/tests/record_cassettes.py`, which the suite does not collect. It refuses to start without a budget, stops before a call that would cross its ceiling, writes the receipt, and stores responses only, so no request body and no credential reaches disk. A test asserts that last property directly by scanning each cassette for credential markers.
 
-These tests assert shape and behaviour and never the fact. The recorded model named a different president than the specification's example does, because a model answers from its own knowledge and that knowledge has a date on it. Asserting the name would make the suite fail on a re-record for a reason that has nothing to do with this library, and would quietly treat a probabilistic source as a factual one.
+These tests assert shape and behavior and never the fact. The recorded model named a different president than the specification's example does, because a model answers from its own knowledge and that knowledge has a date on it. Asserting the name would make the suite fail on a re-record for a reason that has nothing to do with this library, and would quietly treat a probabilistic source as a factual one.
 
 ---
 
@@ -183,6 +183,8 @@ These tests assert shape and behaviour and never the fact. The recorded model na
 The budget is the component whose correctness a caller cannot observe until it fails to protect them, so it gets direct tests, not incidental coverage.
 
 `Budget` accepts a clock at construction, so the time axis is tested by advancing a fake clock rather than by waiting.
+
+The following is a test fragment; `FakeClock`, `Budget`, `Limits`, `BudgetExceeded`, and `pytest` come from the test fixtures and imports.
 
 ```python
 def test_max_seconds_stops_the_run_once_the_clock_passes_the_limit():
@@ -201,7 +203,7 @@ Each axis gets the same three tests: a run that stays under it completes, a run 
 
 - Reservation precedes spend: a call refused by the budget never reaches the client, verified by asserting that the double recorded no prompt.
 - A failed call keeps its reservation at the bound, so a provider that was contacted and raised consumes a call and a retry sequence cannot outrun the ceiling. Only a failure before the provider is reached is uncharged, which is why the client does all local work before reserving.
-- A cost ceiling refuses an attempt whose bound would cross it, before the client is asked. This is the property the previous accounting could not hold: the money was already gone by the time anything noticed.
+- A cost ceiling refuses an attempt whose bound would cross it, before the client is asked.
 - A settled call releases what its bound overshot by, so an over-claim costs headroom during the call and nothing after it.
 - A cache hit consumes no call, no tokens and no cost, and the usage record marks it; admission still checks elapsed time, on both entry points. That a hit's rows still count against `max_rows` is asserted through the fetch path rather than against the client directly
 - A derived child spends from what its parent has left, and a child given a more generous ceiling than its parent holds still reports the parent's headroom.
@@ -221,7 +223,7 @@ Row admission has its own concurrent test. It does not use the widened clock, be
 
 ## 6. Configuration Tests
 
-Every configuration key has a test proving that changing it changes observable behaviour. A setting that is accepted and ignored produces runs whose recorded configuration does not describe what happened, which is worse than a setting that does not exist.
+Every configuration key has a test proving that changing it changes observable behavior. A setting that is accepted and ignored produces runs whose recorded configuration does not describe what happened, which is worse than a setting that does not exist.
 
 | Key | Observable effect asserted |
 |-----|---------------------------|
@@ -245,7 +247,7 @@ Every configuration key has a test proving that changing it changes observable b
 | `plan.child_wording` | `canonical` changes only the children's retrieval wording, derived from the root request and validated filters; `parent` sends byte-identical prompts |
 | `plan.filter_enforcement` | `flag` keeps and counts contradicting records; `drop` removes them at the leaf before reduction, so they neither merge fields into a kept record nor appear in its origins |
 | `plan.range_filters` | Span values on an integer column become inclusive `Range` children that serialize, render and obey as ranges; other columns, caller-declared domains and the switch off keep exact text; overlapping or reversed spans refuse the proposal |
-| `plan.partition_guardrails` | Proposal prompts carry the `partition-2` rules and a count calibrated against each slice's estimate; a numeric key with bucketed values is refused with its reason in `meta.gaps`; off sends the 2.1.0 proposal prompt |
+| `plan.partition_guardrails` | Proposal prompts carry the `partition-2` rules and a count calibrated against each slice's estimate; a numeric key with bucketed values is refused with its reason in `meta.gaps`; off sends the 0.2.1.0 proposal prompt |
 | `plan.split_policy`, `plan.split_threshold_rows` | `always` sends byte-identical prompts; `evidence` probes the root once, splits only on an output-allowance stop or a shortfall, merges root records under origin `root`, seeds children with bounded probe keys, and stays within bounds that charge the probe in every accessor |
 | `plan.distribution_search`, `plan.identity_partitions`, `plan.max_strategy_candidates` | Change the bounded rule-backed candidates, accepted split, and optional planning receipt |
 
@@ -319,3 +321,13 @@ python3 -m ruff format --check . && python3 -m ruff check .
 ```
 
 The compatibility contract test runs everywhere, because `blue-data` is a core dependency and is always present.
+
+## Offline example smoke suite
+
+From the repository root, after installing the components and their development extras, run:
+
+```bash
+python -m pytest -q tests/integration/test_offline_examples.py
+```
+
+The example suite is separate from the unit tree, whose offline guard refuses subprocess and database access. Each example receives a new home and temporary directory; provider credentials are excluded and Python socket connections, datagram sends and subprocess helpers are blocked. The case list follows the no-key examples in `examples/README.md`; provider-backed examples and the live WikiTabGen run are excluded.

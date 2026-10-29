@@ -1,8 +1,4 @@
-"""Mechanical format checks against the declared attribute types.
-
-This is the half of data/format verification that has an oracle. Whether a claim is
-true is a different question and this package does not answer it.
-"""
+"""Coerce values to declared attribute types and report mismatches."""
 
 from __future__ import annotations
 
@@ -12,6 +8,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, cast
 
+from blue_data_llm_source.reduction.identity import parse_date
 from blue_data_llm_source.types import Attr
 
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -19,13 +16,8 @@ _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _TRUE = {"true", "yes", "y", "1"}
 _FALSE = {"false", "no", "n", "0"}
 
-# A comma is a thousands separator only in this shape: groups of exactly three digits after
-# the first, optionally signed, optionally with a dot decimal part. Stripping every comma
-# unconditionally turned the decimal comma most of the world writes — "3,80" — into 380.0
-# and reported outcome=ok with an empty mismatch list, so the caller received a number three
-# orders of magnitude wrong, was told it was clean, and could not reconcile it against
-# anything because the original string is not preserved in the result. Anything that is not
-# this shape keeps its commas, fails the conversion, and is reported as a type mismatch.
+# Strip commas only from grouped thousands. A decimal comma such as "3,80" must
+# remain unchanged and fail conversion as a type mismatch.
 _THOUSANDS = re.compile(r"^[+-]?\d{1,3}(,\d{3})+(\.\d*)?$")
 
 
@@ -66,10 +58,8 @@ def _coerce_float(value: Any) -> Any:
         try:
             return float(value)
         except OverflowError:
-            # A JSON integer wider than the float range. Returned unconverted so it is
-            # reported as a type mismatch, which is what the contract says happens to a
-            # value that will not coerce — it used to raise OverflowError out of the whole
-            # fetch, losing a call the caller had already paid for.
+            # An integer beyond the float range remains a value-level type
+            # mismatch; it must not fail the entire fetch.
             return value
     if isinstance(value, str):
         try:
@@ -92,14 +82,8 @@ def _coerce_bool(value: Any) -> Any:
 
 
 def _coerce_date(value: Any) -> Any:
-    if isinstance(value, str):
-        text = value.strip()
-        for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%B %d, %Y"):
-            try:
-                return _dt.datetime.strptime(text, fmt).date().isoformat()
-            except ValueError:
-                continue
-    return value
+    parsed = parse_date(value)
+    return value if parsed is None else parsed
 
 
 def _coerce_str(value: Any) -> Any:
@@ -146,9 +130,8 @@ class TypeMismatch:
 def unchecked_types(attrs: list[Attr]) -> list[str]:
     """Declared type names nothing here knows how to check, in the order requested.
 
-    A misspelled type checks nothing while the caller believes their records are typed,
-    which is the risk that made an unknown type a per-value mismatch. Reported once, against
-    the request rather than against the data, it stays loud without accusing every value.
+    An unknown type checks no values. Report it once against the request, rather than as a
+    mismatch for every value.
     """
     seen: list[str] = []
     for attr in attrs:
@@ -180,19 +163,14 @@ def verify(
             if name not in fixed or fixed[name] is None:
                 continue
             before = fixed[name]
-            # A declared type this table does not know used to pass everything. That let a
-            # declared `string` hold 123 and a misspelled type check nothing at all, while
-            # the caller was told the records were typed.
+            # Unknown declared types still produce mismatches; they cannot silently
+            # pass values through as if the type had been checked.
             coercer = _COERCERS.get(declared)
             after = coercer(before) if coercer is not None else before
             if _matches(after, declared):
                 fixed[name] = after
             else:
-                # The value stays as it arrived. `float("1e309")` succeeds as `inf`, which
-                # is then correctly reported as a mismatch — but writing it into the record
-                # first put back exactly what the JSON parser refuses to read, and strict
-                # consumers cannot represent it. The data model says a value that will not
-                # coerce is returned as it came.
+                # Keep the original value when coercion fails; `inf` is not valid JSON.
                 mismatches.append(
                     TypeMismatch(
                         record_index=index,
@@ -210,11 +188,8 @@ def _matches(value: Any, declared: str) -> bool:
     if declared in {"int", "integer"}:
         return isinstance(value, int) and not isinstance(value, bool)
     if declared in {"float", "number"}:
-        # Finite: the JSON parser refuses non-finite literals, and a coercion that
-        # reintroduced one put back exactly what it had refused. `math.isfinite` is asked
-        # only of floats, because an int wider than the float range raises OverflowError
-        # inside the conversion it does first — the check meant to keep a bad value out was
-        # itself the thing that escaped the error hierarchy. An int is always finite.
+        # JSON requires finite numbers. Check integers separately: converting a wide int
+        # to float can raise OverflowError.
         if isinstance(value, bool):
             return False
         if isinstance(value, int):
@@ -226,8 +201,7 @@ def _matches(value: Any, declared: str) -> bool:
     if declared in {"str", "string", "text"}:
         return isinstance(value, str)
     if declared == "date":
-        # The pattern says it is shaped like a date; only the calendar says it is one.
-        # `2026-02-30` matched the pattern and was reported as valid.
+        # The pattern checks shape; the calendar checks whether the date exists.
         if not isinstance(value, str) or not _ISO_DATE.match(value):
             return False
         try:
@@ -269,9 +243,7 @@ def drop_empty(
 def _canonical(value: Any) -> str:
     """A marker that does not depend on the order a mapping was written in.
 
-    ``repr`` of a nested object carries its key order, and JSON object order is not
-    semantic — two records equal in Python survived deduplication because the model emitted
-    the same nested object's keys in a different order.
+    Nested object key order is not semantic, so canonicalize it before deduplication.
     """
     if isinstance(value, dict):
         entries = cast("dict[str, Any]", value)

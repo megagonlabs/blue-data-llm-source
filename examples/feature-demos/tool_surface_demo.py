@@ -1,9 +1,9 @@
-"""The orchestrator tool surface: four tools served, four withheld, one refused outright.
+"""The orchestrator tool surface: five tools served, three withheld, one refused outright.
 
 ``DataSource`` offers a tool-calling interface for an orchestrating model: the source
 advertises tools, the caller invokes them one at a time. That tool set describes a
-relational source, and only four of its eight tools mean anything for a model behind a
-virtual database, so this source advertises those four and nothing else. The definitions
+relational source, and only five of its eight tools mean anything for a model behind a
+virtual database, so this source advertises those five and nothing else. The definitions
 are the base class's own, filtered by name rather than rewritten, so an advertised schema
 cannot drift from the dispatcher that reads it.
 
@@ -73,6 +73,15 @@ def main() -> None:
     print("  get_schema         ", json.dumps(schema))
 
     print()
+    print("get_sample reports unavailable statistics without a model call")
+    before_sample = len(client.prompts)
+    sample = source.execute_nl_tool(
+        "get_sample", {"database": "llm", "collection": "public", "entity": "llm_entity"}
+    )
+    print("  sample", sample)
+    print("  extra model calls", len(client.prompts) - before_sample)
+
+    print()
     print("execute_query is the one tool that reaches a model")
     records = source.execute_nl_tool(
         "execute_query",
@@ -105,7 +114,6 @@ def main() -> None:
     print()
     print("anything else is refused by name")
     refused(source, "get_metadata")
-    refused(source, "get_sample")
     refused(source, 42)
 
     print()

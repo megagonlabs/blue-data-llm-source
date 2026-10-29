@@ -14,18 +14,22 @@ whether to proceed.
 ``BLUE_DATA_LLM_SOURCE_LIMIT_COST``, ``_LIMIT_CALLS`` and ``_LIMIT_SECONDS`` from its
 environment as ceilings for every call; an agent's ``limits.*`` can lower them but never
 raise them. Without an operator ceiling, an agent that omits ``limits.max_cost`` can spend
-whatever the provider charges. The system prompt also asks the agent to pass its own.
+whatever the provider charges. The system prompt also asks the agent to pass its own. The operator ceiling covers MCP
+queries; the agent's ``ChatOpenAI`` calls are separate provider calls.
 
 Requires: OPENAI_API_KEY, the provider extra, and the MCP package installed so the
 ``blue-data-llm-mcp`` console script is on PATH.
 
-Run from the repository root:
-    pip install langgraph langchain-openai langchain-mcp-adapters
-    pip install -e lib/ -e platform/llm-mcp/
+Run from the repository root in the active root .venv:
+    ./platform/llm-mcp/scripts/install.sh
+    python -m pip install langgraph langchain-openai langchain-mcp-adapters
+    export BLUE_DATA_LLM_SOURCE_LIMIT_COST=0.02
+    export BLUE_DATA_LLM_SOURCE_MAX_TOKENS=4000
     python3 examples/framework-demos/langgraph_mcp_demo.py
 """
 
 import asyncio
+import math
 import os
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -50,15 +54,54 @@ TASKS = [
     "Go ahead and get me at most eight of them, with name and IATA code.",
 ]
 
+MCP_ENV_NAMES = (
+    "PATH",
+    "OPENAI_API_KEY",
+    "BLUE_DATA_LLM_MODEL",
+    "BLUE_DATA_LLM_SOURCE_REASONING_EFFORT",
+    "BLUE_DATA_LLM_SOURCE_MAX_TOKENS",
+    "BLUE_DATA_LLM_SOURCE_TEMPERATURE",
+    "BLUE_DATA_LLM_SOURCE_TIMEOUT",
+    "BLUE_DATA_LLM_SOURCE_MAX_PARALLEL",
+    "BLUE_DATA_LLM_SOURCE_CACHE",
+    "BLUE_DATA_LLM_SOURCE_CACHE_DIR",
+    "BLUE_DATA_LLM_SOURCE_PRICE_PER_INPUT_TOKEN",
+    "BLUE_DATA_LLM_SOURCE_PRICE_PER_OUTPUT_TOKEN",
+    "BLUE_DATA_LLM_SOURCE_LIMIT_COST",
+    "BLUE_DATA_LLM_SOURCE_LIMIT_CALLS",
+    "BLUE_DATA_LLM_SOURCE_LIMIT_SECONDS",
+)
+
+
+def require_operator_ceiling() -> None:
+    """Require a finite MCP cost ceiling before starting the agent."""
+    raw = os.environ.get("BLUE_DATA_LLM_SOURCE_LIMIT_COST", "").strip()
+    try:
+        ceiling = float(raw)
+    except ValueError:
+        ceiling = float("nan")
+    if not (math.isfinite(ceiling) and ceiling >= 0):
+        raise SystemExit(
+            "Set BLUE_DATA_LLM_SOURCE_LIMIT_COST to a finite, non-negative dollar amount"
+        )
+
+
+def mcp_child_env() -> dict[str, str]:
+    names = MCP_ENV_NAMES + (("SystemRoot",) if os.name == "nt" else ())
+    if os.environ.get("BLUE_DATA_LLM_SOURCE_CACHE_DIR", "").strip().startswith("~"):
+        names += ("USERPROFILE",) if os.name == "nt" else ("HOME",)
+    return {name: os.environ[name] for name in names if name in os.environ}
+
 
 async def main() -> None:
+    require_operator_ceiling()
     client = MultiServerMCPClient(
         {
             "llm": {
                 "command": "blue-data-llm-mcp",
                 "args": [],
                 "transport": "stdio",
-                "env": dict(os.environ),
+                "env": mcp_child_env(),
             }
         }
     )

@@ -71,10 +71,8 @@ class TestARequestIsWeighedAgainstTheCeilingThatBinds:
         assert result.meta.outcome != Outcome.STOPPED_BY_LIMIT
 
     def test_naming_the_parents_retry_allowance_again_changes_nothing(self) -> None:
-        # The adversarial twin, and the sharpest statement of the defect: two spellings of
-        # one budget. The parent forbids retries in both. Writing that down a second time on
-        # the request is redundant, so a request admitted with it must be admitted without
-        # it -- and today only the redundant spelling gets through.
+        # The parent forbids retries in both cases. Repeating that allowance on the
+        # request must not change admission.
         with_it = scripted(ANALYSIS, ROWS)
         without_it = scripted(ANALYSIS, ROWS)
         fetch(with_it, affordable(), **{"limits.max_retries": 0})
@@ -99,7 +97,7 @@ class TestARequestIsWeighedAgainstTheCeilingThatBinds:
 
     def test_the_flat_path_still_runs_on_a_single_call_budget(self) -> None:
         # Flat makes no planning call and is one leaf by construction, so it is weighed one
-        # attempt at a time by the client. This is the behaviour that predates splitting and
+        # attempt at a time by the client. This is the behavior that predates splitting and
         # the one an existing caller depends on.
         client = scripted(ROWS)
         fetch(client, Budget(Limits(max_calls=1, max_retries=0)), **{"plan.mode": "flat"})

@@ -49,7 +49,7 @@ def main() -> None:
     ]
 
     show(
-        "1. types declared and honoured",
+        "1. types declared and honored",
         "two Swiss universities",
         typed,
         '[{"name": "ETH Zurich", "founded": 1855}]',
@@ -80,7 +80,7 @@ def main() -> None:
         "5. a key nobody asked for: reported rather than discarded quietly",
         "two Swiss universities",
         typed,
-        '[{"name": "ETH Zurich", "founded": 1855, "rector": "Joel Mesot"}]',
+        '[{"name": "ETH Zurich", "founded": 1855, "rector": "Example Rector"}]',
     )
 
     show(
@@ -115,7 +115,7 @@ def main() -> None:
         "10. a record answering none of the requested attributes is dropped entirely",
         "two Swiss universities",
         ["name", "founded"],
-        '[{"rector": "Joel Mesot"}]',
+        '[{"rector": "Example Rector"}]',
     )
 
 

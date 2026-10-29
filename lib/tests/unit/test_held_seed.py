@@ -2,7 +2,7 @@
 
 Under `plan.split_policy="evidence"`, children split after a root probe are told what the
 probe holds. The seed travels on wire version 6 for the default contract and on wire
-version 5 for `keyed-leaf-fetch-2`; a task without one keeps its 2.1.0 wire version.
+version 5 for `keyed-leaf-fetch-2`; a task without one keeps its 0.2.1.0 wire version.
 """
 
 from __future__ import annotations

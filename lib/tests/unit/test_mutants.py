@@ -1,7 +1,6 @@
-"""Seeded defects that prove the corresponding invariants are load-bearing.
+"""Mutation checks for source and planning invariants.
 
-Each case restores a previously observed defect and asserts that the guard changes state. This
-tests whether a wrong version fails, rather than repeating the correct-behaviour tests.
+Each case substitutes a wrong implementation and checks the reported state.
 """
 
 from __future__ import annotations
@@ -99,12 +98,11 @@ def _keyless_second_pass() -> tuple[list[dict[str, Any]], list[list[str]]]:
     return verifier.dedupe(records, origins=account.record_origins)
 
 
-class TestPuttingTheDefectBackChangesWhatIsReported:
+class TestInvariantsFailWhenBroken:
     def test_joining_a_disjunction_makes_two_questions_one_prompt(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # The critical defect. Two tests written to prove grouping worked both split the
-        # rendered value on ", ", so both agreed with it and always would have.
+        # Decode independently of the renderer's separator.
         def joined(constraints: dict[str, Exact | OneOf]) -> list[str]:
             return [
                 f"- field {json.dumps(str(name))}: "
@@ -125,7 +123,7 @@ class TestPuttingTheDefectBackChangesWhatIsReported:
     ) -> None:
         # A list of one says alternatives were expected; a bare value says they were not.
         # Rendering both the same way discards the only signal that distinguishes them.
-        real = mapper.build_fetch_prompt
+        real = getattr(mapper, "build_fetch_prompt")
 
         def flattened(query: str, attrs: list[Attr], **kw: Any) -> str:
             given: dict[str, Constraint] = dict(kw.pop("constraints", None) or {})

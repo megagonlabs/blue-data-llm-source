@@ -5,11 +5,8 @@ is the whole of what the model sees and therefore the whole of what a caller's q
 becomes. A test reading ``Leaf.constraints`` instead would pass on a representation that
 is unambiguous in memory and ambiguous by the time it is asked.
 
-The decoder below is deliberately not the renderer run backwards. A test that recovers a
-list by splitting on the separator the renderer joined with agrees with any separator the
-renderer chooses, including one that appears inside the values -- which is the defect this
-file exists to make impossible. ``json`` is the independent half: it is not the code under
-test, and it refuses an ambiguous document rather than guessing at one.
+The decoder uses ``json`` independently of the renderer. A separator inside a value
+must not merge alternatives or make the prompt ambiguous.
 """
 
 from __future__ import annotations
@@ -111,9 +108,8 @@ class TestDistinctAsksStayDistinct:
     """The invariant a caller depends on: a different question sends a different prompt."""
 
     def test_a_comma_inside_a_value_is_not_a_value_boundary(self) -> None:
-        # The adversarial twin. Neither list is unusual -- region names with commas are
-        # ordinary -- and the two ask different questions. One prompt for both means the
-        # model answers a question nobody asked and nothing in the result says so.
+        # A comma inside a region name and a comma between alternatives must produce
+        # different prompts.
         inside = prompts(plan(proposal=PartitionProposal(key="region", values=COMMA_INSIDE)))
         between = prompts(plan(proposal=PartitionProposal(key="region", values=COMMA_BETWEEN)))
         assert inside != between
@@ -133,7 +129,7 @@ class TestDistinctAsksStayDistinct:
 
     def test_every_planned_value_reaches_exactly_one_leaf(self) -> None:
         # The claim this file is allowed to make. Not that the enumeration is exhaustive
-        # and not that the model will honour it: only that each distinct alternative the
+        # and not that the model will honor it: only that each distinct alternative the
         # plan enumerated is encoded in exactly one leaf's disjunction.
         values = [f"v{i}" for i in range(7)]
         p = plan(
@@ -205,24 +201,21 @@ class TestTheDegenerateDisjunction:
     """
 
     def test_an_empty_disjunction_is_not_the_same_plan_as_no_constraint(self) -> None:
-        # The adversarial twin: a caller who named a filter and a caller who named none must
-        # not receive the same plan, whatever the algebra decides an empty disjunction means.
+        # An empty disjunction must remain distinguishable from no constraint.
         emptied = plan(mode=MODE_FLAT, constraints={"region": [], "country": "FR"})
         absent = plan(mode=MODE_FLAT, constraints={"country": "FR"})
         assert (prompts(emptied), emptied.notes) != (prompts(absent), absent.notes)
 
     def test_dropping_an_empty_disjunction_is_reported(self) -> None:
-        # Which code carries it is a design decision; that the widening is visible at all is
-        # not. Today the filter vanishes and nothing is said.
+        # A dropped filter must be visible in the plan's notes.
         emptied = plan(mode=MODE_FLAT, constraints={"region": [], "country": "FR"})
         assert any("region" in note.detail for note in emptied.notes)
 
 
-class TestTheDecoderCannotBeSatisfiedByAccident:
-    """The oracle's own guard.
+class TestTheIndependentDecoderRejectsMalformedFilters:
+    """Reject malformed filter lines in the decoder used by the prompt tests.
 
-    A decoder that quietly accepts a malformed line would let the tests above pass on a
-    renderer that had stopped rendering. These pin what it refuses.
+    Accepting them could hide a renderer that no longer preserves filter structure.
     """
 
     def test_a_joined_disjunction_does_not_decode_as_a_list(self) -> None:

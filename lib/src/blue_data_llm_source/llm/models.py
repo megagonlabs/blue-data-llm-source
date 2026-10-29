@@ -6,9 +6,8 @@ published pricing and model pages together with each model's reasoning-effort se
 sampling rule and its output-token parameter. They are a snapshot and go stale.
 
 A name is matched exactly, or with a dated suffix such as ``-2026-03-05``, after an
-``openai/`` prefix is removed. Anything longer is a different model: an open prefix match
-once priced ``o1-pro`` as ``o1``, and a dearer model priced as a cheaper one whose name it
-extends turns the bound back into a guess.
+``openai/`` prefix is removed. A longer name is a different model; an open prefix match
+could apply a cheaper model's price to it.
 
 A few older rows carry prices only. They have no request contract and no provider, so a call
 to one of them is sent exactly as the caller configured it.

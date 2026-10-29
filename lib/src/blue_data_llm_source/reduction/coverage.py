@@ -1,22 +1,11 @@
-"""One record set out of many leaves, and an account of what it covers.
+"""Merge partition results and report coverage across their leaves.
 
-A partitioned run produces one answer per leaf and the caller receives a single list.
-What falls out between those two is the subject of this module: rows a ceiling cut off, a
-leaf that never ran, two leaves returning the same record with different values in the
-same field. A merged list shows none of that, so it is reported alongside the rows rather
-than left to be inferred from them afterwards.
-
-The account is produced for every run, a one-leaf run included. One leaf still executes
-inside a bounded loop and can stop at its cap, and that is exactly the shape where rows
-with no account look like a complete answer.
-
-Deduplication is the part with teeth. It runs only against a column
-:mod:`~blue_data_llm_source.planning.schema` identified, because merging on a guessed
-column collapses distinct records into one and hands back the result as clean. Where no
-key was identified this stage merges nothing and the records arrive as they came, with a
-note saying so. They may still lose an exact whole-record duplicate further down, where
-verification removes one; that is a different rule at a different stage and not this
-module's to describe.
+The coverage account records truncated rows, leaves that did not run, and conflicting
+values for a record. It is produced for every run, including a one-leaf run that can
+stop at its cap. Records are merged only on a key identified by
+:mod:`~blue_data_llm_source.planning.schema`; without one, the records remain separate
+and the result carries a note. Verification may still remove exact whole-record
+duplicates.
 """
 
 from __future__ import annotations
@@ -459,7 +448,7 @@ def _gaps_for(
         ]
 
     if outcome.outcome == Outcome.EMPTY_QUERY:
-        # Its own code because neither neighbour is true of it. This leaf was processed,
+        # Its own code because neither neighbor is true of it. This leaf was processed,
         # so it is not a `LEAF_NOT_RUN`; no model was asked, so `LEAF_EMPTY` would credit
         # one with an answer it never gave. Both readings cost the caller the same thing:
         # the leaf's range is uncovered and the fix is a query, not a retry.

@@ -46,7 +46,7 @@ def test_a_fetch_op_accepts_attrs_as_well_as_attr_names() -> None:
     assert records == [{"age": 36}]
 
 
-def test_a_fetch_op_honours_max_records() -> None:
+def test_a_fetch_op_honors_max_records() -> None:
     client = ScriptedClient([TWO_RECORDS])
     records = LlmSource(client=client).execute_query(
         {"op": C.OP_FETCH, "query": "who?", "max_records": 1}
@@ -129,11 +129,8 @@ def test_an_estimate_op_gives_optional_properties_the_precedence_a_fetch_op_give
     assert both == _estimate({"op": C.OP_ESTIMATE, "query": "who?", "attrs": ["name", "age"]})
 
 
-def test_an_estimate_op_refuses_the_row_cap_it_cannot_honour() -> None:
-    """`estimate` takes no row cap: the model is asked once and the surplus is dropped.
-
-    Accepting one would report a figure the caller believes their cap moved.
-    """
+def test_an_estimate_op_refuses_the_row_cap_it_cannot_honor() -> None:
+    """`estimate` prices a flat fetch without a row cap."""
     for spec, options in (
         ({"op": C.OP_ESTIMATE, "query": "who?"}, {"max_records": 3}),
         ({"op": C.OP_ESTIMATE, "query": "who?", "max_records": 3}, {}),
@@ -527,7 +524,7 @@ def test_a_real_date_still_passes() -> None:
 
 
 def test_two_non_latin_attribute_names_are_distinct() -> None:
-    """Normalisation deleted every character of both, so both became the empty key.
+    """Normalization deleted every character of both, so both became the empty key.
 
     The request was then refused as ambiguous before any answer was looked at, for a schema
     whose returned keys matched the requested ones exactly and needed no fuzzy matching.
@@ -752,7 +749,7 @@ def test_an_unreadable_provider_cost_is_not_reported_as_a_known_zero() -> None:
 def test_a_malformed_completion_is_retried_and_not_cached(shape: dict[str, Any], why: str) -> None:
     """What a refusal or a non-text completion looks like, and both bypassed the retry loop.
 
-    They passed the materialise check because `choices` was a list, so the attempt settled
+    They passed the materialize check because `choices` was a list, so the attempt settled
     and the payload was cached; extraction raised afterwards, outside tenacity. The
     documented retries never ran and one transient bad response became a cached failure.
     """
@@ -829,10 +826,8 @@ def test_nested_key_order_does_not_defeat_deduplication() -> None:
 def test_a_failed_attempt_that_could_not_be_priced_is_not_hidden_by_a_retry() -> None:
     """The property is every contacted attempt, not every attempt that left a record.
 
-    A contacted failure calls `keep_unpriced` and used to append no usage entry at all, so a
-    successful retry was the only entry the result saw and the whole fetch claimed its
-    accounting was measured — while an unpriced attempt had already reached the provider and
-    may have been billed.
+    A contacted failure calls `keep_unpriced` and adds an unknown-cost usage entry.
+    A later successful retry cannot make the full fetch appear measured.
     """
     import sys
     import types
@@ -1041,7 +1036,7 @@ def test_an_oversized_integer_is_a_type_mismatch_not_an_escaping_error() -> None
     assert [m["attribute"] for m in result.meta.type_mismatches] == ["v"]
     assert result.meta.outcome == "ok"
 
-    # An ordinary integer still coerces, which is the behaviour the guard must not cost.
+    # An ordinary integer still coerces, which is the behavior the guard must not cost.
     fine = LlmSource().fetch(
         "q", attrs=[{"name": "v", "type": "float"}], llm_fn=_answering('[{"v": 3}]')
     )
@@ -1089,13 +1084,8 @@ def test_the_boundary_does_not_swallow_a_cancellation() -> None:
 def test_a_type_name_this_library_cannot_check_is_reported_once_not_per_value() -> None:
     """The declared type is sent to the model verbatim, so an unlisted name is legitimate.
 
-    An earlier version made it a mismatch on every value, to stop a misspelled type from
-    checking nothing while the caller believed their records were typed. That risk is real,
-    but the cure measured one mismatch per record — twenty-one on a batch holding a single
-    genuinely bad number — which destroys the signal callers are told to monitor, and it
-    condemned `price: money`, a declaration four shipped documents invite. The name is
-    reported once, against the request; the values are carried through, as those documents
-    say.
+    An unknown declared type is reported once against the request. Its values pass
+    through without a per-record mismatch.
     """
     result = LlmSource().fetch(
         "q",
@@ -1262,7 +1252,7 @@ def test_the_keys_the_library_reads_without_a_namespace_are_accepted() -> None:
 
 
 # ------------------------------------------------------------- the tool path --
-SERVED_TOOLS = ["list_databases", "list_collections", "get_schema", "execute_query"]
+SERVED_TOOLS = ["list_databases", "list_collections", "get_schema", "execute_query", "get_sample"]
 
 # What a call to each advertised tool looks like. Keyed by name so a tool advertised without
 # an entry here fails the tests below rather than going unexercised.
@@ -1271,18 +1261,12 @@ TOOL_INPUTS: dict[str, dict[str, Any]] = {
     "list_collections": {"database": C.DATABASE},
     "get_schema": {"database": C.DATABASE, "collection": C.COLLECTION},
     "execute_query": {"query": "who?"},
+    "get_sample": {"database": C.DATABASE, "collection": C.COLLECTION, "entity": C.ENTITY},
 }
 
 
 def test_the_advertised_tools_are_the_ones_this_source_can_answer() -> None:
-    """The base advertises eight of them and this source answers four.
-
-    `get_metadata`, `get_column_stats` and `get_relations` return an empty result with
-    nothing said, and `get_sample` raises a bare `TypeError` out of the base dispatcher,
-    which hands `row_sample_size` to a `fetch_entity_stats` that takes no such argument.
-    Advertising any of those puts a tool in front of an orchestrating model that it cannot
-    use and is not told why.
-    """
+    """Advertise shared sampling with an unavailable result."""
     assert [tool["name"] for tool in LlmSource().get_nl_tools()] == SERVED_TOOLS
 
 
@@ -1308,8 +1292,8 @@ def test_an_advertised_schema_is_the_base_class_own() -> None:
     assert set(by_name["get_schema"]["input_schema"]["properties"]) == {"database", "collection"}
 
 
-def test_every_advertised_tool_returns_something_a_caller_can_use() -> None:
-    """Answering with silence is the failure the filter exists to prevent."""
+def test_every_advertised_tool_has_its_documented_result() -> None:
+    """Sampling reports unavailability; the other tools return concrete results."""
     source = LlmSource(client=ScriptedClient([TWO_RECORDS]))
     answers = {
         str(tool["name"]): source.execute_nl_tool(tool["name"], TOOL_INPUTS[tool["name"]])
@@ -1320,7 +1304,7 @@ def test_every_advertised_tool_returns_something_a_caller_can_use() -> None:
     assert answers["list_collections"] == [C.COLLECTION]
     assert answers["get_schema"]["entities"], "a schema with no entities in it is silence"
     assert answers["execute_query"] == [{"name": "Ada"}, {"name": "Grace"}]
-    assert all(answers.values()), "every advertised tool has to answer with something"
+    assert answers["get_sample"] is None
 
 
 def test_a_tool_this_source_does_not_advertise_is_refused_by_name() -> None:
@@ -1331,12 +1315,12 @@ def test_a_tool_this_source_does_not_advertise_is_refused_by_name() -> None:
     """
     source = LlmSource()
 
-    for name in ("get_sample", "get_metadata", "get_column_stats", "get_relations", "invented"):
+    for name in ("get_metadata", "get_column_stats", "get_relations", "invented"):
         with pytest.raises(ConfigError, match="is not a tool this source serves"):
             source.execute_nl_tool(name, {"entity": "x"})
 
     with pytest.raises(ConfigError, match="list_databases"):
-        source.execute_nl_tool("get_sample", {"entity": "x"})
+        source.execute_nl_tool("invented", {"entity": "x"})
 
 
 def test_no_tool_call_escapes_the_documented_hierarchy() -> None:
@@ -1413,37 +1397,15 @@ def _empty(_prompt: str) -> str:
     return "[]"
 
 
-class TestSynchronousEntryInsideAnEventLoop:
-    """`fetch` refuses inside a running loop, and the refusal is catchable as ours.
+def test_sync_fetch_inside_an_event_loop_returns_records() -> None:
+    async def call_it() -> None:
+        assert LlmSource().fetch("anything", llm_fn=_empty).records == []
 
-    The documented guarantee is that nothing but ``LlmSourceError`` escapes ``fetch``,
-    ``afetch`` or ``estimate``. A bare ``RuntimeError`` here broke that for the one case a
-    caller is most likely to hit while porting sync code into an async service, and no test
-    covered it, which is why it survived.
-    """
-
-    def test_the_refusal_is_part_of_the_error_hierarchy(self) -> None:
-        async def call_it() -> Exception | None:
-            try:
-                LlmSource().fetch("anything", llm_fn=_empty)
-            except Exception as exc:  # noqa: BLE001 — the type is what is under test
-                return exc
-            return None
-
-        raised = asyncio.run(call_it())
-        assert raised is not None, "fetch must refuse inside a running loop"
-        assert isinstance(raised, LlmSourceError)
-        assert "afetch" in str(raised), "the message must name the async form to use"
-
-    def test_it_does_not_refuse_outside_a_loop(self) -> None:
-        result = LlmSource().fetch("anything", llm_fn=_empty)
-        assert result.records == []
+    asyncio.run(call_it())
 
 
 def test_a_source_rebuilt_by_the_registry_still_answers() -> None:
-    """`register_source` records `_class` beside the properties and `connect_source` reads
-    it back, so a rebuilt source arrives carrying a key this package never set. The closed
-    property map has to admit it or the registry round trip fails for every source."""
+    """Registry reconstruction accepts the `_class` key added by `register_source`."""
     from blue_data.registry.data_registry import (  # pyright: ignore[reportMissingTypeStubs]
         DataRegistry,
     )
@@ -1452,8 +1414,6 @@ def test_a_source_rebuilt_by_the_registry_still_answers() -> None:
     registry.register_source(LlmSource(properties={"llm.model": "gpt-4o"}))
     rebuilt = cast("LlmSource", registry.connect_source("llm"))
 
-    # The regression is the refusal, not the answer: the rebuilt source carries a key this
-    # package never set, and a closed map that does not admit it ends the round trip here.
     def answer(prompt: str, **_kw: Any) -> str:
         return '{"records":[{"name":"CDG"}]}'
 
@@ -1462,6 +1422,29 @@ def test_a_source_rebuilt_by_the_registry_still_answers() -> None:
         llm_fn=answer,
         optional_properties={"attrs": ["name"]},
     )
+
+
+def test_a_source_rebuilt_after_registry_sync_still_answers() -> None:
+    from blue_data.registry.data_registry import (  # pyright: ignore[reportMissingTypeStubs]
+        DataRegistry,
+    )
+
+    registry = DataRegistry()  # pyright: ignore[reportUnknownVariableType]
+    source = LlmSource(name="llm")
+    registry.register_source(source)
+    registry.sync_source(source.name)
+    del registry.sources[source.name]  # pyright: ignore[reportUnknownMemberType]
+    rebuilt = cast("LlmSource", registry.connect_source(source.name))
+
+    def answer(_prompt: str) -> str:
+        return '[{"name":"CDG"}]'
+
+    result = rebuilt.execute_query_nl(
+        "two airports",
+        llm_fn=answer,
+        optional_properties={"attrs": ["name"]},
+    )
+    assert result == [{"name": "CDG"}]
 
 
 # ------------------------------------------------- defaults across a rebuild --
@@ -1594,3 +1577,150 @@ def test_a_clean_answer_reports_no_repair() -> None:
     result = LlmSource(client=ScriptedClient([ONE_RECORD])).fetch("who?")
     assert result.meta.repaired_numbers == 0
     assert "repaired_numbers" not in meta_view(result.meta)
+
+
+@pytest.mark.parametrize("read_only", [False, True])
+@pytest.mark.parametrize("commit", [False, True])
+def test_shared_read_only_and_commit_are_bounded_reads(read_only: bool, commit: bool) -> None:
+    client = ScriptedClient([ONE_RECORD, ONE_RECORD])
+    source = LlmSource(client=client)
+    options = {"commit": commit, "limits.max_rows": 1}
+    before = dict(options)
+    assert source.execute_query_nl("who?", optional_properties=options, read_only=read_only)
+    assert source.execute_nl_tool(
+        "execute_query", {"query": "who?"}, optional_properties=options, read_only=read_only
+    )
+    assert options == before
+    assert len(client.prompts) == 2
+
+
+@pytest.mark.parametrize("read_only", [False, True])
+def test_base_tool_forwarding_preserves_host_pins_and_commit(
+    monkeypatch: pytest.MonkeyPatch, read_only: bool
+) -> None:
+    observed: list[dict[str, Any]] = []
+
+    def record(_self: LlmSource, _query: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        observed.append(kwargs)
+        return []
+
+    monkeypatch.setattr(LlmSource, "execute_query", record)
+    options = {"commit": True}
+    tool_input = {"query": "who?", "database": "model_db", "collection": "model_collection"}
+    LlmSource().execute_nl_tool(
+        "execute_query",
+        tool_input,
+        database="host_db",
+        collection="host_collection",
+        optional_properties=options,
+        read_only=read_only,
+    )
+    assert observed == [
+        {
+            "database": "host_db",
+            "collection": "host_collection",
+            "optional_properties": {} if read_only else {"commit": True},
+        }
+    ]
+    assert options == {"commit": True}
+    assert tool_input["database"] == "model_db"
+
+
+@pytest.mark.parametrize("overwrite", [None, False, True])
+def test_shared_creation_and_metadata_are_read_only(overwrite: bool | None) -> None:
+    client = ScriptedClient()
+    source = LlmSource(client=client)
+    props: dict[str, Any] = {"nested": {"item": "original"}}
+    methods = [
+        (source.create_database, ("db",)),
+        (source.create_database_collection, ("db", "collection")),
+        (source.create_database_collection_entity, ("db", "collection", "entity")),
+        (source.create_database_collection_relation, ("db", "collection", "relation")),
+    ]
+    options = {} if overwrite is None else {"overwrite": overwrite}
+    for method, args in methods:
+        assert method(*args, properties=props, **options) == {}
+    assert props == {"nested": {"item": "original"}}
+    assert source.fetch_database_collection_entity_metadata("db", "c", "e") == {}
+    assert source.fetch_database_collection_relation_metadata("db", "c", "r") == {}
+    assert source.fetch_database_collection_relation_attributes("db", "c", "r") == {}
+    assert source.fetch_relation_stats("db", "c", "r") is None
+    for read_only in (False, True):
+        with pytest.raises(ConfigError, match="tool-driven query path"):
+            source.execute_query_nl_tools("who?", read_only=read_only, max_sample_size=0)
+    assert not client.prompts
+
+
+def test_granular_entity_attributes_match_bulk_before_and_after_sync() -> None:
+    from blue_data.registry.data_registry import (
+        DataRegistry,  # pyright: ignore[reportMissingTypeStubs]
+    )
+
+    registry: Any = DataRegistry()
+    source = LlmSource("granular")
+    registry.register_source(source)
+    for current in (source,):
+        assert (
+            current.fetch_database_collection_entity_attributes(C.DATABASE, C.COLLECTION, C.ENTITY)
+            == current.fetch_database_collection_entities(C.DATABASE, C.COLLECTION)[C.ENTITY][
+                "properties"
+            ]
+        )
+    registry.sync_source(source.name)
+    del registry.sources[source.name]
+    rebuilt: LlmSource = registry.connect_source(source.name)
+    assert (
+        rebuilt.fetch_database_collection_entity_attributes(C.DATABASE, C.COLLECTION, C.ENTITY)
+        == source.fetch_database_collection_entities(C.DATABASE, C.COLLECTION)[C.ENTITY][
+            "properties"
+        ]
+    )
+    assert rebuilt.fetch_database_collection_entity_attributes("db", "c", "unknown") == {}
+
+
+@pytest.mark.parametrize("sample_size", [None, 0, 3])
+def test_sample_size_forwards_the_shared_keyword(
+    monkeypatch: pytest.MonkeyPatch, sample_size: int | None
+) -> None:
+    observed: list[int] = []
+
+    def record(
+        _self: LlmSource, database: str, collection: str, entity: str, *, row_sample_size: int = 10
+    ) -> None:
+        assert (database, collection, entity) == (C.DATABASE, C.COLLECTION, C.ENTITY)
+        observed.append(row_sample_size)
+
+    monkeypatch.setattr(LlmSource, "fetch_entity_stats", record)
+    inputs = dict(TOOL_INPUTS["get_sample"])
+    if sample_size is not None:
+        inputs["sample_size"] = sample_size
+    assert LlmSource().execute_nl_tool("get_sample", inputs) is None
+    assert observed == [10 if sample_size is None else sample_size]
+
+
+@pytest.mark.parametrize("in_loop", [False, True])
+def test_samples_stay_unavailable_before_and_after_fetch(in_loop: bool) -> None:
+    client = ScriptedClient([ONE_RECORD])
+    source = LlmSource(client=client)
+
+    def check() -> None:
+        for before in (True, False):
+            if not before:
+                source.fetch("who?")
+            count = len(client.prompts)
+            assert (
+                source.fetch_entity_stats(C.DATABASE, C.COLLECTION, C.ENTITY, row_sample_size=0)
+                is None
+            )
+            assert source.execute_nl_tool("get_sample", TOOL_INPUTS["get_sample"]) is None
+            assert len(client.prompts) == count
+        with pytest.raises(LlmSourceError, match="requires"):
+            source.execute_nl_tool("get_sample", {})
+
+    async def run() -> None:
+        check()
+
+    if in_loop:
+        asyncio.run(run())
+    else:
+        check()

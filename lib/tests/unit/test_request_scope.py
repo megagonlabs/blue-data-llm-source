@@ -53,7 +53,7 @@ SCOPE: dict[str, Constraint] = {
 }
 
 LEAF_FETCH_TEMPLATE_SHA256 = "4b3677e5ef22f55f373aa9a0f9507f2a4bdfafeb06f93cb95d39ee2506b7f62d"
-"""The `keyed-leaf-fetch-1` template, unchanged since 2.1.0."""
+"""The `keyed-leaf-fetch-1` template, unchanged since 0.2.1.0."""
 
 COMPLETE = prompts.COMPLETE_LEAF_FETCH_PROMPT_VERSION
 

@@ -1,18 +1,9 @@
-"""The output columns, and which one identifies a record.
+"""Output columns and record identity.
 
-Two rules carry this module.
-
-**The caller's declaration wins.** A caller who declared an attribute and a type gets
-exactly that back. Enrichment may add columns the caller did not name; it may not change
-or drop one they did. v1.0 already promises to honour a supplied list, and the fastest
-way to break that promise is an enrichment step that "improves" a declared type.
-
-**A key is identified or it is absent — never guessed.** A positional fallback, taking
-the first column when inference fails, is arbitrary: deduplicating on the wrong column
-silently collapses distinct records, and that is data loss wearing the appearance of a
-clean result. So a returned name that is not among the attributes is discarded rather
-than trusted, and no positional fallback exists. This is the single rule that decides
-whether cross-leaf deduplication runs downstream.
+Enrichment may add columns but cannot change or remove a caller-declared
+attribute or type. An inferred key must name a returned attribute; otherwise
+there is no key. Choosing the first column as a fallback could collapse distinct
+records during cross-leaf deduplication.
 """
 
 from __future__ import annotations
@@ -34,7 +25,22 @@ SCHEMA_PRESERVE: Final = "preserve"
 SCHEMA_ENRICH: Final = "enrich"
 SCHEMA_MODES: Final = (SCHEMA_PRESERVE, SCHEMA_ENRICH)
 
-_DECLARABLE_TYPES: Final = frozenset({"string", "integer", "number", "boolean"})
+_SUPPORTED_TYPES: Final = {
+    "string": "string",
+    "str": "string",
+    "text": "string",
+    "integer": "integer",
+    "int": "integer",
+    "number": "number",
+    "float": "number",
+    "boolean": "boolean",
+    "bool": "boolean",
+    "date": "date",
+}
+
+
+def _supported_type(value: object) -> str | None:
+    return _SUPPORTED_TYPES.get(value.strip().lower()) if isinstance(value, str) else None
 
 
 def _schema_keys(value: object) -> tuple[str, ...]:
@@ -152,10 +158,8 @@ def _object_from(text: str | None) -> dict[str, Any] | None:
 def _attrs_from(reported: object) -> list[Attr]:
     """The attributes a response carries, keeping only well-formed entries.
 
-    An unrecognised type name is dropped to ``None`` rather than carried through. v1.0
-    reports a declared type it cannot check as an unchecked type precisely so a caller is
-    not left believing their records are typed; inventing a type here from a name the
-    checker does not know would defeat that.
+    An unrecognized type becomes ``None``. The verifier reports an unchecked
+    declared type separately, so it cannot be mistaken for a checked record type.
     """
     if not isinstance(reported, list):
         return []
@@ -174,7 +178,7 @@ def _attrs_from(reported: object) -> list[Attr]:
             continue
         seen.add(name)
         raw_type = cast("dict[str, Any]", entry).get("type")
-        declared = raw_type if isinstance(raw_type, str) and raw_type in _DECLARABLE_TYPES else None
+        declared = _supported_type(raw_type)
         out.append(Attr(name=name, type=declared))
     return out
 
@@ -245,6 +249,7 @@ def schema_from_bootstrap(
     if not isinstance(raw_attrs, list):
         return None
 
+    declared_names = {attr.name for attr in declared}
     inferred: list[Attr] = []
     names: set[str] = set()
     for raw in cast("list[Any]", raw_attrs):
@@ -260,14 +265,14 @@ def schema_from_bootstrap(
         name = raw_name.strip()
         if name in names:
             return None
-        if raw_type is not None and (
-            not isinstance(raw_type, str) or raw_type not in _DECLARABLE_TYPES
-        ):
+        inferred_type = _supported_type(raw_type)
+        # The caller's declared type wins over whatever the model echoes for that name, so
+        # only an inferred attribute has to carry a type the planner supports.
+        if raw_type is not None and inferred_type is None and name not in declared_names:
             return None
         names.add(name)
-        inferred.append(Attr(name=name, type=raw_type))
+        inferred.append(Attr(name=name, type=inferred_type))
 
-    declared_names = {attr.name for attr in declared}
     if declared_key is not None and declared_keys and declared_keys != (declared_key,):
         return None
     keys = declared_keys or ((declared_key,) if declared_key is not None else ())

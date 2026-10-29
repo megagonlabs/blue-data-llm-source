@@ -8,7 +8,7 @@ real call.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -28,7 +28,7 @@ def _marked(request: pytest.FixtureRequest, name: str) -> bool:
     pytest types ``request.node`` through a private module, so a strict checker reads the
     lookup as unknown. Confined to this one helper rather than every call site.
     """
-    node = cast("Any", request.node)  # pyright: ignore[reportUnknownMemberType]
+    node: Any = request.node  # pyright: ignore[reportUnknownMemberType]
     return node.get_closest_marker(name) is not None
 
 
@@ -38,9 +38,8 @@ def offline(
 ) -> Iterator[OfflineRecord]:
     """Block network, subprocess, and database access, and assert none was attempted.
 
-    The locked criterion is that all three event classes are zero across the run, so the
-    guard both blocks and counts. Blocking alone would let a test swallow the resulting
-    exception and still look clean.
+    Count all three event classes and assert zero attempts. Counting catches a blocked
+    call even when the test swallows its exception.
     """
     record = install_offline_guard(
         monkeypatch,

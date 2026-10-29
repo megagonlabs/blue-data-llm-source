@@ -1,14 +1,7 @@
-"""The CLI and the MCP server describe one run the same way.
+"""Compare CLI and MCP metadata payloads for the same run.
 
-They did not. Each adapter carried its own `meta_summary` and the two gated different
-fields, so the same `ExecMeta` came out of the two doors with different keys. Both now
-call the library's `meta_view`, and this is the property that makes that worth doing —
-checked against the two adapters' real payloads rather than against the helper, since the
-helper agreeing with itself proves nothing.
-
-The MCP package is imported by path. The two platform packages are siblings that do not
-depend on each other, and neither should acquire a dependency on the other to be tested;
-what this needs is the source tree next door, which the repository always has.
+Both adapters use the library's ``meta_view``. The tests compare their actual payloads.
+The MCP module is imported by path so neither platform package depends on the other.
 """
 
 from __future__ import annotations

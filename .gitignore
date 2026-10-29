@@ -25,6 +25,13 @@ build/
 dist/
 *.whl
 
+# Python 3.15 compatibility builds
+.build315/
+.native315/
+.native315.tar.gz
+.venv315/
+.wheels315/
+
 # Environment & secrets
 .env
 *.envrc
@@ -40,5 +47,5 @@ dist/
 # OS
 .DS_Store
 
-# Cloud-sync scratch: the drive client writes partial copies here.
+# Temporary partial files.
 .tmp*

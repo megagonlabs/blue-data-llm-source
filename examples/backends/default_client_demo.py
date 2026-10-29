@@ -1,13 +1,16 @@
-"""A provider-backed fetch through DefaultLlmClient, with real accounting.
+"""A provider-backed fetch through DefaultLlmClient.
 
-This is the only backend that spends money. ``DefaultLlmClient`` drives the provider
-through litellm, declares every budget axis, and prices each attempt from the table in
-``llm/pricing.py``. The result carries the model name, provider token counts, settled
-cost, and ``accounting_known=True``. The offline demos cannot produce these values.
+``DefaultLlmClient`` calls the provider through LiteLLM and bounds each attempt
+using rates from ``llm/pricing.py``. Settlement uses LiteLLM's readable cost
+figure when supported and a conservative charge otherwise. This example can
+incur provider charges. The result prints the model, token counts, cost, and
+``accounting_known``; the last field distinguishes measured cost from a
+conservative charge.
 
-The library reads no credential itself. The provider SDK reads ``OPENAI_API_KEY`` from
-the environment. If the key is missing or invalid, the call raises a ``TransportError``
-that mentions credentials rather than a configuration error.
+The provider SDK reads ``OPENAI_API_KEY`` to authenticate. The library also reads
+credential values for redaction; it does not use them to authenticate. An
+authentication failure may raise ``TransportError`` or return a stopped result
+when the call ceiling is reached. The script exits unsuccessfully in either case.
 
 ``limits.max_cost`` is set above the floor implied by the output allowance alone.
 ``llm.max_tokens`` at the model's output rate makes up most of the bound, so a lower
@@ -19,7 +22,9 @@ Run from the repository root:
     python3 examples/backends/default_client_demo.py
 """
 
-from blue_data_llm_source import DefaultLlmClient, LlmSource, LlmSourceError
+import os
+
+from blue_data_llm_source import DefaultLlmClient, LlmSource, LlmSourceError, Outcome
 
 PROPERTIES = {
     "llm.model": "gpt-4o-mini",
@@ -30,10 +35,10 @@ PROPERTIES = {
 }
 
 
-def main() -> None:
-    # Injected rather than left to the source to build, so `close()` releases the cache
-    # backends this client opens. A short script does not need it; a long-lived service
-    # that rotates cache directories does, and nothing else releases those handles.
+def main() -> int:
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise SystemExit("Set OPENAI_API_KEY before running this example.")
+    # The context manager closes any cache backends opened by this client.
     with DefaultLlmClient(PROPERTIES) as client:
         source = LlmSource(properties=PROPERTIES, client=client)
 
@@ -55,7 +60,7 @@ def main() -> None:
             )
         except LlmSourceError as error:
             print(f"{type(error).__name__}: {error}")
-            return
+            return 1
 
         print()
         print("records")
@@ -81,7 +86,8 @@ def main() -> None:
             "of",
             sized.max_cost,
         )
+        return 0 if meta.outcome == Outcome.OK else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

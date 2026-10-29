@@ -1,0 +1,3 @@
+include scripts/build-python315-wheel.py
+include scripts/patch-litellm-python315-wheel.py
+include scripts/python315-constraints.txt

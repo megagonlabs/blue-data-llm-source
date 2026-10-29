@@ -58,7 +58,8 @@ def test_accepted_overrides_are_forwarded_without_their_prefix(
 def test_a_control_key_never_reaches_the_provider_kwargs(
     client: DefaultLlmClient, control: str
 ) -> None:
-    kwargs = client._call_kwargs("who?", {f"llm.{control}": "value"})
+    value: object = False if control == "cache" else ".llm_cache" if control == "cache_dir" else 1
+    kwargs = client._call_kwargs("who?", {f"llm.{control}": value})
     assert control not in kwargs
     assert f"llm.{control}" not in kwargs
 
@@ -66,7 +67,10 @@ def test_a_control_key_never_reaches_the_provider_kwargs(
 def test_every_control_key_at_once_still_leaves_only_the_call_fields(
     client: DefaultLlmClient,
 ) -> None:
-    properties = {f"llm.{key}": 1 for key in CONTROL_KEYS}
+    properties = {
+        f"llm.{key}": False if key == "cache" else ".llm_cache" if key == "cache_dir" else 1
+        for key in CONTROL_KEYS
+    }
     kwargs = client._call_kwargs("who?", properties)
     assert set(kwargs) == {"messages", "model", "reasoning_effort", "custom_llm_provider"}
 

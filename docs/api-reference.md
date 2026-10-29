@@ -2,15 +2,15 @@
 
 Reference to the public methods, parameters, and return types in `blue_data_llm_source`.
 
-Contributor-oriented interface rationale is in [`design/09-api-interface-spec.md`](../design/09-api-interface-spec.md). If this page and that document disagree, the implementation decides and the design document must be corrected.
+Contributor-oriented interface rationale is in [`design/09-api-interface-spec.md`](../design/09-api-interface-spec.md).
 
-Version 2.2.0. `blue_data_llm_source.__version__` carries it.
+Version 1.0.0. `blue_data_llm_source.__version__` carries it.
 
 The fenced blocks on this page are signatures rather than programs: each shows a declaration, not something to paste and run. Runnable examples live in [guide.md](guide.md), [features.md](features.md), and [extending.md](extending.md).
 
 ## Package exports
 
-Fifty names, all importable from `blue_data_llm_source` directly.
+The following names can be imported directly from `blue_data_llm_source`.
 
 | Name | Kind | Purpose |
 |---|---|---|
@@ -33,7 +33,7 @@ Fifty names, all importable from `blue_data_llm_source` directly.
 | `DefaultLlmClient` | class | The built-in provider client |
 | `FunctionClient` | class | A `(prompt) -> str` callable wrapped as a client |
 | `LlmClientProtocol` | protocol | The two-method model boundary |
-| `BudgetAwareClient` | protocol | A client that declares which ceilings it honours |
+| `BudgetAwareClient` | protocol | A client that declares which ceilings it honors |
 | `CacheStore` | protocol | `get`/`set` cache |
 | `MemoryCache` | class | Bounded in-process cache |
 | `FileCache` | class | One-JSON-file-per-entry cache |
@@ -48,6 +48,7 @@ Fifty names, all importable from `blue_data_llm_source` directly.
 | `OP_FETCH` | `str` | `"LLM.FETCH"` |
 | `OP_MODELS` | `str` | `"LLM.MODELS"` |
 | `OP_ESTIMATE` | `str` | `"LLM.ESTIMATE"` |
+| `REASONING_EFFORTS` | `frozenset[str]` | Recognized effort names; each model accepts its documented subset |
 | `rates_for` | function | Published rates for a model, or `None` |
 | `priceable_models` | function | The model names the price table carries |
 | `can_bound` | function | Whether a cost ceiling could be claimed |
@@ -65,7 +66,7 @@ Fifty names, all importable from `blue_data_llm_source` directly.
 | `CardinalityEstimator` | class | Parser for the cardinality stage |
 | `CardinalityEstimate` | dataclass | Its result |
 | `redact` | function | Masks credential-shaped text before it is written out |
-| `__version__` | `str` | `"2.2.0"` |
+| `__version__` | `str` | `"1.0.0"` |
 
 ### `redact`
 
@@ -73,15 +74,15 @@ Fifty names, all importable from `blue_data_llm_source` directly.
 redact(text: str) -> str
 ```
 
-Returns `text` with anything that reads as a credential replaced by `***`. Both adapters call it on the text they write *about* a call (error messages, log output, the request-side fields of a result's metadata), so a key that reaches this package by mistake does not come back out of it.
+Returns `text` with credential-shaped text and values held in credential environment variables replaced by `***`. The CLI and MCP server use it for errors and logs. Their `meta_view` output masks string values in result metadata, including diagnostic keys and values from records that were discarded.
 
-It is not applied to records. A record value that happens to look like a token is the answer to the query, and masking it would destroy data. The same holds for the metadata fields that name the keys the model returned, because they index records that are not masked. `requested_attrs` is the exception: it names record keys too, but it is the caller's own text handed back, so it is masked.
+Returned records remain intact. Direct Python results also retain their original metadata; applications that publish `FetchResult` or `ExecMeta` should mask sensitive values at their output boundary.
 
 Call it on anything you build from a caller's input or a provider's exception before you display, log, or store it.
 
-`blue_data_llm_source.compat.blue_data.BlueDataLlmSource` is an alias for `LlmSource`, kept so an import written against the earlier optional adapter keeps working. It is not a subclass. New code imports `LlmSource`.
-
 ## `LlmSource`
+
+`blue_data_llm_source.compat.blue_data.BlueDataLlmSource` is an alias for `LlmSource`, kept so an import written against the earlier optional adapter keeps working. It is not a subclass. New code imports `LlmSource`.
 
 ```text
 LlmSource(name: str = "llm", properties: dict[str, Any] | None = None, client: Any | None = None)
@@ -98,7 +99,7 @@ Extends `blue_data.source.source.DataSource`. Base-class order determines which 
 | Attribute | Type | Meaning |
 |---|---|---|
 | `name` | `str` | As constructed |
-| `properties` | `dict[str, Any]` | The `connection` sub-dict and what the caller set. The package defaults are applied per call and are not stored here, so a source rebuilt from this map behaves like the original |
+| `properties` | `dict[str, Any]` | The `connection` sub-dict and what the caller set. The package defaults are applied per call and are not stored here, so a source rebuilt from this map uses the same defaults. An injected client and its settings are not part of this map; a rebuilt source starts with the default client |
 | `protocol` | `str` (property) | Always `"llm"`. Not caller-settable |
 | `variant` | `str` (property) | `"openai"` by default. Set through `properties["connection"]["variant"]` |
 
@@ -113,17 +114,19 @@ estimate(query, attrs=None, context=None, properties=None, llm_fn=None) -> Estim
 max_tokens_for_model(model) -> object
 ```
 
+Source settings override client settings; a call can only tighten the resulting ceilings. For the rules on `None`, zero, retries, row caps, caller-supplied prices, and a per-call model or rates under a configured cost ceiling, see the [compatibility guide](../lib/COMPATIBILITY.md#deviations-from-the-earlier-implementation).
+
 | Parameter | Type | Default | Meaning |
 |---|---|---|---|
-| `query` | `Any` | — | The question. A non-string raises `QueryError`; an empty or whitespace string is an empty ask and returns `outcome="empty_query"` |
+| `query` | `Any` | — | The question. `None`, an empty string, or whitespace makes `fetch` return `outcome="empty_query"` and `estimate` return a zero bound; any other non-string raises `QueryError` |
 | `attrs` | `Any` | `None` | A list of names, a list of `Attr`, or a list of `{"name": str, "type": str \| None}` dicts. Anything else raises `QueryError` naming the index |
 | `context` | `Any` | `None` | A string or a list of strings, joined into one block. Free text clarifying what an attribute name means |
-| `max_records` | `int \| None` | `None` | Row ceiling for this call, replacing `limits.max_rows`. Must be a positive non-`bool` integer |
+| `max_records` | `int \| None` | `None` | Row ceiling for this call, clamped by the effective `limits.max_rows`. Must be a positive non-`bool` integer |
 | `properties` | `dict[str, Any] \| None` | `None` | Per-call properties, merged over the instance's for this call only and not written back |
 | `llm_fn` | `Any` | `None` | A `(prompt) -> str` callable, or a coroutine function, used as the model for this call. Wrapped in a `FunctionClient` |
 | `budget` | `Budget \| None` | `None` | A budget you own. The fetch derives a child from it, so ceilings accumulate across every call you hand it to |
 
-`afetch` is the real entry point; `fetch` wraps it with `asyncio.run`. Calling `fetch` from inside a running event loop raises `ConfigError` naming `afetch`.
+Synchronous query methods work inside a running event loop by waiting for an owned worker thread. They block the calling thread and delay its cancellation callbacks. Use `afetch` for concurrent async work and for a client or `llm_fn` that needs the caller's own event loop; a synchronous call hangs on such a client. Thread-affine objects, such as an sqlite connection used inside `llm_fn`, fail on the worker thread. Under `asyncio.run` on Python 3.11 and later, the first Ctrl-C cancels the in-flight fetch when the synchronous call runs in the runner's main task. A call in another task observes cancellation only if that task receives the request. In a plain event-loop callback, that signal cancels the runner's main task while the fetch continues; a second Ctrl-C interrupts the waiting thread. Schedule and await `afetch` in a task for cancellable asynchronous work. Once the bridge receives an interrupt or task-cancellation request, it raises as soon as the fetch stops, or after five seconds if the client ignores cancellation; that work then finishes in the background. Time limits cancel the same cooperative way, so they cannot forcibly stop a client that ignores cancellation either. See [`lib/COMPATIBILITY.md`](../lib/COMPATIBILITY.md).
 
 `estimate` takes no `max_records` and no `budget`, contacts nothing, and reads no `plan.*` setting.
 
@@ -137,10 +140,10 @@ Property precedence, lowest first: this source's own defaults, an injected clien
 
 Inherited from `DataSource` and overridden here.
 
-| Method | Returns | Behaviour |
+| Method | Returns | Behavior |
 |---|---|---|
 | `execute_query(query, database=None, collection=None, optional_properties=None)` | `list[dict[str, Any]]` | Runs a query. `query` is a natural-language string or a dict carrying an `op` key. `database` and `collection` are accepted for signature compatibility and unused |
-| `execute_query_nl(query, database=None, collection=None, schema=None, llm_fn=None, optional_properties=None)` | `list[dict[str, Any]]` | Runs a natural-language query. `llm_fn` is the model for this call, not a translator |
+| `execute_query_nl(query, database=None, collection=None, schema=None, llm_fn=None, optional_properties=None, read_only=True)` | `list[dict[str, Any]]` | Runs a natural-language query. `llm_fn` is the model for this call, not a translator |
 | `translate_nl_to_native_query(query, schema, llm_fn)` | `str \| None` | The identity, because natural language is this source's native form. Returns `None` for an empty query |
 
 `optional_properties` carries the per-call ceiling, and `attrs`, `attr_names`, `context`, and `max_records` are lifted out of it as arguments. Everything else is merged into the property map.
@@ -155,17 +158,17 @@ Inherited from `DataSource` and overridden here.
 | `LLM.MODELS` | nothing | `[{"protocol": "llm", "variant": "openai"}]`, without a model call |
 | `LLM.ESTIMATE` | `query`, `attrs` or `attr_names`, `context` | The `Estimate` as a one-record list, without contacting anything |
 
-An unrecognised op raises `QueryError` listing the three.
+An unrecognized op raises `QueryError` listing the three.
 
 ### Orchestrator tool surface
 
-| Method | Returns | Behaviour |
+| Method | Returns | Behavior |
 |---|---|---|
-| `get_nl_tools(database=None, collection=None)` | `list[dict[str, Any]]` | The base class's own tool definitions, filtered to the four this source can answer |
-| `execute_nl_tool(name, tool_input, database=None, collection=None, optional_properties=None)` | `Any` | Runs one advertised tool, or raises `ConfigError` listing the four |
-| `execute_query_nl_tools(query, database=None, collection=None, llm_fn=None, optional_properties=None, max_iterations=10, extra_tools=None, extra_tool_fn=None)` | — | Always raises `ConfigError` |
+| `get_nl_tools(database=None, collection=None)` | `list[dict[str, Any]]` | The base class's own tool definitions, filtered to the five this source can answer |
+| `execute_nl_tool(name, tool_input, database=None, collection=None, optional_properties=None, read_only=True)` | `Any` | Runs one advertised tool, or raises `ConfigError` listing the five |
+| `execute_query_nl_tools(query, database=None, collection=None, llm_fn=None, optional_properties=None, max_iterations=10, extra_tools=None, extra_tool_fn=None, read_only=True, max_sample_size=None)` | — | Always raises `ConfigError` |
 
-| Tool | Served | Behaviour |
+| Tool | Served | Behavior |
 |---|---|---|
 | `list_databases` | yes | `["llm"]` |
 | `list_collections` | yes | `["public"]` |
@@ -174,11 +177,13 @@ An unrecognised op raises `QueryError` listing the three.
 | `get_metadata` | no | Would return `{}` |
 | `get_column_stats` | no | Would return `None` |
 | `get_relations` | no | Would return `{}` |
-| `get_sample` | no | Raises `TypeError` from the base dispatcher |
+| `get_sample` | yes | Accepts shared `sample_size` (default 10); returns `None`, with no provider call |
 
 A tool input missing a key the advertised schema requires raises `QueryError` naming what was missing and what was supplied. `database` and `collection` may be supplied either in `tool_input` or as arguments. Nothing on this path leaves the `LlmSourceError` hierarchy.
 
 `execute_query_nl_tools` drives a loop of up to ten provider calls that this source's ceilings do not govern, so it is refused rather than served.
+
+The shared `commit` key in `optional_properties` is accepted and ignored by this read-only source. Shared `read_only` keywords are accepted by `execute_query_nl`, `execute_nl_tool` and `execute_query_nl_tools`; `False` enables no writes. `execute_query_nl_tools` also accepts `max_sample_size=None` and remains unsupported. All four creation methods accept `overwrite=False`; either value returns `{}` without mutation. `fetch_entity_stats` accepts keyword-only `row_sample_size=10` and returns `None`. Advertised `get_sample` forwards shared `sample_size` to it and returns the same unavailable result, without generating or retaining samples.
 
 ### Metadata surface
 
@@ -193,13 +198,18 @@ A tool input missing a key the advertised schema requires raises `QueryError` na
 | `fetch_database_schema(database)` | `{}` |
 | `fetch_database_collection_metadata(database, collection)` | `{}` |
 | `fetch_database_collection_relations(database, collection)` | `{}` |
+| `fetch_database_collection_entity_metadata(database, collection, entity)` | `{}` |
+| `fetch_database_collection_entity_attributes(database, collection, entity)` | Virtual entity `properties`; `{}` for an unknown entity |
+| `fetch_database_collection_relation_metadata(database, collection, relation)` | `{}` |
+| `fetch_database_collection_relation_attributes(database, collection, relation)` | `{}` |
+| `fetch_relation_stats(database, collection, relation)` | `None` |
 | `fetch_source_stats()` | `None` |
 | `fetch_database_stats(database)` | `None` |
 | `fetch_collection_stats(database, collection, entities=None, relations=None, sample_limit=None)` | `None` |
-| `fetch_entity_stats(database, collection, entity)` | `None` |
+| `fetch_entity_stats(database, collection, entity, *, row_sample_size=10)` | `None` |
 | `fetch_property_stats(database, collection, entity, property_name, sample_limit=None)` | `None` |
 
-The one-database, one-collection, one-entity hierarchy is synthesised so a registry sync has something to walk; a model has none of its own.
+The one-database, one-collection, one-entity hierarchy is synthesized so a registry sync has something to walk; a model has none of its own.
 
 ### Write surface
 
@@ -207,17 +217,17 @@ A model has nothing to write to. These exist so a registry walking the full surf
 
 | Method |
 |---|
-| `create_database(database, properties=None)` |
-| `create_database_collection(database, collection, properties=None)` |
-| `create_database_collection_entity(database, collection, entity, properties=None)` |
-| `create_database_collection_relation(database, collection, relation, properties=None)` |
+| `create_database(database, properties=None, overwrite=False)` |
+| `create_database_collection(database, collection, properties=None, overwrite=False)` |
+| `create_database_collection_entity(database, collection, entity, properties=None, overwrite=False)` |
+| `create_database_collection_relation(database, collection, relation, properties=None, overwrite=False)` |
 | `import_data(source, database="default", collection="default", entity=None, mode="append", options=None)` |
 
-Materialising model knowledge into a real store is the receiving source's `import_data` with this source as its argument, not this method.
+Materializing model knowledge into a real store is the receiving source's `import_data` with this source as its argument, not this method.
 
 ### Connection
 
-| Method | Returns | Behaviour |
+| Method | Returns | Behavior |
 |---|---|---|
 | `connect()` | `{}` | No persistent connection is held; the client is per call |
 | `disconnect()` | `None` | Does nothing |
@@ -245,7 +255,7 @@ Eleven accepted names. An `llm.*` key outside the set raises `ConfigError` listi
 | `llm.model` | `str` | `"gpt-6-luna"` | yes | Model name. An `openai/` prefix reads the same table entry |
 | `llm.reasoning_effort` | `str` | the model's default | yes | One of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, within the set the model accepts. [Supported models](../lib/README.md#supported-models) lists each model's set and default; GPT-6 Luna's default is `medium` |
 | `llm.temperature` | `float` | `0` for GPT-4.1 and GPT-4o, otherwise none | yes | Sampling temperature. Refused with an active reasoning effort, and at every effort on a model that never accepts it |
-| `llm.max_tokens` | `int` | `25000` | yes | Output allowance. 25,000 for a reasoning model, sent as `max_completion_tokens`; 4,096 for GPT-4.1, GPT-4o and a model the table does not carry, sent as `max_tokens` |
+| `llm.max_tokens` | `int \| None` | `25000` | yes | Output allowance; `None` removes the cap and prevents a finite cost bound. 25,000 for a reasoning model, sent as `max_completion_tokens`; 4,096 for GPT-4.1, GPT-4o and a model the table does not carry, sent as `max_tokens` |
 | `llm.stream` | `bool` | `False` | yes | Read the chunks to the end and reassemble. Does not make a fetch faster; a stream carrying no usage cannot be priced |
 | `llm.timeout` | `float` | provider default | yes | Per-call timeout, capped at the time the budget has left. Checked as a finite positive number |
 | `llm.cache` | `bool` | off | no | Opens a `diskcache` response cache. Requires the `llm` extra |
@@ -256,7 +266,7 @@ Eleven accepted names. An `llm.*` key outside the set raises `ConfigError` listi
 
 `llm.rate_limit` is refused by name with a `ConfigError`, because client-side call spacing has to reconcile with per-attempt budget admission and this library does not do it. Cap concurrency with `llm.max_parallel`, or throttle above this library.
 
-Supplying one of the two price keys commits you to both, and a value that is not a finite positive number raises rather than falling back to the table.
+Supplying one of the two price keys commits you to both. When a cost bound is required, a value that is not a finite positive number raises rather than falling back to the table; `estimate` can instead report `bounded=False` with a reason.
 
 ### `limits.*` properties
 
@@ -287,7 +297,7 @@ Twenty-five accepted names. An unknown `plan.*` key raises `ConfigError`.
 | `plan.partition_key` | `str` | none | Preferred root split dimension. Descendants may choose another and cannot repeat an ancestor's |
 | `plan.max_depth` | `int` | `2` | Deepest partition level. `0` disables subdivision while retaining the planning stages |
 | `plan.max_partitions` | `int` | `20` | Most children one proposal may create. Below `2` leaves the node unsplit |
-| `plan.max_leaves` | `int` | `100` | Most terminal slices. An expansion that cannot fit is rejected whole |
+| `plan.max_leaves` | `int` | `100` | Most terminal slices. Partitioned root values are grouped when over the cap; later expansions that cannot fit stay intact |
 | `plan.target_rows_per_leaf` | `int` | `50` | Row-count hint above which a descendant may split again. Not a completeness target |
 | `plan.max_continuations` | `int` | `0` | How many times a part may ask again for records it did not get. Bounds asks per part, not provider attempts |
 | `plan.max_excluded_keys` | `int` | `50` | Count cap for whole-key exclusions in a continuation prompt. Direct Python only |
@@ -301,12 +311,12 @@ Twenty-five accepted names. An unknown `plan.*` key raises `ConfigError`.
 | `plan.range_filters` | `bool` | `False` | Reads a partition proposal written as integer spans, on a column declared an integer, as `Range` filters instead of exact text. Requires `partitioned` and `plan.leaf_prompt="keyed-leaf-fetch-2"`, whose wire version is the only one that carries a range |
 | `plan.partition_guardrails` | `bool` | `False` | Sends the `partition-2` proposal prompt, with rules against identifier or continuous-measurement keys and placeholder or catch-all values and a value count calibrated against the slice's estimate, and refuses a key declared numeric whose values are not integers or integer spans covering at most 1,000 integers. Requires `partitioned` |
 | `plan.split_policy` | `str` | `"always"` | `"evidence"` runs the root leaf once as a probe, a single ask even when continuations are configured, and splits only on an output-allowance stop, a response cut mid-document, a failed probe, or a shortfall against a large estimate; otherwise the probe's answer is the result. A probe that meets `plan.exact_rows` is accepted unless its answer was cut; a target of zero asks nothing and reports no `split_decision`. Adds one logical call to every published bound. Requires `partitioned` |
-| `plan.split_threshold_rows` | `int` | `120` | Under `"evidence"`, the estimate above which fewer than half the expected keys triggers a split |
+| `plan.split_threshold_rows` | `int` | `120` | Under `"evidence"`, the estimate above which fewer than half the expected keys triggers a split. Requires `plan.split_policy="evidence"` when changed from its default |
 | `plan.distribution_search` | `bool` | `False` | Opt-in for rule-backed distribution selection. Requires `partitioned`. Direct Python only |
 | `plan.identity_partitions` | `list[dict]` | empty | Versioned finite-domain rule mappings. Direct Python only |
 | `plan.max_strategy_candidates` | `int` | `5` | Distribution candidate bound. At least `1` when distribution search is enabled. Direct Python only |
 
-The command-line interface and the MCP server expose the twenty-one standard controls. They do not expose distribution search, its rules, its candidate bound, or the receipt; those four reach only a direct Python caller.
+The command-line interface and MCP server expose the twenty-one standard controls. `plan.max_excluded_keys`, `plan.distribution_search`, `plan.identity_partitions`, and `plan.max_strategy_candidates` reach only a direct Python caller. The distribution-planning receipt is also available only to direct Python callers.
 
 #### Planning schedules
 
@@ -329,7 +339,7 @@ Each entry of `plan.identity_partitions` is a dict with exactly these seven keys
 | `dimension` | `str` | The partition key. Must be one of `plan.keys` |
 | `ordered_primary_keys` | `list[str]` | Must equal `plan.keys` exactly |
 | `kind` | `str` | `"finite_domain"` |
-| `allowed_domain` | `list[JsonScalar]` | Non-empty, with no duplicates after normalisation |
+| `allowed_domain` | `list[JsonScalar]` | Non-empty, with no duplicates after normalization |
 | `parent_scope` | `dict[str, dict]` | Constraints under which this rule applies. `{}` for a root rule |
 | `provenance` | `str` | `"source_configuration"` for a rule set on the source, `"caller_declared"` for one passed with the call |
 | `contract_version` | `str` | `"identity-partition-rule-1"` |
@@ -386,9 +396,10 @@ Every field, in declaration order.
 | `observed_key_count` | `int` | `0` | Distinct complete keys seen |
 | `marginal_key_yields` | `list[int]` | `[]` | New keys added by each successive ask |
 | `incomplete_key_records` | `int` | `0` | Records with a key component missing |
+| `normalization_collisions` | `list[dict[str, Any]]` | `[]` | Distinct raw key values that normalized together |
+| `repaired_numbers` | `int` | `0` | Object values written with thousands separators and read after strict JSON parsing failed |
 | `split_decision` | `str \| None` | `None` | What the root probe decided under `plan.split_policy="evidence"`: `probe_accepted`, `probe_split_length`, `probe_split_incomplete`, `probe_split_shortfall` or `probe_split_failed`. `None` when no probe ran |
 | `filter_contradictions` | `int` | `0` | Records whose checkable filter column contradicts their leaf's filter, counted before reduction. Kept or removed by `plan.filter_enforcement`. `0` means none was observed, not that every leaf obeyed |
-| `normalization_collisions` | `list[dict[str, Any]]` | `[]` | Distinct raw key values that normalised together |
 | `observed_keys` | `list[str]` | `[]` | One entry per key seen. Grows with the answer, so `meta_view` omits it |
 | `unmapped_keys` | `list[str]` | `[]` | Returned keys that matched no requested attribute |
 | `remapped_keys` | `dict[str, str]` | `{}` | Returned key to the attribute it was matched to under a different spelling |
@@ -400,7 +411,7 @@ Every field, in declaration order.
 | `truncated_to` | `int \| None` | `None` | Where the row ceiling cut the result |
 | `stop_reasons` | `list[str]` | `[]` | Ordered distinct facts that limited extraction or discarded final output |
 | `stopped_by` | `str \| None` | `None` | The highest-precedence member of `stop_reasons` |
-| `accounting_known` | `bool` | `True` | Whether `calls`, `cost`, and the token counts describe measured provider work. `False` for an `llm_fn` answer, when provider accounting is missing, or when a call under a cost ceiling was charged a usage bound or its reservation because the response does not prove every billed category; then cost is bookkeeping or a conservative bound rather than an exact bill |
+| `accounting_known` | `bool` | `True` | Whether `calls`, `cost`, and the token counts describe measured provider work. `False` for an `llm_fn` answer, when provider accounting is missing, or when a cost-ceiling charge rests on its reservation, a usage bound, or incomplete calculator categories; then cost is bookkeeping or a conservative bound rather than an exact bill |
 
 Stop-reason precedence, highest first: `max_seconds`, `max_cost`, `max_calls`, `provider_output_limit`, `response_incomplete`, `max_rows`, `plan.max_continuations`. Anything else follows in the order it was observed.
 
@@ -448,7 +459,7 @@ Size a ceiling against `max_cost`. An empty request returns `bounded=True` with 
 | `model` | `str` | `""` | The model this call used |
 | `prompt_tokens` | `int` | `0` | As the provider reported |
 | `completion_tokens` | `int` | `0` | The same |
-| `cost` | `float` | `0.0` | What the provider charged, when it could be read. Otherwise the usage bound or the reservation the call was charged, with `cost_known` false |
+| `cost` | `float` | `0.0` | The ledger charge: under a cost ceiling, at least the reservation, raised by a higher readable calculator figure or usage bound. `cost_known` is false when that charge is not measured |
 | `latency_seconds` | `float` | `0.0` | Including a cache hit's own latency |
 | `cache_hit` | `bool` | `False` | Whether this answer came from a cache |
 | `finish_reason` | `str \| None` | `None` | Why the provider stopped, as it said it. `None` when it said nothing |
@@ -463,7 +474,8 @@ Frozen. `Attr(name: str, type: str | None = None)`.
 | `int`, `integer` | integer, whole float, digit string with optional thousands separators | `int` |
 | `float`, `number` | number, numeric string with optional thousands separators | `float` |
 | `bool`, `boolean` | boolean, or `true`/`yes`/`y`/`1` and `false`/`no`/`n`/`0` in any case | `bool` |
-| `date` | `YYYY-MM-DD`, `YYYY/MM/DD`, `DD-MM-YYYY`, or `Month D, YYYY` | ISO date string |
+| `date` | `YYYY-MM-DD`, `YYYY/MM/DD`, `DD-MM-YYYY` (only when the day is above 12 or equals the month; any other `NN-NN-YYYY` value is kept and reported as a type mismatch), or `Month D, YYYY` | ISO date string |
+| `str`, `string`, `text` | string | Unchanged; a non-string is retained and recorded in `ExecMeta.type_mismatches` (included in adapter JSON only in verbose mode) |
 | anything else | — | Untouched, and the name is reported in `meta.unchecked_types` |
 
 A value that will not coerce is returned as it arrived and reported in `meta.type_mismatches`. An attribute with no declared type is not touched.
@@ -511,10 +523,10 @@ A method, not an attribute, so satisfying it takes a deliberate implementation r
 
 | Member | Value | Declaring it commits the client to |
 |---|---|---|
-| `Capability.CALLS` | `calls` | Honouring `limits.max_calls` |
+| `Capability.CALLS` | `calls` | Honoring `limits.max_calls` |
 | `Capability.ROWS` | `rows` | Nothing the source does not already do itself |
-| `Capability.SECONDS` | `seconds` | Honouring `limits.max_seconds` |
-| `Capability.COST` | `cost` | Honouring `limits.max_cost` |
+| `Capability.SECONDS` | `seconds` | Honoring `limits.max_seconds` |
+| `Capability.COST` | `cost` | Honoring `limits.max_cost` |
 | `Capability.ESTIMATE` | `estimate` | Implementing `bound_for_attempt`, **and** making at most `budget.effective_retries() + 1` provider attempts per call |
 | `Capability.ALL` | frozenset of all five | All of the above |
 
@@ -527,7 +539,7 @@ def get(self, key: str) -> Any | None: ...
 def set(self, key: str, value: Any) -> None: ...
 ```
 
-Driven with those two methods alone. The key is the serialised provider call arguments, which covers the model, the prompt, and every forwarded parameter.
+Driven with those two methods alone. The key is the serialized provider call arguments, which covers the model, the prompt, and every forwarded parameter.
 
 ## Clients
 
@@ -670,13 +682,15 @@ Bounded, with least-recently-used eviction and a lock. `max_entries` at or below
 FileCache(directory: str | os.PathLike[str] = ".llm_cache")
 ```
 
-One JSON file per entry, named `llmcache-<sha256 of key>.json`. The directory is created if absent. Writes go to a temporary file and are moved into place, so a reader never sees a half-written entry.
+One JSON file per entry, named `llmcache-<sha256 of key>.json`. The directory is created with private permissions if absent. On POSIX systems an existing directory must be owned by the current user and inaccessible to others; a symlink is refused. Writes go to a temporary file and are moved into place, so a reader never sees a half-written entry.
 
 | Method | Returns |
 |---|---|
 | `get(key)` | The value, or `None`. A corrupt or unreadable entry is a miss, not an error |
-| `set(key, value)` | `None`. An unserialisable or unwritable value is skipped rather than raised |
-| `clear()` | `None`. Removes only files this cache wrote; anything else in the directory is left alone |
+| `set(key, value)` | `None`. An unserializable or unwritable value is skipped rather than raised |
+| `clear()` | `None`. Removes files written by this instance; pre-existing files and another instance's entries remain |
+
+For a complete purge across runs, stop all users of the dedicated cache directory and remove it as described in the [cache guide](guide.md#caching-responses).
 
 ## Pricing helpers
 
@@ -691,7 +705,7 @@ A model name resolves only when it equals a listed name, or extends one with a h
 
 The price table itself is not exported. It is a mutable snapshot of time-sensitive list prices with no effective date and no freshness check, and publishing it would be a contract this package cannot keep across a price change. Supply `llm.price_per_input_token` and `llm.price_per_output_token` to bound a model it does not carry.
 
-The bound is the prompt's length in UTF-8 bytes plus a 64-token framing allowance at the input rate, plus the whole `llm.max_tokens` allowance at the output rate. Bytes rather than characters, because a byte-pair tokenizer consumes at least one byte per token and can emit more tokens than the prompt has characters. On a table model priced at table rates, a prompt counted at 1,024 tokens or more is bounded at the cache-write rate where the model has one, a prompt above 272,000 tokens at the long-context rates where the model has them, and the whole figure carries the 10% regional uplift where it applies. [The cost bound](../lib/README.md#the-cost-bound) gives the settlement rule as well.
+The bound is the prompt's length in UTF-8 bytes plus a 64-token framing allowance at the input rate, plus the whole `llm.max_tokens` allowance at the output rate. Bytes rather than characters, because a byte-pair tokenizer consumes at least one byte per token and can emit more tokens than the prompt has characters. On a table model, the pre-call bound uses the cache-write maximum and long-context multipliers wherever the model has those tiers, even below their billing thresholds, and includes the 10% regional uplift where it applies. [The cost bound](../lib/README.md#the-cost-bound) gives the settlement rule as well.
 
 ## `meta_view`
 
@@ -704,7 +718,7 @@ The single serialization of `ExecMeta` published by every adapter, so a run has 
 | Tier | Keys |
 |---|---|
 | Always present | `outcome`, `model`, `calls`, `prompt_tokens`, `completion_tokens`, `cost` (rounded to 6 places), `elapsed_seconds` (`ExecMeta.latency_seconds`, rounded to 3), `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records`, `filter_contradictions`, `gaps`, `stop_reasons`, `requested_attrs` |
-| Present when populated | `normalization_collisions`, `split_decision`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to`, `cache_hits`, and `accounting_known` in its false form only |
+| Present when populated | `normalization_collisions`, `repaired_numbers`, `split_decision`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to`, `cache_hits`, and `accounting_known` in its false form only |
 | Verbose only | `unmapped_keys`, `remapped_keys`, `type_mismatches`, `key_collisions` |
 
 `observed_keys` is in no tier: it grows with the answer, and `observed_key_count` already carries the fact a consumer acts on.
@@ -725,7 +739,7 @@ Returns a complete ordered identity, or `None` when any component is absent or b
 | `display` | `tuple[Any, ...]` | The values as they arrived. Excluded from equality and the hash |
 | `exclusion()` | `dict[str, Any]` | The named key object a continuation prompt shows |
 
-Normalisation follows the declared type: `int`/`integer`, `float`/`number`, `bool`/`boolean`, `date`, and `str`/`string`/`text` each get their own rule, and a string type additionally folds case, width, and surrounding whitespace. An attribute with no declared type compares by exact JSON-typed value, so `"CDG"` and `" cdg "` are two identities unless the attribute is declared a string.
+Normalization follows the declared type: `int`/`integer`, `float`/`number`, `bool`/`boolean`, `date`, and `str`/`string`/`text` each get their own rule, and a string type additionally applies NFKC normalization, folds case, strips surrounding whitespace and collapses internal runs of whitespace. An attribute with no declared type compares by exact JSON-typed value, so `"CDG"` and `" cdg "` are two identities unless the attribute is declared a string.
 
 ## Planning types
 
@@ -765,7 +779,7 @@ LlmSourceError
 | Exception | Extra attributes | Raised for |
 |---|---|---|
 | `LlmSourceError` | — | The root. Anything unexpected is wrapped in one with the original as `__cause__` |
-| `ConfigError` | — | An unknown `llm.*`, `limits.*`, or `plan.*` key; an invalid ceiling value; a ceiling the resolved client cannot hold; a cost bound that cannot be established; a missing optional extra; a client that cannot be called as the contract requires; `fetch` called inside a running event loop; an unserved tool name; `execute_query_nl_tools` |
+| `ConfigError` | — | An unknown `llm.*`, `limits.*`, or `plan.*` key; an invalid ceiling value; a ceiling the resolved client cannot hold; a cost bound that cannot be established; a missing optional extra; a client that cannot be called as the contract requires; an unserved tool name; `execute_query_nl_tools` |
 | `QueryError` | — | A query that is not a string; a malformed attribute list; the same attribute requested twice; a non-positive `max_records`; an unknown op; a tool input missing a required key |
 | `TransportError` | `message`, `code`, `provider_error` | A provider failure or a malformed provider response, including a missing or wrong credential, which this library never sees as configuration |
 | `ParseError` | `message`, `raw` | A response that cannot be read as records. `raw` carries the response text, because re-running is not guaranteed to reproduce the failure |
@@ -780,4 +794,4 @@ Nothing escapes `LlmSourceError` from `fetch`, `afetch`, or `estimate`. `Keyboar
 - [guide.md](guide.md): the same surface, task by task.
 - [extending.md](extending.md): the protocols above, from the implementer's side.
 - [`design/09-api-interface-spec.md`](../design/09-api-interface-spec.md): the interface specification this page is kept in agreement with.
-- [`lib/COMPATIBILITY.md`](../lib/COMPATIBILITY.md): what differs from the data-source specification, and from what a caller being ported was written against.
+- [`lib/COMPATIBILITY.md`](../lib/COMPATIBILITY.md): `DataSource` integration and migration from the earlier LLM source.

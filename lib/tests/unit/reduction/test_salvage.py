@@ -1,14 +1,7 @@
 """Reading a response that stopped mid-document.
 
-The defect this closes cost a whole call and returned nothing: a model that reached its
-output ceiling partway through the eighteenth record had its entire answer rejected, so
-seventeen complete records that were paid for went in the bin and the caller got an
-exception.
-
-Two properties matter here and they pull against each other. Salvage has to recover the
-whole records from a document no JSON reader will touch, and it has to refuse everything
-else — because a response that is unreadable for any other reason is a genuine failure, and
-turning that into a short answer would hide it behind rows that look fine.
+A response cut mid-document may contain complete records above the cut. Salvage recovers
+those records and refuses malformed responses that were not cut by the output ceiling.
 """
 
 from __future__ import annotations

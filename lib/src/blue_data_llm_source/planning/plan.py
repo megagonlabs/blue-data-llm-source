@@ -5,12 +5,8 @@ that informs it — choosing a partition key, enumerating its values, scoring ho
 it is — happens before this and arrives as a :class:`PartitionProposal`. So the guards,
 which are the part that decides how much a request costs, are testable without a provider.
 
-**Guards report, they do not veto.** A caller selects a strategy and this honours it where
-it can. Where a guard fires, that node collapses to a single leaf covering its whole range
-and a typed gap says which guard fired and why. Every value the enumeration named is
-still encoded somewhere and only the granularity is lost, which is the honest trade;
-refusing the mode outright would make a selectable strategy unselectable, and dropping the
-node would lose the values it held in silence.
+When a guard fires, the node collapses to one leaf covering its full range. A typed gap
+records the reason. All enumerated values remain in the plan; only granularity is lost.
 """
 
 from __future__ import annotations
@@ -70,7 +66,7 @@ PLAN_SERIALIZATION_VERSION: Final = 1
 RANGE_PLAN_SERIALIZATION_VERSION: Final = 2
 """The version a plan carrying any ``Range`` constraint is written under.
 
-Its own number because a 2.1.0 reader of version 1 has no range kind, and a payload it must
+Its own number because a 0.2.1.0 reader of version 1 has no range kind, and a payload it must
 refuse should say so by its version rather than fail on a constraint deep inside. A plan
 without ranges is still written as version 1, byte for byte as before."""
 PLAN_SERIALIZATION_VERSIONS: Final = (PLAN_SERIALIZATION_VERSION, RANGE_PLAN_SERIALIZATION_VERSION)
@@ -87,7 +83,7 @@ CHILD_WORDINGS: Final = (CHILD_WORDING_PARENT, CHILD_WORDING_CANONICAL)
 
 @dataclass(frozen=True)
 class PartitionPolicy:
-    """How an accepted proposal becomes child leaves. The defaults are 2.1.0 behaviour.
+    """How an accepted proposal becomes child leaves. The defaults are 0.2.1.0 behavior.
 
     ``child_wording="parent"`` gives every child its parent's wording, separated from its
     siblings only by the filter. ``"canonical"`` derives the wording from the root request
@@ -127,7 +123,7 @@ class Gap:
     LEAF_EMPTY_QUERY = "leaf_empty_query"
     """The leaf was processed and refused before any call, because it carried no question.
 
-    Distinct from both of its neighbours. ``LEAF_EMPTY`` claims a model was asked and had
+    Distinct from both of its neighbors. ``LEAF_EMPTY`` claims a model was asked and had
     nothing, which is a statement about the world that nobody made; ``LEAF_NOT_RUN`` says
     execution never reached the leaf, which drops the only fact anyone has about it.
     """
@@ -823,10 +819,7 @@ def _note_from_dict(value: object) -> Note:
 def _flat(ask: str, constraints: dict[str, Constraint], notes: list[Note]) -> FetchPlan:
     """One leaf, and notes retargeted onto it.
 
-    A flat plan has no partition node, so a note still pointing at the root would name an
-    id with nothing behind it — a caller resolving it would get nothing, which makes the
-    binding decorative. Notes raised before the shape was known are moved onto the leaf
-    that actually runs.
+    A flat plan has no partition node. Move root notes to the leaf that runs.
     """
     leaf = Leaf(id=f"{ROOT}.0", parent_id=ROOT, query=ask, constraints=dict(constraints))
     rebound = [
@@ -867,11 +860,8 @@ def _filters(
     made, answered without saying so. ``split_on`` omits the key a partition is already
     splitting on, whose values its leaves carry one at a time.
 
-    A list that named nothing is a malformed constraint rather than either extreme: it is
-    not a filter matching everything, and reading it as a contradiction matching nothing
-    would return no records for a request the model may well be able to answer. So it is
-    dropped, and the note says it was — the widening still happens and stops being silent,
-    which is the whole of what this function can honestly offer.
+    An empty list is a malformed constraint. Drop it and add a note so the resulting
+    wider request is visible to the caller.
     """
     out: dict[str, Constraint] = {}
     for name, value in constraints.items():
@@ -1127,7 +1117,7 @@ def _partitioned(
 
     scalar = _filters(constraints, split_on=proposal.key, notes=notes)
     values = _dedup(proposal.values)
-    # Group rather than truncate. Each value past the cap shares a leaf with its neighbours
+    # Group rather than truncate. Each value past the cap shares a leaf with its neighbors
     # instead of losing one, so every value the enumeration named is encoded in exactly
     # one leaf and only the granularity is lost.
     if len(values) > limits.max_leaves:
@@ -1238,7 +1228,7 @@ def range_buckets(values: Sequence[int], count: int) -> list[Range]:
     """Integers grouped into at most *count* contiguous, pairwise disjoint spans.
 
     The numeric counterpart of :func:`_buckets`, and the other source a ``Range`` may come
-    from. Distinct values are sorted first, so each bucket is a run of neighbours and the
+    from. Distinct values are sorted first, so each bucket is a run of neighbors and the
     spans cannot overlap; a span covers the integers between its ends, including ones no
     value named, which is what makes it a slice rather than a list.
     """
@@ -1345,6 +1335,8 @@ def _proposal_children(
     inherited = leaf.constraints.get(key)
     if isinstance(inherited, Exact):
         return [], None, f"exact constraint on {key!r} cannot be subdivided"
+    if isinstance(inherited, Range):
+        return [], None, f"range constraint on {key!r} cannot be subdivided"
     if isinstance(inherited, OneOf):
         known = _dedup(list(inherited.values))
         known_set = {value_identity(value) for value in known}
@@ -1550,6 +1542,17 @@ def build_entity_plan(
             notes=[Note(code=Gap.GUARD_COLLAPSED, target_id=ROOT, detail=reason)],
         )
     inherited = constraints.get(key)
+    if isinstance(inherited, Range):
+        return replace(
+            root,
+            notes=[
+                Note(
+                    code=Gap.GUARD_COLLAPSED,
+                    target_id=ROOT,
+                    detail=f"range constraint on {key!r} cannot be subdivided",
+                )
+            ],
+        )
     if isinstance(inherited, Exact):
         values = [inherited.value] if inherited.value in values else []
     elif isinstance(inherited, OneOf):

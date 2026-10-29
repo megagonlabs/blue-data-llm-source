@@ -1,3 +1,5 @@
+Recorded sample from an earlier run. Its cost and accounting fields do not reflect the current cost settlement.
+
 estimate bounded  True
 estimate max cost 0.0008709
 estimate model    gpt-4o-mini

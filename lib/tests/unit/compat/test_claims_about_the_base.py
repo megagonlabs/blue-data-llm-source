@@ -1,8 +1,4 @@
-"""Check shipped claims about the shared ``DataSource`` base class.
-
-The scan covers text across the repository, including documentation outside ``lib``.
-Each rejected claim is paired with a runtime contract check.
-"""
+"""Check shipped descriptions of ``DataSource`` against its runtime contract."""
 
 from __future__ import annotations
 
@@ -17,7 +13,19 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 # Directories that are not part of what ships: virtual environments, build output, tool
 # caches, and the recorded provider responses, whose stored text is evidence of what a
 # provider returned rather than prose this project maintains.
-SKIP = {".venv", "build", "__pycache__", ".pytest_cache", ".ruff_cache", "cassettes"}
+# The last four are the Python 3.15 build directories docs/installation.md creates here.
+SKIP = {
+    ".venv",
+    "build",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    "cassettes",
+    ".build315",
+    ".native315",
+    ".venv315",
+    ".wheels315",
+}
 
 # The changelog is part record and part claim about what is about to ship, so it is split
 # rather than exempted. A released section describes the release it names and stays true
@@ -35,13 +43,12 @@ FALSE_CLAIMS = [
         r"|each of its (methods|implementations) returns an empty result"
         r"|its implementations return empty results",
         "the base surface is not uniformly empty: transaction methods raise "
-        "NotImplementedError and the orchestrator-tool methods carry real behaviour. "
-        "Proven by test_the_transactional_surface_refuses_rather_than_returning_empty.",
+        "NotImplementedError and the orchestrator-tool methods carry real behavior.",
     ),
     (
         r"no `llm` arm|no ``llm`` arm|hardcoded (list of )?protocol|Unsupported source protocol",
         "the registry reaches this source through the class path recorded at registration, "
-        "not through protocol-name dispatch. Proven by the registry round-trip assertions.",
+        "not through protocol-name dispatch.",
     ),
     (
         r"advertises no tools"
@@ -50,10 +57,10 @@ FALSE_CLAIMS = [
         r"|`?get_nl_tools`? returns (nothing|an empty)"
         r"|refuses (every tool|the whole tool path)"
         r"|overrides (those three|them locally) with a refusal",
-        "this source advertises four of the base class's eight tools — list_databases, "
-        "list_collections, get_schema and execute_query — and execute_nl_tool serves them "
-        "by delegating to the base dispatcher. Only execute_query_nl_tools is refused. "
-        "Proven by test_the_advertised_tools_are_the_ones_this_source_can_answer.",
+        "this source advertises five of the base class's eight tools — list_databases, "
+        "list_collections, get_schema, execute_query and get_sample — and "
+        "execute_nl_tool serves them "
+        "by delegating to the base dispatcher. Only execute_query_nl_tools is refused.",
     ),
     (
         r"streaming is deferred"
@@ -65,19 +72,12 @@ FALSE_CLAIMS = [
         "provider library's helper, and handed to the same path a non-streamed response "
         "takes. It buys compatibility with providers and proxies that require a stream and "
         "makes nothing faster; a stream carrying no usage reports accounting_known=False "
-        "rather than being refused. Proven by the tests in llm/test_client_stream.py.",
+        "rather than being refused.",
     ),
     (
         r"not supported in v\d+\.\d+|deferred to v\d+\.\d+|v\d+\.\d+ deferral",
-        "llm.rate_limit is refused by this release, so a refusal or a table deferring it to "
-        "v1.0 or v1.1 names a version the reader is already running or past. Naming any "
-        "release is the fault: the message is read by whoever is running, and a promise "
-        "attached to a version goes stale the moment that version ships — as the "
-        "replacement for these two, deferring it to v2.0, did on 2.0.0. A refusal says what "
-        "is unsupported and what to do instead, and stops there. Proven by "
-        "test_client_side_rate_limiting_is_refused_by_name. The claim was written in ten "
-        "files — two refusal messages, a Click help string, five documents and two READMEs "
-        "— which is why it is scanned rather than corrected one file at a time.",
+        "llm.rate_limit is refused. Shipped text should describe current support and "
+        "available alternatives without a version-qualified promise.",
     ),
 ]
 
@@ -164,8 +164,8 @@ def test_the_changelog_carve_out_skips_a_released_section_and_nothing_else(
     both = tmp_path / CHANGELOG
     both.write_text(
         "# Changelog\n\npreamble\n\n"
-        "## 3.0.0 — unreleased\n\nabout to ship\n\n"
-        "## 2.0.0 — released\n\nalready shipped\n",
+        "## 1.0.1 — unreleased\n\nabout to ship\n\n"
+        "## 0.2.2.0 — released (as 2.2.0)\n\nalready shipped\n",
         encoding="utf-8",
     )
     scanned = {line for _, line in _current_lines(both)}

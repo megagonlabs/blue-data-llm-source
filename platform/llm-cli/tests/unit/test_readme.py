@@ -59,7 +59,7 @@ def test_every_readme_command_runs_in_the_order_it_is_shown(runner: CliRunner) -
         argv = shlex.split(command)
         assert argv[0] == "blue-llmdb"
         # A blank answer: the two prompting forms keep the current value and change nothing,
-        # which is the behaviour a reader gets by pressing enter.
+        # which is the behavior a reader gets by pressing enter.
         result = runner.invoke(cli, argv[1:], input="\n\n")
         assert result.exit_code == 0, f"{command}\n{result.output}\n{result.stderr}"
 
@@ -113,13 +113,7 @@ def test_every_error_code_token_is_documented() -> None:
 
 
 def test_the_readme_states_the_cost_ceiling_contract_it_actually_keeps() -> None:
-    """Product-facing spend-control text is a claim, not a wording nit.
-
-    A caller sizing a ceiling against this paragraph sizes it wrong if it is out of date,
-    and it has been out of date twice: once promising to refuse the crossing call before
-    the code could, and once still describing the settle-afterwards behaviour after the
-    code began reserving. Both directions are pinned here.
-    """
+    """Keep README ceiling claims aligned with reservation and settlement."""
     prose = README.read_text(encoding="utf-8")
 
     assert "claimed" in prose, "the ceiling is claimed before the call, and must say so"

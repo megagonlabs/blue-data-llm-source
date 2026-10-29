@@ -68,10 +68,7 @@ def normalize_attrs(attrs: Any) -> list[Attr]:
                 f"attrs[{i}] must be a string or a dict with a 'name' key, "
                 f"got {type(item).__name__}"
             )
-    # Here, before a budget or a client exists, rather than in the aligner after the answer
-    # comes back. A repeated `--attr` at the command line is an ordinary slip, and detecting
-    # it downstream meant the provider was contacted and billed for a request the library
-    # already knew it would refuse. The aligner keeps its own check as a second line.
+    # Reject duplicate attributes before contacting the provider. The aligner checks too.
     seen: set[str] = set()
     for attr in out:
         if attr.name in seen:

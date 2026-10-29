@@ -1,23 +1,20 @@
 """Estimate a request, decide whether to run it, then reconcile its actual cost.
 
-This example shows the sequence an operator can use when deciding whether to spend.
-
 1. ``estimate`` bounds the request without contacting anything.
 2. The bound is checked against a ceiling the caller owns. Too big, and nothing is spent.
 3. A cheaper shape of the same request -- a smaller output allowance -- is sized again.
 4. The fetch runs under a ``Budget`` carrying that ceiling.
 5. The settled cost is reconciled against the reservation the estimate reported.
 
-``estimate`` and the run agree by construction: both ask the client the same question,
-``bound_for_attempt``, so the figure a caller sizes against and the figure a ceiling
-enforces cannot be computed two different ways. What a caller has to remember is that the
-estimate bounds a *flat* fetch -- it reads no ``plan.*`` setting -- so a decomposed
-request can cost several times it.
+``estimate`` and the run both use ``bound_for_attempt``. The estimate bounds a
+flat fetch and reads no ``plan.*`` setting. Non-flat runs may use different
+prompts for planning and extraction; this estimate does not bound their total.
 
 ``LedgerClient`` is a local double: it returns canned records and settles an invented
-price. Its accounting path is the real one, the same reservation and settlement
-``DefaultLlmClient`` uses, so the arithmetic below is the library's rather than this
-script's. ``backends/default_client_demo.py`` is the same sequence against a provider.
+price. It demonstrates how a custom client can release unused reservation by settling
+below its bound. ``DefaultLlmClient`` keeps at least the reservation for a
+contacted attempt under a cost ceiling. ``backends/default_client_demo.py`` is a
+separate provider-backed example.
 
 Run from the repository root:
     python3 examples/integration-demos/estimate_then_fetch_demo.py
@@ -144,10 +141,10 @@ def main() -> None:
     print("  budget headroom     ", round(CEILING - run.committed, 8))
     print()
     print(
-        "The overshoot between the reservation and the settled cost is released back to"
+        "This double releases the unused part of its reservation back to"
     )
     print(
-        "the budget, so the next request under it is sized against what is really left."
+        "the budget. A built-in client keeps the full reservation after provider contact."
     )
 
 

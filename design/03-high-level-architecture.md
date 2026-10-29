@@ -5,10 +5,9 @@
 ```
                           External Interfaces
 
-  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
-  │  Python Lib   │  │  MCP Server   │  │      CLI      │  │   REST API    │
-  │  (available)  │  │  (available)  │  │  (available)  │  │(not available)│
-  └───────┬───────┘  └───────┬───────┘  └───────┬───────┘  └───────────────┘
+  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+  │  Python Lib   │  │  MCP Server   │  │      CLI      │
+  └───────┬───────┘  └───────┬───────┘  └───────┬───────┘
           └──────────────────┴──────────────────┘
                              │
                              ▼
@@ -62,15 +61,13 @@
 
 ### External Interfaces
 
-Interface adapters delegate to the core library and contain only interface-specific translation and presentation logic. Each adapter is a separately versioned package that depends on the library, which has no CLI or server dependency.
+Interface adapters delegate to the core library and contain only interface-specific translation and presentation logic. Each adapter is a separately versioned package that depends on the library; the library does not depend on either adapter package.
 
 **Python Library.** Native Python API (`LlmSource` and its return types), distributed as `blue-data-llm-source` and installed from source. Every other interface wraps this API.
 
 **MCP Server.** `blue-data-llm-mcp` exposes five tools over stdio: `llmdb_query`, `llmdb_estimate`, `llmdb_list_models`, `llmdb_inspect_model`, and `llmdb_inspect_metadata`. A model-driven client can query the source, estimate cost, inspect model pricing support, and read server metadata. The `llmdb_` prefix avoids collisions with tools from other data-source servers. Tool definitions and argument translation are isolated from the protocol SDK; a separate module owns the transport.
 
 **CLI.** `blue-data-llm-cli` provides the `blue-llmdb` command with twelve commands across `profile`, `data`, `model`, and `metadata`. Click handles argument parsing, and Rich handles terminal output. Profiles live under `~/.blue-llmdb`; settings resolve in the order command option, environment variable, profile, then built-in default. Translation, rendering, and profile storage are separate modules, leaving the command module responsible for option declarations and output.
-
-**REST API.** Not implemented or scheduled. No package contains an HTTP application, route handler, or server dependency.
 
 ### LlmSource
 
@@ -85,20 +82,20 @@ Base-class order affects behavior. `LlmSource` must resolve its own implementati
 - Answers `estimate` without contacting a provider. It resolves the client that would answer, since only that client can price an attempt and it must declare `Capability.ESTIMATE` to provide a bound. It then builds the prompt the fetch path would send and bounds it through `pricing`. The figure describes the request and covers a whole `flat` fetch: `max_cost` is `max_cost_per_attempt` accumulated over `max_attempts`, so a ceiling set to exactly `max_cost` admits every attempt included in the estimate. The method reads no `plan.*` setting, so it does not price a split request.
 - Refuses each configured ceiling whose axis the resolved client does not declare, and folds the run's accounting into the returned `ExecMeta`: entries and spend from the budget, which claimed them under a lock, and token counts and the model name from the per-call usage list it handed the client for this call alone.
 - Decides the outcome through one published ordered rule, `decide_outcome`, so a ceiling that fired is never contradicted by a result that reads as complete.
-- Answers the metadata calls a registry walks, over a synthesised one-database, one-collection, one-entity hierarchy, since a model has none of its own.
+- Answers the metadata calls a registry walks, over a synthesized one-database, one-collection, one-entity hierarchy, since a model has none of its own.
 
 ### Request Intake
 
 Request-intake modules validate caller arguments and render provider prompts.
 
-**checks.** Argument validation. Rejects a request that is not a string and passes an empty one through as an empty ask, normalises attributes from either a list of names or a list of `{name, type}` mappings, normalises context from a string or a list of strings, and requires positive integers where a count is expected. Messages name the offending value and the accepted form, because an agent calling through a tool interface sees only the exception text.
+**checks.** Argument validation. Rejects a request that is not a string and passes an empty one through as an empty ask, normalizes attributes from either a list of names or a list of `{name, type}` mappings, normalizes context from a string or a list of strings, and requires positive integers where a count is expected. Messages name the offending value and the accepted form, because an agent calling through a tool interface sees only the exception text.
 
-**prompts.** Every prompt the package sends lives in one module: nine templates and their nine
+**prompts.** Every prompt the package sends lives in one module: eleven templates and nine
 builders cover flat extraction, planned extraction, fact collection, partitioning, distribution,
 and entity enumeration. `Slot` marks each inserted value as encoded, raw, or already-rendered lines;
 `fill` then applies one `str.format_map` over a fixed set of named fields.
 
-**Op dispatch.** `execute_query` accepts either a plain string or a mapping carrying an `op` key. `LLM.FETCH` runs a fetch; `LLM.MODELS` reports protocol and variant; `LLM.ESTIMATE` bounds what the same fetch could cost, without contacting anything, and returns it as a one-record list because that is what this surface returns. An unrecognised op raises an error that lists the supported ones. Both surfaces also take `optional_properties`, which is where a per-request ceiling goes: the keys are merged over the instance's properties for that call and are not written back.
+**Op dispatch.** `execute_query` accepts either a plain string or a mapping carrying an `op` key. `LLM.FETCH` runs a fetch; `LLM.MODELS` reports protocol and variant; `LLM.ESTIMATE` bounds what the same fetch could cost, without contacting anything, and returns it as a one-record list because that is what this surface returns. An unrecognized op raises an error that lists the supported ones. Both surfaces also take `optional_properties`, which is where a per-request ceiling goes: the keys are merged over the instance's properties for that call and are not written back.
 
 ### Planning and Execution
 
@@ -127,7 +124,7 @@ The model boundary is the only layer that contacts a provider, allowing the rest
 
 **FunctionClient.** Wraps a `(prompt: str) -> str` callable and implements the `llm_fn` path. It declares only the rows capability because it cannot observe the callable's provider calls, cost, or deadline behavior. The source therefore refuses call, cost, and time ceilings for this client.
 
-**Budget, Limits, and Reservation.** `Limits` holds the optional ceiling on each axis, and `Budget` tracks consumption against those ceilings. Calls, elapsed time, and cost are reserved under a shared lock before provider contact; rows are counted after parsing. `Budget.reserve` returns a `Reservation` that is settled with the measured cost, retained at its bound when cost is unknown, or released when provider contact did not occur. Each retry reserves separately and rechecks the deadline. Cache hits consume no provider call, tokens, or cost, but their rows and elapsed time still count.
+**Budget, Limits, and Reservation.** `Limits` holds the optional ceiling on each axis, and `Budget` tracks consumption against those ceilings. Calls, elapsed time, and cost are reserved under a shared lock before provider contact; rows are counted after parsing. `Budget.reserve` returns a `Reservation`. The default client keeps at least its bound after provider contact, raises the charge for a higher readable figure, and releases it if contact did not occur. Each retry reserves separately and rechecks the deadline. Cache hits consume no provider call, tokens, or cost, but their rows and elapsed time still count.
 
 `Budget.derive` creates a child that spends from the parent's remaining allowance. The effective limit on each axis, including retry depth, is the smaller of the child limit and the parent's remaining headroom. The child does not inherit the parent's `stopped_by` value.
 
@@ -145,21 +142,21 @@ This layer turns model text into checked records. Each stage is a module of plai
 
 **verifier.** Coerces values to their declared types where the coercion is unambiguous, covering integers, floats, booleans, and dates in several common written forms. A value that will not coerce is left as it came back, because dropping a record over a formatting mismatch loses real data, and it is reported alongside the records rather than kept quietly. The module also provides exact duplicate removal, optionally keyed on a single attribute.
 
-**identity and coverage.** `identity` normalizes scalar and composite keys consistently across continuation, reduction, and rule validation, so one record is one record wherever it is recognised. `coverage` merges the leaves into one record set and reports what merging them cost: the gaps, the origins of each record, and the run's outcome. The key-level counts a caller reads as `marginal_key_yields`, `incomplete_key_records` and `normalization_collisions` are observed a leaf at a time by the continuation loop in `execution` and summed by the facade. None of them is a completeness claim.
+**identity and coverage.** `identity` normalizes scalar and composite keys consistently across continuation, reduction, and rule validation, so one record is one record wherever it is recognized. `coverage` merges the leaves into one record set and reports what merging them cost: the gaps, the origins of each record, and the run's outcome. The key-level counts a caller reads as `marginal_key_yields`, `incomplete_key_records` and `normalization_collisions` are observed a leaf at a time by the continuation loop in `execution` and summed by the facade. None of them is a completeness claim.
 
 ### Shared Contracts
 
 **types.** The data contracts and the exception hierarchy: `Attr`, `Usage`, `Outcome`, `Capability`, `ExecMeta`, `Estimate`, `FetchResult`, the `LlmClientProtocol`, `BudgetAwareClient`, and `CacheStore` protocols, and `LlmSourceError` with `ConfigError`, `QueryError`, `TransportError`, `ParseError`, and `BudgetExceeded` beneath it. `Outcome` is the closed vocabulary `ExecMeta.outcome` draws on, which is what makes an empty result a valid answer carrying a reason rather than an absence, and `Capability` is the closed vocabulary a client declares from. Contracts live here so that the modules and any platform adapter share them without circular imports.
 
-**_constants.** Protocol and variant strings, the three op codes, the names of the synthesised database, collection, entity, and attribute, and the two property keys a fetch hands down under, one for the run's budget and one for the list this call's usage entries go into. No environment variable is named, read, or logged by this package.
+**_constants.** Protocol and variant strings, the three op codes, the names of the synthesized database, collection, entity, and attribute, and the two property keys a fetch hands down under, one for the run's budget and one for the list this call's usage entries go into. This module defines no environment-based request settings.
 
 ### Compatibility Alias
 
-`compat/blue_data.py` binds `BlueDataLlmSource` to `LlmSource` and does nothing else. The module existed when `blue-data` was an optional extra and the core matched the source surface by shape, and it held a subclass that added the real inheritance for callers who wanted it. The core now carries that inheritance, so the name is kept only so an import written against the old module keeps working, and it is an alias rather than a subclass because a second class would be a second method resolution order to get wrong for no behaviour of its own.
+`compat/blue_data.py` binds `BlueDataLlmSource` to `LlmSource` and does nothing else. The module existed when `blue-data` was an optional extra and the core matched the source surface by shape, and it held a subclass that added the real inheritance for callers who wanted it. The core now carries that inheritance, so the name is kept only so an import written against the old module keeps working, and it is an alias rather than a subclass because a second class would be a second method resolution order to get wrong for no behavior of its own.
 
 ### The Data Layer Dependency
 
-The runtime dependencies are `blue-data>=0.1.0` and `tenacity>=9.0.0`. `blue-data` supplies the base class and brings `pandas`, `numpy`, and `jsonpath-ng` into the installation. `litellm` and `diskcache` remain optional and are imported lazily.
+The runtime dependencies are `blue-data>=1.0.0,<2` and `tenacity>=9.0.0`. `blue-data` supplies the base class and brings `pandas`, `numpy`, and `jsonpath-ng` into the installation. `litellm` and `diskcache` remain optional and are imported lazily.
 
 The line the dependency does not cross is the one above the data layer. Nothing here imports `blue` or `blue_data_ops`, and a test asserts it, because a data source that reaches into the runtime calling it can only be used inside that runtime. Depending on the layer this source belongs to is a different thing from depending on the orchestrator that queries it.
 

@@ -3,12 +3,17 @@ advertised tools
   list_collections
   get_schema
   execute_query
+  get_sample
 
 the virtual hierarchy a registry sync walks
   protocol / variant  llm / openai
   list_databases      ['llm']
   list_collections    ['public']
   get_schema          {"entities": {"llm_entity": {"properties": {"llm_entity_attribute": {"type": "text"}}}}, "relations": {}}
+
+get_sample reports unavailable statistics without a model call
+  sample None
+  extra model calls 0
 
 execute_query is the one tool that reaches a model
   records [{'name': 'Orly', 'city': 'Paris'}]
@@ -18,9 +23,8 @@ a ceiling passed through this surface binds the call it arrived with
   records []
 
 anything else is refused by name
-  'get_metadata': 'get_metadata' is not a tool this source serves. Available: execute_query, get_schema, list_collections, list_databases. Use execute_query_nl for the natural-language surface
-  'get_sample': 'get_sample' is not a tool this source serves. Available: execute_query, get_schema, list_collections, list_databases. Use execute_query_nl for the natural-language surface
-  42: 42 is not a tool this source serves. Available: execute_query, get_schema, list_collections, list_databases. Use execute_query_nl for the natural-language surface
+  'get_metadata': 'get_metadata' is not a tool this source serves. Available: execute_query, get_sample, get_schema, list_collections, list_databases. Use execute_query_nl for the natural-language surface
+  42: 42 is not a tool this source serves. Available: execute_query, get_sample, get_schema, list_collections, list_databases. Use execute_query_nl for the natural-language surface
 
 and the tool-driven loop is refused outright
   this source does not serve the tool-driven query path. Use execute_query_nl, whose spend and time ceilings this source enforces

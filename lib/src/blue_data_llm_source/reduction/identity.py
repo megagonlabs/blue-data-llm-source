@@ -87,11 +87,18 @@ def _boolean(value: object) -> bool | None:
     return None
 
 
-def _date(value: object) -> str | None:
+def parse_date(value: object) -> str | None:
+    """Return an ISO date only when the supported format is unambiguous."""
     if not isinstance(value, str):
         return None
     text = value.strip()
-    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%B %d, %Y"):
+    formats = ["%Y-%m-%d", "%Y/%m/%d", "%B %d, %Y"]
+    # Year-last numeric dates need a day above 12, or a day equal to the month, so that a
+    # month-first reading cannot name a different date.
+    day_first = re.fullmatch(r"([0-9]{1,2})-([0-9]{1,2})-([0-9]{4})", text)
+    if day_first is not None and (int(day_first[1]) > 12 or int(day_first[1]) == int(day_first[2])):
+        formats.append("%d-%m-%Y")
+    for fmt in formats:
         try:
             return dt.datetime.strptime(text, fmt).date().isoformat()
         except ValueError:
@@ -103,7 +110,7 @@ def typed_identity(value: object, declared_type: str | None) -> Hashable | None:
     """*value* read under its declared type, or None when the type or the value cannot be.
 
     None covers two cases a caller comparing values has to treat alike: a column with no
-    declared type, or one this module does not recognise, and a value the declared type
+    declared type, or one this module does not recognize, and a value the declared type
     cannot read, such as ``"unknown"`` in an integer column. Neither is evidence about what
     the value means, so neither may be compared as if it were.
     """
@@ -116,7 +123,7 @@ def typed_identity(value: object, declared_type: str | None) -> Hashable | None:
     elif declared in {"bool", "boolean"}:
         normalized = _boolean(value)
     elif declared == "date":
-        normalized = _date(value)
+        normalized = parse_date(value)
     elif declared in {"str", "string", "text"}:
         normalized = _text(value) if isinstance(value, str) else None
     else:

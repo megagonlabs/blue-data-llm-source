@@ -66,7 +66,7 @@ class TestAnEnumerationThatNamedNothingIsUnsatisfiable:
         assert not [gap for gap in result.meta.gaps if gap.startswith("constraint_dropped")]
 
     def test_a_request_with_no_constraints_at_all_reports_no_such_gap(self) -> None:
-        # The other neighbour: naming a field and failing to fill it is a different fact
+        # The other neighbor: naming a field and failing to fill it is a different fact
         # from never naming one, and only the first is something to report.
         result = fetch({})
 

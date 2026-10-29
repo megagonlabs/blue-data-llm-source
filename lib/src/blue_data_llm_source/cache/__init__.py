@@ -1,9 +1,7 @@
 """Cache stores.
 
-Both implement the ``CacheStore`` protocol in ``types``: ``get`` and ``set``, nothing
-else. The decomposition standard for this layer is an abstract store with an in-memory
-implementation shipped and a persistent backend optional, so neither of these requires a
-server and no code path depends on one being present.
+``MemoryCache`` and ``FileCache`` implement the ``CacheStore`` protocol in ``types``:
+``get`` and ``set``. Neither requires a server.
 """
 
 from __future__ import annotations

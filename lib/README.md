@@ -4,13 +4,20 @@ Python library for querying a language model through the `DataSource` interface 
 
 ## Install
 
+Run these commands from the `blue-data-llm-source` checkout root, in the same root `.venv` used by the [quick start](../docs/quickstart.md):
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
-scripts/install.sh               # blue-data from its checkout, then this package
-BLUE_DATA_PATH=/path/to/blue-data/lib scripts/install.sh   # if it lives elsewhere
+./lib/scripts/install.sh
 ```
 
-The core depends on `blue-data` and `tenacity`. `blue-data` supplies the `DataSource` base class and also installs `pandas`, `numpy`, and `jsonpath-ng`. The `llm` extra adds `litellm` and `diskcache`; both are imported lazily, so the base package and its tests work without them.
+If `blue-data` is not beside this checkout, run the installer with its `lib/` directory instead:
+
+```bash
+BLUE_DATA_PATH=/path/to/blue-data/lib ./lib/scripts/install.sh
+```
+
+The core depends on `blue-data` and `tenacity`. `blue-data` supplies the `DataSource` base class and also installs `pandas`, `numpy`, and `jsonpath-ng`. The installer adds the `dev` and `llm` extras; `llm` supplies `litellm` and `diskcache`. The base package imports neither until needed. Store-dependent tests skip if `diskcache` is absent.
 
 ## LlmSource
 
@@ -20,11 +27,13 @@ LlmSource(name="llm", properties=None, client=None)
 
 `LlmSource` inherits `blue_data.source.source.DataSource` and implements the shared query and metadata surface. The base class provides default empty results for several methods, so a contract test verifies that every required method resolves to `LlmSource`. Transaction methods raise `NotImplementedError`; the supported orchestrator-tool methods are narrowed locally, and `execute_query_nl_tools` is refused.
 
-Inheriting the base class does not make the source reachable by protocol name. `DataRegistry.connect_source` returns the live registered instance while one is present, and reconstructs an equivalent source from the recorded class path once it is not. The route is to build the source yourself and hand the instance to `register_source`. That is enough: the registry records the class alongside `name` and `properties`, and rebuilds an `LlmSource` from that record, so a source registered this way survives a round trip through the registry.
+Inheriting the base class does not make the source reachable by protocol name. `DataRegistry.connect_source` returns the live registered instance while one is present, and reconstructs a new source from the recorded class path and properties once it is not. The route is to build the source yourself and hand the instance to `register_source`. That is enough: the registry records the class alongside `name` and `properties`, and rebuilds an `LlmSource` from that record, so a source registered this way survives a round trip through the registry.
+
+The registry stores the source's own properties, not its injected client or the client's settings. Put ceilings, model and rates on the source when they must survive registration and reconstruction; a rebuilt source starts with the default client.
 
 `properties` carries connection details and configuration. `client` injects a model client, so tests and alternative providers need no subclassing. The full contract is in [Injecting a client](#injecting-a-client) below. In brief, the client provides two methods that take the prompt first and merged per-call properties second, plus an optional method declaring which ceilings it supports.
 
-[COMPATIBILITY.md](COMPATIBILITY.md) records what this library does differently from the data-source design document, and from the behaviour a caller being ported was written against, including the whole budget contract in one place. Read it before porting a caller.
+[COMPATIBILITY.md](COMPATIBILITY.md) covers integration with the `DataSource` base class and migration from the earlier LLM source, including its budget contract. Read it before porting a caller.
 
 ### fetch
 
@@ -36,7 +45,7 @@ afetch(...)   # the async form; fetch() wraps it
 
 `query` is the question. `attrs` is either a list of names or a list of `{"name": ..., "type": ...}` dicts. `context` is free text that may clarify an attribute name. `max_records` caps the returned rows. `llm_fn` is a `(prompt) -> str` callable used as the client for that call. `budget` is a `Budget` you own. When supplied, each fetch derives a child from it, so ceilings accumulate across calls using that budget. Without it, the fetch builds a budget from the configured limits for that call alone.
 
-`fetch` raises `ConfigError` if called from inside a running event loop. Use `afetch` there.
+Synchronous query methods work inside a running event loop by waiting for an owned worker thread. They block the calling thread and delay its cancellation callbacks. Use `afetch` for concurrent async work and for a client or `llm_fn` that needs the caller's own event loop; a synchronous call hangs on such a client. Thread-affine objects, such as an sqlite connection used inside `llm_fn`, fail on the worker thread. Under `asyncio.run` on Python 3.11 and later, the first Ctrl-C cancels the in-flight fetch when the synchronous call runs in the runner's main task. A call in another task observes cancellation only if that task receives the request. In a plain event-loop callback, that signal cancels the runner's main task while the fetch continues; a second Ctrl-C interrupts the waiting thread. Schedule and await `afetch` in a task for cancellable asynchronous work. Once the bridge receives an interrupt or task-cancellation request, it raises as soon as the fetch stops, or after five seconds if the client ignores cancellation; that work then finishes in the background. Time limits cancel the same cooperative way, so they cannot forcibly stop a client that ignores cancellation either. See [`COMPATIBILITY.md`](COMPATIBILITY.md).
 
 Returns a `FetchResult` with `records` and `meta`. A direct Python fetch with rule-backed
 distribution search enabled can also expose an optional `planning_receipt` property; the dataclass
@@ -74,7 +83,7 @@ print(unpriced.bounded, unpriced.max_cost, unpriced.reason)
 ```text
 execute_query(query, database=None, collection=None, optional_properties=None) -> list[dict]
 execute_query_nl(query, database=None, collection=None, schema=None, llm_fn=None,
-                 optional_properties=None) -> list[dict]
+                 optional_properties=None, read_only=True) -> list[dict]
 translate_nl_to_native_query(query, schema, llm_fn) -> str | None
 ```
 
@@ -112,25 +121,28 @@ print(unbounded)
 ```text
 get_nl_tools(database=None, collection=None) -> list[dict]
 execute_nl_tool(name, tool_input, database=None, collection=None,
-                optional_properties=None) -> Any
+                optional_properties=None, read_only=True) -> Any
 ```
 
-`DataSource` offers a tool-calling interface for an orchestrating model: a source advertises tools, and the caller invokes them one at a time. Its tools describe a relational source (databases, collections, columns, row samples, and foreign keys). Four of its eight tools are supported here.
+`DataSource` offers a tool-calling interface for an orchestrating model: a source advertises tools, and the caller invokes them one at a time. Its tools describe a relational source (databases, collections, columns, row samples, and foreign keys). Five of its eight tools are supported here.
 
 | Tool | Returns |
 |------|---------|
 | `list_databases` | `["llm"]`, the one virtual database |
 | `list_collections` | `["public"]`, the one virtual collection |
 | `get_schema` | The virtual entity with its one text attribute, and an empty relation map |
+| `get_sample` | `None`: no stored samples or statistics; no provider call |
 | `execute_query` | The records for `tool_input["query"]`, fetched through the query surface |
 
-The other four are not advertised. `get_metadata`, `get_column_stats`, and `get_relations` return empty results without explanation. `get_sample` raises a `TypeError` in the base dispatcher, which passes `row_sample_size` to `fetch_entity_stats`, a method that takes no such argument. The definitions above come from the base class and are filtered by name, so the advertised schema cannot drift from its dispatcher.
+The other three are not advertised. `get_metadata`, `get_column_stats`, and `get_relations` have no useful stored metadata to return. The advertised definitions come from the shared base class and are filtered by name.
 
-`execute_nl_tool` refuses any other name with a `ConfigError` naming the four that are served. Nothing on this path raises outside `LlmSourceError`, including a name that is not a string and a `tool_input` missing a key the tool requires.
+`execute_nl_tool` refuses any other name with a `ConfigError` naming the five that are served. Nothing on this path raises outside `LlmSourceError`, including a name that is not a string and a `tool_input` missing a key the tool requires.
 
 `execute_query` is the one tool here that reaches a provider, and it takes its ceilings where the query surface takes them: a `limits.*` key in `optional_properties` reaches `execute_query` and binds that call.
 
 `execute_query_nl_tools` is not served and raises `ConfigError`. It can make up to ten provider calls, which this source's ceilings do not govern. `execute_query_nl` is the natural-language route; its spend and time ceilings are enforced.
+
+The shared `commit` key in `optional_properties` is accepted and ignored by this read-only source. Shared `read_only` keywords are accepted by `execute_query_nl`, `execute_nl_tool` and `execute_query_nl_tools`; `False` enables no writes. `execute_query_nl_tools` also accepts `max_sample_size=None` and remains unsupported. All four creation methods accept `overwrite=False`; either value returns `{}` without mutation. `fetch_entity_stats` accepts keyword-only `row_sample_size=10` and returns `None`. Advertised `get_sample` forwards shared `sample_size` to it and returns the same unavailable result, without generating or retaining samples.
 
 ### Metadata
 
@@ -140,7 +152,7 @@ The other four are not advertised. `get_metadata`, `get_column_stats`, and `get_
 
 ## Injecting a client
 
-Injection is structural, and the shape is checked when the client is resolved: a client missing a method, or one whose signature cannot be called as `complete(prompt, properties)`, is refused with a `ConfigError` naming the contract rather than failing later with a raw `TypeError`. What no check can prove is that a client honours a budget it declares, so capability declarations remain its own responsibility. This is the whole contract:
+Injection is structural, and the shape is checked when the client is resolved: a client missing a method, or one whose signature cannot be called as `complete(prompt, properties)`, is refused with a `ConfigError` naming the contract rather than failing later with a raw `TypeError`. What no check can prove is that a client honors a budget it declares, so capability declarations remain its own responsibility. This is the whole contract:
 
 ```python
 from typing import Any, Protocol
@@ -192,12 +204,10 @@ PER_ATTEMPT_BOUND = 0.002
 
 class MyClient:
     def budget_capabilities(self) -> frozenset[str]:
-        return Capability.ALL
+        return frozenset({Capability.CALLS, Capability.COST, Capability.ROWS, Capability.ESTIMATE})
 
     def bound_for_attempt(self, prompt: str, properties: dict[str, Any]) -> float:
-        # The same figure the reservation below claims. Declaring Capability.ALL includes
-        # ESTIMATE, so without this the client says it supports a bounded estimate and
-        # then cannot produce one.
+        # ESTIMATE requires a bound consistent with the reservation below.
         return PER_ATTEMPT_BOUND
 
     def complete(self, prompt: str, properties: dict[str, Any] | None = None) -> str:
@@ -233,11 +243,15 @@ print(result.records)
 print(result.meta.model, result.meta.calls, round(result.meta.cost, 4), result.meta.outcome)
 ```
 
-Claim inside `budget.attempt(...)` and resolve the claim on every exit path. The context manager registers cleanup before taking the claim; `reserve` is also available but leaves a window in which an interrupt can orphan a claim. `settle(actual)` releases any excess, `keep_unpriced()` retains the claim for an attempt that reached the provider but cannot be priced, and `release()` returns the claim for an attempt that never reached the provider. An outstanding claim reduces the budget's remaining headroom.
+This client does not declare `Capability.SECONDS`. A client that awaits a provider must enforce the deadline on that wait before it can promise a time ceiling.
+
+This `MyClient` controls its own settlement; `DefaultLlmClient` keeps at least each contacted reservation under `limits.max_cost`. Claim inside `budget.attempt(...)` and resolve the claim on every exit path. The context manager registers cleanup before taking the claim; `reserve` is also available but leaves a window in which an interrupt can orphan a claim. `settle(actual)` releases any excess, `keep_unpriced()` retains the claim for an attempt that reached the provider but cannot be priced, and `release()` returns the claim for an attempt that never reached the provider. An outstanding claim reduces the budget's remaining headroom.
 
 Declare only capabilities the client can guarantee. `DefaultLlmClient` declares `Capability.ALL` because it makes the provider call itself. `FunctionClient`, which wraps an `llm_fn`, declares only `Capability.ROWS`: it cannot know the function's cost, stop it at a deadline, or determine how many provider calls one invocation makes. A call, cost, or time ceiling on an `llm_fn` is therefore refused rather than settled at zero.
 
 ## Configuration
+
+Source settings override client settings; a call can only tighten the resulting ceilings. For the rules on `None`, zero, retries, row caps, caller-supplied prices, and a per-call model or rates under a configured cost ceiling, see the [compatibility guide](COMPATIBILITY.md#deviations-from-the-earlier-implementation).
 
 Provider settings are `llm.*` keys in `properties`. The accepted set is closed; an unknown key raises `ConfigError` listing the accepted keys.
 
@@ -253,7 +267,7 @@ The numeric keys carry a range as well as a name, checked at the same boundary a
 
 `llm.cache`, `llm.cache_dir`, and `llm.max_parallel` are consumed here and never sent to the provider, and so are `llm.price_per_input_token` and `llm.price_per_output_token`, which supply the rates for a model `pricing.PRICES` does not carry.
 
-Each distinct `llm.cache_dir` opens an on-disk backend that holds file descriptors. A client keeps at most eight open and closes the least recently used beyond that. `DefaultLlmClient.close()` releases them all, and the client is also a context manager. A short-lived script needs neither. A long-lived service that rotates cache directories by tenant or day should close the client, or it may eventually exhaust the process's file descriptors.
+Each distinct resolved `llm.cache_dir` opens an on-disk backend that holds file descriptors. A leading `~` and environment variables are expanded before the directory is checked; unresolved variables are refused. On POSIX systems, the directory must be owned by the current user and inaccessible to group and other users; a new directory is created with mode `0700`. An existing directory with broader permissions is refused without changing it. A client keeps at most eight backends open and closes the least recently used beyond that. `DefaultLlmClient.close()` releases them all, and the client is also a context manager. A long-lived service that rotates cache directories by tenant or day should close the client.
 
 ### Supported models
 
@@ -301,16 +315,16 @@ A bare name in one of OpenAI's naming families (`gpt-`, `chatgpt-`, or `o` and a
 **Known limitations.**
 
 - GPT-5.6 Sol's rates, and so the `gpt-5.6` alias's, are a promotion OpenAI offers through at least 2026-11-21. When the price rises, the table's rates are too low and so is every bound built from them, until the table is updated. Supply `llm.price_per_input_token` and `llm.price_per_output_token` to bound at the new rates in the meantime.
-- LiteLLM's bundled price map, as of LiteLLM 1.102.1, does not know the GPT-6 models. LiteLLM uses that map when `LITELLM_LOCAL_MODEL_COST_MAP=True` is set. Its cost calculator then answers zero, which this package reads as an unknown cost and settles at the [usage bound](#the-cost-bound). The remote price map LiteLLM fetches at import when that variable is not set prices GPT-6 Luna and Sol as of September 2026.
+- LiteLLM's bundled price map, as of LiteLLM 1.102.1, does not know the GPT-6 models. LiteLLM uses that map when `LITELLM_LOCAL_MODEL_COST_MAP=True` is set. Its cost calculator then answers zero, which this package reads as an unknown cost. Under a ceiling the attempt keeps at least its reservation; without a ceiling it reports the [usage bound](#the-cost-bound) where available. The remote price map LiteLLM fetches at import when that variable is not set prices GPT-6 Luna and Sol as of September 2026.
 - With that bundled map, LiteLLM 1.102.1 also rejects `temperature` at effort `none` for a GPT-6 name it does not know. It raises the error inside the attempt, so under a cost ceiling the attempt keeps its reservation like any other failed provider call. Leave `llm.temperature` unset on GPT-6 with that map.
-- The usage bound is conservative. It applies the long-context rates and the regional uplift to every call on a model that has them, and prices every uncached prompt token as a cache write, so a ceiling admits fewer calls than real spend would allow.
-- Regional processing is modelled only as the 10% uplift, always assumed on the models above. Other data-residency pricing is not modelled, and neither is Fast mode: a response served at the `priority` tier is not settled at the usage bound, so under a ceiling it keeps its whole reservation.
+- The usage bound applies the long-context rates and the regional uplift to every call on a model that has them, and prices every uncached prompt token as a cache write. Under a ceiling the reservation remains the minimum charge.
+- Regional processing is modeled only as the 10% uplift, always assumed on the models above. Other data-residency pricing is not modeled, and neither is Fast mode: a response served at the `priority` tier cannot use the usage bound, so under a ceiling it keeps at least its reservation. A higher readable calculator figure raises the ledger charge.
 
 ### Streaming
 
-`llm.stream=True` is accepted. It exists for compatibility and **it does not make anything faster.** A fetch parses one whole JSON document into records, so there is no partial result for a caller to receive: the chunks are read to the end, reassembled into a single response, and handed to the same path a non-streamed response takes. The same records come back, priced the same way, at the same time or slightly later. The reason to set it is that some provider configurations and proxies require or default to a stream, and until now those callers could not use this package at all.
+`llm.stream=True` supports provider configurations and proxies that require a stream. A fetch parses one whole JSON document into records, so chunks are reassembled before parsing. Streaming returns no partial records and offers no latency advantage here; it follows the same pricing path as a non-streamed response.
 
-Streaming changes accounting when the provider omits token counts, which many providers do. In that case the call cannot be priced: the reservation remains at its upper bound, the usage record reports `cost_known=False`, and the fetch reports `accounting_known=False`. The same rule applies whenever a call's cost cannot be read; missing accounting does not make the call free. A stream that includes usage follows the same accounting path as a non-streamed call, including the usage bound [described below](#the-cost-bound).
+Streaming changes accounting when the provider omits token counts, which many providers do. In that case the call cannot be priced: the reservation remains at its upper bound, the usage record reports `cost_known=False`, and the fetch reports `accounting_known=False`. The same rule applies whenever a call's cost cannot be read; missing accounting does not make the call free. A stream that includes usage follows the same accounting path as a non-streamed call.
 
 The reassembled response is not priced from a token count computed here. The provider library's assembler fills in a usage block from a local tokenizer when the stream sent none, and neither those counts nor a price derived from them is what was billed, so both are dropped, not reported as measurements.
 
@@ -318,7 +332,7 @@ The reassembled response is not priced from a token count computed here. The pro
 
 ### Rate limiting
 
-`llm.rate_limit` is **not supported**. Client-side call spacing has to reconcile with per-attempt budget admission and every arrangement tried let one corrupt the other, so it is refused by name with a `ConfigError` rather than implemented. Cap concurrency with `llm.max_parallel`, or throttle above this library where the whole request sequence is visible.
+`llm.rate_limit` is **not supported**. Client-side call spacing can interfere with per-attempt budget admission, so the setting raises `ConfigError`. Cap concurrency with `llm.max_parallel`, or throttle above this library where the whole request sequence is visible.
 
 ## Limits
 
@@ -342,28 +356,32 @@ It bounds **admission and every cooperative wait in `DefaultLlmClient.acomplete`
 
 It is **not** an end-to-end wall-clock guarantee, and Python offers no way to make it one: `asyncio` cannot interrupt code that is not awaiting. Work that does not yield runs to completion and is measured only once it has finished.
 
-**Where the clock starts.** `fetch` and `afetch` normalise the attributes, context, limits and query *before* the run's budget exists; that work is outside the ceiling entirely. The budget is then constructed, or derived from one you supplied. A budget you supplied started its own clock whenever you created it, which may be long before this call. Resolving and shape-checking the client, binding it, building the call metadata and rendering the prompt all happen after construction but before `acomplete`, so they are charged to the ceiling and can only overrun it rather than be stopped by it.
+**Where the clock starts.** `fetch` and `afetch` normalize the attributes, context, limits and query *before* the run's budget exists; that work is outside the ceiling entirely. The budget is then constructed, or derived from one you supplied. A budget you supplied started its own clock whenever you created it, which may be long before this call. Resolving and shape-checking the client, binding it, building the call metadata and rendering the prompt all happen after construction but before `acomplete`, so they are charged to the ceiling and can only overrun it rather than be stopped by it.
 
 **What is excluded.** Inside the window, anything that does not yield:
 
-- **synchronous work inside the answering client**: importing the provider on first use, materialising the response object, and the provider's own cost accounting;
+- **synchronous work inside the answering client**: importing the provider on first use, materializing the response object, and the provider's own cost accounting;
 - **synchronous setup between budget construction and the call**: client resolution and shape checking, call metadata, and prompt rendering, as described above;
-- **work that declines its cancellation**: the deadline cancels the wait and then waits for the cancellation to be acknowledged, so a provider that catches `CancelledError` and keeps going holds the call open. Abandoning it instead was tried and was worse: your own cancellation stopped reaching the work, the abandoned task could be collected mid-flight or keep `asyncio.run` from returning, and it settled real cost into your budget after a result reporting none had already been returned;
+- **work that declines cancellation**: the deadline cancels the wait, then waits for the provider to acknowledge cancellation. A provider that catches `CancelledError` and continues can hold the call open; its eventual cost is still charged to the run;
 - **post-processing after the client returns**: parsing, aligning, verifying, and deduplicating the records, which grows with the size of the response;
 - **a caller-supplied cache store that blocks**, since `CacheStore` is a synchronous protocol and a store that reaches a network is invisible from here;
 - **the synchronous `complete` path and the adapters around it**, which pass the provider a timeout capped at the remaining budget but cannot preempt a provider that ignores it, and whose event-loop startup and shutdown sit outside the measured window entirely.
 
-So `stopped_by: max_seconds` is always truthful about which ceiling was crossed, and a run may report it well after the ceiling (with a large response or a slow store, several times over). Where you need a hard wall-clock stop, impose it above this library, in a task or process you can cancel.
-
-This is the only full description of the time ceiling. Other references link here to avoid duplicate descriptions that could become inconsistent.
+`stopped_by: max_seconds` reports the ceiling crossed, but a large response or slow store may delay the result past that ceiling. For a hard wall-clock stop, impose a deadline above this library, in a task or process you can cancel.
 
 The key names form a closed set. An unknown key, including `limit.*` or a bare `limits`, raises `ConfigError` and lists the accepted names. Values are also validated when the ceiling is built: a wrong type, `bool`, negative number, or non-finite number raises `ConfigError` naming the field. `NaN` is explicitly rejected because every spend comparison with it is false, leaving an apparently configured ceiling unenforced.
 
 ### The cost bound
 
-`llm/pricing.py` produces an upper bound on one call *against the rates it holds*, or refuses. Those rates are a static snapshot of published list prices with no effective date and no freshness check, so everything below bounds the call's size correctly and is only as accurate as the table's prices. If a listed price rises, or an alias or proxy bills differently, the reservation is too small and the difference appears at settlement. Supply `llm.price_per_input_token` and `llm.price_per_output_token` to bound against rates you maintain. The bound is the prompt's length in UTF-8 bytes plus a framing allowance at the model's published input rate, plus the whole `llm.max_tokens` allowance at its output rate. Three rules from the [model table](#supported-models) raise it: a prompt counted at 1,024 tokens or more on a model with a cache-write price is bounded at that price, since the response does not say how much of the prompt was written to cache; a prompt above 272,000 tokens on a model with a long-context tier is bounded at that tier's rates; and a model subject to the regional uplift has 10% added. Supplied rates for a table model are read as its base rates: the same three rules apply to them, and the bound never falls below the table's own. Rates for a model outside the table are used as given, so they must already cover every tier that model can be billed at. Counting bytes rather than dividing them by an average bytes-per-token figure is what makes it a bound: a byte-pair tokenizer merges byte sequences, so every token it emits consumes at least one byte of the encoded prompt and no tokenizer can exceed the count, while an average is exceeded by text of short words, punctuation, or non-Latin script. Counting characters would not have been a bound, although it reads like one, because a tokenizer splits a character whose encoding it has no merge for. The bound is reserved before the attempt and settled when the response arrives. `estimate` reports the reservation, so a request sized against it and a run bounded by it cannot disagree about admission. Neither figure is a claim about what the provider will invoice.
+`llm/pricing.py` bounds one call against its stored rates or refuses the request. The rates are a static snapshot of published list prices, without an effective date or freshness check. A price change or different billing by an alias or proxy can make the reservation too small; later accounting may raise the ledger charge without detecting the full invoice difference. Set `llm.price_per_input_token` and `llm.price_per_output_token` to use rates you maintain.
 
-**Settling the charge.** LiteLLM's cost calculator settles the reservation outright, as a measured cost, when its figure is readable and the model is in the table at table rates with no cache-write price, no long-context tier and no regional uplift. The calculator prices at standard rates, so it cannot prove any of those charges. A calculator zero is never readable for a call that reached the provider, because the calculator answers zero for a model its price map does not carry and for a missing or all-zero usage block, and every request sends a prompt. Every other call under a cost ceiling is charged a usage bound instead, with `cost_known=False`:
+The bound prices the prompt's UTF-8 byte length plus a framing allowance at the input rate and the full `llm.max_tokens` allowance at the output rate. For a model with cache-write or long-context tiers, the pre-call bound applies the most expensive of those rates even below the provider's billing threshold; it also includes the regional uplift where applicable. For a table model, supplied rates are treated as base rates and these adjustments still apply; the bound cannot fall below the table's own rate bound. For a model outside the table, supplied rates must cover every billable tier.
+
+Byte length avoids an average bytes-per-token estimate, which can be exceeded by short words, punctuation, or non-Latin text. For the byte-pair tokenizers used here, each token consumes at least one byte of the encoded prompt; character count does not provide that property. The bound is reserved before provider contact and remains the minimum ledger charge under a cost ceiling. `estimate` reports the same reservation used for admission. Neither amount predicts the provider's invoice.
+
+**Settling the charge.** Under `limits.max_cost`, every attempt that reaches the provider keeps at least its pre-call reservation. A readable LiteLLM calculator figure or a [usage bound](#the-cost-bound) raises that charge when higher. The reported `cost` is the amount charged to the budget ledger, not a claim about the invoice. `cost_known=False` when the reservation or usage bound determines the charge, or when the calculator cannot prove every billed category, even if its readable figure is higher. A readable calculator figure at least as high as the reservation yields `cost_known=True` only for a model priced at table rates without additional billing categories.
+
+LiteLLM can return zero for a model missing from its price map or for missing usage. A contacted call with zero calculator cost is treated as unpriced. The usage bound is calculated as:
 
 ```text
 U = uplift × [ (prompt − cached) × max(input, cache write) × Tin
@@ -371,7 +389,7 @@ U = uplift × [ (prompt − cached) × max(input, cache write) × Tin
              + completion × output × Tout ]
 ```
 
-`Tin` and `Tout` are 2 and 1.5 on a model with a long-context tier and 1 otherwise, and `uplift` is 1.10 on the models it applies to. A readable calculator figure above `U` wins. `U` is built only where every input to it is proven: the rates are the table's own, the model that answered resolves to the same row as the one requested, the response's `service_tier` is `default` or `flex`, and the usage reports whole prompt, completion and cached-token counts with the cached count no larger than the prompt, at least one prompt token, and at least one output token when the answer has text. Where any of those fails, the call keeps its whole reservation, or the greater of the reservation and a readable calculator figure. A `U` above the reservation is charged in full and recorded as crossing the ceiling, because the call has already been made.
+`Tin` and `Tout` are 2 and 1.5 on a model with a long-context tier and 1 otherwise, and `uplift` is 1.10 on the models it applies to. `U` requires table rates, a matching answered model, a `default` or `flex` service tier, valid prompt, completion and cached-token counts, at least one prompt token, and at least one output token when the answer has text. It can raise the ledger charge above the reservation, but cannot lower it. A charge above the ceiling is recorded after the contacted attempt because that call has already happened.
 
 Without a cost ceiling nothing is reserved. A readable calculator figure is reported as measured; an unreadable one is reported as `U` where it can be built, and otherwise as zero, both with `cost_known=False`.
 
@@ -379,27 +397,24 @@ Without a cost ceiling nothing is reserved. A readable calculator figure is repo
 
 `meta.cost` and a usage record's `cost` depend on whether a cost ceiling was set, which model answered, and whether LiteLLM's calculator could price the call. Read `accounting_known` (`cost_known` on a usage record) first.
 
-| Cost ceiling | Model and rates | Calculator figure | `cost` | `accounting_known` |
-|---|---|---|---|---|
-| none | any | readable | the calculator's figure | true |
-| none | a table model at table rates | zero or unreadable | the usage bound `U`, where the response proves its inputs | false |
-| none | a model outside the table, or `U` cannot be built | zero or unreadable | `0`, meaning not measured | false |
-| set | a table model at table rates with no cache-write price, long-context tier or regional uplift: GPT-5, GPT-4.1, GPT-4o, the o-series and the older GPT rows | readable | the calculator's figure | true |
-| set | a table model at table rates with any of those: GPT-6, GPT-5.6, GPT-5.5 and the GPT-5.4 family | any | the greater of `U` and a readable figure, or the reservation where `U` cannot be built | false |
-| set | a table model whose calculator figure is zero or unreadable | zero or unreadable | `U`, or the reservation where `U` cannot be built | false |
-| set | a model outside the table, or caller-supplied rates | any | the greater of the reservation and a readable figure | false |
+| Cost ceiling | Calculator figure | `cost` | `accounting_known` |
+|---|---|---|---|
+| none | readable | the calculator figure | true |
+| none | zero or unreadable | `U` where its inputs are proven, otherwise `0` (unmeasured) | false |
+| set | readable for a table model at table rates without extra billing categories, and at least the reservation | the calculator figure | true |
+| set | any other response | at least the reservation; a higher readable figure or `U` wins | false |
 
 A cache hit costs `0` and is measured. An answer from an `llm_fn` reports `0` with `accounting_known` false, because nothing here can see what the callable spent.
 
 Where the bound cannot be established, `limits.max_cost` raises `ConfigError` rather than claiming an invented figure. That happens when the model has no published price, since a model this table has never heard of may cost more than anything in it, and when `llm.max_tokens` is not a finite positive number, since output with no cap can run until the provider stops it. `pricing.rates_for` returns `None` for an unlisted model and `pricing.can_bound` answers the question without raising. No bound is computed at all when no cost ceiling is configured, so a run bounded on calls or rows is never refused over an unfamiliar model.
 
-**The minimum cost bound is the full output allowance.** The prompt contributes relatively little; `llm.max_tokens` at the model's output rate, with the regional uplift where it applies, contributes the rest. With the default `gpt-6-luna` model and `llm.max_tokens=25000`, the minimum is about $0.01375. A lower `limits.max_cost` refuses the call before provider contact. Reduce `llm.max_tokens` when the answer needs fewer tokens.
+**The minimum cost bound is the full output allowance.** The prompt contributes relatively little; `llm.max_tokens` at the model's output rate, with the long-context output multiplier and regional uplift where they apply, contributes the rest. With the default `gpt-6-luna` model and `llm.max_tokens=25000`, the output-only floor is about $0.020625. A lower `limits.max_cost` refuses the call before provider contact. Reduce `llm.max_tokens` when the answer needs fewer tokens.
 
-`pricing.resolve_rates` accepts `llm.price_per_input_token` and `llm.price_per_output_token`, supplied together, for a model the table does not carry. For such a model the rates are used as given, so they must already cover every tier it can be billed at: cache writes, a long-context tier, regional processing. For a model the table does carry, supplied rates are read as its base input and output rates: the entry's cache-write ratio, long-context tier and regional uplift still apply to them, and the bound is never lower than the table's own, so supplying the published base rates cannot drop a charge the model is known to carry. Both are accepted `llm.*` overrides, consumed by the client and never forwarded to the provider, so an unlisted model can be given a cost ceiling by whoever knows what it costs. Supplying one commits you to both, and a value that is not a finite positive number is refused instead of being passed over in favour of the table, since an override that was meant and then ignored produces a bound lower than the one you asked for.
+`pricing.resolve_rates` accepts `llm.price_per_input_token` and `llm.price_per_output_token`, supplied together, for a model the table does not carry. For such a model the rates are used as given, so they must already cover every tier it can be billed at: cache writes, a long-context tier, regional processing. For a model the table does carry, supplied rates are read as its base input and output rates: the entry's cache-write ratio, long-context tier and regional uplift still apply to them, and the bound is never lower than the table's own, so supplying the published base rates cannot drop a charge the model is known to carry. Both are accepted `llm.*` overrides, consumed by the client and never forwarded to the provider, so an unlisted model can be given a cost ceiling by whoever knows what it costs. Supplying one commits you to both, and a value that is not a finite positive number is refused instead of being passed over in favor of the table, since an override that was meant and then ignored produces a bound lower than the one you asked for.
 
 ### Which ceilings bind
 
-A ceiling binds only on an axis the answering client declares through `budget_capabilities()`, and each configured ceiling on an undeclared axis raises `ConfigError` at the first fetch naming that ceiling and what the client did declare. Reporting a ceiling that is not holding anything is worse than declining to hold it, because the caller believes it. `limits.max_rows` binds any client, since the records are counted here.
+A ceiling binds only on an axis the answering client declares through `budget_capabilities()`. A configured ceiling on an undeclared axis raises `ConfigError` at the first fetch, naming that ceiling and what the client declared. `limits.max_rows` binds any client, since the records are counted here.
 
 The practical case is `llm_fn`. `FunctionClient` declares rows alone, so `limits.max_calls`, `limits.max_cost`, or `limits.max_seconds` on a run that supplies `llm_fn` is refused.
 
@@ -443,7 +458,7 @@ separately and merged on the way back. Nothing selects a shape for you.
 |---|---|---|
 | `plan.mode` | `flat` | `flat` asks once. `partitioned` splits the ask by a key the analysis found. `row_by_row` asks once per entity in a list the analysis found. An unknown value raises `ConfigError`. |
 | `plan.max_continuations` | `0` | How many times a part may ask again for records it did not get. At `0` each part asks once. It bounds asks per part, not provider attempts or planning calls; each ask may still be retried up to `limits.max_retries` times, three attempts by default. |
-| `plan.max_leaves` | `100` | Most terminal slices. An expansion that cannot fit is rejected as a whole; row-by-row falls back to the intact batch slice rather than running a prefix. |
+| `plan.max_leaves` | `100` | Most terminal slices. Partitioned root values are grouped when over the cap; later expansions that cannot fit stay intact, and row-by-row keeps its batch slice. |
 | `plan.key` | none | The attribute identifying a record, so parts returning the same record merge. Must be one of the attributes you asked for. |
 | `plan.partition_key` | none | Preferred root split dimension. Descendants may choose another dimension and cannot repeat an ancestor dimension. |
 | `plan.max_depth` | `2` | Deepest partition level. `0` disables subdivision while retaining non-flat bootstrap analysis. |
@@ -461,13 +476,13 @@ separately and merged on the way back. Nothing selects a shape for you.
 | `plan.filter_enforcement` | `flag` | What happens to a record whose checkable filter column contradicts its leaf's filter. `flag` keeps it; `drop` removes it at the leaf, before reduction merges it into anything. Both count it in `meta.filter_contradictions`. `drop` is refused in `flat` mode, which has no filter. |
 | `plan.range_filters` | `False` | In `partitioned` mode, reads a partition proposal written as integer spans, such as `1946–1952`, on a column the schema declares `int` or `integer`, as inclusive `Range` filters instead of exact text that no record's value can equal. The spans must not overlap and each must start at or below its end, or the proposal is refused with the reason. Requires `plan.leaf_prompt="keyed-leaf-fetch-2"`, because a range travels only on that contract's wire version. |
 | `plan.partition_guardrails` | `False` | In `partitioned` mode, sends the `partition-2` proposal prompt, which adds generic rules: no identifier or continuous-measurement keys, no placeholder or catch-all values, and a value count calibrated against the slice's own row estimate and `plan.target_rows_per_leaf`. It also refuses a proposed key the schema declares `int`, `integer`, `float` or `number` unless its values are integers or integer spans covering at most 1,000 integers; the reason appears in `meta.gaps` as `guard_collapsed`. Adds no call. |
-| `plan.split_policy` | `always` | In `partitioned` mode, whether the root always splits (`always`, the 2.1.0 behaviour) or is asked once first (`evidence`). Under `evidence` the root leaf runs once as a probe, with no continuation. The plan splits only when the provider says the probe's answer hit its output allowance, the answer ended mid-document and only its complete records could be read, the probe failed outright (reported as a `probe_failed` gap), or the probe holds fewer than half the keys an estimate above `plan.split_threshold_rows` expects. Otherwise the probe's answer is the result, with no proposal call. The probe is a single ask even when `plan.max_continuations` is set, and a probe that meets `plan.exact_rows` is accepted unless its answer was cut, by the output allowance or mid-document; a target of zero asks nothing and reports no `split_decision`. When the plan does split, the probe's records are merged with the children's under the origin `root`, and every child is told which keys the probe already holds, bounded by `plan.max_excluded_keys` and `plan.max_exclusion_bytes`. The probe is one more logical call in every published bound. `meta.split_decision` says what was decided. Refused outside `partitioned`. |
+| `plan.split_policy` | `always` | In `partitioned` mode, whether the root always splits (`always`, the 0.2.1.0 behavior) or is asked once first (`evidence`). Under `evidence` the root leaf runs once as a probe, with no continuation. The plan splits only when the provider says the probe's answer hit its output allowance, the answer ended mid-document and only its complete records could be read, the probe failed outright (reported as a `probe_failed` gap), or the probe holds fewer than half the keys an estimate above `plan.split_threshold_rows` expects. Otherwise the probe's answer is the result, with no proposal call. The probe is a single ask even when `plan.max_continuations` is set, and a probe that meets `plan.exact_rows` is accepted unless its answer was cut, by the output allowance or mid-document; a target of zero asks nothing and reports no `split_decision`. When the plan does split, the probe's records are merged with the children's under the origin `root`, and every child is told which keys the probe already holds, bounded by `plan.max_excluded_keys` and `plan.max_exclusion_bytes`. The probe is one more logical call in every published bound. `meta.split_decision` says what was decided. Refused outside `partitioned`. |
 | `plan.split_threshold_rows` | `120` | Under `plan.split_policy="evidence"`, the estimate above which a short probe answer triggers a split. A value other than 120 is refused with any other policy. |
 | `plan.distribution_search` | `False` | Direct-Python-only opt-in for rule-backed distribution selection. Requires `partitioned`. |
 | `plan.identity_partitions` | empty | Direct-Python-only list of versioned finite-domain rule mappings accepted by `IdentityPartitionRule.from_dict()`. |
 | `plan.max_strategy_candidates` | `5` | Direct-Python-only candidate bound. Must be at least `1` when distribution search is enabled. |
 
-The five settings from `plan.leaf_prompt` to `plan.partition_guardrails` are experimental. `plan.leaf_prompt="keyed-leaf-fetch-2"` reduced recall with GPT-4o in internal testing and is not recommended. `plan.split_policy="evidence"` improved recall with GPT-4o in an internal benchmark and has not been measured on other models; the [changelog](../CHANGELOG.md#220--candidate) gives the figures.
+The five settings from `plan.leaf_prompt` to `plan.partition_guardrails` are experimental. `plan.split_policy="evidence"` is opt-in. Neither an accepted probe nor a completed split establishes that every matching record was found.
 
 ### Rule-backed distribution search
 
@@ -514,8 +529,8 @@ the distribution calls when distribution search is on, then the leaves. With the
 partitions at depth two and 100 leaves, and the default schedule, that is 124: three fact calls, at
 most 21 partition proposals (one per node that can split, the root and its twenty children) and at
 most 100 leaves. With the default retries that is 372 provider attempts. At the flat per-attempt bound
-of a short request, about $0.0138 on `gpt-6-luna` and $0.0431 on `gpt-4o`, the worst case is roughly
-$5.15 and $16.05; leaf prompts carry their constraints and are a little longer.
+of a short request, about $0.0209 on `gpt-6-luna` and $0.0431 on `gpt-4o`, the worst case is roughly
+$7.76 and $16.05; leaf prompts carry their constraints and are a little longer.
 A fetch is not refused against that figure. Each planning call and each provider attempt is admitted
 against the ceiling when it is made, so a ceiling below the worst case stops the run where the money
 runs out and reports it in `stopped_by`.
@@ -561,7 +576,7 @@ zero. Flat mode, an unknown estimate, or a bootstrap transformation rejected dur
 diagnostics, including planning fallback, failed or unserved tasks, and discarded records. An empty
 gap list says only that no supported diagnostic fired.
 
-**Read `accounting_known` before reading `cost`.** It is `False` when the answer came from a caller-supplied `llm_fn`, when provider accounting is unreadable, or when a call under a hard cost ceiling was charged a usage bound or its reservation because the response does not prove every billed category ([settling the charge](#the-cost-bound)). In those cases `cost` is conservative bookkeeping, not an exact invoice. For an `llm_fn`, a `cost` of `0.0` means "not measured", not "free", and a `calls` value counts invocations of the callable rather than provider requests.
+**Read `accounting_known` before reading `cost`.** It is `False` when the answer came from a caller-supplied `llm_fn`, when provider accounting is unreadable, or when a call under a hard cost ceiling was charged its reservation or a higher usage bound, or its calculator could not prove every billed category ([settling the charge](#the-cost-bound)). In those cases `cost` is the conservative ledger charge, not an exact invoice. For an `llm_fn`, a `cost` of `0.0` means "not measured", not "free", and a `calls` value counts invocations of the callable rather than provider requests.
 
 `unmapped_keys` matters. When the model returns a key that cannot be matched to a requested attribute, the key is reported there rather than dropped in silence. `key_collisions` is the same idea for the opposite problem: when two returned keys map to one requested attribute, the first wins and the second is reported with the value it carried, because which spelling the model meant is not knowable here. Two occurrences of the identical key inside one JSON object are a different case and raise `ParseError`, since there the two values have nothing to tell them apart by and Python's decoder would otherwise keep the last of the pair without a trace.
 
@@ -583,9 +598,9 @@ by reduction produce `filtered_to_empty`.
 
 No other exception type escapes `fetch`, `afetch`, or `estimate`. Unexpected exceptions are wrapped in `LlmSourceError` with the original attached as `__cause__`, so callers can catch the library root while maintainers retain the original type. `KeyboardInterrupt` and cancellation are not caught. The three entry points enforce this boundary directly.
 
-`ConfigError` covers more than a bad key. A ceiling configured on an axis the resolved client does not declare raises one, as does an unknown or invalid `limits.*` value, and so does a `limits.max_cost` whose bound cannot be established because the model has no published price or `llm.max_tokens` is not a finite positive number. `QueryError` covers the same attribute requested twice. Two *distinct* names whose fuzzy forms coincide (`first name` and `first_name`, or two scripts a normaliser flattens together) are not refused: the fuzzy index simply drops the entry it cannot separate, so exact keys still match and a key that only matches fuzzily is reported in `meta.unmapped_keys` rather than assigned by guess.
+`ConfigError` covers more than a bad key. A ceiling configured on an axis the resolved client does not declare raises one, as does an unknown or invalid `limits.*` value, and so does a `limits.max_cost` whose bound cannot be established because the model has no published price or `llm.max_tokens` is not a finite positive number. `QueryError` covers the same attribute requested twice. Two *distinct* names whose fuzzy forms coincide (`first name` and `first_name`, or two scripts a normalizer flattens together) are not refused: the fuzzy index simply drops the entry it cannot separate, so exact keys still match and a key that only matches fuzzily is reported in `meta.unmapped_keys` rather than assigned by guess.
 
-A missing provider credential is **not** a `ConfigError`. This library never reads a credential, so it cannot find one missing; the provider SDK reports it as a failed call, which arrives as a `TransportError`. Read a `TransportError` mentioning credentials as "the key is absent or wrong" rather than as a network fault.
+A missing provider credential is **not** a `ConfigError`. The provider SDK handles authentication. With no answered extraction response and no retained records, a failed attempt raises `TransportError` if the retry policy is exhausted or `max_calls` prevents the next retry. If `max_cost` or `max_seconds` refuses that retry, or a ceiling refuses the first attempt, the fetch returns `stopped_by_limit`. If an extraction response has already been parsed, the fetch keeps its records with `outcome=partial` and a gap for the failed part. The library reads credential environment values only to mask diagnostic text. A `TransportError` mentioning credentials may indicate an absent or invalid key.
 
 `BudgetExceeded` raised inside a fetch does not reach the caller. A refusal before any extraction
 answer returns no records with `outcome=stopped_by_limit`. If later work is refused after an
@@ -596,13 +611,15 @@ stop fields name the axis. `BudgetExceeded` remains public for callers driving a
 
 ## Tests
 
+Run these commands from `lib/` after installing the `dev` and `llm` extras in the active environment.
+
 ```bash
 python -m pytest tests/unit -q
 ```
 
 Unit tests only. Every I/O boundary is doubled and no test touches the network. Coverage is not collected by default and no threshold is enforced; pass `--cov=src` to `pytest` to measure it.
 
-For the type check, create a `.venv` in this directory before installing. `pyproject.toml` points `pyright` at it, and without one pyright reports every import as unresolved instead of real typing errors:
+The Pyright development gate uses a separate `lib/.venv` because `pyproject.toml` points there. Create it from `lib/` and install the development dependencies in it before running that gate:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -618,4 +635,4 @@ The test prints the path of the `blue_data` package it inspected and includes th
 
 ## Distribution
 
-None of the three packages is on PyPI or on an internal index. Install from source; `blue-data` must be installed first. See [Install](#install) above and the dependency section of the top-level [README](../README.md). References in design documents to how these packages are "distributed" describe the intended route, which is not currently available.
+None of the three packages is on a package index. Install from source; `blue-data` must be installed first. See [Install](#install) above and the dependency section of the top-level [README](../README.md).

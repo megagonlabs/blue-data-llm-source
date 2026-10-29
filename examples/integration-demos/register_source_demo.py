@@ -4,7 +4,8 @@
 does not register it under a protocol name. Build the instance and pass it to
 ``DataRegistry.register_source``. The registry records the class path, ``name``, and
 ``properties``. While the live instance exists, ``connect_source`` returns it; after it is
-dropped, the registry rebuilds an equivalent source from the recorded information.
+dropped, the registry rebuilds a source from the recorded class and properties, without
+the injected client.
 
 From there the source answers through the shared surface: ``execute_query_nl`` for a
 natural-language string, ``execute_query`` for a dict carrying an ``op``. Both take a
@@ -64,7 +65,11 @@ def main() -> None:
     print("registered sources ", registry.list_sources())
     recorded = registry.get_source_properties("llm")
     print("recorded class     ", recorded["_class"])
-    print("recorded connection", recorded["connection"])
+    connection = recorded["connection"]
+    print(
+        "recorded connection",
+        {"protocol": connection["protocol"], "variant": connection["variant"]},
+    )
     print("recorded model     ", recorded["llm.model"])
 
     print()

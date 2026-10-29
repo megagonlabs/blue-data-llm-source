@@ -1,4 +1,4 @@
-1. types declared and honoured
+1. types declared and honored
   response       [{"name": "ETH Zurich", "founded": 1855}]
   records        [{'name': 'ETH Zurich', 'founded': 1855}]
   outcome        ok
@@ -35,7 +35,7 @@
   unchecked      []
 
 5. a key nobody asked for: reported rather than discarded quietly
-  response       [{"name": "ETH Zurich", "founded": 1855, "rector": "Joel Mesot"}]
+  response       [{"name": "ETH Zurich", "founded": 1855, "rector": "Example Rector"}]
   records        [{'name': 'ETH Zurich', 'founded': 1855}]
   outcome        ok
   unmapped keys  ['rector']
@@ -80,7 +80,7 @@
   unchecked      []
 
 10. a record answering none of the requested attributes is dropped entirely
-  response       [{"rector": "Joel Mesot"}]
+  response       [{"rector": "Example Rector"}]
   records        []
   outcome        filtered_to_empty
   unmapped keys  ['rector']

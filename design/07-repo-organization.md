@@ -12,8 +12,7 @@ blue-data-llm-source/
 ├── README.md                               # what the source is, quick start, dependency posture
 ├── .gitignore                              # environments, caches, build output, direnv files
 │
-├── design/                                 # design documents 01 through 13, the process
-│                                           #   note, and the layout template
+├── design/                                 # numbered design documents
 │
 ├── docs/                                   # reader documentation
 │   ├── README.md                           # the map into the rest of this directory
@@ -23,27 +22,26 @@ blue-data-llm-source/
 │   ├── guide.md                            # the long-form walkthrough
 │   ├── api-reference.md                    # the library surface
 │   ├── architecture.md                     # the shape of the code, for a contributor
-│   ├── extending.md                        # clients, cache stores, and prompts
+│   ├── extending.md                        # clients, cache stores, prices, and budgets
 │   ├── cli.md                              # the `blue-llmdb` command reference
-│   ├── mcp.md                              # the MCP tool reference
-│   └── api.md                              # states that there is no HTTP interface
+│   └── mcp.md                              # the MCP tool reference
 │
 ├── examples/                               # runnable scripts, each beside its captured stdout
 │   ├── README.md                           # what each one shows, and what it needs to run
 │   ├── backends/                           # the client axis and the cache axis
-│   ├── feature-demos/                      # one behaviour each
+│   ├── feature-demos/                      # one behavior each
 │   ├── framework-demos/                    # the source inside an agent framework
 │   ├── integration-demos/                  # the source inside a registry
 │   └── scenario-demos/                     # a whole task, end to end
 │
-├── lib/                                    # Python library (blue-data-llm-source PyPI package)
+├── lib/                                    # blue-data-llm-source Python library
 │   ├── pyproject.toml                      # package metadata, extras, tool config
 │   ├── README.md                           # library usage and API reference
-│   ├── COMPATIBILITY.md                    # deviations from the spec and the earlier implementation
+│   ├── COMPATIBILITY.md                    # DataSource integration and migration
 │   ├── scripts/
 │   │   ├── build.sh                        # build wheel and sdist
 │   │   ├── install.sh                      # editable install with the dev and llm extras
-│   │   └── publish.sh                      # publish to PyPI
+│   │   └── publish.sh                      # check and upload current-version archives
 │   ├── src/
 │   │   └── blue_data_llm_source/
 │   │       ├── __init__.py                 # re-exports the facade, types, clients, and constants
@@ -51,7 +49,9 @@ blue-data-llm-source/
 │   │       ├── _constants.py               # protocol, variant, op codes, virtual hierarchy names
 │   │       ├── types.py                    # data contracts, protocols, exception hierarchy
 │   │       ├── checks.py                   # argument validation with model-readable messages
+│   │       ├── redaction.py                # credential-shaped diagnostic masking
 │   │       ├── source.py                   # LlmSource — facade and both query surfaces
+│   │       ├── views.py                    # result metadata views
 │   │       │
 │   │       ├── prompts/
 │   │       │   └── __init__.py             # every prompt, plus rendering and building
@@ -68,8 +68,10 @@ blue-data-llm-source/
 │   │       │   ├── partition_safety.py     # finite identity rules and accepted decisions
 │   │       │   ├── plan.py                 # FetchPlan and its versioned wire form
 │   │       │   ├── receipt.py              # closed optional distribution-planning receipt
+│   │       │   ├── ranges.py               # bounded range filters for partitioned retrieval
 │   │       │   ├── schedules.py            # the five closed planning schedules
 │   │       │   ├── schema.py               # schema and ordered primary-key contracts
+│   │       │   ├── split_gate.py           # evidence-based root split decision
 │   │       │   └── transport.py            # versioned LeafTask execution DTO
 │   │       │
 │   │       ├── execution/                  # accepted plan to bounded extraction
@@ -95,6 +97,7 @@ blue-data-llm-source/
 │   │       │   ├── aligner.py              # key-to-attribute mapping, Alignment
 │   │       │   ├── verifier.py             # type coercion and mismatch reporting
 │   │       │   ├── identity.py             # normalized scalar and composite key identity
+│   │       │   ├── obedience.py            # filter contradiction checks
 │   │       │   └── coverage.py             # deduplication and observed key coverage
 │   │       │
 │   │       └── compat/                     # the older adapter name, now an alias
@@ -118,7 +121,7 @@ blue-data-llm-source/
 │           ├── test_source_budget.py       # limits reaching the result
 │           ├── test_estimate.py            # the cost bound answered before a call
 │           ├── test_packaging.py           # the dependency line: blue_data yes, blue no
-│           ├── test_source_fixtures.py     # the worked examples from the source spec
+│           ├── test_source_fixtures.py     # source behavior examples
 │           ├── test_cassette_fixtures.py   # the same examples replayed from recordings
 │           ├── test_checks.py              # argument validation and message content
 │           ├── test_types.py               # contracts and the exception hierarchy
@@ -135,7 +138,7 @@ blue-data-llm-source/
 │                                           #   and the scan for claims the runtime contradicts
 │
 └── platform/                               # external interface services
-    ├── llm-cli/                            # CLI (blue-data-llm-cli PyPI package)
+    ├── llm-cli/                            # blue-data-llm-cli command-line package
     │   ├── pyproject.toml                  # depends on lib, click, rich; entry point `blue-llmdb`
     │   ├── README.md                       # command reference; every command in it is run by a test
     │   ├── scripts/{build.sh,install.sh,publish.sh}
@@ -144,14 +147,14 @@ blue-data-llm-source/
     │   │       ├── commands.py             # the command tree: data, model, metadata
     │   │       ├── profile.py              # the `profile` group, family-standard
     │   │       ├── profile_spec.json       # this CLI's own configuration parameters
-    │   │       ├── configstore.py          # profile store, precedence chain, secret storage
+    │   │       ├── profile_adapter.py      # protected shared-profile I/O and invocation cleanup
     │   │       ├── config.py               # option translation, error vocabulary, the streams
     │   │       └── formats.py              # one renderer for table, json, nl and csv
     │   └── tests/
     │       └── unit/                       # commands, profiles, config, formats, errors,
     │                                       #   and the README walkthrough
     │
-    └── llm-mcp/                            # MCP server (blue-data-llm-mcp PyPI package)
+    └── llm-mcp/                            # blue-data-llm-mcp server package
         ├── pyproject.toml                  # depends on lib and mcp; entry point blue-data-llm-mcp
         ├── README.md                       # tool reference and client configuration
         ├── scripts/{build.sh,install.sh,publish.sh}
@@ -172,7 +175,7 @@ blue-data-llm-source/
 
 All business logic lives under `lib/src/`. The `src/` layout prevents accidental imports from the project root. The test suite adds `src` to the path through `pythonpath` in `pyproject.toml`, so tests run against the working tree; packaging gates exercise the installed artifact.
 
-Two documents sit beside the code. `README.md` also serves as the API reference. `COMPATIBILITY.md` records how this library differs from the source design document and the earlier platform implementation, along with the reason for each difference. This gives anyone porting a caller one place to review them.
+Two documents sit beside the code. `README.md` also serves as the API reference. `COMPATIBILITY.md` covers `DataSource` integration and migration from the earlier LLM source.
 
 `lib/scripts/` provides three scripts:
 
@@ -180,7 +183,7 @@ Two documents sit beside the code. `README.md` also serves as the API reference.
 |--------|---------|
 | `build.sh` | Builds the wheel and sdist via `python -m build` |
 | `install.sh` | Installs the package in editable mode with the `dev` and `llm` extras |
-| `publish.sh` | Publishes to PyPI via `twine upload` |
+| `publish.sh` | Requires an HTTPS repository URL, then checks and uploads the current version's wheel and sdist |
 
 ### Module-to-architecture mapping
 
@@ -201,7 +204,7 @@ Two documents sit beside the code. `README.md` also serves as the API reference.
 | `reduction/verifier.py` | Reduction: type coercion, mismatch reporting, and deduplication |
 | `reduction/identity.py`, `reduction/coverage.py` | Reduction: normalized composite identity, deduplication, marginal yield, incomplete keys, and collision evidence |
 | `types.py` | Shared contracts: `Attr`, `Usage`, `Outcome`, `Capability`, `ExecMeta`, `Estimate`, `FetchResult`, the protocols including `BudgetAwareClient`, and the exception hierarchy |
-| `_constants.py` | Shared vocabulary: protocol, variant, the three op codes, the synthesised hierarchy, and the budget and usage-sink property keys |
+| `_constants.py` | Shared vocabulary: protocol, variant, the three op codes, the synthesized hierarchy, and the budget and usage-sink property keys |
 | `compat/blue_data.py` | Backwards-compatible alias for `LlmSource`, kept for an older import |
 
 ### One prompt module
@@ -221,7 +224,7 @@ layers from owning each other's types while giving platform adapters one stable 
 
 ### `design/` and `docs/`
 
-The repository has two documentation directories for different readers. `design/` holds numbered documents describing the repository and its design, along with the process note and layout template; it is for people changing the design. `docs/` is for users and includes a quickstart, feature guide, and per-interface references. A claim belongs in one directory and should be linked from the other rather than copied.
+The repository has two documentation directories for different readers. `design/` holds numbered documents describing the repository and its design; it is for people changing the design. `docs/` is for users and includes a quickstart, feature guide, and per-interface references. A claim belongs in one directory and should be linked from the other rather than copied.
 
 ### `platform/`: external interface services
 
@@ -242,7 +245,7 @@ Each service follows the same internal structure:
 | `src/<package>/` | Interface adapter code, split into declaration and translation |
 | `tests/unit/` | Unit tests for the adapter layer |
 
-Both services separate declaration from translation, for the same reason. The CLI keeps every mapping between what a person typed and what the library accepts in `config.py`, every rendering decision in `formats.py`, and the profile engine in `configstore.py`, so `commands.py` is option declaration and printing and `profile.py` is the Click layer over the engine. The MCP server keeps the tool specifications and the argument translation in `tools.py`, which imports nothing from the protocol SDK, so `server.py` owns the transport alone. In both cases the modules a test cares about are the ones with no framework in them.
+Both services separate declaration from translation, for the same reason. The CLI keeps every mapping between what a person typed and what the library accepts in `config.py`, every rendering decision in `formats.py`, and shared configuration integration in `profile_adapter.py`, so `commands.py` is option declaration and printing and `profile.py` is the Click layer over the engine. The MCP server keeps the tool specifications and the argument translation in `tools.py`, which imports nothing from the protocol SDK, so `server.py` owns the transport alone. In both cases the modules a test cares about are the ones with no framework in them.
 
 Each service's `pyproject.toml` adds the library's source directory to the test path, so the suites run against a checkout without an install step.
 
@@ -261,7 +264,7 @@ both included stores against the published protocol.
 
 `test_packaging.py` checks a repository-wide dependency boundary rather than one module. It scans the package for an import of `blue` or `blue_data_ops` and fails on either, because this package depends on the data layer but not the orchestration layer above it.
 
-`llm/` also holds `test_pricing.py`, which covers the bound both the cost ceiling and `estimate` rest on, and `test_models.py`, which covers each model's request contract, rates and settlement. `lib/tests/cassettes/` holds four recorded provider responses and a receipt stating what the recording round cost. `test_cassette_fixtures.py` replays them through the real pipeline, so the specified worked examples are covered end to end with no network connection. `record_cassettes.py` sits beside the suite rather than in it, because it is the one thing here that makes real calls, and it is run by hand when a prompt change makes the recordings stale.
+`llm/` also holds `test_pricing.py`, which covers the bound both the cost ceiling and `estimate` rest on, and `test_models.py`, which covers each model's request contract, rates and settlement. `lib/tests/cassettes/` holds four recorded provider responses and a receipt stating their costs. `test_cassette_fixtures.py` replays them through the real pipeline without a network connection. `record_cassettes.py` makes real calls and is run by hand when a prompt change makes the recordings stale.
 
 `lib/tests/doubles/` holds the doubles the suite needs, one per boundary the package owns:
 

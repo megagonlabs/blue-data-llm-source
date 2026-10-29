@@ -1,18 +1,7 @@
-"""How many records an ask should yield, as a bucket rather than a number.
+"""Represent estimated row counts as buckets for partition planning.
 
-There is no benchmark to calibrate an estimator against, so a point estimate would be an
-unchecked number driving real decisions. A bucket is coarse enough to be defensible and
-is used only to size partitioning depth and per-leaf quota.
-
-The member that earns this module is ``UNKNOWN``. The obvious alternative — returning
-``0`` when no count can be read — puts a failed estimate below every threshold, so it
-becomes indistinguishable from a genuinely small one and quietly selects the cheapest
-plan. It reaches further than the plan shape, too: zero is falsy, so a continuation loop
-guarded on a truthy estimate takes its no-estimate branch and stops after a single call.
-The queries that most need decomposition are exactly the ones whose size could not be
-estimated, so that is the worst possible direction to fail in.
-
-So an absent estimate is its own member here, and it is never a number.
+An unreadable estimate is ``UNKNOWN``, distinct from a count of zero. Treating it as
+zero would suppress partitioning and continuations for requests of unknown size.
 """
 
 from __future__ import annotations
@@ -335,10 +324,7 @@ def from_reported(reported: object) -> str:
         return bucket_of(int(reported)) if reported >= 0 else Cardinality.UNKNOWN
     if isinstance(reported, str):
         text = reported.strip().replace(",", "")
-        # Only a bare number counts. Scanning prose for the first run of digits reads
-        # "between 2 and 300 depending on the year" as an estimate of two. A number
-        # embedded in a sentence is not a figure to trust, and UNKNOWN is the honest
-        # reading of it.
+        # Accept only a bare number; a number embedded in prose is ambiguous.
         if text.isdigit():
             return bucket_of(int(text))
         return Cardinality.UNKNOWN
@@ -365,10 +351,8 @@ def upper_bound(estimate: str) -> int | None:
 def for_sizing(estimate: str) -> str:
     """The bucket used to size depth and quota, given what the estimate said.
 
-    ``UNKNOWN`` is sized as ``HUNDREDS``. Under-collection is the failure this package
-    exists to fix, so an absent estimate plans for more rows rather than fewer. The
-    committed budget bound is what makes that conservative direction affordable: the
-    request cannot overspend, whatever the estimate failed to say.
+    ``UNKNOWN`` is sized as ``HUNDREDS`` so an absent estimate does not reduce the
+    planned row count. The committed budget still bounds the request.
     """
     if estimate not in Cardinality.ALL:
         raise ValueError(f"not a cardinality: {estimate!r}")

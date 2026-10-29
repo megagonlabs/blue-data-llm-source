@@ -49,29 +49,14 @@ from blue_data_llm_source.types import (
     ParseError,
 )
 
-MAX_EXCLUDED_KEYS: Final = 50
-"""How many already-held records a continuation names, unless the caller says otherwise.
-
-The exclusion list grows with every answer while the ask itself does not, so an uncapped
-one eventually becomes the request: at a few hundred rows the model is reading a manifest
-with a question buried above it, and paying for the manifest on every remaining call. The
-cap costs some precision about what is already held, which is why the count is sent even
-when the entries are not.
-"""
-
 
 @dataclass(frozen=True)
 class Answer:
     """One model reply, with whatever the provider said about why it stopped.
 
-    The internal driver seam, not the published client protocol.
-    :class:`~blue_data_llm_source.types.LlmClientProtocol` still returns ``str`` and is
-    unchanged: widening it would make every implementer answer a question most of them
-    cannot, including the one that wraps a caller's plain callable. Here the reason has
-    somewhere to travel without anyone outside this package being asked for it.
-
-    A driver that answers with a bare string is accepted and reports no reason, which is the
-    honest answer for a model that has none to give.
+    This internal driver type carries a finish reason while
+    :class:`~blue_data_llm_source.types.LlmClientProtocol` still returns ``str``. A bare
+    string has no reported finish reason.
     """
 
     text: str | None
@@ -87,12 +72,8 @@ def _answer(sent: Any) -> Answer:
 class ResponseRecord:
     """What was observed about one response, kept beside the response it describes.
 
-    A leaf makes several calls, and every fact it reports is really a fact about one of them.
-    Accumulating those facts into leaf-level booleans as the loop runs loses which response
-    each belonged to — and then a complete response carrying ``length`` attests a later,
-    different, unattested recovery, because both facts had been reduced to "did this leaf ever
-    see one". The flags on :class:`LeafRun` are derived from this list rather than built up
-    alongside it, so the summary cannot disagree with what was seen.
+    Recovery and finish reason belong to the same response. :class:`LeafRun` derives its
+    summary flags from these records so facts from different calls are not combined.
     """
 
     recovered: bool = False
@@ -124,9 +105,8 @@ class LeafRun:
     """True when the continuation cap ended the run after a response that was still adding
     records. False when the model ran out first, or the row target was met.
 
-    Says what the loop did, not what the model held. Nothing observable distinguishes a
-    model with nothing more from one with a great deal more, so this means completeness was
-    not established here — a caller who wants to find out raises the cap and asks again."""
+    This reports the loop's stopping condition; it does not establish whether the model
+    had more records."""
 
     responses: tuple[ResponseRecord, ...] = ()
     """One entry per response this leaf received, in the order they arrived.
@@ -164,33 +144,25 @@ class LeafRun:
 
     @property
     def recovered_prefix(self) -> bool:
-        """True when any response did not parse whole and its complete records were kept.
+        """True when complete records were kept from an unparseable response.
 
-        What was observed, which is all this can say. A document that ends mid-record and one
-        that was simply written badly are the same text, and nothing in it distinguishes them.
-
-        Separate from ``at_cap`` because the remedy differs. A capped leaf has more
-        continuations to give it; a leaf that lost rows inside a single answer already paid
-        for gets the same cut by asking again the same way."""
+        The text cannot show whether the model stopped mid-record or wrote invalid JSON.
+        This differs from ``at_cap``: another continuation cannot establish whether
+        records were lost within that response.
+        """
         return any(response.recovered for response in self.responses)
 
     @property
     def provider_output_limit(self) -> bool:
         """True when the provider attested that its allowance ended any response.
 
-        An attestation, not an inference. It stays False when the provider said nothing, said
-        something unrecognised, or cannot say anything at all — which is the default path,
-        since a caller's plain callable has no reason to give.
+        A missing or unrecognized finish reason is not an attestation. A plain
+        caller-provided function usually gives no reason.
 
-        It does **not** additionally require that the response failed to parse. A document
-        that closes proves its emitted tokens form a document; it does not negate the
-        provider's word that generation stopped because the allowance ran out, and a run
-        holding that attestation cannot be reported as one nothing cut short. An earlier
-        version required both, which returned an attested stop as ``ok`` with no gaps while
-        three published contracts still said ``length`` is evidence the allowance fired.
+        A response may parse completely and still have a provider-attested output
+        limit. Its ``length`` finish reason must count even when the JSON closes.
 
-        Absence of evidence is recorded as absence of evidence rather than as evidence the
-        response was complete."""
+        Lack of an attestation does not prove the response was complete."""
         return any(response.finish_reason == "length" for response in self.responses)
 
     @property
@@ -257,11 +229,8 @@ def _leaf_loop(
 ) -> LeafLoop:
     """Every decision a leaf makes, with the waiting taken out.
 
-    Extracted so that the synchronous and asynchronous drivers below share one copy. The
-    part worth having exactly one of is this: how many calls a leaf may make, what a
-    continuation tells the model it already holds, and which of the three stopping
-    conditions ended it. A second implementation for the async path would be two loops that
-    agree until the day one of them is fixed.
+    Shared by the synchronous and asynchronous drivers so both use the same continuation
+    and stopping rules.
 
     Stops on the first of: a response with no record this leaf does not already hold, the
     row target being reached, or the continuation cap. Only the last of those sets
@@ -405,9 +374,9 @@ def _leaf_loop(
 
         # Filed against the response it describes, not accumulated into a flag about the
         # leaf. Read for evidence and never for reassurance: "length" is the provider saying
-        # its allowance fired, while "stop", an unrecognised word, and silence are the same
-        # non-answer, because the provider layer defaults a reason it does not recognise to
-        # "stop" and believing that turns an unrecognised truncation into a claim of
+        # its allowance fired, while "stop", an unrecognized word, and silence are the same
+        # non-answer, because the provider layer defaults a reason it does not recognize to
+        # "stop" and believing that turns an unrecognized truncation into a claim of
         # completeness. Which response carried it matters as much as what it said — a reason
         # on an answer that parsed whole explains nothing about one that did not.
         responses.append(
@@ -475,12 +444,8 @@ def _leaf_loop(
                 continue
             break
         if attempts >= allowed:
-            # Only a cap that could have been avoided is a cap. With no continuations
-            # configured, one call is the whole contract the caller asked for, and the loop
-            # stopping after it is the contract being met rather than a limit cutting it
-            # short. Reporting `at_cap` unconditionally made every default fetch return
-            # `stopped_by_limit`, which is the flag saying nothing at all: a caller cannot
-            # act on a warning that is always present.
+            # The first call is the whole run when continuations are disabled. Only an
+            # enabled continuation cap can mark the result as stopped by a limit.
             at_cap = limits.max_continuations > 0
             break
 
@@ -588,10 +553,8 @@ async def arun_leaf(
 ) -> LeafRun:
     """:func:`run_leaf` against an awaitable model boundary.
 
-    The library's own path is async, and its client cancels a wait that outlives the run's
-    time ceiling — something the synchronous entry point does not do. Driving leaves through
-    the synchronous boundary from a worker thread would therefore have left ``max_seconds``
-    enforcing less than the caller was told, which is worse than not offering the ceiling.
+    The async client can cancel a wait when ``max_seconds`` expires; the synchronous
+    entry point cannot.
     """
     keys = _resolve_keys(primary_keys, key)
     loop = _leaf_loop(
@@ -633,12 +596,9 @@ def _outcome(
     of an answer whose loop ended before the model did, and ``ok`` on forty rows out of an
     unknown number is the reading that hides it.
 
-    A run that recovered a prefix counts as cut short even when the continuations that
-    followed appeared
-    to finish. Whether they recovered the rows lost inside the truncated answer is not
-    knowable from here — the model is asked for what is missing and reports nothing wrong
-    either way — so the run is reported as short and the gap says rows may have been
-    recovered. Claiming completeness that was never established is the more expensive error.
+    A recovered prefix counts as cut short even if later continuations finish. They cannot
+    establish whether rows were lost inside the unparseable response; the gap records that
+    uncertainty.
 
     ``Outcome`` has no member for a failed call, so a failure reports the same cut-short
     member and ``error`` says which of the two happened. What must not happen is a failure

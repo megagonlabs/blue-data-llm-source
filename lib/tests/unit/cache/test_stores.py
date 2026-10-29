@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +53,7 @@ def test_keys_do_not_collide(store: CacheStore) -> None:
 
 
 def test_a_long_unsafe_key_is_usable(store: CacheStore) -> None:
-    key = json.dumps({"messages": [{"content": "a/b\\c" * 200}]})
+    key = json.dumps({"messages": [{"content": "dir/leaf\\path" * 200}]})
     store.set(key, {"ok": True})
     assert store.get(key) == {"ok": True}
 
@@ -90,7 +91,7 @@ def test_file_cache_treats_a_corrupt_entry_as_a_miss(tmp_path: Path) -> None:
     assert cache.get("k") is None
 
 
-def test_file_cache_skips_an_unserialisable_value_rather_than_raising(tmp_path: Path) -> None:
+def test_file_cache_skips_an_unserializable_value_rather_than_raising(tmp_path: Path) -> None:
     cache = FileCache(tmp_path / "cache")
     cache.set("k", object())
     assert cache.get("k") is None
@@ -102,6 +103,52 @@ def test_file_cache_leaves_no_temporary_files(tmp_path: Path) -> None:
     cache.set("k", {"n": 1})
     cache.set("k2", object())
     assert list(directory.glob("*.tmp")) == []
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory permissions")
+def test_file_cache_creates_a_private_directory(tmp_path: Path) -> None:
+    directory = tmp_path / "cache"
+    FileCache(directory)
+    assert directory.stat().st_mode & 0o077 == 0
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory permissions")
+def test_file_cache_refuses_an_accessible_existing_directory(tmp_path: Path) -> None:
+    directory = tmp_path / "cache"
+    directory.mkdir(mode=0o755)
+    directory.chmod(0o755)
+
+    with pytest.raises(PermissionError, match="private directory"):
+        FileCache(directory)
+
+    assert directory.stat().st_mode & 0o777 == 0o755
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory permissions")
+def test_file_cache_refuses_a_symlink_directory(tmp_path: Path) -> None:
+    actual = tmp_path / "actual"
+    actual.mkdir(mode=0o700)
+    link = tmp_path / "link"
+    link.symlink_to(actual, target_is_directory=True)
+
+    with pytest.raises(PermissionError, match="private directory"):
+        FileCache(link)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory permissions")
+def test_file_cache_rechecks_permissions_before_each_operation(tmp_path: Path) -> None:
+    directory = tmp_path / "cache"
+    cache = FileCache(directory)
+    cache.set("key", {"value": 1})
+    directory.chmod(0o755)
+
+    for operation in (lambda: cache.get("key"), lambda: cache.set("next", 2), cache.clear):
+        with pytest.raises(PermissionError, match="private directory"):
+            operation()
+
+    directory.chmod(0o700)
+    assert cache.get("key") == {"value": 1}
+    assert cache.get("next") is None
 
 
 def test_clear_empties_the_store(store: CacheStore) -> None:
@@ -131,11 +178,7 @@ def test_a_shipped_store_works_as_the_client_cache(tmp_path: Path) -> None:
 
 
 def test_clear_leaves_json_this_cache_did_not_write(tmp_path: Path) -> None:
-    """A caller may point this at a directory that already holds other JSON.
-
-    `clear` deleted every `*.json` in it — a config file, another component's state — which
-    is a data loss the caller cannot recover and did not ask for.
-    """
+    """An existing JSON file in the cache directory belongs to its original owner."""
     bystander = tmp_path / "settings.json"
     bystander.write_text('{"keep": true}', encoding="utf-8")
     also = tmp_path / "0123456789abcdef.json"  # json, hex-ish, still not ours
@@ -150,3 +193,25 @@ def test_clear_leaves_json_this_cache_did_not_write(tmp_path: Path) -> None:
     assert cache.get("a key") is None, "the cache did not clear its own entry"
     assert bystander.read_text(encoding="utf-8") == '{"keep": true}'
     assert also.exists()
+
+
+def test_clear_leaves_a_matching_file_the_instance_did_not_write(tmp_path: Path) -> None:
+    bystander = tmp_path / ("llmcache-" + "a" * 64 + ".json")
+    bystander.write_text('{"keep": true}', encoding="utf-8")
+
+    FileCache(tmp_path).clear()
+
+    assert bystander.read_text(encoding="utf-8") == '{"keep": true}'
+
+
+def test_clear_does_not_delete_another_instances_replacement(tmp_path: Path) -> None:
+    first = FileCache(tmp_path)
+    second = FileCache(tmp_path)
+    first.set("key", "first")
+    second.set("key", "second")
+
+    first.clear()
+
+    assert second.get("key") == "second"
+    second.clear()
+    assert second.get("key") is None

@@ -2,7 +2,7 @@
 
 Runnable examples are grouped by backend, feature, integration, and usage scenario.
 
-Each script has a matching `.output.txt` file containing captured standard output. The partitioned WikiTabGen example's captured output is its setup preview; `--live` prints the provider responses.
+Each script has a matching `.output.txt` file containing captured standard output. The WikiTabGen example's captured output is its setup preview; `--live` prints the provider responses.
 
 Most scripts require no credential or network access. They use a scripted `llm_fn` or an injected client to exercise prompt rendering, attribute alignment, type checking, limits, budgets, gaps, outcome precedence, planning modes, and the registry round trip. Provider calls require a key. The table at the end of this file identifies each script's execution mode.
 
@@ -61,17 +61,17 @@ python3 examples/backends/injected_client_demo.py
 
 ### Provider-backed fetch (`default_client_demo.py`)
 
-This example uses `DefaultLlmClient` through litellm and reports the model, token counts, and settled cost reconciled against the earlier estimate. The client is injected so `close()` releases the cache backends it opens. The library does not read credentials; the provider SDK reads `OPENAI_API_KEY`. If it is missing, the call raises a `TransportError` mentioning credentials.
+This example uses `DefaultLlmClient` through litellm and reports the model, token counts, and settled cost reconciled against the earlier estimate. The client is injected so `close()` releases the cache backends it opens. The provider SDK reads `OPENAI_API_KEY` for authentication; the library reads credential environment values only to mask diagnostics. Authentication failure may raise `TransportError` or stop the result when the call ceiling is reached. The script exits unsuccessfully in either case.
 
 ```bash
 python3 examples/backends/default_client_demo.py
 ```
 
-**Requires:** `OPENAI_API_KEY`, and the `llm` extra | **[Sample output](backends/default_client_demo.output.txt)**, from a real provider call
+**Requires:** `OPENAI_API_KEY`, and the `llm` extra | **[Recorded output](backends/default_client_demo.output.txt)** from an earlier provider call. Its estimate, cost, and accounting fields predate the current bound and settlement rules; run the script for current values.
 
 ### The two cache stores (`cache_stores_demo.py`)
 
-`MemoryCache` and `FileCache` driven through the `get`/`set` pair the `CacheStore` protocol declares, the same pair `DefaultLlmClient` uses. Bounded LRU eviction, persistence across instances, and a `clear()` that will not delete a file the cache did not write, which matters because a cache directory is one a caller merely selected.
+`MemoryCache` and `FileCache` use the `get`/`set` pair declared by the `CacheStore` protocol. The example shows bounded LRU eviction, persistence across instances, and `clear()` removing only entries written by the current `FileCache` instance.
 
 ```bash
 python3 examples/backends/cache_stores_demo.py
@@ -97,7 +97,7 @@ Each script covers one feature using a scripted `llm_fn` or an injected client, 
 
 ### Attributes and declared types (`attrs_and_types_demo.py`)
 
-Ten canned responses cover the main attribute outcomes. A numeric string under a declared `integer` is converted; a number under a declared `string` is retained and reported as a mismatch. The example also covers `unmapped_keys`, `key_collisions`, `unchecked_types`, and removal of a record that answers none of the requested attributes.
+Ten sample responses cover the main attribute outcomes. A numeric string under a declared `integer` is converted; a number under a declared `string` is retained and reported as a mismatch. The example also covers `unmapped_keys`, `key_collisions`, `unchecked_types`, and removal of a record that answers none of the requested attributes.
 
 ```bash
 python3 examples/feature-demos/attrs_and_types_demo.py
@@ -117,7 +117,7 @@ python3 examples/feature-demos/limits_demo.py
 
 ### estimate (`estimate_demo.py`)
 
-The one cost demo that needs no credential, because `estimate` contacts nothing by construction. A priced model, the cost floor that the output allowance alone implies, a model the rate table has never heard of answering with a reason instead of a guess, caller-supplied rates for that model, an `llm_fn` that cannot price itself, and the proof that `plan.*` settings are not read.
+An offline cost demo: `estimate` contacts nothing by construction. It shows a priced model, the cost floor from the output allowance, an unpriced model's reason, caller-supplied rates, an `llm_fn` that cannot price itself, and that `plan.*` settings are not read. The budget and estimate-then-fetch demos also need no credential.
 
 ```bash
 python3 examples/feature-demos/estimate_demo.py
@@ -147,7 +147,7 @@ python3 examples/feature-demos/gaps_and_outcome_demo.py
 
 ### Planning modes (`planning_modes_demo.py`)
 
-The example prints the call sequence for `flat`, flat with continuations, `partitioned`, and `row_by_row`, making the cost of each shape visible. The scripted planner recognises each planning prompt by its opening line and uses a fixed response, so the same four sequences appear on every run.
+The example prints the call sequence for `flat`, flat with continuations, `partitioned`, and `row_by_row`, making the cost of each shape visible. The scripted planner recognizes each planning prompt by its opening line and uses a fixed response, so the same four sequences appear on every run.
 
 ```bash
 python3 examples/feature-demos/planning_modes_demo.py
@@ -157,7 +157,7 @@ python3 examples/feature-demos/planning_modes_demo.py
 
 ### The orchestrator tool surface (`tool_surface_demo.py`)
 
-`get_nl_tools` advertises four of the base class's eight tools and `execute_nl_tool` serves exactly those four, refusing anything else by name. `execute_query_nl_tools` (the tool-driven loop) is refused outright, because it drives up to ten provider calls this source's ceilings do not govern.
+`get_nl_tools` advertises five of the base class's eight tools and `execute_nl_tool` serves those five (`get_sample` returns `None` for unavailable statistics), refusing anything else by name. `execute_query_nl_tools` (the tool-driven loop) is refused outright, because it drives up to ten provider calls this source's ceilings do not govern.
 
 ```bash
 python3 examples/feature-demos/tool_surface_demo.py
@@ -167,32 +167,38 @@ python3 examples/feature-demos/tool_surface_demo.py
 
 ---
 
-## framework-demos/: agentic framework integrations
+## framework-demos/: AI agent framework integrations
 
 Both examples use [LangGraph](https://github.com/langchain-ai/langgraph) and are provider-backed. One implements a fixed pipeline; the other lets an agent select its own tools.
 
 ### Direct Python API (`langgraph_direct_demo.py`)
 
-The pipeline has two nodes. `retrieve` calls `LlmSource.fetch` under a `Budget` owned by the graph, then `respond` composes a sentence. The records travel with `meta.outcome` and `meta.gaps`; the writing node is instructed to report detected limits or gaps. An agent that reads only `records` misses detected truncation; even an empty `meta.gaps` does not establish completeness.
+Run this from the checkout root in the active root `.venv`. The pipeline has two nodes. `retrieve` calls `LlmSource.fetch` under a shared retrieval `Budget`, then `respond` makes a separate `ChatOpenAI` call to compose a sentence. The printed budget excludes that writing call. The records travel with `meta.outcome` and `meta.gaps`; the writing node is instructed to report detected limits or gaps. An agent that reads only `records` misses detected truncation; even an empty `meta.gaps` does not establish completeness.
 
 ```bash
-pip install langgraph langchain-openai
+python -m pip install langgraph langchain-openai
 python3 examples/framework-demos/langgraph_direct_demo.py
 ```
 
-**Requires:** `OPENAI_API_KEY`, `langgraph`, `langchain-openai` | **[Sample output](framework-demos/langgraph_direct_demo.output.txt)**, from a real agent run
+The two tasks make two retrieval calls and two separate writing calls when no retry occurs. If `langchain-openai` is missing, the script stops at import with `ModuleNotFoundError: No module named 'langchain_openai'`.
+
+**Requires:** `OPENAI_API_KEY`, `langgraph`, `langchain-openai` | **[Recorded output](framework-demos/langgraph_direct_demo.output.txt)** from an earlier provider-backed run. Its budget cost predates the current bound and settlement rules; run the script for current values.
 
 ### MCP-based integration (`langgraph_mcp_demo.py`)
 
-No source-specific code on the LangGraph side: `langchain-mcp-adapters` launches `blue-data-llm-mcp` as a stdio subprocess, discovers its five tools, and a ReAct agent decides what to call. The system prompt makes the agent price a request with `llmdb_estimate` before running it, and pass its own ceilings. An operator can also set ceilings for every call through the server's environment, which a call can lower but never raise; without one, a call that sets no ceiling has none.
+Run this from the checkout root in the active root `.venv`. `langchain-mcp-adapters` launches `blue-data-llm-mcp` as a stdio subprocess and discovers its five tools. A ReAct agent decides what to call. The system prompt asks the agent to estimate cost and pass a ceiling. The example requires a finite operator cost ceiling in the server's environment. That ceiling applies to each MCP query; it does not cap total tool spend or the agent's separate `ChatOpenAI` calls. The 4,000-token allowance keeps the example's offline flat estimate below the prompt's $0.02 threshold at the package rates, so the agent can proceed to a query.
 
 ```bash
-pip install langgraph langchain-openai langchain-mcp-adapters
-pip install -e lib/ -e platform/llm-mcp/
+./platform/llm-mcp/scripts/install.sh
+python -m pip install langgraph langchain-openai langchain-mcp-adapters
+export BLUE_DATA_LLM_SOURCE_LIMIT_COST=0.02
+export BLUE_DATA_LLM_SOURCE_MAX_TOKENS=4000
 python3 examples/framework-demos/langgraph_mcp_demo.py
 ```
 
-**Requires:** `OPENAI_API_KEY`, `langgraph`, `langchain-openai`, `langchain-mcp-adapters`, and the MCP package on PATH | **[Sample output](framework-demos/langgraph_mcp_demo.output.txt)**, from a real agent run
+**Requires:** `OPENAI_API_KEY`, `BLUE_DATA_LLM_SOURCE_LIMIT_COST`, `langgraph`, `langchain-openai`, `langchain-mcp-adapters`, and the MCP package on PATH | **[Earlier output](framework-demos/langgraph_mcp_demo.output.txt)**, captured with library 0.2.0.0, which reports its version as 2.0.0, and the default output allowance. It shows the agent declining to fetch when the estimate exceeds $0.02; the command above uses a smaller allowance and may take the query path.
+
+The example passes the provider key and [MCP deployment settings](../platform/llm-mcp/README.md#configuration) to the server subprocess. Other environment settings, including endpoint and proxy variables, are not forwarded.
 
 ---
 
@@ -200,7 +206,7 @@ python3 examples/framework-demos/langgraph_mcp_demo.py
 
 ### Registering the source in the data layer (`register_source_demo.py`)
 
-The example registers a built instance with `register_source`, then retrieves it with `connect_source`. After the live instance is dropped, `connect_source` rebuilds an equivalent source from the recorded class path in the same registry. It then exercises the shared interface: `execute_query_nl` with a string, `execute_query` with an `op` dict, and a `limits.*` ceiling in `optional_properties` that applies to one call.
+The example registers a built instance with `register_source`, then retrieves it with `connect_source`. After the live instance is dropped, `connect_source` rebuilds a new source from the recorded class path and properties in the same registry, without the injected client. It then exercises the shared interface: `execute_query_nl` with a string, `execute_query` with an `op` dict, and a `limits.*` ceiling in `optional_properties` that applies to one call.
 
 ```bash
 python3 examples/integration-demos/register_source_demo.py
@@ -210,13 +216,13 @@ python3 examples/integration-demos/register_source_demo.py
 
 ### Estimate, decide, fetch, reconcile (`estimate_then_fetch_demo.py`)
 
-This example estimates a request without provider contact, compares it with a caller-owned ceiling, reduces the output allowance, runs the request under a `Budget`, and reconciles the settled cost with the reservation. Both `estimate` and runtime reservation call `bound_for_attempt`, so they use the same bound.
+This example estimates a request without provider contact, compares it with a caller-owned ceiling, reduces the output allowance, runs the request under a `Budget`, and reconciles its custom client's settled cost with the reservation. Both `estimate` and runtime reservation call `bound_for_attempt`. The double settles below its reservation; the built-in client keeps at least the reservation after provider contact under a cost ceiling. See [extending.md](../docs/extending.md) for the client contract.
 
 ```bash
 python3 examples/integration-demos/estimate_then_fetch_demo.py
 ```
 
-**API key:** not required (`LedgerClient` is a local double whose accounting path is the real one) | **[Sample output](integration-demos/estimate_then_fetch_demo.output.txt)**
+**API key:** not required (`LedgerClient` is a local double that settles below its reservation) | **[Sample output](integration-demos/estimate_then_fetch_demo.output.txt)**
 
 ---
 
@@ -226,9 +232,9 @@ python3 examples/integration-demos/estimate_then_fetch_demo.py
 
 A model asked to enumerate a set larger than its output allowance may return a valid but incomplete list. Counting records does not distinguish a complete result from a truncated one, and an empty gap list does not establish completeness.
 
-The example declares an identifying column with `plan.key`, enables continuations, and reads `gaps`. In this scripted run, exhausting the set finishes without a gap; reaching the cap while records are still arriving reports `leaf_at_cap` and the count reached.
+The example uses a fictional 24-item catalog, not a real geographic list. It declares an identifying column with `plan.key`, enables continuations, and reads `gaps`. In this scripted run, exhausting the known fixture finishes without a gap; reaching the cap while items are still arriving reports `leaf_at_cap` and the count reached.
 
-The three runs return 6 of 24 records without a diagnostic, 18 of 24 with a named gap, and 24 of 24 without a gap. The scripted model returns at most six items per request so the example exercises merging and continuation accounting.
+The three runs return 6 of 24 synthetic items without a diagnostic, 18 of 24 with a named gap, and all 24 without a gap. The scripted model returns at most six items per request so the example exercises merging and continuation accounting. The absence of a gap alone would not establish completeness for a real request.
 
 ```bash
 python3 examples/scenario-demos/bounded_enumeration_demo.py
@@ -236,31 +242,15 @@ python3 examples/scenario-demos/bounded_enumeration_demo.py
 
 **API key:** not required | **[Sample output](scenario-demos/bounded_enumeration_demo.output.txt)**
 
-### Comparing retrieval modes on WikiTabGen (`partitioned_wikitabgen_demo.py`)
+### Retrieval modes on one WikiTabGen table (`partitioned_wikitabgen_demo.py`)
 
-This runs WikiTabGen query 15, a 118-row table of chemical elements with 11 columns, through `flat`, `row_by_row`, and `partitioned` retrieval. Every mode receives the same query and columns. The context supplies the complete list of atomic numbers, 1–118, to every mode; it supplies no element names or attribute values. `row_by_row` uses atomic number `Z` as its key. `partitioned` uses `Period` and `Z`, with a declared finite domain of seven periods. Each call uses GPT-6 Luna with reasoning effort `none` and a 4,096-token output allowance. Continuations are disabled, so flat makes one capped call. Modes selected in one invocation share a $0.30, 160-call, 900-second budget; later modes receive what remains. The script prints each request, complete successful model response, returned records, diagnostics, and a call, cost, and row summary. The benchmark files are needed only for reference scoring.
+This example applies `flat`, `row_by_row`, and `partitioned` retrieval to the chemical-elements query from one table in the public [WikiTabGen dataset](https://github.com/analysis-bots/WikiTabGen). Every mode receives the same query and 11 columns. The context supplies atomic numbers 1–118, but no element names or attribute values. `row_by_row` uses atomic number `Z` as its key. `partitioned` uses `Period` and `Z`, with a declared finite domain of seven periods. Each call uses GPT-6 Luna with reasoning effort `none` and a 4,096-token output allowance. Continuations are disabled, so flat makes one capped call. Modes selected in one invocation share a $0.30, 160-call, 900-second budget; later modes receive what remains. The script prints each request, model response, returned records, diagnostics, and a run summary.
 
 ```bash
 python3 examples/scenario-demos/partitioned_wikitabgen_demo.py --live
 ```
 
-Omit `--live` to preview the inputs and settings without contacting the provider. Repeat `--mode` to run a subset, such as `--mode flat --mode partitioned`. With no `--mode`, all three run. If you have a sibling `pkdb` checkout with the WikiTabGen benchmark, use `third_parties/WikiTabGen/benchmark/tables/elements.csv` as the optional reference. The CSV used below has SHA-256 `5f856b8394b552a38b0fa0c9a6430acd8c5e74ae71c61f4257261525f2e47a8c`. The score matches atomic number `Z` and then compares each populated non-key reference cell. Duplicate returned keys are excluded from cell matches. Numbers compare by decimal value; text ignores case and surrounding space.
-
-```bash
-REFERENCE_CSV=../pkdb/third_parties/WikiTabGen/benchmark/tables/elements.csv
-shasum -a 256 "$REFERENCE_CSV"
-python3 examples/scenario-demos/partitioned_wikitabgen_demo.py --live --reference-csv "$REFERENCE_CSV"
-```
-
-The command above produced these results in one live invocation on 2026-09-24. The reference table has 118 atomic numbers and 1,152 populated non-key cells.
-
-| Mode | Rows returned | Reference `Z` keys | Matching cells | Calls | Settled cost | Outcome |
-|---|---:|---:|---:|---:|---:|---|
-| `flat` | 54 | 54/118 | 488/1,152 | 1 | $0.003545 | `stopped_by_limit` |
-| `row_by_row` | 118 | 118/118 | 888/1,152 | 119 | $0.032558 | `ok` |
-| `partitioned` | 118 | 118/118 | 910/1,152 | 9 | $0.010442 | `ok` |
-
-Flat reached its output allowance in its single call. Row-by-row made one planning call and 118 per-element calls. The partitioned plan accepted one split into seven period leaves and returned every atomic number in nine calls. The supplied key list means reference-key coverage measures extraction within the call limits, not discovery of the elements. On this table, partitioning returned 64 keys absent from the capped flat result at about one-third of row-by-row's cost. It also matched 22 more non-key cells than row-by-row. Some values still differed from the reference; these results describe one run, not a general accuracy ranking.
+Omit `--live` to preview the inputs and settings without contacting the provider. Repeat `--mode` to run a subset, such as `--mode flat --mode partitioned`. With no `--mode`, all three run. Flat mode often stops at its one-response output allowance before returning all 118 rows; observed runs returned about 54–55 rows with `stopped_by_limit`. Row counts vary. Use the preview and `estimate()` to inspect the configured allowance before a live run. The returned records are model output and should be checked against an authoritative source when accuracy matters.
 
 **Requires for `--live`:** `OPENAI_API_KEY` and the `llm` extra | **[Preview output](scenario-demos/partitioned_wikitabgen_demo.output.txt)**
 

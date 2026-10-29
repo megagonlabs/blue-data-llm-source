@@ -3,16 +3,11 @@
 The attribution is computed where the leaves are merged and then passes through five
 transforms before anyone sees it: alignment builds new records, verification checks them,
 empty records are dropped, exact duplicates are dropped again, and a row cap trims the tail.
-Three of those five change the length of the list. A list published without following them
-is indexed against records that no longer exist.
+Three of those five change the length of the list. Attribution must follow the surviving
+records.
 
-That is not a hypothetical: ``type_mismatches`` already hit it, and ``_renumber_by_record``
-exists because of it. The attribution's own design note says the quiet part out loud --
-attribution that lines up against the wrong rows is worse than none, because it looks right.
-
-The oracle here is independent of the library's bookkeeping. Each record carries the name of
-the part that produced it, written by the model double from the prompt it was asked, so the
-expected origin of every surviving record is readable off the record itself.
+The expected origin is checked independently of the library's bookkeeping. Each record
+carries the producing part's name, written by the model double from its prompt.
 """
 
 from __future__ import annotations

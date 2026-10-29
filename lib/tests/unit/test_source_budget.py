@@ -1,8 +1,4 @@
-"""Budget limits configured on the source, seen from the fetch surface.
-
-A budget is created per fetch and handed to the default client, so a limit reached
-before the call stops the run and is reported in ExecMeta rather than raised.
-"""
+"""Budget admission and reporting through fetch, with source or caller budgets."""
 
 from __future__ import annotations
 
@@ -46,6 +42,20 @@ def test_max_calls_stops_the_run_and_is_named_in_the_metadata(
     assert stub.calls == []
 
 
+def test_failed_provider_attempt_is_not_reported_as_only_a_call_limit(
+    litellm_stub: InstallStub,
+) -> None:
+    stub = litellm_stub(LitellmStub(error=RuntimeError("private failure marker")))
+    source = LlmSource(properties={"limits.max_calls": 1})
+
+    with pytest.raises(TransportError) as caught:
+        source.fetch("who?")
+
+    assert "max_calls" in str(caught.value)
+    assert "private failure marker" not in str(caught.value)
+    assert len(stub.calls) == 1
+
+
 def test_max_cost_stops_the_run_and_is_named_in_the_metadata(
     litellm_stub: InstallStub,
 ) -> None:
@@ -87,6 +97,63 @@ def test_a_run_within_its_limits_returns_records(litellm_stub: InstallStub) -> N
     assert result.records == [{"name": "Ada"}]
     assert result.meta.stopped_by is None
     assert result.meta.calls == 1
+
+
+def test_fetch_reports_retained_reservation_as_unknown_accounting(
+    litellm_stub: InstallStub,
+) -> None:
+    litellm_stub(LitellmStub(chat_payload(ONE_RECORD), cost=0.000_000_001))
+    budget = Budget(Limits(max_cost=1.0, max_retries=0))
+    source = LlmSource(properties={"llm.model": "gpt-4o-mini", "llm.max_tokens": 64})
+
+    result = source.fetch("who?", budget=budget)
+
+    assert result.meta.cost == budget.cost
+    assert result.meta.cost > 0.000_000_001
+    assert result.meta.accounting_known is False
+
+
+def test_flat_estimate_covers_a_conservative_settlement(litellm_stub: InstallStub) -> None:
+    properties = {
+        "llm.model": "gpt-6-luna",
+        "llm.max_tokens": 4_096,
+        "limits.max_cost": 1.0,
+        "limits.max_retries": 0,
+    }
+    source = LlmSource(properties=properties)
+    estimate = source.estimate("who?", attrs=["name"])
+    assert estimate.bounded and estimate.max_cost is not None
+    assert estimate.prompt_bytes is not None
+    usage = {
+        "prompt_tokens": estimate.prompt_bytes,
+        "completion_tokens": 4_096,
+        "prompt_tokens_details": {"cached_tokens": 0},
+    }
+    payload = chat_payload('[{"name":"Ada"}]', model="gpt-6-luna", usage=usage)
+    payload["service_tier"] = "default"
+    litellm_stub(LitellmStub(payload, cost=1e-9))
+
+    result = source.fetch("who?", attrs=["name"])
+
+    assert result.meta.cost <= estimate.max_cost
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [("llm.stream", "false"), ("llm.cache", 1), ("llm.cache_dir", 3)],
+)
+def test_injected_function_cannot_bypass_adapter_control_types(name: str, value: object) -> None:
+    calls = 0
+
+    def answer(prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        return "[]"
+
+    with pytest.raises(ConfigError, match=name):
+        LlmSource().fetch("who?", llm_fn=answer, properties={name: value})
+
+    assert calls == 0
 
 
 def test_per_call_properties_override_a_configured_limit(
@@ -296,7 +363,7 @@ def test_a_child_cannot_be_given_more_than_its_parent_holds() -> None:
 
 
 # ---------------------------------------- the run's budget reaches every knob, not just one --
-def test_an_injected_default_client_honours_the_runs_retry_depth(
+def test_an_injected_default_client_honors_the_runs_retry_depth(
     litellm_stub: InstallStub,
 ) -> None:
     """Reservation bound but retry depth did not, so a limit half-applied.
@@ -541,15 +608,7 @@ def test_a_reused_client_does_not_accumulate_semaphores_across_contended_loops()
 
 
 async def test_max_parallel_binds_when_no_client_is_injected() -> None:
-    """The bound must hold on the path a caller actually takes.
-
-    The test above injects one `DefaultLlmClient` and shares it across both fetches, which
-    is the only reason its bound held. `LlmSource` builds a fresh client per fetch unless
-    the caller supplies one, and the semaphore registry used to be per instance — so on the
-    default path every concurrent fetch got its own full-permit semaphore and
-    `llm.max_parallel` bounded nothing at all. Five documents call it the main lever against
-    provider rate limiting, and the MCP server cannot inject a client, so it had no lever.
-    """
+    """Default clients enforce max_parallel across concurrent fetches."""
     import asyncio
 
     stub = LitellmStub(chat_payload(ONE_RECORD))
@@ -734,7 +793,7 @@ def test_the_backoff_wait_is_capped_at_the_time_left() -> None:
     """Isolating the cap, because the surrounding deadline hides a regression in it.
 
     The end-to-end test below cannot see this: with the whole call under a deadline, an
-    uncapped backoff is cancelled mid-sleep and reports the same axis after the same
+    uncapped backoff is canceled mid-sleep and reports the same axis after the same
     elapsed time. What the cap buys is a retry that still happens inside the remaining
     time rather than sleeping past it, and only this level can tell the two apart.
     """
@@ -930,15 +989,11 @@ def test_a_provider_that_swallows_cancellation_cannot_return_a_late_success() ->
 
 
 def test_work_that_never_yields_runs_past_the_ceiling_as_documented() -> None:
-    """The exclusion in ADR-024, asserted rather than only written down.
+    """A blocking cache store can run past the deadline, which is then reported.
 
-    ``asyncio`` cannot interrupt code that is not awaiting, so a blocking cache store —
-    standing here for every synchronous phase, since ``CacheStore`` is the one a caller
-    supplies — runs to completion and is measured afterwards. This is what is left outside
-    the ceiling after the waits inside it were bounded, and it is a test so that a later
-    change cannot quietly re-assert the stronger claim.
-
-    What must stay true is the reporting: the axis is still named, and named truthfully.
+    ``asyncio`` cannot interrupt code that is not awaiting. The store models
+    synchronous work supplied by a caller; the resulting error must still name
+    ``max_seconds``.
     """
     import time
 
@@ -968,24 +1023,16 @@ def test_work_that_never_yields_runs_past_the_ceiling_as_documented() -> None:
     with _installed_module(_slow_provider(0.0)):
         axis, elapsed = asyncio.run(exercise())
 
-    assert elapsed > CEILING, "if this ever holds the ceiling, ADR-024 and the README are stale"
+    assert elapsed > CEILING, "if this ever holds the ceiling, the README is stale"
     assert axis == "max_seconds", "the axis is reported truthfully even when reported late"
 
 
-def test_a_provider_that_never_honours_cancellation_holds_the_caller() -> None:
-    """The other end of ADR-024's exclusion, asserted so it cannot be quietly reclaimed.
+def test_a_provider_that_never_honors_cancellation_holds_the_caller() -> None:
+    """The caller waits for provider cancellation to be acknowledged.
 
-    Cancelling is a request. The deadline makes it and then waits for the acknowledgement,
-    and work that never acknowledges holds this call open. Letting go of it instead was
-    tried and cost more than it bought: the caller's own cancellation stopped reaching the
-    work, the abandoned task could be collected mid-flight or keep ``asyncio.run`` from
-    returning, and it settled real cost into the caller's budget after a result reporting
-    none had already been handed back.
-
-    The provider signals when it is entered and when each cancellation reaches it, so this
-    observes the deadline firing rather than only that nothing came back. Asserting
-    lateness alone passed with the deadline removed entirely, which is the failure this
-    test exists to detect.
+    The provider signals entry and each cancellation, proving that the deadline
+    fires even when the provider keeps running. Abandoning that work would detach
+    caller cancellation and cost accounting from the provider attempt.
     """
     import time
     import types
@@ -1031,7 +1078,7 @@ def test_a_provider_that_never_honours_cancellation_holds_the_caller() -> None:
     with _installed_module(module):
         finished, started, seen = asyncio.run(exercise())
 
-    assert seen, "the deadline never cancelled the provider at all"
+    assert seen, "the deadline never canceled the provider at all"
     # The first cancellation is the deadline's, and it must arrive at the ceiling rather
     # than at the end of the observation window. Without the deadline the only cancellation
     # would be the cleanup one, six ceilings later.
@@ -1040,19 +1087,17 @@ def test_a_provider_that_never_honours_cancellation_holds_the_caller() -> None:
     )
     assert not finished, (
         "the caller returned despite work that never acknowledged cancellation; if that now "
-        "holds, the exclusion in ADR-024 and the README is stale"
+        "holds, the exclusion in the README is stale"
     )
 
 
 def test_client_side_rate_limiting_is_refused_by_name() -> None:
-    """Withdrawn before release, and refused rather than accepted and ignored.
+    """Refuse ``llm.rate_limit`` by name at each entry point.
 
-    Client-side spacing has to reconcile with per-attempt budget admission, and every
-    arrangement let one corrupt the other: claimed before admission it charged an interval
-    to calls the budget refused and let a waiter hold a shared allowance a live sibling then
-    lost; claimed after it, retries entered the provider at the speed of the backoff. The
-    key is refused by name so a caller who sets it learns that, instead of believing a
-    ceiling is holding.
+    Client-side spacing cannot currently bind together with per-attempt budget
+    admission: claiming it before admission charges refused calls; claiming it
+    after admission leaves retries governed only by backoff. The refusal tells
+    callers that no rate ceiling is active.
     """
 
     def refusal(build: Callable[[], object]) -> str:
@@ -1181,9 +1226,8 @@ def test_out_of_order_resolution_leaves_no_phantom_reservation() -> None:
 def test_a_slow_import_does_not_refuse_a_sibling_on_a_shared_budget() -> None:
     """Admission takes nothing, so it cannot exhaust a ceiling on another caller's behalf.
 
-    Claiming before the import made the claim visible to a sibling sharing the budget, which
-    was then terminally refused on an allowance the final ledger said was free. The claim is
-    the last thing that happens now, immediately before the provider is entered.
+    Admission holds no claim during import. The claim is made immediately before provider
+    entry, leaving shared headroom available to another caller until then.
     """
     import sys
     import threading
@@ -1231,7 +1275,7 @@ def test_a_slow_import_does_not_refuse_a_sibling_on_a_shared_budget() -> None:
 def test_the_provider_timeout_reflects_the_time_left_after_the_import() -> None:
     """The cap is derived after the import, because the import spends part of the deadline.
 
-    Derived before it, a provider that honours its timeout was handed the whole original
+    Derived before it, a provider that honors its timeout was handed the whole original
     allowance and answered well past the ceiling — the documented cap silently stopped
     meaning what it says.
     """
@@ -1320,14 +1364,7 @@ def test_an_interruption_inside_the_claim_leaves_no_claim_outstanding() -> None:
 
 
 def test_the_shared_semaphore_registry_does_not_grow_without_bound() -> None:
-    """Sharing the registry fixed the ceiling; it also outlived the client that made it.
-
-    The sweep drops closed loops, which was sufficient while the map was per instance and
-    died with it. At class scope an entry keeps its loop reachable, so a loop that is
-    abandoned rather than closed is pinned by the map itself along with its selector and
-    descriptors — a hundred and fifty of them took a process from thirty-eight open
-    descriptors to four hundred and eighty-eight.
-    """
+    """The shared semaphore registry releases abandoned event loops."""
     import asyncio
     import gc
 
@@ -1335,9 +1372,11 @@ def test_the_shared_semaphore_registry_does_not_grow_without_bound() -> None:
 
     registry = DefaultLlmClient._semaphores  # pyright: ignore[reportPrivateUsage]
     registry.clear()
+    loops: list[asyncio.AbstractEventLoop] = []
     try:
         for _ in range(80):
-            loop = asyncio.new_event_loop()  # abandoned on purpose: never closed
+            loop = asyncio.new_event_loop()
+            loops.append(loop)
             client = DefaultLlmClient({"llm.model": "gpt-4o-mini"})
 
             async def touch(bound: DefaultLlmClient = client) -> None:
@@ -1346,5 +1385,7 @@ def test_the_shared_semaphore_registry_does_not_grow_without_bound() -> None:
             loop.run_until_complete(touch())
         assert len(registry) <= 16, f"registry grew to {len(registry)} abandoned loops"
     finally:
+        for loop in loops:
+            loop.close()
         registry.clear()
         gc.collect()

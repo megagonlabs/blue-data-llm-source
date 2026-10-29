@@ -1,6 +1,6 @@
 # blue-data-llm-mcp
 
-This package exposes `blue-data-llm-source` through an MCP server named `blue-data-llm`. The server uses stdio and provides five tools and no resources. It validates each tool call against the advertised schema, translates the arguments into a library call, and returns JSON. The library remains responsible for domain validation, configuration, alignment, and budgets. Library errors are returned with their original wording so a model-driven client can act on them.
+This package exposes `blue-data-llm-source` through an MCP server named `blue-data-llm`. The server uses stdio and provides five tools and no resources. It validates each tool call against the advertised schema, translates the arguments into a library call, and returns JSON. The library remains responsible for domain validation, configuration, alignment, and budgets. MCP validation and deployment refusals name the affected argument or setting. Library failures retain a known error kind and use fixed messages.
 
 **Set an operator ceiling before exposing a provider credential.** `llmdb_query` accepts `limits.max_cost`, `limits.max_seconds`, and `limits.max_calls`, and `llmdb_estimate` calculates a cost bound before a query runs. The operator can set the same ceilings for every call with `BLUE_DATA_LLM_SOURCE_LIMIT_COST`, `_LIMIT_CALLS` and `_LIMIT_SECONDS`; a call can lower them but never raise or remove them. Without an operator ceiling, a call that sets none is unbounded. See [Ceilings](#ceilings).
 
@@ -16,7 +16,7 @@ This package exposes `blue-data-llm-source` through an MCP server named `blue-da
 
 The `llmdb_` prefix prevents collisions when a client loads several data-source servers into one tool namespace. The remainder of each name matches the corresponding `blue-llmdb` operation.
 
-Versions before 2.0.0 exposed `llm_fetch`, `llm_estimate` and `llm_info`. These names are no longer supported. A client that calls one receives an `UnknownTool` error listing the available tools.
+Versions before 0.2.0.0 exposed `llm_fetch`, `llm_estimate` and `llm_info`. These names are no longer supported. A client that calls one receives an `UnknownTool` error listing the available tools.
 
 ### `llmdb_query`
 
@@ -27,7 +27,7 @@ Fetch structured records from a language model's own knowledge.
 | `query` | string | no | What to ask for, in plain language. Omitted or empty, the call succeeds with no records and `outcome: empty_query` |
 | `attrs` | array | no | Attributes every record must carry: `"country"` or `{"name": "year", "type": "int"}`. Each attribute once; the two spellings name the same attribute, and a repeat is refused before the model is reached |
 | `context` | string | no | Text that clarifies the query or an attribute name |
-| `max_records` | integer, minimum 1 | no | Stop after this many records |
+| `max_records` | integer, minimum 1 | no | Keep at most this many returned records; the model still answers in full |
 | `limits.max_cost` | number, minimum 0 | no | Refuse a call that would take this run's spend past this many dollars |
 | `limits.max_seconds` | number, minimum 0 | no | Refuse a call once the run has been going this long |
 | `limits.max_calls` | integer, minimum 0 | no | Refuse more than this many provider calls, retries included |
@@ -55,9 +55,15 @@ Fetch structured records from a language model's own knowledge.
 
 The rows follow schema order. Each of the seven enum `plan.*` settings above has a closed set of values: its schema declares a JSON Schema `enum`, and the server refuses values outside that set before calling the library.
 
-The `type` on an attribute is deliberately **not** closed. The library checks a value against a type name it recognises (`int`, `integer`, `float`, `number`, `bool`, `boolean`, `date`, `str`, `string`, `text`) and accepts any other name unchecked, reporting it once in `meta.unchecked_types`. Refusing an unrecognised name here would make that field unreachable over this transport.
+The `type` on an attribute is deliberately **not** closed. The library checks a value against a type name it recognizes (`int`, `integer`, `float`, `number`, `bool`, `boolean`, `date`, `str`, `string`, `text`) and accepts any other name unchecked, reporting it once in `meta.unchecked_types`. Refusing an unrecognized name here would make that field unreachable over this transport.
 
 Nothing is required. A missing query is a successful call with no records, not an error.
+
+The dots in `limits.max_cost` and `plan.mode` are part of each argument name. Pass flat keys, not nested `limits` or `plan` objects; a nested `limits` object is refused as `unknown argument 'limits'`. For example:
+
+```json
+{"query": "the member states of the European Union", "attrs": ["country"], "limits.max_cost": 0.05, "plan.mode": "partitioned"}
+```
 
 A call and its result:
 
@@ -65,7 +71,7 @@ A call and its result:
 {
   "query": "the member states of the European Union",
   "attrs": ["country", {"name": "accession_year", "type": "int"}],
-  "max_records": 5
+  "limits.max_cost": 0.05
 }
 ```
 
@@ -80,13 +86,14 @@ A call and its result:
     "calls": 1,
     "prompt_tokens": 12,
     "completion_tokens": 34,
-    "cost": 0.0000182,
+    "cost": 0.020862875000000003,
+    "accounting_known": false,
     "elapsed_seconds": 0.31,
     "row_estimate": null,
     "cardinality_estimate": null,
     "primary_keys": [],
     "observed_key_count": 0,
-    "marginal_key_yields": [],
+    "marginal_key_yields": [1],
     "incomplete_key_records": 0,
     "filter_contradictions": 0,
     "gaps": [],
@@ -96,11 +103,13 @@ A call and its result:
 }
 ```
 
+If this call includes `"max_records": 1` and the model produces more than one record, the response keeps one record and reports `outcome: truncated`; generation still consumed the full model answer.
+
 `outcome` is always present and explains the result: `ok`, `empty_query`, `model_returned_none`, `filtered_to_empty`, `partial`, `stopped_by_limit`, or `truncated`. Use it to distinguish a model-produced empty result from one caused by filtering, interruption, or a limit.
 
-Every field in that sample is always present, so a program branches on what it says rather than on whether the key arrived. `gaps` reports an observed failed or interrupted part, a ceiling, or discarded output; a valid empty answer alone does not create one. `stop_reasons` retains simultaneous limits in precedence order. `row_estimate` is the accepted non-flat bootstrap root hint or JSON `null`.
+`accounting_known` appears when it is false; it is omitted when accounting is measured. The other fields shown in the sample are always present. `gaps` reports an observed failed or interrupted part, a ceiling, or discarded output; a valid empty answer alone does not create one. `stop_reasons` retains simultaneous limits in precedence order. `row_estimate` is the accepted non-flat bootstrap root hint or JSON `null`.
 
-`meta` also carries `normalization_collisions`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to`, `cache_hits`, `unmapped_keys`, `remapped_keys`, `type_mismatches`, `key_collisions`, and `accounting_known`, each when it applies. An absent key there means the thing did not happen. Read `accounting_known` before `cost`: when false, `cost` is a conservative bound, or a zero that means unmeasured. [What `cost` means](../../lib/README.md#what-cost-means) lists each case. A budget stop is a result rather than a tool error.
+`meta` also carries `normalization_collisions`, `repaired_numbers`, `split_decision`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to`, `cache_hits`, `unmapped_keys`, `remapped_keys`, `type_mismatches`, `key_collisions`, and `accounting_known`, each when it applies. An absent key there means the thing did not happen. Read `accounting_known` before `cost`: under a cost ceiling, a contacted attempt keeps at least its reservation in the ledger. When `accounting_known` is false, `cost` is a conservative ledger value or an unmeasured zero, not billed spend. [What `cost` means](../../lib/README.md#what-cost-means) lists each case. A budget stop is a result rather than a tool error.
 
 ### `llmdb_estimate`
 
@@ -113,8 +122,8 @@ What one **flat** `llmdb_query` of the same request could cost, without calling 
 ```json
 {
   "bounded": true,
-  "max_cost": 0.041528190000000006,
-  "max_cost_per_attempt": 0.013842730000000001,
+  "max_cost": 0.062570475,
+  "max_cost_per_attempt": 0.020856825,
   "max_attempts": 3,
   "reason": null,
   "model": "gpt-6-luna",
@@ -126,9 +135,9 @@ What one **flat** `llmdb_query` of the same request could cost, without calling 
 
 `attempts_within_ceiling` is `null` when no cost ceiling applies to the call. With one, from the call or from the operator, it is how many of `max_attempts` fit under it, each at `max_cost_per_attempt`; `0` means the first attempt would be refused.
 
-`max_cost` bounds the whole of a `flat` fetch rather than predicting it: `max_cost_per_attempt` accumulated `max_attempts` times, with the entire output allowance reserved at the model's output rate and the prompt bounded by its encoded length. A typical call costs a fraction of it. It is the same figure the reservation claims, so a request that estimates inside a ceiling is not refused when it runs, and a ceiling set to exactly `max_cost` admits every attempt the figure accounted for. Both are computed from this package's static price table, never from anything the provider reports, so they agree with each other and not necessarily with an invoice. Neither cost is rounded, for the same reason: a figure a run can exceed is not a bound.
+`max_cost` bounds the whole of a `flat` fetch rather than predicting it: `max_cost_per_attempt` accumulated `max_attempts` times, with the entire output allowance reserved at the model's output rate and the prompt bounded by its encoded length. A typical call costs a fraction of it. It is the same figure the reservation claims, so a request that estimates inside a ceiling is not refused when it runs, and a ceiling set to exactly `max_cost` admits every attempt the figure accounted for. Both are computed from the package or configured rates, not a provider quote. The bound assumes those rates and the provider's output-token allowance hold; it is not an invoice prediction. Neither cost is rounded, for the same reason: a figure a run can exceed is not a bound.
 
-`bounded` is `false` when no bound can be established, such as when the library has no rates for a model and none were supplied. `reason` identifies what is missing. This is a successful call, even when it cannot provide a cost bound. This path does not contact the provider.
+`bounded` is `false` when no bound can be established, such as when the library has no rates for a model and none were supplied. `reason` gives fixed guidance about pricing, output allowance, or client cost support. This is a successful call, even when it cannot provide a cost bound. An empty call `llmdb_estimate {}` succeeds with `bounded: true`, `max_cost: 0`, and `reason: empty_query`. This path does not contact the provider.
 
 ### `llmdb_list_models`
 
@@ -217,7 +226,7 @@ A model the table does not carry answers with `priceable: false`, null rates and
 No inputs. Returns the protocol, the variant, and the version of the library underneath. It reads no deployment setting, so it still answers while a malformed one is failing the query, estimate and model-inspection tools:
 
 ```json
-{"protocol": "llm", "variant": "openai", "version": "2.2.0"}
+{"protocol": "llm", "variant": "openai", "version": "1.0.0"}
 ```
 
 ## Decomposition
@@ -248,9 +257,9 @@ By default, `llmdb_query` answers with one model call. A large request can be sp
 | `plan.split_policy` | `always` is the default. `evidence` asks the root once and splits only when that answer was cut off, by the output allowance or mid-answer, when the probe failed, or when it holds fewer than half the keys an estimate above `plan.split_threshold_rows` expects; otherwise that answer is the result, and `meta.split_decision` says which. The probe is one more call in the bound. Needs `partitioned`. |
 | `plan.split_threshold_rows` | Under `evidence`, the estimate above which a short probe answer splits. Default `120`. |
 
-`plan.leaf_prompt`, `plan.child_wording`, `plan.filter_enforcement`, `plan.range_filters` and `plan.partition_guardrails` are experimental. `keyed-leaf-fetch-2` reduced recall with GPT-4o in internal testing and is not recommended. `plan.split_policy` `evidence` improved recall with GPT-4o in an internal benchmark and has not been measured on other models.
+`plan.leaf_prompt`, `plan.child_wording`, `plan.filter_enforcement`, `plan.range_filters` and `plan.partition_guardrails` are experimental. `plan.split_policy` `evidence` is opt-in. Check the returned records and diagnostics; these planning settings do not establish completeness.
 
-These are the 21 standard planning controls shared with Python and the CLI. The MCP schema intentionally does not expose `plan.distribution_search`, `plan.identity_partitions`, or `plan.max_strategy_candidates`, and `llmdb_query` returns only records and meta, not the direct-Python planning receipt.
+These are the 21 standard planning controls shared with Python and the CLI. The MCP schema intentionally does not expose `plan.max_excluded_keys`, `plan.distribution_search`, `plan.identity_partitions`, or `plan.max_strategy_candidates`, and `llmdb_query` returns only records and meta, not the direct-Python planning receipt.
 
 Non-flat calls also spend on the selected planning schedule and may make bounded proposal or entity enumeration calls before leaf extraction. The library admits those calls incrementally against the shared budget; `plan.max_continuations` is not a bound on the whole request.
 
@@ -300,15 +309,17 @@ The `blue-llmdb` CLI spells the same settings as hyphenated flags, because a dot
 | A `--format` equivalent | An MCP tool's wire format is fixed JSON by protocol. `--format table/json/nl/csv` is a CLI concern and is deliberately not mirrored here. |
 | MCP resources | This server is tools-only. The price table contains 27 names with no paging or subscription behavior, and each other read is either a live provider call, which a client must not be able to trigger by prefetching context, or a fact already returned by a tool. |
 | The library's registry surface (`fetch_schema`, `fetch_databases`, `fetch_database_collections` and the rest) | They exist so a registry sync has a hierarchy to walk. `fetch_databases()` returns one synthetic name and `fetch_schema()` returns `{}`; there is nothing for an agent to read. |
+| `translate_nl_to_native_query` | Natural language is already the native query form. This compatibility method returns the query unchanged, or `None` when it is empty; it has no separate translation for an agent to request. |
+| `connect()` and `disconnect()` | The source holds no persistent connection. `connect()` returns `{}` and `disconnect()` does nothing, so there is no connection lifecycle to expose as MCP tools. |
 | The `DataSource` orchestrator-tool surface (`get_nl_tools`, `execute_nl_tool`, `execute_query_nl`) | That is how Blue's own orchestrator drives a source, and it is already a tool-dispatch layer. Putting it behind an MCP tool would nest one tool protocol inside another and give an agent two routes to the same fetch. `llmdb_query` is that fetch. |
 
 ## Ceilings
 
-Three axes bound what a call may spend: `limits.max_cost` in dollars, `limits.max_seconds`, and `limits.max_calls`, which counts retries. Each provider attempt is claimed before contact. A refusal before any extraction answer returns no records with `outcome=stopped_by_limit`; a later refusal after an extraction answered retains those records with `outcome=partial`. In both cases the stop fields name the axis.
+Three axes bound what a call may spend: `limits.max_cost` in dollars, `limits.max_seconds`, and `limits.max_calls`, which counts retries. Each provider attempt is claimed before contact. With no answered extraction response and no retained records, a ceiling refusal returns no records with `outcome=stopped_by_limit`; after a failed attempt, a call-count refusal of the retry instead raises `TransportError`. If an extraction response has already been parsed, either failure retains its records with `outcome=partial` and a gap for the failed part. Limit results name the axis in the stop fields.
 
-`max_records` is not one of them. It caps the rows in the result, not the spend: the model is asked once and the surplus records are dropped on arrival.
+`max_records` caps returned rows; it is not a provider-call or cost ceiling. Non-flat plans, continuations, and retries can make additional calls.
 
-Every cost ceiling must meet a minimum. The bound reserves the full output allowance at the model's output rate, plus OpenAI's 10% regional uplift for applicable models. A `limits.max_cost` below `max_cost_per_attempt` therefore refuses every call before it starts. Use `llmdb_estimate` to obtain that figure. The output allowance is controlled by the deployment setting `BLUE_DATA_LLM_SOURCE_MAX_TOKENS`; no call argument changes it.
+Every cost ceiling must meet a minimum. The bound reserves the full output allowance at the model's output rate, including any long-context output multiplier and OpenAI's 10% regional uplift. A `limits.max_cost` below `max_cost_per_attempt` therefore refuses every call before it starts. Use `llmdb_estimate` to obtain that figure. The output allowance is controlled by the deployment setting `BLUE_DATA_LLM_SOURCE_MAX_TOKENS`; no call argument changes it.
 
 A cost ceiling also needs rates for the model, from the price table or from the `BLUE_DATA_LLM_SOURCE_PRICE_PER_INPUT_TOKEN` and `BLUE_DATA_LLM_SOURCE_PRICE_PER_OUTPUT_TOKEN` this deployment was started with. Ask `llmdb_inspect_model` first: `cost_ceiling_supported: false` means `limits.max_cost` will refuse every call on this server, whatever value it is given.
 
@@ -318,38 +329,55 @@ An operator can set ceilings for every call with `BLUE_DATA_LLM_SOURCE_LIMIT_COS
 
 Every tool follows the same error rule. A call that produces no result is an MCP-level error with `isError: true`. A completed call with a readable result is successful at the protocol level; partial results and stops are represented in the result fields.
 
-Error text uses `Kind: message` and preserves the library's wording. Before the text is returned, credential-shaped content is replaced with `***` because provider exceptions can include request headers. For a value outside a declared set, the message identifies the argument and lists accepted values without repeating the rejected value. Unknown keys are quoted so callers can locate misspellings.
+Error text uses `Kind: message`. MCP argument validation identifies the field and constraint. Below-minimum errors include the supplied number; enum errors list accepted values without repeating the submitted value, and unknown keys are quoted. Deployment validation does not repeat setting values. Library failures use fixed text by error kind; provider and unexpected failures do not include exception details. Credential-shaped content in argument names is replaced with `***`.
 
 | Kind | Raised for |
 |---|---|
 | `InvalidArguments` | An argument the advertised schema refuses: an unknown key, a wrong type, a value below a declared minimum, a blank value where the schema declares a pattern, a repeated entry in an array declared unique, a value outside a declared enum, a missing required argument, or a withdrawn setting. Fix the call. |
 | `UnknownTool` | A tool name this server does not serve. The message names the ones it does. |
-| `QueryError`, `ConfigError`, `TransportError`, `ParseError` | The library refused or failed, and the kind is its exception class. Fix the request or the deployment, as the message says. |
+| `QueryError`, `ConfigError`, `TransportError`, `ParseError` | The library refused or failed. Known validation cases give fixed guidance; provider and parse failures have stable messages. |
+| `BudgetExceeded` | A configured limit stopped the call without a readable result. The fixed message is `Configured limit reached.` |
+| `LlmSourceError`, `InternalError` | Other library or server failures. The message contains no underlying exception text. |
 
 ```text
 ConfigError: BLUE_DATA_LLM_SOURCE_MAX_TOKENS must be a whole number of at least 1.
 ```
 
+Caller mistakes such as an invalid `plan.leaf_prompt` for flat mode, `plan.keys` outside requested `attrs`, or a locked planning order without its required schema and keys receive fixed `InvalidArguments` guidance naming the field. When a provider failure raises `TransportError`, the tool returns `TransportError: Provider request failed` with a fixed category in parentheses if structured error data identifies `authentication`, `network`, `rate_limit`, or `model_not_found`; otherwise it remains generic. Raw provider text is not returned. Malformed JSON-RPC can fail in the SDK before a tool handler runs and receives an SDK protocol error rather than a tool `Kind: message` error.
+
 That one is a deployment message: the variable is set where the server is started, not on this surface, and `llmdb_query`, `llmdb_estimate` and `llmdb_inspect_model` fail with it until the variable is fixed. See [Configuration](#configuration).
 
-Before 2.0.0 an argument refusal was also reported as `ConfigError`, so "unknown argument" and "no model configured" shared one prefix with two different remedies. They are told apart now.
+Before 0.2.0.0 an argument refusal was also reported as `ConfigError`, so "unknown argument" and "no model configured" shared one prefix with two different remedies. They are told apart now.
 
 These are payload facts rather than errors:
 
 | Situation | Where it appears |
 |---|---|
 | An empty or missing query | `meta.outcome: empty_query`, on a successful call with no records |
-| A budget stop | `meta.outcome: stopped_by_limit` or `partial`, with the axis in `meta.stopped_by`. The records obtained before the stop are in the payload, which is why `BudgetExceeded` is not in the table above |
+| A budget stop with a readable result | `meta.outcome: stopped_by_limit` or `partial`, with the axis in `meta.stopped_by`. The records obtained before the stop are in the payload |
 | A cost that cannot be bounded | `bounded: false` with `reason`, on `llmdb_estimate` |
 | A model with no published price | `priceable: false` with null rates, on `llmdb_inspect_model` |
 
-A missing or wrong provider credential arrives as `TransportError`, not `ConfigError`. The library never reads a credential, so it cannot report one as missing; the provider SDK reports it as a call that failed, and the message names the environment variable it looked for.
+A missing or wrong provider credential fails the provider request, not configuration validation. The provider SDK handles authentication. With no answered extraction response and no retained records, an exhausted retry policy or a `max_calls` refusal after the failure raises `TransportError` with a fixed MCP message. If `max_cost` or `max_seconds` refuses that retry, or a ceiling refuses the first attempt, the result has `outcome: stopped_by_limit`. If an extraction response has already been parsed, the result is partial with a gap for the failed part. The library reads credential environment values only to mask diagnostic text.
 
 ## Result shapes
 
-Each tool returns a JSON object carrying the library return type it wraps, and nothing more. Only `llmdb_query` has a `meta` object, because only `LlmSource.fetch` produces one. There is no shared envelope around the five.
+On success, each tool returns one MCP text content block containing a JSON object. SDK clients parse the block's `text`; this server does not populate `structuredContent`. Its fields correspond to the library result wrapped by the tool. Only `llmdb_query` has a `meta` object, because only `LlmSource.fetch` produces one. There is no shared envelope around the five.
 
 ## Install and run
+
+From the checkout root, with `blue-data` beside it, use the root `.venv`:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+./platform/llm-mcp/scripts/install.sh
+command -v blue-data-llm-mcp
+```
+
+If `.venv` already exists, activate it and run only the installer. It installs `blue-data`, the library's `dev` and `llm` extras, and the MCP package's `dev` extra. Alternatively, use Conda from the same checkout root:
+
+The [installation guide](../../docs/installation.md) is the reference for these Conda steps.
 
 Run these commands from the `blue-data-llm-source` checkout with `blue-data` beside it. Create the environment once:
 
@@ -381,7 +409,7 @@ If the environment already exists, start at `conda activate blue-llmdb`. The las
 }
 ```
 
-After setting the ceiling, pass `OPENAI_API_KEY` through the client's environment or secret settings. A desktop client may not inherit variables from your shell. The client starts the server over stdio; the server opens no port.
+After setting the ceiling, pass `OPENAI_API_KEY` through the client's environment or secret settings. A desktop client may not inherit variables from your shell. The client starts the server over stdio; the server opens no port. Use `blue-data-llm-mcp --help` or `--version` to inspect the command. Unsupported command options exit 2 with fixed guidance. Without an option, `blue-data-llm-mcp` waits for protocol messages on standard input.
 
 To choose a model, output allowance and cost ceiling, add these variables to the server environment:
 
@@ -415,18 +443,18 @@ This server reads no configuration file and no CLI profile. It reads these varia
 | `BLUE_DATA_LLM_SOURCE_TIMEOUT` | `llm.timeout` | seconds |
 | `BLUE_DATA_LLM_SOURCE_MAX_PARALLEL` | `llm.max_parallel` | a whole number |
 | `BLUE_DATA_LLM_SOURCE_CACHE` | `llm.cache` | `1`, `true`, `yes`, `on`, or `0`, `false`, `no`, `off` |
-| `BLUE_DATA_LLM_SOURCE_CACHE_DIR` | `llm.cache_dir` | a directory; a leading `~` is expanded |
+| `BLUE_DATA_LLM_SOURCE_CACHE_DIR` | `llm.cache_dir` | a directory; a leading `~` and environment variables are expanded |
 | `BLUE_DATA_LLM_SOURCE_PRICE_PER_INPUT_TOKEN` | `llm.price_per_input_token` | USD per token |
 | `BLUE_DATA_LLM_SOURCE_PRICE_PER_OUTPUT_TOKEN` | `llm.price_per_output_token` | USD per token |
 | `BLUE_DATA_LLM_SOURCE_LIMIT_COST` | `limits.max_cost`, for every call | dollars, zero or more |
 | `BLUE_DATA_LLM_SOURCE_LIMIT_CALLS` | `limits.max_calls`, for every call | a whole number, zero or more |
 | `BLUE_DATA_LLM_SOURCE_LIMIT_SECONDS` | `limits.max_seconds`, for every call | seconds, zero or more |
 
-They are read on every call, not once at startup. A variable that is unset or blank leaves the library's default in place, so with none set the server runs `gpt-6-luna` at medium reasoning with a 25,000-token allowance. A value that cannot be read as its type, or that the library refuses, fails that call with a `ConfigError` naming the variable and what it must be, never the value itself, and the server keeps running. A configured model name the package does not publish, and the cache directory, are masked as `***` wherever they would appear in a result or an error, since a deployment setting can hold anything and a caller's transcript is not the operator's to control.
+The server reads its process environment on every call. Restart the MCP client or server process after changing the client configuration; an already-running process does not inherit later shell changes. An unset variable leaves the library default in place. A blank `LIMIT` variable fails the call with a `ConfigError`; zero is a valid ceiling. Other blank variables keep their defaults, so with none set the server runs `gpt-6-luna` at medium reasoning with a 25,000-token allowance. A value that cannot be read as its type, or that the library refuses, fails that call with a `ConfigError` naming the variable and what it must be, never the value itself, and the server keeps running. A configured model name the package does not publish, and the cache directory, are masked as `***` wherever they would appear in a result or an error, since a deployment setting can hold anything and a caller's transcript is not the operator's to control.
 
 The rate and allowance settings are not masked. Any MCP caller can work out `BLUE_DATA_LLM_SOURCE_PRICE_PER_INPUT_TOKEN`, `BLUE_DATA_LLM_SOURCE_PRICE_PER_OUTPUT_TOKEN` and `BLUE_DATA_LLM_SOURCE_MAX_TOKENS` from `max_output_tokens`, from two `llmdb_estimate` results, or from `meta.cost`. Do not put a confidential rate in them. The three `LIMIT` variables are operator ceilings: a call's `limits.*` argument applies only where it is lower, so an agent can tighten a ceiling for one call but not loosen it. No other `BLUE_DATA_*` variable is read: the planning settings stay per-call arguments, and a call's `plan.*` arguments apply to that call only.
 
-`OPENAI_API_KEY` belongs to the provider SDK. The SDK reads it from the server process environment; neither this package nor the library reads it directly, and no tool accepts a credential as an argument. Text about a call passes through `redact`, including errors, model names, requested attributes, rewritten queries, unchecked types, and unbounded-estimate reasons. A test examines every returned string and requires it to be redacted or explicitly exempted. Returned records are exempt because they are the query result; a token-shaped record value remains data.
+The provider SDK reads `OPENAI_API_KEY` from the server process environment for authentication. The library reads values held under credential environment names only to mask diagnostics; no tool accepts a credential as an argument. Text about a call passes through `redact`, including errors, model names, requested attributes, rewritten queries, unchecked types, and unbounded-estimate reasons. Returned records are the query result and retain their values.
 
 The `blue-llmdb` CLI stores profiles and applies its own environment-variable precedence chain under `~/.blue-llmdb/`. The MCP server reads none of that state, only the variables above. Both interfaces use the property names shown in the mapping table above.
 

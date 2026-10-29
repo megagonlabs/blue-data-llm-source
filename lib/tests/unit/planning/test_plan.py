@@ -1,8 +1,6 @@
 """The plan, and the guards that decide how much a request costs.
 
-Three of the prototype's defects were guards that could never execute, so every guard here
-has a case that reaches it and asserts the note it leaves. A guard without a test that
-fires it is assumed broken.
+Every guard has a case that reaches it and checks the note it leaves.
 """
 
 from __future__ import annotations
@@ -216,9 +214,8 @@ class TestMaxLeaves:
             OneOf(("e", "f")),
             OneOf(("g", "h")),
         ]
-        # Read off the alternatives themselves. Splitting a rendered group on its
-        # separator is the oracle that agreed with the defect this typing removed: it
-        # recovers whatever the renderer joined, including a separator inside a value.
+        # Read alternatives from their tagged values. Splitting rendered text would
+        # mistake separators inside values for boundaries.
         covered = [value for group in groups if isinstance(group, OneOf) for value in group.values]
         assert covered == list("abcdefgh"), "every value in exactly one leaf"
 

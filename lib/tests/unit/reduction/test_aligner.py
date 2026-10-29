@@ -27,7 +27,7 @@ def test_a_key_differing_only_in_punctuation_maps() -> None:
     assert result.remapped == {"first_name": "first name"}
 
 
-def test_normalisation_ignores_spaces_hyphens_and_case() -> None:
+def test_normalization_ignores_spaces_hyphens_and_case() -> None:
     result = align([{"First-Name": "Ada"}], [Attr("first name")])
     assert result.records == [{"first name": "Ada"}]
 
@@ -83,7 +83,6 @@ def test_alignment_of_several_records_maps_each_one() -> None:
 def test_two_keys_matching_one_attribute_keep_the_first_and_report_the_second() -> None:
     """Two spellings that normalize alike, which the parser passes through unchanged.
 
-    Overwriting made the surviving value depend on the order the model emitted its keys.
     Two *identical* keys are a different case and are rejected at the parser.
     """
     result = align([{"First Name": "Ada", "first_name": "Grace"}], [Attr("first name")])
@@ -94,15 +93,15 @@ def test_two_keys_matching_one_attribute_keep_the_first_and_report_the_second() 
     assert result.collisions[0]["ignored_value"] == "Grace"
 
 
-def test_the_surviving_value_does_not_depend_on_key_order() -> None:
+def test_key_order_selects_survivor_and_reports_discarded_value() -> None:
     forward = align([{"First Name": "Ada", "first_name": "Grace"}], [Attr("first name")])
     reverse = align([{"first_name": "Grace", "First Name": "Ada"}], [Attr("first name")])
 
     assert forward.records[0]["first name"] == "Ada"
     assert reverse.records[0]["first name"] == "Grace"
-    # Order decides which key is *first*, which is legitimate; what matters is that the
-    # discarded one is reported either way rather than vanishing.
     assert len(forward.collisions) == len(reverse.collisions) == 1
+    assert forward.collisions[0]["ignored_value"] == "Grace"
+    assert reverse.collisions[0]["ignored_value"] == "Ada"
 
 
 def test_a_collision_still_counts_as_answered() -> None:
@@ -113,7 +112,7 @@ def test_a_collision_still_counts_as_answered() -> None:
 def test_two_requested_attributes_that_normalize_alike_are_still_usable() -> None:
     """The fuzzy index cannot separate them, so it is not consulted for them.
 
-    Refusing the whole request was too strong: two names whose normalised forms coincide are
+    Refusing the whole request was too strong: two names whose normalized forms coincide are
     still distinct names, and a model returning them exactly needs no fuzzy matching at all.
     A key that only matches fuzzily is reported unmapped rather than assigned by guess.
     """
@@ -121,7 +120,7 @@ def test_two_requested_attributes_that_normalize_alike_are_still_usable() -> Non
     assert exact.records == [{"first name": 1, "first_name": 2}]
     assert exact.unmapped == []
 
-    # `firstname` matches both by normalisation and neither exactly, so it is not guessed.
+    # `firstname` matches both by normalization and neither exactly, so it is not guessed.
     ambiguous = align([{"firstname": 1}], [Attr("first name"), Attr("first_name")])
     assert ambiguous.unmapped == ["firstname"]
     assert ambiguous.records == [{"first name": None, "first_name": None}]

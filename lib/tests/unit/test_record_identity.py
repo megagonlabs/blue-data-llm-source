@@ -40,7 +40,7 @@ VALUES: list[Any] = [
     [1],
     {"a": 1},
 ]
-"""The values the two rules split on, plus enough neighbours to pin what stays merged.
+"""The values the two rules split on, plus enough neighbors to pin what stays merged.
 
 ``1`` against ``"1"`` is where a string coercion loses a row. ``True`` against ``1`` and
 ``False`` against ``0`` are where a raw dict key loses one, since Python hashes a bool as

@@ -1,30 +1,20 @@
-"""The ``blue-llmdb`` command tree.
+"""The ``blue-llmdb`` command tree: profile, data, model, and metadata.
 
-Four components — ``profile``, ``data``, ``model``, ``metadata`` — and twelve commands, in
-the family's ``<cli> <component> <action> <parameters>`` shape. Six of the twelve are
-``profile``, which is family-standard behaviour over local state and lives in its own
-module; four call one library API each; ``metadata inspect`` calls two.
+For profile settings, precedence is command option, environment variable, profile,
+then built-in default. The resolver handles the bottom three tiers. Request flags,
+including the ``--plan-*`` controls, are command-line only so they cannot carry over
+to a later query. ``--effort`` is a profile setting because it sets the continuation
+allowance.
 
-Precedence, for every setting the profile spec declares a parameter for: **command option,
-then environment variable, then profile, then built-in default.** The bottom three belong to
-the resolver, which the root callback builds and exports into the environment before any
-command runs; a command option sits on top and never reaches the resolver at all.
-
-A flag the spec has no parameter for is read from the command line and nowhere else. That is
-all twenty-one ``--plan-*`` controls and the flags that are the request itself, and it is a
-choice rather than an omission: a plan setting describes one ask, and a partition key or a
-row target left in a profile would apply itself to the next, unrelated query. ``--effort`` is
-the exception among them, because a continuation allowance is an appetite for spending.
-
-This module declares arguments and prints results. What an option means to the library is
-in ``config``; what a result looks like in each format is in ``formats``.
+This module declares arguments and prints results. ``config`` translates options
+for the library; ``formats`` renders results.
 """
 
 from __future__ import annotations
 
 import contextlib
 import math
-import sys
+import os
 from typing import Any, cast
 
 import click
@@ -49,13 +39,23 @@ from blue_data_llm_source.prompts import LEAF_PROMPT_VERSIONS
 from blue_data_llm_source.reduction.obedience import FILTER_ENFORCEMENTS
 
 from blue_data_llm_cli import config, formats
-from blue_data_llm_cli.configstore import ConfigResolver
-from blue_data_llm_cli.profile import profile_group, profile_store, resolver_for
+from blue_data_llm_cli.profile import cli_spec, profile_group, profile_store, resolver_for
+from blue_data_llm_cli.profile_adapter import ConfigResolver, ProfileError, ProfileStore
 
-# Import the three closed sets used by plan options to avoid duplicating values that could
-# drift from the library. The library refuses each value by name. When `--plan-mode` was a
-# bare string, it reached the library and returned `ERROR: CONFIG`, exit 4, while its two
-# sibling options were refused by the parser as `ERROR: USAGE`, exit 2.
+# Use the library's closed sets so invalid plan options fail during CLI parsing.
+
+
+class _EmptyProfileStore(ProfileStore):
+    """Default settings for a read-only command when no profile home can be created."""
+
+    def selected(self) -> str:
+        return "default"
+
+    def exists(self, name: str) -> bool:
+        return name == "default"
+
+    def values(self, name: str) -> dict[str, str]:
+        return {}
 
 
 # ------------------------------------------------------------------ #
@@ -75,7 +75,7 @@ from blue_data_llm_cli.profile import profile_group, profile_store, resolver_for
 )
 @click.pass_context
 def cli(ctx: click.Context, profile_name: str | None) -> None:
-    """blue-llmdb — query a language model as if it were a data source.
+    """blue-llmdb: query a language model as if it were a data source.
 
     Configuration lives in profiles: `blue-llmdb profile config` to set values,
     `blue-llmdb profile inspect` to see them and where each came from. Every setting
@@ -86,6 +86,7 @@ def cli(ctx: click.Context, profile_name: str | None) -> None:
     home = ""
     resolver: ConfigResolver | None = None
     failure: config.CliError | None = None
+    read_only_fallback_failure: config.CliError | None = None
 
     # Anything this callback refuses is held rather than raised. Click has not parsed the
     # subcommand's arguments yet, so a failure reported from here could only ever be plain
@@ -98,33 +99,68 @@ def cli(ctx: click.Context, profile_name: str | None) -> None:
         # `profile add` before anything works. Keyed on the profiles file, so a profile
         # removed on purpose is not resurrected on the next command.
         store = profile_store(home)
-        store.initialize()
+        try:
+            store.initialize()
+        except ProfileError as error:
+            if (
+                profile_name is not None
+                or ctx.invoked_subcommand not in {"data", "model", "metadata"}
+                or os.path.lexists(home)
+                or not str(error).startswith(f"cannot create {home}:")
+            ):
+                raise
+            read_only_fallback_failure = config.failure_for(error)
+            store = _EmptyProfileStore(home)
 
-        # A blank name is refused before the existence check, which reads it as "none
-        # given" and falls through to the selected profile: `--profile ''` then ran under a
-        # profile the caller did not name, which is the same silent substitution.
+        # Refuse a blank name before profile selection can fall back to the default.
         if profile_name is not None and not profile_name.strip():
             raise config.CliError(
                 config.USAGE,
                 f"--profile needs a profile name. Run `{config.PROGRAM} profile list` to see them.",
             )
 
-        # A named profile that does not exist is refused rather than run as an empty one.
-        # A misspelled profile name could silently omit a configured ceiling.
+        # A missing profile would silently omit its configured ceilings. Profile
+        # commands still need to run so a stale selection can be repaired.
         if profile_name and not store.exists(profile_name):
             raise config.CliError(
                 config.PROFILE,
                 f"no such profile: {profile_name!r}. Run `{config.PROGRAM} profile list` to "
                 f"see them, or `{config.PROGRAM} profile add {profile_name}` to make it.",
             )
+        if profile_name is None and ctx.invoked_subcommand != "profile":
+            selected = store.selected()
+            if not store.exists(selected):
+                source = (
+                    ".selected.profile"
+                    if os.path.lexists(store.selected_path)
+                    else "the implicit default"
+                )
+                raise config.CliError(
+                    config.PROFILE,
+                    f"selected profile {selected!r} from {source} does not exist. "
+                    f"Run `{config.PROGRAM} profile list` to see available profiles, "
+                    f"then `{config.PROGRAM} profile select NAME` to choose one.",
+                )
 
         # Apply the profile before other commands run. Resolved values go into the
         # environment, where the provider SDK reads its configuration.
-        resolver = resolver_for(home, profile_name)
+        managing = ctx.invoked_subcommand == "profile"
+        resolver = (
+            ConfigResolver(cli_spec(), store, profile=profile_name)
+            if read_only_fallback_failure is not None
+            else resolver_for(home, profile_name, allow_missing=managing)
+        )
         # Undone when the command finishes, and registered before the export rather than
         # after it: an export that fails halfway has still written part of what it resolved.
         ctx.call_on_close(resolver.restore)
-        resolver.export()
+        try:
+            resolver.export()
+        except config.STORE_ERRORS:
+            if not managing:
+                raise
+            # Profile commands call no provider, and a stored value that does not resolve
+            # must not block the command that repairs it.
+            resolver.restore()
     except (click.Abort, click.exceptions.Exit):
         raise
     except Exception as error:
@@ -135,6 +171,7 @@ def cli(ctx: click.Context, profile_name: str | None) -> None:
         "profile": resolver.profile if resolver is not None else (profile_name or ""),
         "config": resolver,
         "failure": failure,
+        "read_only_fallback_failure": read_only_fallback_failure,
     }
 
 
@@ -165,9 +202,7 @@ _REQUEST_OPTIONS = [
     ),
     click.option(
         "--max-tokens",
-        # A range, not a bare int: zero or a negative allowance passed straight through to
-        # the provider when no cost ceiling was set, because only the pricing path validates
-        # it and that path does not run without one.
+        # Validate the allowance even when no cost ceiling is configured.
         type=click.IntRange(min=1),
         default=None,
         # The output allowance dominates the cost bound, so a cost ceiling below its floor
@@ -426,10 +461,8 @@ def data_group() -> None:
 @click.option("--cache-dir", default=None, help="Where cached answers are kept.")
 @click.option(
     "--rate-limit",
-    # Deliberately untyped. Declared as a float, Click validated the value before the handler
-    # ran, so `--rate-limit fast` was answered with "not a valid float" — true, and not the
-    # thing the caller needed to know. Nothing here parses it; it exists to be refused with
-    # an answer whatever it holds.
+    # Accept any value for this unsupported option so the handler can give the same
+    # actionable refusal for every input.
     default=None,
     help="Not supported. Kept so the refusal can say what to use instead.",
 )
@@ -505,6 +538,14 @@ def data_query(
         if rate_limit is not None:
             raise config.CliError(config.USAGE, f"--rate-limit: {config.RATE_LIMIT_REASON}")
         attrs = _attrs(attr)
+        requested_names = {item.name for item in attrs}
+        if requested_names and any(
+            key not in requested_names for key in ((plan_key,) if plan_key else ()) + plan_keys
+        ):
+            raise config.CliError(
+                config.USAGE,
+                "--plan-key and --plan-keys must name attributes supplied with --attr.",
+            )
 
         settings = config.Settings(resolver)
         properties = _adapter_properties(
@@ -561,16 +602,16 @@ def data_query(
         reporter.line(f"profile {obj['profile']}: {settings.footer()}")
         reporter.line(f"query: {query}")
         with reporter.status("Querying…"):
-            # Some provider SDK paths write diagnostics to stdout. Keep stdout owned by this
-            # command so the result stays machine-readable while diagnostics stay visible.
-            with contextlib.redirect_stdout(sys.stderr):
-                result = source.fetch(
-                    query,
-                    attrs=attrs or None,
-                    context=context,
-                    max_records=max_rows,
-                    properties=properties or None,
-                )
+            # Provider stdout is untrusted text and cannot share the result stream.
+            with open(os.devnull, "w", encoding="utf-8") as sink:
+                with contextlib.redirect_stdout(sink):
+                    result = source.fetch(
+                        query,
+                        attrs=attrs or None,
+                        context=context,
+                        max_records=max_rows,
+                        properties=properties or None,
+                    )
         reporter.line(
             f"outcome {result.meta.outcome}: {len(result.records)} record(s), "
             f"{result.meta.calls} call(s), ${result.meta.cost:.4f}"
@@ -596,6 +637,14 @@ def data_query(
             empty="(no records)",
         )
     formats.render(rendered, fmt)
+    if fmt == "csv" and result.meta.outcome != Outcome.OK:
+        details = [f"outcome: {result.meta.outcome}"]
+        details.extend(f"gap: {redact(gap)}" for gap in result.meta.gaps)
+        details.extend(
+            f"stopped by: {_stop_line(reason, result.meta)}"
+            for reason in _stop_reasons(result.meta)
+        )
+        click.echo(formats.printable("; ".join(details)).replace("\n", " "), err=True)
 
     # The result is printed first; the outcome then distinguishes an initial budget refusal
     # from a retained partial answer. A row-only cap is excluded because it leaves a usable
@@ -640,13 +689,14 @@ def data_estimate(
     here is read from the command line and nowhere else.
 
     \b
-    This prices one flat fetch, so a split request costs this figure once per call it makes.
+    This bounds one flat fetch, including retries. Non-flat requests may make planning
+    and extraction calls with different prompts; this figure does not bound their total.
     --limit-calls and --max-retries change this number, because the bound accumulates once
     per attempt that can actually happen.
     """
     published = config.Output(output_format)
     with config.reporting(published, log=log):
-        resolver = config.start(obj)
+        resolver = config.start(obj, read_only=True)
         fmt = published.resolve(resolver)
         reporter = config.Reporter(fmt, log, config.resolve_log_limit(resolver, log_limit))
         attrs = _attrs(attr)
@@ -723,7 +773,7 @@ def model_list(obj: dict[str, Any], output_format: str | None) -> None:
     """
     published = config.Output(output_format)
     with config.reporting(published):
-        fmt = published.resolve(config.start(obj))
+        fmt = published.resolve(config.start(obj, read_only=True))
         models = list(priceable_models())
         rendered = formats.tabular(
             ("model",),
@@ -743,7 +793,7 @@ def model_inspect(obj: dict[str, Any], name: str, output_format: str | None) -> 
     """Show what is known about NAME: its published rates and whether it can be bounded."""
     published = config.Output(output_format)
     with config.reporting(published):
-        resolver = config.start(obj)
+        resolver = config.start(obj, read_only=True)
         fmt = published.resolve(resolver)
         configured = resolver.get("BLUE_DATA_LLM_SOURCE_MAX_TOKENS")
         # `is None`, not a truth test: a configured 0 is a number, and silently replacing it
@@ -810,7 +860,7 @@ def metadata_inspect(obj: dict[str, Any], output_format: str | None) -> None:
     """Print the protocol, the variant, and the version of the library underneath."""
     published = config.Output(output_format)
     with config.reporting(published):
-        resolver = config.start(obj)
+        resolver = config.start(obj, read_only=True)
         fmt = published.resolve(resolver)
         variant = resolver.get("BLUE_DATA_LLM_SOURCE_VARIANT")
         source: LlmSource = config.build_source(variant)
@@ -931,17 +981,18 @@ def _plan_settings(
 def _effort(resolver: Any, option: str | None) -> tuple[str, str]:
     if option is not None:
         return option, "flag"
-    found = resolver.resolve("BLUE_DATA_LLM_SOURCE_EFFORT")
-    if found.value is None:
+    value = resolver.get("BLUE_DATA_LLM_SOURCE_EFFORT")
+    if value is None:
         return "low", "default"
-    chosen = str(found.value)
+    chosen = str(value)
     if chosen not in config.EFFORTS:
         raise config.CliError(
             config.PROFILE,
             f"BLUE_DATA_LLM_SOURCE_EFFORT is {chosen!r}; expected one of "
-            f"{', '.join(config.EFFORTS)}",
+            f"{', '.join(config.EFFORTS)}. Run `{config.PROGRAM} profile config "
+            "BLUE_DATA_LLM_SOURCE_EFFORT VALUE` to fix it.",
         )
-    return chosen, str(found.source)
+    return chosen, resolver.source_of("BLUE_DATA_LLM_SOURCE_EFFORT")
 
 
 def _refuse_keyless_effort(
@@ -972,12 +1023,7 @@ def _refuse_keyless_effort(
 
 
 _FLOORS = ("llm.max_tokens", "limits.max_rows")
-"""Settings whose flag carries a ``>= 1`` range, which the other tiers have to honour too.
-
-The range on the option only guards the option. A zero output allowance reaching the
-provider is the case the flag's own comment describes, and the profile and the environment
-reach the same place.
-"""
+"""Settings whose ``>= 1`` flag range also applies to profile and environment values."""
 
 
 def _check_floors(settings: config.Settings) -> None:
@@ -1012,11 +1058,8 @@ def _plural(count: int, word: str) -> str:
 def _reported_model(meta: ExecMeta, absent: str) -> str:
     """The model a run reported, masked.
 
-    `meta.model` is what the client said it called, and the built-in client echoes the
-    configured `llm.model` — so a credential pasted into that setting comes back here. The
-    machine formats inherit the masking from `meta_view`; the table footer and the prose
-    sentence read the field directly, and the footer is the most visible line this CLI
-    prints. A name that is only a name is unchanged, which is what makes this affordable.
+    The model name can contain caller-supplied text. Mask it before writing the table
+    footer or prose summary; machine formats use ``meta_view``.
     """
     return redact(meta.model) if meta.model else absent
 
@@ -1073,16 +1116,12 @@ def _query_notes(
     records: list[dict[str, Any]], meta: ExecMeta, settings: config.Settings, verbose: bool
 ) -> tuple[str, ...]:
     notes = [_footer(len(records), meta)]
-    # Ungated, beside the gaps and stop reasons, because it answers the question the table
-    # otherwise leaves to `--verbose` or `--format json`: an empty result under `table` gave
-    # no way to tell `empty_query` from `model_returned_none` from `filtered_to_empty`, which
-    # the library carries a closed vocabulary to distinguish. First of the three, because it
-    # is the most general statement about the result; the gaps and the stop axis refine it.
+    # Show the outcome in table output so distinct empty-result reasons remain visible.
     if meta.outcome != Outcome.OK:
         notes.append(f"outcome: {meta.outcome}")
     # Before the verbose block and outside it: a gap is why the row count is what it is, not
     # a diagnostic about how it was produced.
-    notes.extend(f"gap: {gap}" for gap in meta.gaps)
+    notes.extend(f"gap: {redact(gap)}" for gap in meta.gaps)
     notes.extend(f"stopped by: {_stop_line(reason, meta)}" for reason in _stop_reasons(meta))
     if verbose:
         notes.extend(_verbose_lines(meta))
@@ -1123,7 +1162,8 @@ def _estimate_sentences(
         f"One flat fetch of this request costs at most ${published['max_cost']:.4f} against "
         f"{published['model']}, across {published['max_attempts']} attempt(s).",
         *((fit,) if fit else ()),
-        "A split request costs that figure once per call it makes.",
+        "Non-flat requests may make planning and extraction calls with different prompts; "
+        "this figure does not bound their total cost.",
         settings.ceilings(),
     )
 
@@ -1195,7 +1235,7 @@ def _model_sentence(name: str, rates: tuple[float, float] | None, allowance: int
 def _verbose_lines(meta: ExecMeta) -> list[str]:
     lines: list[str] = []
     if meta.primary_keys:
-        lines.append("primary keys: " + ", ".join(meta.primary_keys))
+        lines.append("primary keys: " + ", ".join(redact(key) for key in meta.primary_keys))
     lines.append(f"observed complete keys: {meta.observed_key_count}")
     if meta.incomplete_key_records:
         lines.append(f"incomplete-key records: {meta.incomplete_key_records}")
@@ -1231,7 +1271,7 @@ def _verbose_lines(meta: ExecMeta) -> list[str]:
                 f"  record {collision['record_index']} {collision['attribute']}: "
                 f"kept {collision['kept_key']}, ignored {collision['ignored_key']}"
             )
-    return lines
+    return [redact(line) for line in lines]
 
 
 __all__ = ["cli"]

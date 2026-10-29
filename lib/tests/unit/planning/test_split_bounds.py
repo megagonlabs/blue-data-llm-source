@@ -195,7 +195,7 @@ async def test_a_budget_refusal_during_the_probe_is_raised_before_any_proposal()
         ({"split_policy": EVIDENCE}, "needs a probe"),
     ],
 )
-async def test_the_coordinator_refuses_a_split_setting_it_cannot_honour(
+async def test_the_coordinator_refuses_a_split_setting_it_cannot_honor(
     kwargs: dict[str, Any], message: str
 ) -> None:
     arguments: dict[str, Any] = {

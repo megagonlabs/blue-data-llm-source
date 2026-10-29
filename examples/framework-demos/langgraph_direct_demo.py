@@ -1,23 +1,20 @@
 """LangGraph over the direct Python API: a bounded retrieval node feeding a writing node.
 
-The pipeline has two nodes. ``retrieve`` calls ``LlmSource.fetch`` under a ``Budget`` owned
-by the graph, so every ask draws from the same ceiling.
-``respond`` is an ordinary LLM call that turns the records into a sentence for the caller.
+The pipeline has two nodes. ``retrieve`` calls ``LlmSource.fetch`` under one shared
+``Budget`` across the graph's retrievals. ``respond`` makes a separate ``ChatOpenAI`` call
+to turn the records into a sentence; that call is outside the retrieval budget.
 
-The split preserves the metadata passed between the nodes. ``retrieve`` passes the records
-*and* ``meta.outcome`` and ``meta.gaps``, and ``respond`` is told to say so when the
-retrieval was short. An agent that reads only ``records`` cannot tell a complete answer
-from a truncated one. The library's result metadata lets the writing node distinguish
-these cases; downstream prompting cannot recover that information if it is omitted.
+``retrieve`` passes records, ``meta.outcome``, and ``meta.gaps`` to ``respond``.
+The writing node mentions a detected limit or gap. An unflagged short answer can
+still be incomplete; these fields do not measure completeness.
 
 In ``langgraph_mcp_demo.py``, the agent chooses its tools and call order through the MCP
 server. Here the pipeline is fixed, and the model only chooses the wording.
 
 Requires: OPENAI_API_KEY, and the provider extra.
 
-Run from the repository root:
-    pip install langgraph langchain-openai
-    pip install -e lib/ --config-settings editable_mode=strict
+Run from the repository root in the active root .venv:
+    python -m pip install langgraph langchain-openai
     python3 examples/framework-demos/langgraph_direct_demo.py
 """
 

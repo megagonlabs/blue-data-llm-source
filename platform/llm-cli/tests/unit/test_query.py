@@ -368,10 +368,17 @@ def test_the_effort_default_comes_from_the_profile(runner: CliRunner, install_so
 
 
 def test_an_effort_the_cli_does_not_have_is_a_profile_error(runner: CliRunner) -> None:
-    runner.invoke(cli, ["profile", "config", "BLUE_DATA_LLM_SOURCE_EFFORT", "maximum"])
+    refused = runner.invoke(cli, ["profile", "config", "BLUE_DATA_LLM_SOURCE_EFFORT", "maximum"])
+    assert refused.exit_code == config.EXIT_PROFILE
     result = runner.invoke(cli, ["data", "query", QUERY])
-    assert result.exit_code == config.EXIT_PROFILE
-    assert "BLUE_DATA_LLM_SOURCE_EFFORT" in result.stderr
+    assert result.exit_code == 0
+
+
+def test_plan_key_must_match_a_requested_attr(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["data", "query", QUERY, "--attr", "name", "--plan-key", "country"])
+    assert result.exit_code == config.EXIT_USAGE
+    assert "--plan-key" in result.stderr
+    assert "--attr" in result.stderr
 
 
 # ------------------------------------------------------------ the envelope --
@@ -470,6 +477,26 @@ def test_a_partly_answered_run_exits_on_its_own_code(
     )
     result = runner.invoke(cli, ["data", "query", QUERY])
     assert result.exit_code == config.EXIT_PARTIAL, result.output
+
+
+def test_csv_keeps_non_ok_diagnostics_off_the_data_stream(
+    runner: CliRunner, install_source: Any
+) -> None:
+    install_source(
+        RecordingSource(
+            ExecMeta(
+                outcome=Outcome.STOPPED_BY_LIMIT,
+                stopped_by="max_cost",
+                gaps=["cost limit reached"],
+            )
+        )
+    )
+    result = runner.invoke(cli, ["data", "query", QUERY, "--attr", "name", "--format", "csv"])
+    assert result.exit_code == config.EXIT_BUDGET
+    assert result.stdout_bytes == b"name\r\nAda\r\n"
+    assert "outcome: stopped_by_limit" in result.stderr
+    assert "gap: cost limit reached" in result.stderr
+    assert "stopped by: max_cost" in result.stderr
 
 
 def test_a_row_cap_is_not_a_failure(runner: CliRunner, install_client: Any) -> None:
@@ -645,7 +672,7 @@ def test_provider_stdout_is_redirected_away_from_the_result(
     result = runner.invoke(cli, ["data", "query", QUERY, "--format", "json"])
     assert result.exit_code == 0, result.output
     assert payload(result.stdout)["records"] == [{"name": "Ada"}]
-    assert "provider banner" in result.stderr
+    assert "provider banner" not in result.stderr
 
 
 def test_model_text_cannot_drive_the_terminal(runner: CliRunner, install_client: Any) -> None:

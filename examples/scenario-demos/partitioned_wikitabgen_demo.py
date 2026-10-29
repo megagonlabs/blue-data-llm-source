@@ -1,7 +1,7 @@
-"""Compare flat, row-by-row, and partitioned retrieval on WikiTabGen query 15.
+"""Run three retrieval modes on the public WikiTabGen elements query.
 
-The query and columns are embedded; a reference CSV is optional. Run from the
-blue-data-llm-source checkout root with OPENAI_API_KEY exported:
+The query and columns are embedded. Run from the blue-data-llm-source checkout
+root with OPENAI_API_KEY exported:
 
     python3 examples/scenario-demos/partitioned_wikitabgen_demo.py --live
 """
@@ -9,11 +9,8 @@ blue-data-llm-source checkout root with OPENAI_API_KEY exported:
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import os
-from decimal import Decimal, InvalidOperation
-from pathlib import Path
 from typing import Any
 
 from blue_data_llm_source import (
@@ -126,39 +123,7 @@ class ShowingClient(DefaultLlmClient):
         return answer
 
 
-def record_key(record: dict[str, Any]) -> str | None:
-    atomic_number = record.get("Z")
-    if atomic_number is None:
-        return None
-    key = str(atomic_number).strip()
-    try:
-        number = Decimal(key)
-    except InvalidOperation:
-        return None
-    return str(int(number)) if number == number.to_integral_value() else None
-
-
-def reference_rows(path: Path) -> dict[str, dict[str, str]]:
-    with path.open(newline="", encoding="utf-8-sig") as stream:
-        reader = csv.DictReader(stream)
-        if not reader.fieldnames or not set(ATTRS).issubset(reader.fieldnames):
-            raise ValueError("reference CSV needs the demo's 11 columns")
-        return {key: row for row in reader if (key := record_key(row)) is not None}
-
-
-def normalized_cell(value: Any) -> Decimal | str:
-    if value is None:
-        return ""
-    text = str(value).strip().replace(",", "")
-    try:
-        return Decimal(text)
-    except InvalidOperation:
-        return text.casefold()
-
-
-def run_mode(
-    mode: str, budget: Budget, reference: dict[str, dict[str, str]] | None
-) -> dict[str, Any]:
+def run_mode(mode: str, budget: Budget) -> dict[str, Any]:
     props = properties_for(mode)
     client_props = {
         key: value for key, value in props.items() if key.startswith("llm.")
@@ -183,19 +148,6 @@ def run_mode(
             "cost": budget.cost - initial_cost,
             "outcome": "failed",
         }
-        if reference is not None:
-            summary.update(
-                {
-                    "matched": 0,
-                    "reference": len(reference),
-                    "cells": 0,
-                    "total_cells": sum(
-                        normalized_cell(row[attr]) != ""
-                        for row in reference.values()
-                        for attr in ATTRS[1:]
-                    ),
-                }
-            )
         return summary
 
     print("\nrecords:")
@@ -229,44 +181,6 @@ def run_mode(
         "cost": meta.cost,
         "outcome": str(meta.outcome),
     }
-    if reference is not None:
-        produced: dict[str, dict[str, Any]] = {}
-        duplicate_keys: set[str] = set()
-        for row in result.records:
-            key = record_key(row)
-            if key is None:
-                continue
-            if key in produced:
-                duplicate_keys.add(key)
-            else:
-                produced[key] = row
-        shared = produced.keys() & reference.keys()
-        matched = len(shared)
-        nonkeys = [attr for attr in ATTRS if attr != "Z"]
-        known_cells = [
-            (key, attr, value)
-            for key, row in reference.items()
-            for attr in nonkeys
-            if (value := normalized_cell(row[attr])) != ""
-        ]
-        cells = sum(
-            normalized_cell(produced[key].get(attr)) == value
-            for key, attr, value in known_cells
-            if key in shared and key not in duplicate_keys
-        )
-        total_cells = len(known_cells)
-        summary.update(
-            {
-                "matched": matched,
-                "reference": len(reference),
-                "cells": cells,
-                "total_cells": total_cells,
-            }
-        )
-        print(f"exact atomic numbers in reference: {matched}/{len(reference)}")
-        print(f"matched unique returned atomic numbers: {matched}/{len(produced)}")
-        print(f"duplicate atomic numbers in returned records: {len(duplicate_keys)}")
-        print(f"matching non-key cells: {cells}/{total_cells}")
     return summary
 
 
@@ -274,9 +188,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--live", action="store_true", help="call GPT-6 Luna")
     parser.add_argument("--mode", action="append", choices=("all", *MODES))
-    parser.add_argument(
-        "--reference-csv", type=Path, help="score atomic numbers and non-key cells"
-    )
     args = parser.parse_args()
     selected = args.mode or ["all"]
     if selected == ["all"]:
@@ -295,10 +206,6 @@ def main() -> None:
         "model: gpt-6-luna; reasoning none; 4096 output tokens per call; no cache or retries"
     )
     print("shared cap: $0.30, 160 calls, 900 seconds")
-    try:
-        reference = reference_rows(args.reference_csv) if args.reference_csv else None
-    except (OSError, ValueError) as error:
-        parser.error(f"cannot read reference CSV: {error}")
     if not args.live:
         print("Add --live to call GPT-6 Luna and print every model response.")
         return
@@ -306,22 +213,14 @@ def main() -> None:
         parser.error("OPENAI_API_KEY is not exported")
 
     budget = Budget(TOTAL_LIMITS)
-    summaries = [run_mode(mode, budget, reference) for mode in modes]
-    print("\n=== comparison ===")
+    summaries = [run_mode(mode, budget) for mode in modes]
+    print("\n=== run summary ===")
     for item in summaries:
-        score = (
-            f" exact_keys={item['matched']}/{item['reference']} "
-            f"matching_cells={item['cells']}/{item['total_cells']}"
-            if "matched" in item
-            else ""
-        )
         print(
             f"{item['mode']}: rows={item['rows']} calls={item['calls']} "
-            f"cost=${item['cost']:.6f} outcome={item['outcome']}{score}"
+            f"cost=${item['cost']:.6f} outcome={item['outcome']}"
         )
     print(f"total: calls={budget.calls} settled_cost=${budget.cost:.6f}")
-    if reference is not None:
-        print("Cell matches compare the returned values with the WikiTabGen table.")
 
 
 if __name__ == "__main__":

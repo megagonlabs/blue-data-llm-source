@@ -153,3 +153,39 @@ def test_latency_is_recorded_for_every_call(litellm_stub: InstallStub) -> None:
 
 def _raise_cost(*args: object, **kwargs: object) -> float:
     raise RuntimeError("this model has no price sheet")
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("streamed", [False, True])
+def test_default_source_admitted_at_estimate_stays_within_it(
+    litellm_stub: InstallStub, asynchronous: bool, streamed: bool
+) -> None:
+    import asyncio
+
+    from blue_data_llm_source import LlmSource
+    from tests.doubles import stream_chunks
+
+    usage = {
+        "prompt_tokens": 176,
+        "completion_tokens": 25000,
+        "total_tokens": 25176,
+        "prompt_tokens_details": {"cached_tokens": 0},
+    }
+    payload = chat_payload('[{"item":"alpha"}]', model="gpt-6-luna", usage=usage)
+    payload["service_tier"] = "default"
+    chunks = stream_chunks('[{"item":"alpha"}]', model="gpt-6-luna", usage=usage)
+    chunks[-1]["service_tier"] = "default"
+    stub = litellm_stub(LitellmStub(payload, chunks=chunks))
+    source = LlmSource(properties={"limits.max_retries": 0, "llm.stream": streamed})
+    estimate = source.estimate("items", attrs=["item"])
+    assert estimate.max_cost_per_attempt is not None
+    options = {"limits.max_cost": estimate.max_cost_per_attempt}
+    result = (
+        asyncio.run(source.afetch("items", attrs=["item"], properties=options))
+        if asynchronous
+        else source.fetch("items", attrs=["item"], properties=options)
+    )
+    assert result.records == [{"item": "alpha"}]
+    assert result.meta.cost <= estimate.max_cost_per_attempt
+    assert result.meta.outcome == "ok"
+    assert len(stub.calls) == 1

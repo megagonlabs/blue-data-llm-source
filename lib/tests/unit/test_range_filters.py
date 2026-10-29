@@ -2,7 +2,7 @@
 
 `plan.range_filters` reads a model proposal written as integer spans, such as "1946–1952",
 on a column the schema declares an integer, as `Range` filters. With the switch off the
-same proposal becomes exact text filters, as in 2.1.0.
+same proposal becomes exact text filters, as in 0.2.1.0.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from blue_data_llm_source.planning.plan import (
     PartitionPolicy,
     PartitionProposal,
     apply_partition_proposal,
+    build_entity_plan,
     range_buckets,
     root_plan,
 )
@@ -236,6 +237,35 @@ def test_an_inherited_filter_on_the_key_takes_the_existing_path() -> None:
         constraints={"year": OneOf(("1946–1952", "1953-1960"))},
     )
     assert _year_filters(plan) == [Exact("1946–1952"), Exact("1953-1960")]
+
+
+@pytest.mark.parametrize("values", [["1990", "2020"], ["2001", "2002"]])
+def test_an_inherited_range_cannot_be_replaced_by_enumerated_children(
+    values: list[str],
+) -> None:
+    parent = Range(2000, 2010)
+    plan = _split(values, constraints={"year": parent})
+    assert [leaf.id for leaf in plan.leaves] == ["0"]
+    assert plan.leaves[0].constraints["year"] == parent
+    assert plan.notes[-1].code == Gap.GUARD_COLLAPSED
+    assert "range constraint" in plan.notes[-1].detail
+
+
+@pytest.mark.parametrize("entities", [[1990, 2020], [2001, 2002]])
+def test_an_entity_plan_keeps_an_inherited_range(entities: list[int]) -> None:
+    parent = Range(2000, 2010)
+    plan = build_entity_plan(
+        original_query="films",
+        retrieval_query="films",
+        constraints={"year": parent},
+        key="year",
+        entities=entities,
+        limits=PlanLimits(),
+    )
+    assert [leaf.id for leaf in plan.leaves] == ["0"]
+    assert plan.leaves[0].constraints["year"] == parent
+    assert plan.notes[-1].code == Gap.GUARD_COLLAPSED
+    assert "range constraint" in plan.notes[-1].detail
 
 
 def test_a_refused_span_proposal_keeps_the_parent_and_says_why() -> None:

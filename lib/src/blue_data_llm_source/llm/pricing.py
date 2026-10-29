@@ -1,38 +1,16 @@
-"""A genuine upper bound on what one call can cost, or a refusal to guess.
+"""Upper-bound a model call's cost before admitting it.
 
-A cost ceiling claimed before spend is only as good as the number claimed. If the estimate
-can be exceeded, the ceiling is crossed by the call that crosses it, which is the behaviour
-reserving was introduced to remove. So this module either produces a bound that cannot be
-exceeded, or says it cannot and lets the caller be refused.
+Byte-pair tokens consume at least one UTF-8 byte each, so
+``len(prompt.encode("utf-8"))`` bounds input tokens. Character count does not:
+one character may require several tokens. This byte bound is loose for English
+but cannot underestimate token count.
 
-**Tokens never outnumber UTF-8 bytes.** Byte-pair tokenizers merge byte sequences, so every
-token consumes at least one byte of the encoded prompt and ``len(prompt.encode("utf-8"))``
-bounds the token count for any of them.
-
-The bound was written against *characters* first, on the reasoning that a token consumes at
-least one character. That is false. A tokenizer splits a character whose encoding it has no
-merge for, so a family emoji of seven code points can cost eleven tokens; measured, a
-1,400-character sequence produced 2,200 tokens against a reservation of fewer. Bytes are the
-unit the tokenizer actually consumes, and the claim holds there.
-
-It is loose — English runs three to four bytes per token — and loose in the only safe
-direction. A bound that is usually right is a ceiling that is occasionally crossed, and the
-difference between the two is the whole reason this module exists.
-
-Two things must be known before a bound exists at all: the model's prices, and a finite cap
-on how much output it may produce. Neither can be assumed. A model absent from the table
-may be priced above everything in it, and a request with no output cap can produce output
-until the provider stops it. Where either is missing, :func:`bound_cost` raises rather than
-inventing a figure, and the source refuses the cost ceiling instead of appearing to hold one.
-
-Prices are published list prices, in USD per token, and are a snapshot. They go stale in the
-safe direction — providers cut prices far more often than they raise them — but a caller
-running a model this table does not know is refused rather than bounded against a guess.
-Supply ``llm.price_per_input_token`` and ``llm.price_per_output_token`` to bound a model the
-table does not carry. Those rates are used as given, so they must already cover every tier
-the model can be billed at. For a model the table does carry, supplied rates are read as its
-base rates: the table's cache-write, long-context and regional charges still apply, and the
-result is never below the table's own bound.
+:func:`bound_cost` requires known prices and a finite output cap. Published
+prices are a snapshot in USD per token. For an unlisted model, callers may
+provide ``llm.price_per_input_token`` and ``llm.price_per_output_token``;
+these rates must cover every billed tier. For a listed model, supplied base
+rates still include the table's cache-write, long-context, and regional
+charges, and the bound never falls below the table's own calculation.
 """
 
 from __future__ import annotations
@@ -52,13 +30,11 @@ PRICES: dict[str, tuple[float, float]] = {
     name: (entry.input, entry.output) for name, entry in models.MODELS.items()
 }
 
-_MIN_CACHEABLE_INPUT_TOKENS = 1_024
-
 
 def rates_for(model: str) -> tuple[float, float] | None:
     """Published input and output price per token, or None for a model not in the table.
 
-    Exact names and dated variants only. Refusing an unrecognised name is what makes the
+    Exact names and dated variants only. Refusing an unrecognized name is what makes the
     caller-supplied rates worth having; guessing from a prefix is how a dearer model gets
     priced as a cheaper one whose name it happens to extend.
     """
@@ -100,9 +76,8 @@ def resolve_rates(model: str, properties: dict[str, object] | None = None) -> tu
     supplied = properties or {}
     raw_in = supplied.get("llm.price_per_input_token")
     raw_out = supplied.get("llm.price_per_output_token")
-    # Presence, not validity, decides whether the caller meant to override. Falling back to
-    # the table when both values happened to be unusable accepted an explicit override and
-    # ignored it, which against a stale table makes the bound too low.
+    # Any supplied rate selects the override path. Invalid rates cannot fall back to the
+    # table because that could understate the bound.
     if raw_in is not None or raw_out is not None:
         given_in = positive_finite(raw_in)
         given_out = positive_finite(raw_out)
@@ -170,13 +145,13 @@ def _entry_bound(
     output_cap: float,
 ) -> float:
     """One call's bound at these base rates, with *entry*'s billing modifiers applied."""
-    # The response does not say how much of the prompt was written to cache, so any prompt
-    # long enough to be cached is bounded as if all of it was, at the write rate's ratio to
-    # the input rate.
-    if prompt_tokens >= _MIN_CACHEABLE_INPUT_TOKENS and entry.cache_write is not None:
+    # Settlement conservatively prices every uncached token at the cache-write rate and
+    # applies the long-context multipliers whenever the model carries that tier. Admission
+    # must use the same worst case, including for a short prompt.
+    if entry.cache_write is not None:
         input_rate *= max(1.0, entry.cache_write / entry.input)
     tier = entry.long_context
-    if tier is not None and prompt_tokens > tier.threshold:
+    if tier is not None:
         input_rate *= tier.input_multiplier
         output_rate *= tier.output_multiplier
     return (prompt_tokens * input_rate + output_cap * output_rate) * entry.regional_uplift

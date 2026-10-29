@@ -35,16 +35,7 @@ PER_CALL = 0.0012
 def test_each_ceiling_stops_the_fetch_before_the_model_is_called(
     make_source: Any, ceiling: dict[str, Any], axis: str
 ) -> None:
-    """A ceiling in the tool arguments has to bind, or it is worse than no ceiling.
-
-    An accepted argument that reaches nothing is the failure this package exists to
-    prevent: the caller believes the run is bounded and it is not. So the assertion is not
-    that the argument was accepted but that the provider was never reached and the result
-    names the axis that refused it.
-
-    Both dispatch paths, because the server reaches the async one and every direct test
-    reaches the other.
-    """
+    """Both dispatch paths refuse a configured ceiling before provider contact."""
     for dispatch in ("sync", "async"):
         source, client = make_source()
         arguments = {"query": QUERY, **ceiling}
@@ -109,23 +100,19 @@ def test_one_calls_ceiling_does_not_bind_the_next_call(make_source: Any) -> None
 
 
 def test_a_refused_ceiling_is_a_tool_error_naming_it(make_source: Any) -> None:
-    """The library validates the value; this layer passes the refusal through unreworded."""
     source, client = make_source()
     arguments = {"query": QUERY, "limits.max_cost": float("inf")}
     with pytest.raises(tools.ToolError) as caught:
         tools.dispatch("llmdb_query", arguments, source=source)
 
-    assert caught.value.kind == "ConfigError"
+    assert caught.value.kind == tools.INVALID_ARGUMENTS
     assert "limits.max_cost" in caught.value.message
+    assert "finite number" in caught.value.message
     assert client.prompts == []
 
 
 def test_llmdb_estimate_returns_a_bound_and_contacts_nothing(make_source: Any) -> None:
-    """The point of the tool: a figure to size a request against, for free.
-
-    An estimate that reached the provider would be a request, and an agent asking what
-    something costs before deciding whether to pay for it would have paid for the question.
-    """
+    """Estimation returns a bound without contacting the provider."""
     source, client = make_source()
     payload = tools.dispatch(
         "llmdb_estimate", {"query": QUERY, "attrs": ["country"]}, source=source
@@ -191,7 +178,7 @@ def test_an_unpriceable_client_reports_why_rather_than_guessing(make_source: Any
 
     assert payload["bounded"] is False
     assert payload["max_cost"] is None
-    assert "does not report what an attempt will cost" in payload["reason"]
+    assert payload["reason"] == "This client does not report a cost bound."
     assert client.prompts == []
 
 
@@ -212,18 +199,13 @@ def test_llmdb_estimate_is_reachable_on_the_async_path(make_source: Any) -> None
     assert client.prompts == []
 
 
-def test_the_estimate_result_is_json_serialisable(source: Any) -> None:
+def test_the_estimate_result_is_json_serializable(source: Any) -> None:
     payload = tools.dispatch("llmdb_estimate", {"query": QUERY}, source=source)
     assert json.loads(json.dumps(payload)) == payload
 
 
-def test_a_library_refusal_carries_its_own_kind_and_message(source: Any) -> None:
-    """The handler, not the dispatcher: this is the pass-through the tool result depends on.
-
-    Reached through `dispatch` the argument check refuses this first, with its own message.
-    Called the way the dispatcher calls it, the library's `QueryError` has to arrive intact,
-    because the agent reading the failed tool call sees that text and nothing else.
-    """
+def test_a_library_refusal_keeps_safe_attribute_guidance(source: Any) -> None:
+    """Direct tool calls retain the attribute name requirement."""
     with pytest.raises(tools.ToolError) as caught:
         tools.llmdb_estimate({"query": QUERY, "attrs": [{"type": "int"}]}, source=source)
     assert caught.value.kind == "QueryError"
@@ -341,7 +323,7 @@ class TestTheModelTools:
         assert payload["max_output_tokens"] == 25_000
 
     def test_inspect_adds_the_published_defaults(self, source: Any) -> None:
-        """Labelled as the model's published defaults, beside the deployment's own answer."""
+        """Labeled as the model's published defaults beside the deployment's answer."""
         from blue_data_llm_source import published_defaults
 
         payload = tools.dispatch("llmdb_inspect_model", {"model": "gpt-6-astra"}, source=source)

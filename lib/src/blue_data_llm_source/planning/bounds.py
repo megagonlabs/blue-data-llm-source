@@ -46,10 +46,7 @@ MODES: Final = (MODE_FLAT, MODE_PARTITIONED, MODE_ROW_BY_ROW)
 class PlanLimits:
     """The caps a worst case is computed from.
 
-    Every field is a real parameter consumed at one seam. A limit routed through a
-    keyword-argument bag it can never appear in is silently discarded — the caller sets it,
-    the code reads a literal default, and nothing reports the difference. A settings object
-    read in one place is the structural answer to that.
+    The planner reads these settings at one seam so configured limits reach the bound.
     """
 
     max_leaves: int = 100
@@ -59,15 +56,7 @@ class PlanLimits:
     max_continuations: int = 0
     """How many times a leaf may ask again for what it did not get. Zero by default.
 
-    Off rather than on, because every continuation is another billed call and the caller
-    who would pay for it is the one who did not configure anything. Routing ``fetch``
-    through a planner whose loop defaulted to three would have quadrupled the worst case of
-    every request already in use, with nothing in the caller's code changed and nothing in
-    the result saying why the bill moved.
-
-    One default, here, rather than a conservative one at the facade and a generous one in
-    the library. A knob whose value depends on which door the caller came through is the
-    shape of every "accepted then ignored" defect this class exists to prevent.
+    Each continuation is a billed call. The same default applies at every entry point.
     """
 
     max_schema_candidates: int = 3
@@ -323,15 +312,12 @@ def planning_calls(
 ) -> int:
     """Logical model calls planning can make, at worst.
 
-    One to analyse and one to estimate; a schema pool, a candidate set, and one
+    One to analyze and one to estimate; a schema pool, a candidate set, and one
     enrichment per candidate; then per partition node, one distribution estimate per
     candidate column plus a selection and an enumeration; then one rewrite per leaf.
 
-    The full design's figure, and larger than what any planning schedule the pipeline runs
-    can make, with distribution search or without: at most three fact calls against the
-    four-plus-candidates charged here, and a split proposal per node that the per-node and
-    per-leaf terms together always cover. So it takes neither setting; for the pipeline's
-    own count under a given schedule, use :func:`planning_model_calls`.
+    This bound covers every planning schedule, including distribution search. For a
+    schedule-specific count, use :func:`planning_model_calls`.
     """
     _check_mode(mode)
     schema = 2 + limits.max_schema_candidates
@@ -347,10 +333,8 @@ def planning_calls(
 def execution_calls(limits: PlanLimits, leaves: int) -> int:
     """Logical model calls execution can make, at worst, for a plan of this many leaves.
 
-    Each leaf is one call plus its continuations. The zero-row retry is counted once per
-    leaf when enabled, because the design leaves it off by default precisely so that it
-    is a decision rather than a surprise: it doubles the call count on the case where the
-    model has already said it has nothing.
+    Each leaf makes one call plus its continuations. An enabled zero-row retry adds one
+    call per leaf.
     """
     # bool only. The annotation already excludes non-integers for our own callers, but
     # bool is a subtype of int, so `leaves=True` type-checks and would silently plan one
@@ -389,11 +373,8 @@ def request_calls(
 ) -> int:
     """Logical model calls a whole request in this mode makes, at worst.
 
-    What a call ceiling has to be weighed against before anything is asked. This is the
-    whole of what the shipped pipeline does — the schedule's planning calls outside flat,
-    then the leaves — rather than the full-design figure :func:`planning_calls` sizes a
-    recommendation against. An earlier version charged one analysis call and nothing for
-    the splits, which fell short of every other schedule and of any split at all.
+    Includes the schedule's planning calls outside flat, then the leaf calls.
+    :func:`planning_calls` instead sizes all supported planning schedules.
 
     ``leaves`` is the plan's real count once there is a plan. Before there is one the most
     leaves the mode can run (:func:`leaf_limit`) stands in for it, because a bound that

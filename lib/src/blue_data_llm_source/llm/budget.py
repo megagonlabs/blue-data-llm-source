@@ -1,19 +1,12 @@
-"""Budget on five axes, reserved before spend and reconciled after it.
+"""Bound requests by rows, time, provider calls, and cost.
 
-The implementation this client is derived from accounted usage after each call. That
-records an overrun rather than preventing one, which is fine for a single call and wrong
-for a fan-out: by the time the total is read, the money is gone.
+Calls and estimated cost are reserved under one lock before provider contact, so
+concurrent callers cannot race past those ceilings. Time is checked at admission and
+rows are capped after extraction. A cost reservation is reconciled against the best
+accounting the client can verify.
 
-Every axis is claimed before the provider is contacted, under one lock, so concurrent
-callers cannot race past a ceiling. Cost is claimed the only way an unknown price can be:
-an estimated upper bound is reserved before the attempt, then resolved against the best
-accounting the client can verify. The sibling operator library already does this one layer
-up, estimating a semantic join's tokens and refusing above a cap before it runs.
-
-Reserving rather than settling is what makes the two hard cases work. A cost that cannot be
-read leaves its reservation standing, so an accounting failure is not a free call. And ten
-concurrent leaves each commit an estimate before spending, so they cannot collectively
-overshoot by ten calls' worth while each sees room for one.
+A cost that cannot be read leaves its reservation standing. Concurrent leaves each
+reserve an estimate before spending, so they cannot collectively cross the ceiling.
 
 A budget may be built per call or handed in by a caller, in which case it accumulates
 across every call it is given to. A child from :meth:`derive` never receives a fresh
@@ -65,10 +58,8 @@ def check_retries(value: object, name: str = "limits.max_retries") -> int:
 class Limits:
     """Configured ceilings. None means unlimited on that axis.
 
-    Every field is validated on construction. A ``NaN`` ceiling compares false against
-    everything, so it reads as configured and enforces nothing — a limit that is present,
-    accepted, and silently off. That is the failure this package exists to prevent, so it
-    is refused at the boundary rather than discovered later.
+    Every field is validated on construction. ``NaN`` is refused because comparisons
+    against it are false and would leave a configured ceiling unenforced.
     """
 
     max_rows: int | None = None
@@ -108,10 +99,7 @@ def _require_real(name: str, value: object) -> float | None:
     try:
         number = float(value)
     except OverflowError as e:
-        # An int has no float range, so a large enough one raises here rather than becoming
-        # inf. The package guards float() at four other sites, one of them with a comment
-        # stating the rule; this was the site that did not, so a ceiling raised a bare
-        # OverflowError from outside the documented hierarchy.
+        # Large integers can raise OverflowError instead of producing infinity.
         raise ConfigError(f"limits.{name} is too large to be a ceiling, got {value!r}") from e
     if not math.isfinite(number):
         raise ConfigError(
@@ -126,16 +114,8 @@ def _require_real(name: str, value: object) -> float | None:
 class Reservation:
     """One claimed provider attempt, awaiting its real cost.
 
-    A handle rather than a bare number so the claim resolves exactly once. A free-standing
-    counter decrement carries no evidence that the attempt it undoes never happened, which
-    is how a retry escape gets rebuilt by whoever calls it next.
-
-    The handle *is* the identity of its claim, and whether it is still outstanding is read
-    from the ledger under the family lock rather than from a flag on this object. A flag was
-    read and written unlocked, so two threads resolving one handle could both see it unset,
-    and the ledger removed claims by matching float value — which deleted a *different*
-    live handle's claim whenever two attempts happened to be priced the same, and let the
-    budget admit past both its call and cost ceilings.
+    The ledger keys each claim by its handle. The outstanding state is read under the
+    lock shared by derived budgets, so a handle resolves once without releasing another claim.
     """
 
     __slots__ = ("_budget", "_estimate", "_settled_by_refusal")
@@ -168,13 +148,10 @@ class Reservation:
         claimed: nothing reached the provider, so the claim is released rather than settled
         at zero. Rows it returns are admitted separately and do still count.
 
-        The amount is validated before the ledger is touched, because settling an unchecked
-        actual corrupted it: a non-finite value passed ``max(0.0, x)`` as zero and restored
-        the whole ceiling. But the claim resolves either way. An amount this refuses is
-        charged at the estimate, as :meth:`keep_unpriced` would — the provider was contacted,
-        and the earlier behaviour of leaving the handle outstanding let ``attempt``'s cleanup
-        refund it, which turned a billed call into a free one. The handle is spent once this
-        returns or raises; do not resolve it again.
+        The amount is validated before the ledger is touched. A rejected amount is
+        charged at the estimate, as :meth:`keep_unpriced` does, because the
+        provider was contacted. The handle resolves even when validation raises;
+        callers must not resolve it again.
         """
         if cache_hit:
             self._budget.release_reservation(self, refund_call=True)
@@ -182,20 +159,10 @@ class Reservation:
         try:
             checked = Budget.checked_amount("the settled cost", actual_cost)
         except ConfigError:
-            # Validating before resolving is deliberate — settling an unchecked amount
-            # corrupted the ledger — but letting the refusal out with the claim still
-            # outstanding was worse. `attempt`'s cleanup then refunded the cost *and* the
-            # call, so a contacted provider attempt became a free one: under max_calls=1 the
-            # provider could be contacted repeatedly with the ledger still reading zero. An
-            # unreadable settlement is charged at its estimate, exactly as an unreadable
-            # cost is, and the refusal still reaches the caller.
+            # An unreadable settlement is charged at its estimate. Resolve the
+            # claim before raising so cleanup cannot refund a contacted attempt.
             self.keep_unpriced()
-            # The obvious recovery is `except: reservation.keep_unpriced(); raise`, which the
-            # README's own instruction to resolve on every path out of the block encourages.
-            # That second call met "already resolved" — a bare RuntimeError, outside the
-            # documented hierarchy, replacing the ConfigError that says what was actually
-            # wrong. The claim is settled either way, so a follow-up resolve has nothing left
-            # to do and is allowed to be a no-op rather than an ambush.
+            # Let cleanup resolve again without replacing the original ConfigError.
             self._settled_by_refusal = True
             raise
         self._budget.settle_reservation(self, checked)
@@ -251,18 +218,9 @@ class Budget:
         self.calls = 0
         self.cost = 0.0
         self.rows = 0
-        # The outstanding claims themselves, not a running total. Adding each estimate and
-        # subtracting it again left a rounding remnant once handles resolved out of order:
-        # a residue of 1.1e-16 made an exact remaining-cost claim cross a ceiling it fitted
-        # inside. The aggregate is re-derived from what is actually outstanding instead, so
-        # it returns to exactly zero when nothing is.
-        # Keyed by the handle, not by its amount. Removing the first equal float deleted a
-        # different live handle's claim whenever two attempts were priced the same.
-        # Keyed by the handle itself, so its identity is the claim's identity and there is
-        # nothing to expose or to collide. Keying by amount deleted a different live handle's
-        # claim whenever two attempts were priced the same; keying by ``id()`` collided
-        # outright, because CPython reuses an address the moment the object at it is
-        # collected. An outstanding claim keeps its handle alive, which is what it means.
+        # Derive the aggregate from outstanding claims to avoid float subtraction drift.
+        # Key by handle, not amount or id(): estimates repeat and CPython reuses object IDs.
+        # This map keeps each handle alive until its claim resolves.
         self._outstanding: dict[Reservation, float] = {}
         self.reserved = 0.0
         self.stopped_by: str | None = None
@@ -297,11 +255,8 @@ class Budget:
     def remaining_cost(self) -> float | None:
         """Headroom against the cost ceiling, this budget's and every parent's.
 
-        The figure is one admission will actually accept. ``max_cost - committed`` is the
-        arithmetic answer, but ``committed + that`` can land one unit in the last place
-        above ``max_cost``, so ``reserve(budget.remaining_cost())`` — the obvious way to
-        spend exactly what is left — was refused for about one in a hundred small ceilings.
-        Reported headroom a caller cannot claim is not headroom.
+        Return an amount that ``reserve`` will accept. Floating-point rounding can
+        make ``max_cost - committed`` larger than the claimable amount.
         """
         return self._narrow(
             None if self.limits.max_cost is None else self._claimable_cost(),
@@ -330,9 +285,7 @@ class Budget:
     def configured_axes(self) -> frozenset[str]:
         """Every axis carrying a ceiling anywhere in this chain.
 
-        A ceiling set only on a caller's parent is still a ceiling this run has to honour,
-        and reading the child's own limits alone let a parent-only ``max_cost`` reach a
-        client that cannot enforce it.
+        Parent ceilings apply to child runs as well.
         """
         mine = {
             axis
@@ -352,7 +305,7 @@ class Budget:
         """Retry depth, narrowed by every parent.
 
         Read from the child alone, a derived budget could spend more attempts than its
-        parent authorised — the one axis that did not consult the chain.
+        parent authorized — the one axis that did not consult the chain.
         """
         mine = int(self.limits.max_retries)
         if self._parent is None:
@@ -406,7 +359,7 @@ class Budget:
         return number
 
     def reserve(self, estimated_cost: float = 0.0) -> Reservation:
-        """Claim one provider attempt and an upper bound on what it will cost.
+        """Claim one provider attempt and its proposed cost bound.
 
         Raises BudgetExceeded naming the axis that refused, before anything is spent. Call
         once per attempt that will reach the provider, including every retry: counting
@@ -447,11 +400,8 @@ class Budget:
     def _own_here(self, reservation: Reservation) -> Reservation:
         """As :meth:`_own`, and the handle must be one this budget issued.
 
-        Exact type alone was not enough. A handle issued by another family, passed to this
-        one's private take, was claimed here and released *there*, leaving this ledger's
-        entry unreachable; and a hand-built handle could carry a negative or ``NaN`` amount,
-        which admitted a call under a zero ceiling and corrupted the total respectively. The
-        amount is revalidated because nothing else has looked at it since construction.
+        Check the issuer so settlement reaches the same ledger. Revalidate the amount to
+        reject a hand-built handle with a negative or non-finite estimate.
         """
         self._own(reservation)
         if reservation.issuer is not self:
@@ -462,21 +412,11 @@ class Budget:
     def _take(self, reservation: Reservation) -> Reservation:
         """Admit and claim for a handle that already exists. Shared by both entry points.
 
-        The family lock is reentrant, because ``_admit`` and ``_claim`` walk the parent chain
-        and every node shares one lock. Reentrancy is what a same-thread trace, profile or
-        signal callback needs: entering another ``attempt`` between the admission and the
-        claim, it was admitted against a state the outer call had already been promised, and
-        both then claimed it — ``max_calls=1`` finished with two calls and 1.2 of cost.
-
-        The admission is therefore re-taken if the ledger moved under it. A version counter
-        on the family root advances on every claim and every resolution; if it changed while
-        this admission was being decided, the decision is stale and is made again against
-        what is there now. Nothing is refused for being nested — the real ceiling decides,
-        which is the only thing that should.
-
-        A flag marking the transaction was tried first and is the wrong shape: clearing it is
-        an assignment, an interrupt can land before it, and the whole family is then refused
-        for good. Nothing here needs clearing.
+        The family lock is reentrant because ``_admit`` and ``_claim`` walk the
+        parent chain. A same-thread callback can enter another ``attempt`` between
+        those operations. If the family version changed, admission is repeated
+        against current headroom before the claim; the ceiling decides whether a
+        nested attempt fits.
         """
         self._own_here(reservation)
         root = self._root()
@@ -498,17 +438,10 @@ class Budget:
     def check_admissible(self, estimated_cost: float = 0.0) -> None:
         """Raise if this attempt would be refused, without claiming anything.
 
-        So a run a ceiling will refuse can be refused before the provider library is
-        imported. Importing it is not contacting a provider, but it is not free: the shipped
-        adapter fetches a remote price map on first use, so a request the cost ceiling was
-        always going to reject still reached the network and took about a second to say no.
-
-        Deliberately *not* a claim. Holding one across the import made a sibling on a shared
-        budget see an exhausted ceiling and be terminally refused, on an allowance the final
-        ledger then said was free. ``reserve`` stays the authoritative check and is the only
-        thing that takes anything; asking the same question twice costs nothing, and the
-        window between them can admit a call that ``reserve`` then refuses — which is the
-        accepted cost of not blocking a sibling. See the note in :meth:`reserve`.
+        Call before importing the provider library, whose adapter may fetch a remote price
+        map on first use. This check reserves no headroom, so concurrent callers are not
+        blocked during that import. ``reserve`` checks again and makes the claim; another
+        caller may spend the available headroom between the two checks.
         """
         estimate = self.checked_amount("the reservation estimate", estimated_cost)
         with self._lock:
@@ -528,9 +461,7 @@ class Budget:
                     f"time limit reached ({limits.max_seconds}s, elapsed {self.elapsed:.1f}s)",
                 )
             if limits.max_cost is not None and estimate > limits.max_cost:
-                # No attempt can ever fit, whatever has been spent. Saying so, with the
-                # figure and what lowers it, is the difference between a caller fixing the
-                # request and one raising a ceiling that was never the problem's size.
+                # The estimated attempt exceeds the ceiling even before prior spend.
                 self._stop(
                     "max_cost",
                     f"cost limit reached: one attempt needs up to ${estimate:.6f}, above the "
@@ -562,29 +493,19 @@ class Budget:
     def attempt(self, estimated_cost: float = 0.0) -> Generator[Reservation]:
         """One claimed attempt whose cleanup is installed before the claim is taken.
 
-        ``reserve`` hands back a handle, and between it returning and the caller's ``try``
-        beginning there is a window an interrupt or a profiling hook can land in: the claim
-        is taken, nobody holds the handle, and the headroom never comes back. Here the
-        ``finally`` is established first, so there is no instant at which a claim exists
-        without something that will resolve it.
+        Establish ``finally`` before claiming so an interrupt cannot strand headroom.
 
         Releasing on exit is right because a reservation that reached the provider is
         resolved inside the block — settled, or kept unpriced. Reaching here unresolved
         means the attempt never happened.
         """
-        # The handle exists before anything is claimed against it, and the finalizer holds
-        # it before the claim is taken. Assigning it from `reserve`'s return left a window:
-        # an interrupt after the claim mutated the family and before the assignment unwound
-        # with the claim taken and nothing anywhere that could give it back.
+        # Hold the handle before claiming so cleanup can resolve an interrupted claim.
         reservation = self._handle(estimated_cost)
         try:
             yield self._take(reservation)
         finally:
-            # One locked operation, not "read resolved, drop the lock, then release".
-            # Between those two another thread could settle the same handle, and this
-            # cleanup became the losing resolver and raised — replacing whatever the block
-            # was already failing with. A caller lost its own exception to an internal
-            # lifecycle error. No-ops when nothing was ever claimed.
+            # Resolve under one lock so concurrent settlement cannot replace the block's
+            # exception. No-op if nothing was claimed.
             self._release_if_outstanding(reservation)
 
     def settle_reservation(self, reservation: Reservation, actual: float) -> None:
@@ -615,11 +536,8 @@ class Budget:
     def _resolve(self, reservation: Reservation, actual: float, refund_call: bool) -> None:
         """Claim the right to resolve this handle, then resolve it, under one lock.
 
-        The whole family shares one lock, so deciding that this handle is still outstanding
-        and removing it are a single atomic step. Split apart — a flag on the handle read
-        without the lock, then a removal by matching amount — two threads resolving one
-        handle both won and both removed, taking a *different* live handle's claim with
-        them and letting the budget admit past its ceilings.
+        The shared lock makes the outstanding check and removal atomic. Two threads
+        cannot resolve the same handle or remove another reservation's claim.
         """
         self._own(reservation)
         with self._lock:
@@ -634,9 +552,7 @@ class Budget:
     def _resolve_here(self, claim: Reservation, actual: float, refund_call: bool) -> None:
         """Caller holds the family lock."""
         self._drop(claim)
-        # Added one charge at a time, which is what `estimate` publishes the total of. An
-        # `fsum` here would be marginally steadier and would no longer be the figure a
-        # caller sized their ceiling against, which is the property that matters.
+        # Match the addition order used by `estimate`, which callers may use as a ceiling.
         self.cost += actual
         if refund_call:
             self.calls = max(0, self.calls - 1)
@@ -655,14 +571,9 @@ class Budget:
     def _resum(self) -> None:
         """Caller holds the lock. ``fsum`` so the total does not drift with resolution order.
 
-        Amounts are validated finite where they enter, and a finite sum of finite amounts
-        can still exceed a float. Reaching that needs a total around 1e308, which no real
-        pricing produces — it takes a caller passing deliberate nonsense through a custom
-        client's ``bound_for_attempt``, and what they get is ``inf`` in their own metadata.
-        Guarding it was tried and withdrawn: the guard could not refuse a settlement without
-        leaving the attempt unresolved, and the cleanup then refunded a call that had reached
-        the provider. That broke the hard call ceiling for every caller, which is a real loss
-        traded against an impossible one.
+        Finite amounts can sum beyond the float range when a custom client
+        supplies an extreme ``bound_for_attempt`` value. In that case, reserved
+        headroom saturates at ``inf`` while the contacted attempt still resolves.
         """
         try:
             self.reserved = math.fsum(self._outstanding.values())
@@ -713,11 +624,6 @@ class Budget:
         ``stopped_by``. Time and spend are facts about the world at this moment, so a
         deadline crossed while several calls were in flight belongs to all of them, and a
         ceiling a *different* call was refused by belongs to none of them.
-
-        Both errors have been made here. Asking whether the parent was already marked
-        dropped a shared deadline from every sibling but the first to fold. Treating any
-        newer ancestor mark as this call's own then reported two admitted, completed calls
-        as stopped because a third sibling was refused.
 
         An admission refusal is not reported here at all. It reaches the call it refused,
         as the exception ``reserve`` raises, and reaches no other.

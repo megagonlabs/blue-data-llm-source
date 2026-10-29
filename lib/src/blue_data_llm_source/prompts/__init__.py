@@ -31,9 +31,8 @@ COMPLETE_LEAF_FETCH_PROMPT_VERSION: Final = "keyed-leaf-fetch-2"
 LEAF_PROMPT_VERSIONS: Final = (KEYED_LEAF_FETCH_PROMPT_VERSION, COMPLETE_LEAF_FETCH_PROMPT_VERSION)
 """The leaf contracts a caller may select, the first being the default."""
 
-# The partition-proposal contracts. The first is the unversioned 2.1.0 text, named here so
-# the second has something to differ from; the second adds rules about which keys and values
-# make a usable split and is selected by `plan.partition_guardrails`.
+# Partition proposal contracts. `plan.partition_guardrails` selects the version that
+# adds rules for usable split keys and values.
 PARTITION_PROMPT_VERSION: Final = "partition-1"
 GUARDED_PARTITION_PROMPT_VERSION: Final = "partition-2"
 PARTITION_PROMPT_VERSIONS: Final = (PARTITION_PROMPT_VERSION, GUARDED_PARTITION_PROMPT_VERSION)
@@ -88,9 +87,8 @@ class Slot:
     helper does not prove that every future prompt value will be classified.
 
     :meth:`raw` is the deliberate exception, and it is named so it can be counted. Every use
-    is a place where text reaches a model unencoded, and there are only two: what the caller
-    typed, and what the caller asked for. An architecture test pins that list, so adding a
-    third is a visible act rather than an omission.
+    is a place where text reaches a model unencoded. Current call sites carry the caller's
+    query, context, or requested attributes. An architecture test pins their count.
     """
 
     text: str
@@ -120,8 +118,7 @@ class Slot:
         counted raw exception.
         """
         for line in rendered:
-            # `splitlines` decides, not a pair of named characters. The oracle counts lines
-            # the same way, so a value this accepts cannot add one there.
+            # Use the same `splitlines` boundary as the encoded-value check.
             if len(f"a{line}b".splitlines()) > 1:
                 raise ValueError(
                     "Slot.lines joins already-rendered lines and cannot accept one that "
@@ -133,10 +130,8 @@ class Slot:
 def fill(template: str, **slots: Slot) -> str:
     """Substitute *slots* into *template*, refusing anything that is not a :class:`Slot`.
 
-    One ``str.format_map`` over a fixed set of named fields, applied once. Deliberately not a
-    template engine: the implementation this replaces ran Template substitution followed by
-    Jinja2 until the string stopped changing, which expanded any ``${...}`` or ``{{...}}`` a
-    caller happened to type.
+    Applies ``str.format_map`` once over named fields. Slot contents are not expanded as
+    nested template syntax.
     """
     for name, slot in slots.items():
         # Keep the runtime check even with the annotation: callers may not run a type
@@ -149,10 +144,8 @@ def fill(template: str, **slots: Slot) -> str:
     return template.format_map({name: slot.text for name, slot in slots.items()})
 
 
-# Every code point Python treats as a line break, taken from `str.splitlines` so the encoder
-# and differential oracle use the same definition. Listing only `\n` and `\r` would miss
-# U+2028, which survives `json.dumps(ensure_ascii=False)` but is treated as a line break by
-# `splitlines`. Model text could then open a new line while passing the guards.
+# Match `str.splitlines`, including U+2028, which `json.dumps(ensure_ascii=False)` leaves
+# literal. The encoder must reject every character that can open another prompt line.
 LINE_BREAKS: Final = tuple(
     sorted({c for c in map(chr, range(0x110000)) if len(f"a{c}b".splitlines()) > 1})
 )
@@ -170,7 +163,7 @@ def _json(value: object) -> str:
 
     ``ensure_ascii=False`` because the reader is a model: escaped, a non-Latin name costs
     several times the tokens and tells it less. That flag is also what leaves U+2028 and its
-    neighbours literal, so the break class is escaped explicitly afterwards. Everything that
+    neighbors literal, so the break class is escaped explicitly afterwards. Everything that
     has to be escaped for safety — the quote, the control characters — is escaped either way.
     """
     return _escape_breaks(json.dumps(value, ensure_ascii=False, sort_keys=True, default=str))
@@ -602,8 +595,12 @@ Return one JSON object with exactly these keys:
 - "attrs": an ordered list of objects with "name" and optional "type"
 - "primary_keys": an ordered list of fields that jointly identify one record
 
-Types may be string, integer, number, boolean, or null. Declared attributes and types must
-remain unchanged. Schema mode is {schema_mode}. Return only the JSON object.
+Inferred types may be string, integer, number, boolean, date, or null. Declared attributes
+and types must remain unchanged, including aliases int, float, bool, str, and text.
+Caller-supplied primary keys must remain unchanged. When none were supplied, infer fields
+from the schema and request that jointly identify one record, only when defensible.
+An empty declared primary_keys list means no key was supplied; it does not disable inference.
+Schema mode is {schema_mode}. Return only the JSON object.
 
 Original request: {original_query}
 Retrieval wording: {retrieval_query}
@@ -698,6 +695,9 @@ Return one JSON object with exactly these keys:
 - "schema": an object with "attrs" and "primary_keys"; attrs contain name and optional type
 
 Schema mode is {schema_mode}. Declared attributes and their types must remain unchanged.
+Caller-supplied primary keys must remain unchanged. When none were supplied, infer fields
+from the schema and request that jointly identify one record, only when defensible.
+An empty declared primary_keys list means no key was supplied; it does not disable inference.
 Return only the JSON object.
 
 Original request: {query}

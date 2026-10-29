@@ -1,15 +1,11 @@
-"""Tool definitions and the translation between tool arguments and the library.
+"""MCP tool schemas, argument validation, and library calls.
 
-Nothing here imports ``mcp``. The server module owns that import, so the schemas and the
-translation can be exercised with only the library installed, and so a change to either
-one is tested without a transport.
-
-There is no logic in this module beyond moving values across the boundary. Argument
-validation belongs to the library, whose messages are written to be read by a model.
+The server owns the ``mcp`` import, allowing these tools to run without a transport.
 """
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import re
@@ -19,11 +15,15 @@ from pathlib import Path
 from typing import Any, cast
 
 from blue_data_llm_source import (
+    BudgetExceeded,
     ConfigError,
     Estimate,
     Limits,
     LlmSource,
     LlmSourceError,
+    ParseError,
+    QueryError,
+    TransportError,
     can_bound,
     meta_view,
     priceable_models,
@@ -51,25 +51,110 @@ UNKNOWN_TOOL = "UnknownTool"
 NON_BLANK = r"\S"
 """The declared pattern for a field the library refuses when it holds only whitespace.
 
-`minLength` would not express it: the library strips before it looks, so `"   "` passed the
-advertised schema and was then refused by the runtime, which is the one direction in which
-"advertised equals enforced" can quietly stop being true.
+`minLength` permits whitespace-only input, which the library strips and refuses.
 """
 
 
 class ToolError(Exception):
-    """A failed tool call, in the library's own wording with credential shapes masked.
-
-    Masked at construction rather than at the transport. ``dispatch`` is reached directly by
-    anything embedding these tools without a server, and a message that only the server
-    makes safe is only safe through the server.
-    """
+    """A failed tool call with text safe for an MCP caller."""
 
     def __init__(self, message: str, kind: str = "ToolError") -> None:
         masked = conceal(redact(message))
         super().__init__(masked)
         self.message = masked
         self.kind = kind
+
+
+def _library_error(error: LlmSourceError) -> ToolError:
+    """Keep known failure kinds without publishing library exception text."""
+    if type(error) is QueryError:
+        if str(error) == "query must not be empty or whitespace":
+            return ToolError("query must not be empty or whitespace", kind="QueryError")
+        if re.match(r"^attrs\[\d+\] must have a non-empty string 'name', got ", str(error)):
+            return ToolError("attrs item must have a non-empty string 'name'.", kind="QueryError")
+        return ToolError("Query or attributes are invalid.", kind="QueryError")
+    if type(error) is ConfigError:
+        message = str(error)
+        if message.startswith("plan.leaf_prompt=") and "requires a non-flat plan.mode" in message:
+            return ToolError(
+                "plan.leaf_prompt needs plan.mode partitioned or row_by_row.",
+                kind=INVALID_ARGUMENTS,
+            )
+        if message.startswith("plan.filter_enforcement='drop' requires a non-flat plan.mode"):
+            return ToolError(
+                "plan.filter_enforcement drop needs plan.mode partitioned or row_by_row.",
+                kind=INVALID_ARGUMENTS,
+            )
+        if message.startswith("plan.split_policy=") and (
+            "requires plan.mode='partitioned'" in message
+        ):
+            return ToolError(
+                "plan.split_policy evidence needs plan.mode partitioned.",
+                kind=INVALID_ARGUMENTS,
+            )
+        if message.startswith("plan.keys ") and message.endswith(
+            " are not among the requested attributes"
+        ):
+            return ToolError("plan.keys must name requested attrs.", kind=INVALID_ARGUMENTS)
+        if message.startswith("planning.locked_sequential requires a non-empty caller schema"):
+            return ToolError(
+                "plan.planning_order planning.locked_sequential needs attrs and ordered plan.keys.",
+                kind=INVALID_ARGUMENTS,
+            )
+        if str(error).startswith("limits.max_cost must be "):
+            return ToolError(
+                "limits.max_cost must be a finite non-negative number.", kind="ConfigError"
+            )
+        if str(error).startswith("unknown adapter override "):
+            return ToolError(
+                "unknown adapter override; check supported settings.", kind="ConfigError"
+            )
+        return ToolError("Configuration or request settings are invalid.", kind="ConfigError")
+    if type(error) is ParseError:
+        if str(error).startswith("model response is not valid JSON:"):
+            return ToolError("Model response is not valid JSON.", kind="ParseError")
+        return ToolError("Model response could not be parsed as records.", kind="ParseError")
+    if type(error) is TransportError:
+        category = _transport_category(error)
+        detail = f" ({category})" if category else ""
+        return ToolError(f"Provider request failed{detail}.", kind="TransportError")
+    if type(error) is BudgetExceeded:
+        return ToolError("Configured limit reached.", kind="BudgetExceeded")
+    return ToolError("Library request failed.", kind="LlmSourceError")
+
+
+def _transport_category(error: TransportError) -> str | None:
+    """Classify structured provider errors without publishing provider text."""
+    if error.code in {"authentication_error", "invalid_api_key"}:
+        return "authentication"
+    if error.code in {"rate_limit_error", "rate_limit"}:
+        return "rate_limit"
+    if error.code in {"model_not_found", "unknown_model"}:
+        return "model_not_found"
+    if error.code in {"connection_error", "timeout"}:
+        return "network"
+    provider = error.provider_error
+    if provider is None or not type(provider).__module__.startswith("litellm."):
+        return None
+    kind = type(provider).__name__
+    if kind in {"AuthenticationError", "PermissionDeniedError"}:
+        return "authentication"
+    if kind == "RateLimitError":
+        return "rate_limit"
+    if kind in {"APIConnectionError", "Timeout"}:
+        return "network"
+    if kind == "ModelNotFoundError":
+        return "model_not_found"
+    try:
+        status = getattr(provider, "status_code", None)
+    except Exception:
+        return None
+    if type(status) is int:
+        if status in {401, 403}:
+            return "authentication"
+        if status == 429:
+            return "rate_limit"
+    return None
 
 
 @dataclass(frozen=True)
@@ -91,7 +176,7 @@ ATTR_SCHEMA: dict[str, Any] = {
                 "name": {"type": "string", "pattern": NON_BLANK, "description": "Attribute name."},
                 "type": {
                     # No `enum`: the library checks a value against a declared type it
-                    # recognises and accepts any other name unchecked, reporting it once in
+                    # recognizes and accepts any other name unchecked, reporting it once in
                     # meta.unchecked_types. Closing the set here would refuse what the
                     # library accepts, and the CLI does not close it either.
                     "type": "string",
@@ -136,7 +221,7 @@ REQUEST_PROPERTIES: dict[str, Any] = {
 # shorthands for these keys -- `--limit-cost` for `limits.max_cost` -- because a dot is not
 # usable in a long option; the README carries the mapping. A renamed key here would be read
 # by nothing: the library validates the keys it is given, and a tool argument the handlers
-# do not recognise never reaches it, so the run would go unbounded in silence.
+# do not recognize never reaches it, so the run would go unbounded in silence.
 LIMIT_PROPERTIES: dict[str, Any] = {
     "limits.max_cost": {
         "type": "number",
@@ -367,16 +452,13 @@ QUERY_INPUT_SCHEMA: dict[str, Any] = {
         **LIMIT_PROPERTIES,
         **PLAN_PROPERTIES,
     },
-    # No required key. The source treats a missing or empty query as a normal outcome and
-    # reports it as `empty_query`, which the README documents; declaring it required told a
-    # generated client something the server does not enforce and would not want to.
+    # Missing or empty queries are valid inputs that produce `empty_query`.
     "required": [],
     "additionalProperties": False,
 }
 
-# No `max_records` here, and deliberately: `estimate` takes no row cap, so accepting one
-# would advertise an input that changes nothing about the answer. A row cap does not bound
-# spend anyway — the model is asked once and the surplus records are dropped on arrival.
+# `estimate` prices a flat fetch without a row cap. Accepting `max_records` here would
+# advertise an input that cannot change the estimate.
 ESTIMATE_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {**REQUEST_PROPERTIES, **LIMIT_PROPERTIES},
@@ -596,9 +678,12 @@ def operator_limits(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
     source = os.environ if environ is None else environ
     ceilings: dict[str, Any] = {}
     for variable, key, kind in _OPERATOR_LIMITS:
-        text = source.get(variable, "").strip()
-        if text:
-            ceilings[key] = _environment_value(key, text, kind)
+        if variable not in source:
+            continue
+        text = source[variable].strip()
+        if not text:
+            raise _refused([key])
+        ceilings[key] = _environment_value(key, text, kind)
     try:
         Limits(
             max_cost=ceilings.get("limits.max_cost"),
@@ -632,6 +717,8 @@ def _concealed(environ: Mapping[str, str] | None = None) -> list[str]:
 def conceal(text: str) -> str:
     """*text* with every configured private value replaced by the mask."""
     for value in _concealed():
+        text = text.replace(repr(value), MASK)
+        text = text.replace(json.dumps(value, ensure_ascii=False), MASK)
         text = text.replace(value, MASK)
     return text
 
@@ -648,10 +735,8 @@ def build_source(environ: Mapping[str, str] | None = None) -> LlmSource:
 def limit_properties(args: dict[str, Any]) -> dict[str, Any] | None:
     """The ceilings and plan settings in *args*, as per-call properties the library reads.
 
-    None rather than an empty dict when the caller set none, so a call without a ceiling
-    reaches the library exactly as it did before there was one to set. The library merges
-    these over the source's own properties for this call and does not write them back, so
-    one agent's ceiling cannot leak into the next call over the same server.
+    Return None when no settings were supplied. Per-call settings do not persist to the
+    next call.
 
     The operator's ceilings from the environment are merged in here, each call's own value
     kept only where it is lower, so no call can raise or remove the operator's bound.
@@ -669,9 +754,10 @@ async def llmdb_query_async(
 ) -> dict[str, Any]:
     """Run one fetch and return its records with a compact meta dict.
 
-    Async because the MCP handler that calls it is async. The library's synchronous
-    ``fetch`` refuses to run inside an event loop, so a sync dispatcher reached from an
-    async handler cannot work at all.
+    Async because the MCP handler that calls it is async. Inside a running loop the
+    library's synchronous ``fetch`` blocks the handler's thread while it runs on a worker
+    thread, which stalls the server's loop and hangs any client that needs that loop.
+    Awaiting ``afetch`` keeps the fetch on the loop.
     """
     args = arguments or {}
     target = source if source is not None else build_source()
@@ -688,8 +774,10 @@ async def llmdb_query_async(
             properties=limit_properties(args),
         )
     except LlmSourceError as error:
-        raise ToolError(str(error), kind=type(error).__name__) from error
-    return _query_result(result)
+        failure = _library_error(error)
+    else:
+        return _query_result(result)
+    raise failure
 
 
 def llmdb_query(
@@ -708,8 +796,10 @@ def llmdb_query(
             properties=limit_properties(args),
         )
     except LlmSourceError as error:
-        raise ToolError(str(error), kind=type(error).__name__) from error
-    return _query_result(result)
+        failure = _library_error(error)
+    else:
+        return _query_result(result)
+    raise failure
 
 
 def _query_result(result: Any) -> dict[str, Any]:
@@ -723,6 +813,21 @@ def _query_result(result: Any) -> dict[str, Any]:
     return {"records": list(result.records), "meta": meta}
 
 
+def _estimate_reason(reason: str | None) -> str | None:
+    """Report why a bound is missing without returning library exception text."""
+    if not reason:
+        return reason
+    if reason.startswith("this client does not report what an attempt will cost"):
+        return "This client does not report a cost bound."
+    if reason.startswith("no published prices for "):
+        return "Model pricing is unavailable; set finite input and output rates."
+    if reason.startswith("llm.price_per_input_token and llm.price_per_output_token"):
+        return "Set finite positive input and output rates."
+    if reason.startswith("limits.max_cost needs a finite positive llm.max_tokens"):
+        return "A finite positive output allowance is required to bound cost."
+    return "A cost bound is unavailable; check pricing, output allowance, or client cost support."
+
+
 def estimate_summary(estimate: Estimate) -> dict[str, Any]:
     """Shape Estimate for a tool result: every field, whether or not it is set.
 
@@ -732,16 +837,14 @@ def estimate_summary(estimate: Estimate) -> dict[str, Any]:
     ``limits.max_cost`` to the figure it was given would have the last attempt that figure
     accounted for refused.
 
-    ``reason`` is a library error message published as a field rather than raised, so it
-    reaches a caller without passing the boundary that masks the raised ones. It is masked
-    here instead.
+    ``reason`` may contain a library error, so it uses fixed guidance.
     """
     return {
         "bounded": estimate.bounded,
         "max_cost": estimate.max_cost,
         "max_cost_per_attempt": estimate.max_cost_per_attempt,
         "max_attempts": estimate.max_attempts,
-        "reason": conceal(redact(estimate.reason)) if estimate.reason else estimate.reason,
+        "reason": _estimate_reason(estimate.reason),
         "model": conceal(estimate.model),
         "prompt_bytes": estimate.prompt_bytes,
         "max_output_tokens": estimate.max_output_tokens,
@@ -769,8 +872,13 @@ def llmdb_estimate(
             properties=limit_properties(args),
         )
     except LlmSourceError as error:
-        raise ToolError(str(error), kind=type(error).__name__) from error
-    return estimate_summary(estimate)
+        failure = _library_error(error)
+    else:
+        summary = estimate_summary(estimate)
+        if query is None or (isinstance(query, str) and not query.strip()):
+            summary["reason"] = "empty_query"
+        return summary
+    raise failure
 
 
 def llmdb_list_models(
@@ -785,6 +893,16 @@ def llmdb_list_models(
     return {"models": list(priceable_models())}
 
 
+def _model_allowance(target: Any, name: str) -> Any:
+    try:
+        allowance = target.max_tokens_for_model(name)
+    except LlmSourceError as error:
+        failure = _library_error(error)
+    else:
+        return allowance
+    raise failure
+
+
 def llmdb_inspect_model(
     arguments: dict[str, Any] | None = None, source: Any | None = None
 ) -> dict[str, Any]:
@@ -796,18 +914,15 @@ def llmdb_inspect_model(
     """
     args = arguments or {}
     name = str(args["model"])
+    if not name.strip():
+        raise ToolError("model must be a non-blank string.", kind=INVALID_ARGUMENTS)
     target = source if source is not None else build_source()
     rates = rates_for(name)
     # Read off the source rather than assumed, because the question is about this
     # deployment: a cost bound needs a finite output allowance as well as rates, and a
     # source configured without one can price nothing however well known the model is.
     properties: dict[str, Any] = dict(target.properties)
-    try:
-        allowance = target.max_tokens_for_model(name)
-    except LlmSourceError as error:
-        # A deployment setting the library refuses, reported as this call's failure the
-        # way the query and the estimate report it.
-        raise ToolError(str(error), kind=type(error).__name__) from error
+    allowance = _model_allowance(target, name)
     return {
         # The one field here that is the caller's own text on its way back out. The lookups
         # above read what arrived; what is published is masked.
@@ -880,7 +995,7 @@ _ASYNC_HANDLERS: dict[str, AsyncHandler] = {
 
 
 # Named here as well as in the library because a tool call never reaches the library's property
-# validation: the handlers read known fields and would otherwise drop an unrecognised key.
+# validation: the handlers read known fields and would otherwise drop an unrecognized key.
 _DEFERRED_ARGS = {
     "llm.rate_limit": (
         "client-side call spacing is not implemented here. Use 'llm.max_parallel' to cap "
@@ -894,13 +1009,9 @@ _SCHEMAS = {spec.name: spec.input_schema for spec in TOOLS}
 def _check_arguments(name: str, arguments: object) -> None:
     """Enforce the advertised schema, which nothing else enforces for us.
 
-    Every tool schema declares ``additionalProperties: false``, and nothing was checking it:
-    the handler took the fields it recognised and discarded whatever else arrived. A caller
-    setting a ceiling this build does not support was told nothing and got an unbounded run.
-
-    The SDK's own prevalidator is switched off for this handler, because it ran first and
-    answered a deferred key with a generic schema error instead of the message naming what
-    to use instead. So this has to do the whole job, and the schema tests assert it does.
+    Each schema declares ``additionalProperties: false``. Check unknown keys here before
+    handlers can discard them. The SDK prevalidator is disabled so unsupported settings
+    receive the specific guidance below.
     """
     schema = _SCHEMAS.get(name)
     if schema is None:
@@ -1003,6 +1114,12 @@ def _check_value(label: str, value: Any, spec: dict[str, Any]) -> Any:
                 return _check_value(label, value, option)
             except ToolError:
                 continue
+        if label.startswith("'attrs'["):
+            raise ToolError(
+                f"{label} must be a non-blank string or an object with a non-blank "
+                "string 'name' and optional string 'type'",
+                kind=INVALID_ARGUMENTS,
+            )
         raise ToolError(f"{label} does not match any accepted shape", kind=INVALID_ARGUMENTS)
 
     # Read once, before any narrowing: taken later the checker sees the accumulated
@@ -1019,6 +1136,8 @@ def _check_value(label: str, value: Any, spec: dict[str, Any]) -> Any:
         # bool is an int in Python and is never what a count meant.
         if isinstance(value, bool):
             raise ToolError(f"{label} must be an integer, got {kind}", kind=INVALID_ARGUMENTS)
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ToolError(f"{label} must be a finite integer", kind=INVALID_ARGUMENTS)
         # JSON has one number type, so 2 and 2.0 are the same value on the wire and both
         # satisfy an "integer" schema. Refusing the second contradicted the schema this
         # server advertises, and a client generating arguments from that schema had no way
@@ -1034,6 +1153,8 @@ def _check_value(label: str, value: Any, spec: dict[str, Any]) -> Any:
         # here would make this server accept what its own published contract refuses.
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ToolError(f"{label} must be a number, got {kind}", kind=INVALID_ARGUMENTS)
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ToolError(f"{label} must be a finite number", kind=INVALID_ARGUMENTS)
         _check_minimum(label, value, spec)
     if declared == "array":
         if not isinstance(value, list):
@@ -1137,8 +1258,8 @@ async def adispatch(
     """Async route, used by the MCP handler.
 
     The server's ``call_tool`` is async, so it must reach the library's async path. A
-    synchronous dispatcher here would call ``fetch`` inside a running loop, which the
-    library refuses by design, and every fetch over MCP would fail.
+    synchronous dispatcher here would call ``fetch`` inside a running loop, which blocks
+    the server's loop until the fetch finishes on a worker thread.
     """
     handler = _ASYNC_HANDLERS.get(name)
     if handler is None:

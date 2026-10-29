@@ -1,29 +1,169 @@
-"""The server's own call path, exercised the way the SDK exercises it.
+"""Exercise the shipped async handler without starting the MCP server.
 
-The tool-translation tests call ``tools`` directly, which is why they stayed green while
-the shipped server was broken: its ``call_tool`` handler is async and was dispatching
-synchronously, so the library refused every fetch with "called from inside a running
-event loop". These tests drive the same coroutine the SDK would await.
-
-The MCP package is not installed here, so the handler is reconstructed from the module's
-own source rather than mocked. None of the server's own behaviour is stubbed.
+The handler body runs from its source file with a local TextContent stand-in.
 """
 
 from __future__ import annotations
 
+import argparse
+import ast
 import asyncio
+import builtins
 import contextlib
+import importlib
 import json
+import logging
+import os
+import subprocess
 import sys
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
-from blue_data_llm_source import ConfigError, redact
+from blue_data_llm_source import ConfigError, TransportError
 
-from blue_data_llm_mcp import tools
+from blue_data_llm_mcp import __version__, tools
 
 PACKAGE = Path(tools.__file__).parent
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [["--help"], ["-h"], ["--version"], ["--bogus"], ["--api-key", "synthetic-secret"]],
+)
+def test_console_arguments_finish_without_starting_transport(
+    arguments: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = PACKAGE / "server.py"
+    module = ast.parse(path.read_text(encoding="utf-8"))
+    entry = next(
+        node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == "main"
+    )
+    parser = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.ClassDef) and node.name == "_ArgumentParser"
+    )
+    started: list[object] = []
+
+    def capture_run(task: object) -> None:
+        started.append(task)
+
+    def stub_serve() -> str:
+        started.append("serve")
+        return "serve"
+
+    namespace: dict[str, Any] = {
+        "argparse": argparse,
+        "asyncio": SimpleNamespace(run=capture_run),
+        "serve": stub_serve,
+        "__version__": __version__,
+    }
+    exec(compile(ast.Module(body=[parser, entry], type_ignores=[]), str(path), "exec"), namespace)
+    monkeypatch.setattr(sys, "argv", ["blue-data-llm-mcp", *arguments])
+
+    with pytest.raises(SystemExit) as stopped:
+        namespace["main"]()
+
+    bad = arguments[0] in {"--bogus", "--api-key"}
+    assert stopped.value.code == (2 if bad else 0)
+    assert not started
+    output = capsys.readouterr()
+    if bad:
+        assert "unsupported arguments; see --help" in output.err
+        assert "synthetic-secret" not in output.err
+    else:
+        assert output.out
+        if arguments == ["--version"]:
+            assert output.out.strip() == __version__
+
+
+def test_malformed_frame_does_not_log_caller_arguments() -> None:
+    pytest.importorskip("mcp")
+    marker = "SYNTHETIC_MCP_MARKER_123"
+    frames: list[dict[str, object]] = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "0"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "llmdb_query", "arguments": [{"name": marker}]},
+        },
+    ]
+    process = subprocess.run(
+        [sys.executable, "-m", "blue_data_llm_mcp.server"],
+        input="".join(json.dumps(frame) + "\n" for frame in frames),
+        text=True,
+        capture_output=True,
+        timeout=8,
+        check=False,
+    )
+    assert process.returncode == 0
+    assert marker not in process.stderr
+    assert marker not in process.stdout
+    assert "MCP request validation failed." in process.stderr
+    response = json.loads(process.stdout.splitlines()[-1])
+    assert response["error"]["code"] == -32602
+
+
+def test_sdk_filter_scrubs_validation_record_and_leaves_other_logs_alone() -> None:
+    path = PACKAGE / "server.py"
+    module = ast.parse(path.read_text(encoding="utf-8"))
+    filter_class = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.ClassDef) and node.name == "_SdkValidationFilter"
+    )
+    namespace: dict[str, Any] = {"logging": logging}
+    exec(compile(ast.Module(body=[filter_class], type_ignores=[]), str(path), "exec"), namespace)
+    sdk_filter = namespace["_SdkValidationFilter"]()
+    leaked = logging.LogRecord(
+        "root", logging.WARNING, __file__, 1, "Failed to validate request: %s", ("marker",), None
+    )
+    leaked.stack_info = "marker stack"
+    assert sdk_filter.filter(leaked)
+    assert leaked.msg == "MCP request validation failed."
+    assert leaked.args == ()
+    assert leaked.stack_info is None
+    ordinary = logging.LogRecord("root", logging.WARNING, __file__, 1, "ordinary", (), None)
+    assert sdk_filter.filter(ordinary)
+    assert ordinary.msg == "ordinary"
+
+
+def test_sdk_filter_is_removed_if_log_sink_cannot_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("mcp")
+    server_module = importlib.import_module("blue_data_llm_mcp.server")
+    root = logging.getLogger()
+    before = tuple(root.filters)
+
+    @contextlib.asynccontextmanager
+    async def local_stdio() -> AsyncGenerator[tuple[None, None]]:
+        yield None, None
+
+    original_open = cast("Callable[..., Any]", builtins.open)
+
+    def refused(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if path == os.devnull:
+            raise OSError("synthetic sink refusal")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(server_module, "stdio_server", local_stdio)
+    monkeypatch.setattr(builtins, "open", refused)
+    with pytest.raises(OSError, match="synthetic sink refusal"):
+        asyncio.run(server_module.serve())
+    assert tuple(root.filters) == before
 
 
 class _Source:
@@ -48,35 +188,51 @@ class _Source:
 
 
 async def _call_tool(name: str, arguments: dict[str, Any], source: Any) -> list[str]:
-    """The body of the shipped call_tool handler, minus the SDK decorators."""
-    try:
-        payload = await tools.adispatch(name, arguments, source)
-    except tools.ToolError as error:
-        raise ValueError(f"{error.kind}: {error.message}") from error
-    except Exception as error:
-        raise ValueError(redact(f"{type(error).__name__}: {error}")) from error
-    return [json.dumps(payload, default=str)]
+    """Run the shipped handler with a source and a local TextContent stand-in."""
+    path = PACKAGE / "server.py"
+    module = ast.parse(path.read_text(encoding="utf-8"))
+    handler = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "call_tool"
+    )
+    handler.decorator_list = []
+
+    async def adispatch(tool_name: str, args: dict[str, Any]) -> Any:
+        return await tools.adispatch(tool_name, args, source)
+
+    def text_content(**fields: Any) -> SimpleNamespace:
+        return SimpleNamespace(**fields)
+
+    namespace: dict[str, Any] = {
+        "tools": SimpleNamespace(adispatch=adispatch, ToolError=tools.ToolError),
+        "types": SimpleNamespace(TextContent=text_content),
+        "json": json,
+        "Any": Any,
+    }
+    exec(compile(ast.Module(body=[handler], type_ignores=[]), str(path), "exec"), namespace)
+    call_tool = cast(
+        Callable[[str, dict[str, Any]], Awaitable[list[SimpleNamespace]]], namespace["call_tool"]
+    )
+    blocks = await call_tool(name, arguments)
+    return [block.text for block in blocks]
 
 
 def test_the_redirect_wraps_the_run_and_not_each_call() -> None:
-    """This file reproduces the handler rather than importing it, so it can drift.
-
-    The redirect belongs around the whole ``server.run`` and nowhere else. Per call it was
-    worse than absent, for the reason the next test measures.
-    """
+    """Check that stdout is redirected around ``server.run``, not per call."""
     source = (PACKAGE / "server.py").read_text()
-    assert "with contextlib.redirect_stdout(sys.stderr):\n            await server.run(" in source
+    assert "with contextlib.redirect_stdout(sink):\n                    await server.run(" in source
+    assert "open(os.devnull" in source
+    assert "root_logger.removeFilter(sdk_filter)" in source
     handler = source[source.index("async def call_tool") : source.index("async def serve")]
     assert "redirect_stdout" not in handler, "the redirect is back inside the per-call path"
-    assert "redact(" in handler, "the handler stopped masking what it did not classify"
+    assert "InternalError: Tool failed." in handler
 
 
 def _make_pair() -> tuple[Any, Any, Any]:
     """Two sources and the events that pin the interleaving.
 
-    A must still be inside when B enters, and must leave before B prints. Left to plain
-    ``sleep(0)`` scheduling, A finished before B ever entered and the overlap the test is
-    about never happened — it passed against the defect.
+    Events force A and B to overlap, then make A leave before B prints.
     """
     b_entered = asyncio.Event()
     a_left = asyncio.Event()
@@ -99,33 +255,30 @@ def _make_pair() -> tuple[Any, Any, Any]:
 def test_concurrent_calls_cannot_leak_provider_output_or_strip_stdout(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """B enters, A enters and exits, then B prints — the order a per-call redirect loses.
+    """Concurrent calls cannot leak provider output or change stdout after the run.
 
-    ``redirect_stdout`` assigns the process-global ``sys.stdout``, and this server runs
-    requests concurrently. Wrapped per call, A's exit restores the real stdout while B is
-    still inside, so B's provider line goes to the JSON-RPC frame; and B's own exit then
-    restores the stderr object it saw on entry, leaving ``sys.stdout`` wrong for everything
-    afterwards. One redirect over the whole run cannot nest, so it cannot race.
+    ``redirect_stdout`` changes process-global state. The server holds one redirect for
+    its lifetime so overlapping calls do not restore different stdout objects.
     """
     quiet, late, a_left = _make_pair()
     original = sys.stdout
 
     async def exercise() -> None:
         # Mirrors serve(): one redirect for the lifetime, every call inside it.
-        with contextlib.redirect_stdout(sys.stderr):
-            # A enters, B enters behind it, A leaves, then B prints. That is the order a
-            # per-call redirect loses: A's exit restores the frame while B is still inside.
-            a = asyncio.create_task(_call_tool("llmdb_query", {"query": "a"}, quiet))
-            b = asyncio.create_task(_call_tool("llmdb_query", {"query": "b"}, late))
-            await a
-            a_left.set()
-            await b
+        with open(os.devnull, "w", encoding="utf-8") as sink:
+            with contextlib.redirect_stdout(sink):
+                # A leaves before B prints, exposing any per-call redirect race.
+                a = asyncio.create_task(_call_tool("llmdb_query", {"query": "a"}, quiet))
+                b = asyncio.create_task(_call_tool("llmdb_query", {"query": "b"}, late))
+                await a
+                a_left.set()
+                await b
 
     asyncio.run(exercise())
 
     captured = capsys.readouterr()
     assert "provider banner" not in captured.out, "provider output reached the JSON-RPC stream"
-    assert "provider banner" in captured.err, "it must stay visible, just not on stdout"
+    assert "provider banner" not in captured.err, "provider output reached stderr"
     assert sys.stdout is original, "stdout was left pointing somewhere else"
 
 
@@ -141,22 +294,25 @@ SENTINEL = "sk-canary-NOTAKEY"
 """A key literal in the shape a provider stamps one with. A sentinel, not a credential."""
 
 
-def test_an_unclassified_failure_leaves_the_handler_masked() -> None:
-    """The SDK puts `str(exc)` in the tool result whether or not this package named it."""
+@pytest.mark.parametrize("format_value", [str, repr, json.dumps])
+def test_an_unclassified_failure_has_no_exception_text_or_cause(format_value: Any) -> None:
+    """The SDK puts the raised ValueError text in the tool result."""
 
     class _Broken(_Source):
         async def afetch(self, query: str, **kwargs: Any) -> Any:
-            raise RuntimeError(f"request failed: api_key={SENTINEL}")
+            raise RuntimeError(f"request failed: {format_value(SENTINEL)}")
 
     with pytest.raises(ValueError) as raised:
         asyncio.run(_call_tool("llmdb_query", {"query": "who?"}, _Broken()))
 
     assert SENTINEL not in str(raised.value)
-    assert "***" in str(raised.value)
+    assert str(raised.value) == "InternalError: Tool failed."
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
 
 
 def test_the_sync_path_is_never_taken_from_the_async_handler() -> None:
-    """The stand-in raises if fetch() is reached, which is what used to happen."""
+    """The async handler must call ``afetch`` and never ``fetch``."""
     source = _Source()
     asyncio.run(_call_tool("llmdb_query", {"query": "who?"}, source))
     assert source.async_calls == 1
@@ -174,7 +330,7 @@ def test_an_unknown_tool_surfaces_as_a_value_error() -> None:
         asyncio.run(_call_tool("nope", {}, _Source()))
 
 
-def test_a_library_error_surfaces_with_its_message_intact() -> None:
+def test_a_known_library_refusal_keeps_safe_query_guidance() -> None:
     from blue_data_llm_source.types import QueryError
 
     class Failing(_Source):
@@ -183,6 +339,35 @@ def test_a_library_error_surfaces_with_its_message_intact() -> None:
 
     with pytest.raises(ValueError, match="query must not be empty or whitespace"):
         asyncio.run(_call_tool("llmdb_query", {"query": " "}, Failing()))
+
+
+@pytest.mark.parametrize(
+    ("error_type", "expected"),
+    [
+        (RuntimeError, "InternalError: Tool failed."),
+        (TransportError, "TransportError: Provider request failed."),
+    ],
+)
+def test_valid_operator_setting_echo_is_not_in_server_error(
+    error_type: type[Exception],
+    expected: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = "27183"
+    monkeypatch.setenv("BLUE_DATA_LLM_SOURCE_MAX_TOKENS", value)
+    assert tools.deployment_properties()["llm.max_tokens"] == int(value)
+
+    class _Broken(_Source):
+        async def afetch(self, query: str, **kwargs: Any) -> Any:
+            raise error_type(f"provider echoed max_tokens={value}")
+
+    with pytest.raises(ValueError) as raised:
+        asyncio.run(_call_tool("llmdb_query", {"query": "who?"}, _Broken()))
+
+    assert str(raised.value) == expected
+    assert value not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
 
 
 def test_the_shipped_handler_awaits_the_async_dispatcher() -> None:
@@ -201,15 +386,10 @@ def test_the_shipped_handler_awaits_the_async_dispatcher() -> None:
 
 
 def test_the_server_module_imports_when_the_sdk_is_installed() -> None:
-    """The one test that would have caught a server that cannot start.
+    """Import the server against an installed protocol SDK.
 
-    Every other test in this package imports ``tools``, which is SDK-free by design, so the
-    suite stayed green while ``server.py`` was unimportable against the installed SDK:
-    ``mcp`` was declared as ``>=1.0``, pip resolved 2.0, and the low-level decorator API
-    this module is built on was removed in that release.
-
-    Skipped when the SDK is absent, which is the supported development configuration. It is
-    not skipped in any environment where the server would actually be run.
+    The tools module has no SDK dependency, so this test checks the server import
+    separately. Skip it when the SDK is absent.
     """
     pytest.importorskip("mcp")
 
@@ -220,12 +400,7 @@ def test_the_server_module_imports_when_the_sdk_is_installed() -> None:
 
 
 def test_the_handshake_reports_this_package_and_not_the_sdk() -> None:
-    """`Server(name)` alone made every client read the SDK's version as this server's.
-
-    The SDK falls back to `pkg_version("mcp")` when no `version=` is given, so the
-    initialize response said 1.27.2 while the package and the metadata tool both said
-    something else. Three answers to one question, and a client sees the wrong one first.
-    """
+    """The handshake reports the package version rather than the SDK version."""
     pytest.importorskip("mcp")
 
     from blue_data_llm_mcp import __version__
@@ -253,7 +428,7 @@ def test_a_dotted_ceiling_name_survives_the_protocol_layer() -> None:
     tests never see either. This drives the shipped server through the installed SDK, and it
     is `llmdb_estimate` because that one answers with no credential and contacts nothing.
 
-    Guarded like its siblings below: the suite is specified to run without the protocol SDK.
+    Skip the SDK path when the protocol SDK is absent.
     """
     pytest.importorskip("mcp")
 
@@ -296,15 +471,8 @@ def test_a_dotted_ceiling_name_survives_the_protocol_layer() -> None:
 def test_the_real_sdk_handler_gives_the_deferred_answer_not_a_schema_error() -> None:
     """Through the installed SDK request handler, not `dispatch` alone.
 
-    The SDK validates `inputSchema` before the decorated handler runs, so a deferred key —
-    which is an extra property, and so schema-invalid — came back as a generic
-    "Input validation error". It named the key and nothing else: not the version it moved
-    to, not what to use instead. The direct-dispatch tests could not see that, because they
-    never went through the SDK.
-
-    Guarded like its sibling above. Three documents state that this suite runs without the
-    protocol SDK installed, and it did not: this was the one test that imported it
-    unconditionally, so the claim held everywhere except here.
+    The SDK can reject an extra property before the handler supplies guidance for an
+    unsupported setting. Exercise the installed SDK path when available.
     """
     pytest.importorskip("mcp")
 
@@ -328,7 +496,32 @@ def test_the_real_sdk_handler_gives_the_deferred_answer_not_a_schema_error() -> 
     assert "llm.rate_limit" in message
     assert "v2.0" not in message
     assert "max_parallel" in message
-    assert "max_parallel" in message
+
+
+def test_the_real_sdk_handler_hides_provider_failure_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("mcp")
+
+    from mcp import types
+
+    from blue_data_llm_mcp import server as shipped
+
+    class Failing:
+        async def afetch(self, query: str, **kwargs: Any) -> Any:
+            raise TransportError("provider rejected private setting 27183")
+
+    monkeypatch.setattr(tools, "build_source", Failing)
+
+    async def exercise() -> Any:
+        request = types.CallToolRequest(
+            method="tools/call",
+            params=types.CallToolRequestParams(name="llmdb_query", arguments={"query": "who?"}),
+        )
+        return await shipped.server.request_handlers[types.CallToolRequest](request)
+
+    result = asyncio.run(exercise()).root
+    assert result.isError
+    assert "TransportError: Provider request failed." in result.content[0].text
+    assert "27183" not in result.content[0].text
 
 
 def _sdk_tool_listing() -> Any:
@@ -369,8 +562,7 @@ def test_what_the_server_advertises_is_exactly_what_the_specs_declare() -> None:
 def test_the_advertised_closed_sets_reach_the_wire() -> None:
     """That the enums are *there*, not merely that the schema has not changed.
 
-    A snapshot test pins whatever shape it was given, so it would have kept these three
-    parameters as bare strings forever. This asserts the property the checklist asks for.
+    A snapshot alone would also accept bare strings for these parameters.
     """
     pytest.importorskip("mcp")
 

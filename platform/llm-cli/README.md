@@ -4,6 +4,18 @@
 
 ## Install
 
+From the checkout root, with `blue-data` beside it, use the root `.venv`:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+./platform/llm-cli/scripts/install.sh
+```
+
+If `.venv` already exists, activate it and run only the installer. It installs `blue-data`, the library's `dev` and `llm` extras, and the CLI's `dev` extra. Alternatively, use Conda from the same checkout root:
+
+The [installation guide](../../docs/installation.md) is the reference for these Conda steps.
+
 Run these commands from the `blue-data-llm-source` checkout with `blue-data` beside it. Create the environment once:
 
 ```bash
@@ -55,7 +67,7 @@ blue-llmdb [--version] [-h|--help] [--profile NAME]
     └── inspect [--format]
 ```
 
-There is no `database`, `schema`, or `cache` component. A model-backed source has one synthetic database and collection, no stored schema, and no cache-introspection API. `data search` is also omitted because searching and querying are the same operation for this source.
+Retrieval runs through `data query`; `--attr` declares result fields, and `metadata inspect` reports the source protocol, variant, and library version. Search and query are the same operation for this source. See the [CLI guide](../../docs/cli.md) for the reasons behind its profile, output, and error conventions.
 
 ```bash
 blue-llmdb metadata inspect
@@ -69,7 +81,7 @@ Prints the protocol, the variant, and the version of the library underneath:
 ┡━━━━━━━━━━╇━━━━━━━━┩
 │ protocol │ llm    │
 │ variant  │ openai │
-│ version  │ 2.2.0  │
+│ version  │ 1.0.0  │
 └──────────┴────────┘
 ```
 
@@ -83,7 +95,7 @@ blue-llmdb metadata inspect --format json
 {
   "protocol": "llm",
   "variant": "openai",
-  "version": "2.2.0"
+  "version": "1.0.0"
 }
 ```
 
@@ -102,6 +114,8 @@ blue-llmdb profile config BLUE_DATA_LLM_MODEL gpt-4o
 ```
 
 `profile config` has three forms: with no argument, it prompts for the parameters requested on a first run; with a parameter name, it prompts for that parameter; with a name and value, it sets the value directly. If the profile named by `--profile` does not exist, the write creates it. A refused parameter or value leaves no profile behind.
+
+Put `--` before a negative positional value so Click passes it to the command; limit parameters then reject the negative number.
 
 ```bash
 blue-llmdb profile config
@@ -164,11 +178,13 @@ blue-llmdb profile remove staging --confirm
 | `BLUE_DATA_LLM_SOURCE_LIMIT_SECONDS` | float | — | | `limits.max_seconds` |
 | `BLUE_DATA_LLM_SOURCE_LIMIT_CALLS` | int | — | | `limits.max_calls` |
 | `BLUE_DATA_LLM_SOURCE_MAX_RETRIES` | int | — | | `limits.max_retries` |
-| `BLUE_DATA_LLM_SOURCE_EFFORT` | str | `low` | | `plan.max_continuations` |
+| `BLUE_DATA_LLM_SOURCE_EFFORT` | str | — | | `plan.max_continuations` |
 
-A parameter name is also its environment-variable name, so exporting `BLUE_DATA_LLM_MODEL` overrides the profile for one shell without editing it. An empty exported value is refused instead of treated as unset. `BLUE_DATA_LLM_MODEL=''` is still an explicit value; falling through to the profile would hide a configuration error. Use `unset BLUE_DATA_LLM_MODEL` to remove the environment tier. Profile storage also refuses blank values because they would otherwise be written but skipped during resolution.
+A profile leaves `BLUE_DATA_LLM_SOURCE_EFFORT` unset unless you set it. When `data query` has no `--effort` or configured effort, it uses `low` (zero continuations).
 
-Nothing blocks on a parameter being unset. "Asked on a first run" means `blue-llmdb profile config` with no argument walks those two, and nothing more. `profile`, `model`, `metadata` and `data estimate` contact no provider and run against an empty profile. A missing credential surfaces only when `data query` reaches the provider, as `ERROR: TRANSPORT`.
+A parameter name is also its environment-variable name, so exporting `BLUE_DATA_LLM_MODEL` overrides the profile for one shell without editing it. An empty exported value is refused instead of treated as unset. `BLUE_DATA_LLM_MODEL=''` is still an explicit value; falling through to the profile would hide a configuration error. Use `unset BLUE_DATA_LLM_MODEL` to remove the environment tier. Profile storage also refuses blank values because they would otherwise be written but skipped during resolution. A blank or undecodable value edited into the profile file by hand does not block `profile list`, `add`, `select`, `remove` or `config`, so the profile can be repaired; data, model and metadata commands refuse it with ``KEY is blank in profile 'NAME' in <home>/.profiles; it would be read as unset. Set it with `blue-llmdb profile config KEY VALUE --profile NAME`, or delete that line.``
+
+Nothing blocks on a parameter being unset. "Asked on a first run" means `blue-llmdb profile config` with no argument walks those two, and nothing more. `profile`, `model`, `metadata` and `data estimate` contact no provider and run against an empty profile. A missing credential surfaces only when `data query` reaches the provider. With no answered extraction response and no retained records, it normally raises a transport error; a cost or time ceiling can stop a retry after the failed attempt. If an extraction response has already been parsed, the result is partial with a gap for the failed part. A ceiling refusal before the first attempt is a stopped result.
 
 Two settings come from the environment rather than a profile. `BLUE_DATA_LLM_SOURCE_HOME` moves the CLI home, where profiles are stored. An empty value is refused because an empty path resolves to the working directory. `BLUE_DATA_PROFILE` selects the profile, and the root `--profile` option overrides it. If either names a nonexistent profile, the CLI refuses to run with an empty profile; otherwise, a misspelled name could silently omit a configured ceiling.
 
@@ -185,9 +201,9 @@ Every write first goes to a temporary file in the same directory, then moves int
 
 A secret is never accepted as a value on the command line, where it would land in shell history. `blue-llmdb profile config OPENAI_API_KEY` prompts with the input hidden. Enter `$MY_KEY` at that prompt to store a reference to an environment variable instead of the secret itself; `profile inspect` then shows `$MY_KEY (set)` or `$MY_KEY (unset)`, so you can see what to export.
 
-A directly entered secret is stored as base64 behind an `enc:` prefix. **This is obfuscation, not encryption.** Anyone who can read the file can decode it; the file permissions provide the protection. Commands do not print secret values in profile output, logs, or error messages.
+A directly entered secret is stored as base64 behind an `enc:` prefix. **This is obfuscation, not encryption.** Anyone who can read the profile, including a copy in a backup or sync service, can decode the secret. On POSIX systems, the `0600` file mode restricts local access; copies need their own access controls. If the profile may be copied, enter a `$MY_KEY` reference to keep the secret out of it. Commands do not print secret values in profile output, logs, or error messages.
 
-The store does not control the text in error messages or `--log` output. These may include library messages quoting user input or provider SDK exceptions containing request headers or part of a key. The library's `redact` function processes every error line, JSON error object, log line, and traceback printed by `--log`. It replaces environment values stored under credential names, and strings matching credential patterns, with `***`. It also processes the reported model name in every format (the table footer, the `nl` sentence, and `meta.model`) and the `llm.model` entry in the `settings` envelope. This prevents a credential pasted into that setting from appearing in CLI output; ordinary model names remain unchanged. Other fields in the `settings` envelope are not masked. For example, cache directories are paths, and masking them would hide the directory the user selected. Records are also not masked because they are model output; a record value that resembles a token remains part of the requested answer.
+Errors and `--log` output can include library or provider text. The CLI masks credential-shaped strings and values held in credential environment variables in errors, logs, settings values, and result metadata. It also masks malformed profile errors without quoting the profile file. Ordinary model names remain visible. A cache path can appear partly masked if it contains credential-shaped text. Returned records remain intact, including values that resemble credentials.
 
 ## data query
 
@@ -195,7 +211,7 @@ The store does not control the text in error messages or `--log` output. These m
 blue-llmdb data query "the member states of the European Union"
 ```
 
-Name the attributes you want and you get exactly those columns. `NAME:TYPE` declares a type, and values that can be coerced to it are coerced; `int`, `float`, `bool`, and `date` are understood and converted. `string` (also `str`, `text`) is checked but not converted, so a declared string that arrives as a number is reported rather than stringified. Any other name is accepted, checks nothing, and is listed once under `unchecked_types`.
+In the default flat mode, named attributes define the output columns. Non-flat planning with schema enrichment may add inferred columns. `NAME:TYPE` declares a type, and values that can be coerced to it are coerced; `int`, `float`, `bool`, and `date` are understood and converted. `string` (also `str`, `text`) is checked but not converted, so a declared string that arrives as a number is reported rather than stringified. Any other name is accepted, checks nothing, and is listed once under `unchecked_types`.
 
 ```bash
 blue-llmdb data query "the member states of the European Union" \
@@ -210,7 +226,7 @@ blue-llmdb data query "the member states of the European Union" \
 │ Germany │ 1958           │
 └─────────┴────────────────┘
 2 records | model gpt-6-luna | 1 call | 46 tokens | row estimate unknown | $0.0000 | 0.31s
-settings: llm.model=gpt-6-luna (default), plan.max_continuations=0 (default)
+settings: llm.cache_dir=~/.blue-llmdb/cache (default), llm.model=gpt-6-luna (default), plan.max_continuations=0 (default)
 ```
 
 `--context` adds text that clarifies the ask, usually what an attribute name means:
@@ -219,7 +235,7 @@ settings: llm.model=gpt-6-luna (default), plan.max_continuations=0 (default)
 blue-llmdb data query "the largest lakes in Africa" --context "rank by surface area, not volume"
 ```
 
-`--max-records` is the row ceiling. It is the only flag for that knob: `fetch` assigns it to the library's `limits.max_rows`, overwriting anything configured.
+`--max-records` is the row ceiling. It is the only flag for that knob: the library clamps it by any configured `limits.max_rows`.
 
 ```bash
 blue-llmdb data query "the member states of the European Union" --max-records 5
@@ -247,14 +263,14 @@ blue-llmdb data query "the member states of the European Union" \
 
 A ceiling applies to one request. A profile supplies the default for each request. Every run prints which ceilings applied and where each came from, so neither fact has to be inferred.
 
-`--limit-cost` is claimed against an upper bound on what the call can cost rather than an estimate of what it is likely to cost. The bound is reconciled once the call returns: a measured cost settles it, and [the cost bound](../../lib/README.md#the-cost-bound) sets the charge when the response cannot prove it. That section also says how the bound is calculated and how to size one, and [what `cost` means](../../lib/README.md#what-cost-means) says how to read the figure a run reports. A request refused this way prints no records and exits 7, with `outcome: stopped_by_limit` and `stopped by: max_cost` under the table.
+`--limit-cost` is claimed against an upper bound on what the call can cost rather than an estimate of what it is likely to cost. The bound is reconciled once the call returns: each contacted attempt keeps at least its reservation, and a higher readable figure raises the charge as [the cost bound](../../lib/README.md#the-cost-bound) explains. [What `cost` means](../../lib/README.md#what-cost-means) explains the ledger figure. Under a cost ceiling, `meta.cost` can remain at the reservation and `meta.accounting_known` can be false; that amount is not measured provider spend. A request refused this way prints no records and exits 7, with `outcome: stopped_by_limit` and `stopped by: max_cost` under the table.
 
 ```bash
 blue-llmdb data query "the member states of the European Union" \
     --model gpt-4o --limit-cost 0.50 --limit-seconds 30 --limit-calls 2 --max-retries 1
 ```
 
-`--limit-cost 0.50` is above the floor for that model, which is what makes the command above work. The floor is the whole output allowance at the model's output rate and does not depend on the prompt: GPT-4o's default allowance is 4,096 output tokens, for a floor of about $0.041, so `--limit-cost 0.01` would refuse every call before making one. The GPT-6 Luna default is 25,000 tokens, for a floor of about $0.0138 once OpenAI's 10% regional-processing uplift is added. Ask for a smaller answer with `--max-tokens` rather than raising the ceiling, since the output allowance is what the floor is made of. A model this package carries no published price for is refused a cost ceiling outright, with a `ConfigError` naming what is missing and exit code 4, instead of being bounded against a guessed rate. `blue-llmdb model list` is the list of models it does carry.
+`--limit-cost 0.50` is above the floor for that model, which is what makes the command above work. The output-only floor is the whole allowance at the model's output rate, with any long-context output multiplier and regional uplift, and does not depend on the prompt: GPT-4o's default allowance is 4,096 output tokens, for a floor of about $0.041, so `--limit-cost 0.01` would refuse every call before making one. The GPT-6 Luna default is 25,000 tokens, for an output-only floor of about $0.020625 including the long-context output multiplier and OpenAI's 10% regional-processing uplift. Ask for a smaller answer with `--max-tokens` rather than raising the ceiling, since the output allowance is what the floor is made of. A model this package carries no published price for needs both `--price-in` and `--price-out` before a cost ceiling can be used. Without those rates, the command exits 4 with a `ConfigError` naming what is missing. `blue-llmdb model list` shows the models in the package price table.
 
 ### Decomposition
 
@@ -267,11 +283,23 @@ blue-llmdb data query "the member states of the European Union" \
     --attr name --attr capital --plan-key name --plan-continuations 1
 ```
 
-`--plan-depth` bounds recursion, `--plan-partitions` bounds children per node, and `--plan-target-rows` supplies the uncertain row-count threshold for descendant splits. `--plan-leaves` bounds the parts a split may run, grouping values past it several to a part. `--plan-partition-key` guides only the root proposal. `--plan-schema-mode preserve` keeps caller attributes; `enrich` lets non-flat planning append inferred attributes.
+`--plan-depth` bounds recursion, `--plan-partitions` bounds children per node, and `--plan-target-rows` supplies the uncertain row-count threshold for descendant splits. `--plan-leaves` caps the number of leaf parts; for a partitioned root with more values, the planner groups neighboring values into at most that many leaves; other expansions that cannot fit are left intact. `--plan-partition-key` guides only the root proposal. `--plan-schema-mode preserve` keeps caller attributes; `enrich` lets non-flat planning append inferred attributes.
 
 The remaining standard controls are `--plan-keys` for ordered composite identity, `--plan-exact-rows` for a hard target when the plan has one leaf, `--plan-exclusion-bytes` for continuation-prompt size, `--plan-planning-order` for one of the five schedules, and `--plan-expose-estimate`/`--no-plan-expose-estimate` for extraction-prompt context.
 
-Five experimental switches choose how a split is asked, and each defaults to the 2.1.0 behaviour. `--plan-leaf-prompt keyed-leaf-fetch-2` sends the leaf contract that asks for every matching record rather than a sample. `--plan-child-wording canonical` words each partitioned child from the request and its own filters instead of copying the parent's. `--plan-filter-enforcement drop` removes, at the leaf and before merging, records that contradict their leaf's filter; `flag`, the default, keeps them, and both count them in `filter_contradictions`. `--plan-range-filters`/`--no-plan-range-filters` reads partition values written as integer spans, such as `1946-1952`, as range filters, and needs `--plan-leaf-prompt keyed-leaf-fetch-2`. `--plan-partition-guardrails`/`--no-plan-partition-guardrails` sends proposal rules against identifier, measurement, placeholder and catch-all values, and refuses a numeric key bucketed like a measurement. None of them adds a call. `keyed-leaf-fetch-2` reduced recall with GPT-4o in internal testing and is not recommended. `--plan-split-policy evidence` asks the root of a partitioned plan once before splitting it, and splits only when that answer was cut off, by the output allowance or mid-answer, when the probe failed, or when it holds fewer than half the keys an estimate above `--plan-split-threshold-rows` (default 120) expects; otherwise that one answer is the result, and `split_decision` in the result says which. The probe is one more call in the published bound. It improved recall with GPT-4o in an internal benchmark and has not been measured on other models. The CLI, MCP, and Python APIs share these 21 controls. Rule-backed distribution controls and the optional planning receipt are available only through direct Python calls. The two locked schedules need a non-empty caller schema and ordered `--plan-keys`. A multi-leaf plan does not apply `--plan-exact-rows` and adds `exact_rows_not_leaf_bound` to the result's gaps.
+Five optional controls change how a split is asked. Each keeps the 0.2.1.0 behavior unless selected:
+
+- `--plan-leaf-prompt keyed-leaf-fetch-2` asks a leaf for every matching record rather than a sample. It is experimental; check the returned records when using it.
+- `--plan-child-wording canonical` builds each child's request from the original request and its own filters rather than the parent's wording.
+- `--plan-filter-enforcement drop` removes records that contradict their leaf's filter before merging. The default, `flag`, keeps them. Both count the contradictions in `filter_contradictions`.
+- `--plan-range-filters` reads a partition value written as an integer span, such as `1946-1952`, as a range filter. It requires `--plan-leaf-prompt keyed-leaf-fetch-2`; `--no-plan-range-filters` disables it.
+- `--plan-partition-guardrails` adds proposal rules against identifier, measurement, placeholder, and catch-all values, and rejects a numeric key bucketed like a measurement. `--no-plan-partition-guardrails` disables it.
+
+These five controls are experimental and add no model calls.
+
+`--plan-split-policy evidence` asks the root of a partitioned plan once before deciding whether to split. It splits if that answer was cut off by the output allowance or mid-answer, the probe failed, or the probe contains fewer than half the keys expected by an estimate above `--plan-split-threshold-rows` (default 120). Otherwise the probe answer is the result. `split_decision` reports the choice. The probe adds one call to the published bound. An accepted probe does not establish completeness.
+
+The CLI, MCP, and Python APIs share these 21 planning controls. Rule-backed distribution controls and the optional planning receipt are available only through direct Python calls. Both locked schedules require a non-empty caller schema and ordered `--plan-keys`. A plan with multiple leaves does not apply `--plan-exact-rows`; it reports `exact_rows_not_leaf_bound` in the result's gaps.
 
 None of the `--plan-*` controls has a profile parameter, so none of them is in the precedence chain: each is read from the command line and nowhere else. A plan setting describes one ask, not a deployment, and a partition key or a row target left in a profile would apply itself to the next, unrelated query. `--effort` is the one planning-adjacent option that does read configuration, as `BLUE_DATA_LLM_SOURCE_EFFORT`, because a continuation allowance is an appetite for spending rather than a shape.
 
@@ -280,7 +308,7 @@ blue-llmdb data query "the largest lakes in Africa" \
     --plan-mode partitioned --plan-depth 2 --plan-partitions 4 --plan-target-rows 50
 ```
 
-When an answer is short, the reason is printed with it rather than left to be inferred from the row count: an `outcome:` line whenever the outcome is anything but `ok`, a `gap:` line per shortfall, and the same two facts under `outcome` and `gaps` in the machine formats. The outcome is the general statement (`empty_query`, `model_returned_none` and `filtered_to_empty` are three different empty results), and the gaps and the stop reasons refine it. No gap means that no supported operational diagnostic fired. It is not a completeness result.
+When a limit or interrupted part is detected, the result reports it: an `outcome:` line appears when the outcome is not `ok`, and `gap:` lines name supported diagnostics. Machine formats carry the same facts under `outcome` and `gaps`. `empty_query`, `model_returned_none`, and `filtered_to_empty` distinguish three kinds of empty result. A short answer can still have outcome `ok` and no gap; neither field measures completeness.
 
 ### `--verbose` and `--log`
 
@@ -305,7 +333,7 @@ blue-llmdb data query "the member states of the European Union" --log --log-limi
 blue-llmdb data estimate "the member states of the European Union"
 ```
 
-It prices **one flat fetch**, so a split request costs the published figure once per call it makes. `--limit-calls` and `--max-retries` move the number, because the bound accumulates once per attempt that can actually happen.
+It prices **one flat fetch**, including retries. Non-flat runs may use different prompts for planning and extraction, so the estimate does not bound their total cost. `--limit-calls` and `--max-retries` move the number, because the bound accumulates once per attempt that can actually happen.
 
 ```bash
 blue-llmdb data estimate "the member states of the European Union" \
@@ -346,13 +374,17 @@ blue-llmdb data query "the member states of the European Union" --format csv
 blue-llmdb data query "the member states of the European Union" --format nl
 ```
 
-`table` is the Rich table above. `csv` is RFC 4180 with the same columns, and a cell beginning `=`, `+`, `-` or `@` is quoted, because a spreadsheet reads those as formulas and these cells hold model output. `nl` is a short paragraph: how many records, from which model, at what cost, and whether anything stopped the run early. Every format strips terminal control characters from every cell, for the same reason.
+`table` is the Rich table above. `csv` is RFC 4180 with the same columns; a cell beginning `=`, `+`, `-` or `@` receives a leading apostrophe before CSV encoding because a spreadsheet may read it as a formula. `nl` is a short paragraph: how many records, from which model, at what cost, and whether anything stopped the run early. Every format strips terminal control characters from every cell.
 
 `json` is one object on standard output and nothing else:
 
 ```bash
-blue-llmdb data query "the member states of the European Union" --format json
+blue-llmdb data query "the member states of the European Union" \
+    --model gpt-4o --attr country --attr accession_year:int \
+    --limit-cost 0.50 --format json
 ```
+
+The following shortened response illustrates the JSON shape; values vary by run.
 
 ```text
 {
@@ -366,15 +398,15 @@ blue-llmdb data query "the member states of the European Union" --format json
     "outcome": "ok",
     "model": "gpt-4o",
     "calls": 1,
-    "prompt_tokens": 12,
+    "prompt_tokens": 202,
     "completion_tokens": 34,
-    "cost": 0.0012,
+    "cost": 0.043143,
     "elapsed_seconds": 0.31,
     "row_estimate": null,
     "cardinality_estimate": null,
     "primary_keys": [],
     "observed_key_count": 0,
-    "marginal_key_yields": [],
+    "marginal_key_yields": [1],
     "incomplete_key_records": 0,
     "filter_contradictions": 0,
     "gaps": [],
@@ -382,15 +414,17 @@ blue-llmdb data query "the member states of the European Union" --format json
     "requested_attrs": ["country", "accession_year"]
   },
   "settings": {
-    "applied": {"llm.model": "gpt-4o", "plan.max_continuations": 0},
-    "source": {"llm.model": "default", "plan.max_continuations": "default"}
+    "applied": {"llm.model": "gpt-4o", "limits.max_cost": 0.5, "plan.max_continuations": 0},
+    "source": {"llm.model": "flag", "limits.max_cost": "flag", "plan.max_continuations": "default"}
   }
 }
 ```
 
-Three keys, and the same three every time. This replaces the two-key object earlier versions printed; the MCP tool result is unchanged and stays two-key.
+The CLI JSON result has `records`, `meta`, and `settings`. The MCP tool result has `records` and `meta`.
 
-`meta` always carries `outcome`, the accounting fields, `gaps`, `stop_reasons`, `requested_attrs`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records` and `filter_contradictions`, even when the list is empty: a reader branches on what they say rather than on whether they arrived. `normalization_collisions`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to` and `cache_hits` appear when there is something to report, and `accounting_known` appears only when it is false. `--verbose` adds `unmapped_keys`, `remapped_keys`, `type_mismatches` and `key_collisions`, which carry arbitrary model output.
+`meta` always carries `outcome`, the accounting fields, `gaps`, `stop_reasons`, `requested_attrs`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records` and `filter_contradictions`, even when the list is empty: a reader branches on what they say rather than on whether they arrived. `normalization_collisions`, `repaired_numbers`, `split_decision`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to` and `cache_hits` appear when there is something to report, and `accounting_known` appears only when it is false. `--verbose` adds `unmapped_keys`, `remapped_keys`, `type_mismatches` and `key_collisions`, which carry arbitrary model output.
+
+In a planned call with no `--attr`, `requested_attrs` remains empty even if the planner inferred columns. Inspect the returned records and diagnostics; this field records the caller's request, not the resolved schema.
 
 `settings` is this CLI's own envelope, and its scope is exactly what the CLI can know: the values this invocation resolved and passed to the library, and the tier each came from. It is not a report of the library's effective configuration. Keys are the library's own dotted names, so the same spelling appears here, in the profile file and in the MCP schema. A property this run did not set appears in neither map. Under `--format table` the same pairs print as a `settings:` footer; under `--format nl` only the ceilings are named.
 
@@ -421,13 +455,13 @@ ERROR: PARSE ParseError: model response is not valid JSON: Expecting value: line
 
 No command here is a batch command, so there is no partial-success rule to define beyond `PARTIAL`, which is about one request rather than about several.
 
-A missing `OPENAI_API_KEY` exits 5, not 4. The library never reads a provider credential, so it cannot report one as missing; the provider SDK reports it as a call that failed, which becomes a `TransportError`. The message names the command that sets one:
+The provider SDK detects a missing `OPENAI_API_KEY` during a call; the library masks credential-shaped diagnostic text. With no answered extraction response and no retained records, exhausted retries or a `max_calls` retry refusal produce `TRANSPORT` with exit 5. If `max_cost` or `max_seconds` refuses the retry, the command reports `stopped_by_limit` and exits 7. A ceiling refusal before the first attempt also exits 7. If an extraction response has already been parsed, the result is partial with a gap for the failed part. The SDK-specific error prefix can vary by LiteLLM version. Set the key with `blue-llmdb profile config OPENAI_API_KEY` or export `OPENAI_API_KEY` in the process environment. With `--limit-calls 1`, the fixed retry-stop text for a request with no answered extraction is:
 
 ```text
-ERROR: TRANSPORT TransportError: litellm.AuthenticationError - Missing credentials. Set the key with `blue-llmdb profile config OPENAI_API_KEY`.
+ERROR: TRANSPORT TransportError: Provider request failed; max_calls stopped retries.
 ```
 
-**Exit 2 belongs to Click's parser.** A misspelled option or a value of the wrong type is refused before any command body runs, which means before the CLI knows what `--format` you asked for. Those errors are always plain text on standard error, and they are the only ones that are. Everything the CLI refuses after the parse is, under `--format json`, also written to standard output as `{"error": {"code": ..., "message": ...}}`, the startup work included: an unknown `--profile`, a profiles file that cannot be read, a profile value that will not cast. One residue: if `BLUE_DATA_CLI_FORMAT` itself holds something that is not a format, the failure *is* the lookup that would have named the format, so with no `--format` on the command line there is nothing left to publish in and it reports as text.
+**Exit 2 belongs to Click's parser.** A misspelled option, bad value, or missing argument exits 2. On a command that accepts `--format`, `--format json` or a valid `BLUE_DATA_CLI_FORMAT=json` default also writes `{"error": {"code": "USAGE", "message": ...}}` to standard output if parsing fails. The last explicit `--format` flag wins over the default; a flag after `--` is treated as an argument. The standard error line remains. A profile default is available only after the root callback exports it. Root-option parse failures can use an already exported environment default, but cannot use a profile-only default; pass `--format json` on the selected command when you need JSON for those failures. Errors after parsing use the same JSON envelope when the selected format is already known, including an unknown `--profile`, an unreadable profiles file, or a profile value that will not cast. Before a profile can be read, startup errors use an explicit format flag or an already exported environment default. Commands without `--format` report errors only on standard error. If `BLUE_DATA_CLI_FORMAT` itself holds an invalid value and no format flag is given, that lookup also reports only on standard error.
 
 ## Tests
 

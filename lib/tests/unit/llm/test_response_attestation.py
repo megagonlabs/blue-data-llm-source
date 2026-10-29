@@ -49,15 +49,12 @@ class TestAnAttestationBelongsToTheResponseThatCarriedIt:
     """Two points on the reason axis crossed with two points on the response axis."""
 
     def test_a_reason_on_a_complete_response_does_not_attest_a_later_recovery(self) -> None:
-        # The defect, stated as the caller sees it. Only the *first* response's reason
-        # differs between these two runs, and the first response is complete -- nothing
-        # about it was recovered, so it has nothing to attest.
+        # A complete first response cannot attest recovery of the second.
         attested_first = run(Answer(WHOLE_A, finish_reason="length"), Answer(CUT_B))
         silent_first = run(Answer(WHOLE_A, finish_reason="stop"), Answer(CUT_B))
 
         assert attested_first.recovered_prefix is silent_first.recovered_prefix is True
-        # `recovery_attested` is the pairing this file exists for: the reason belongs to the
-        # first, complete response and explains nothing about the second one's lost prefix.
+        # The first response's reason cannot attest the second response's recovery.
         assert attested_first.recovery_attested is False
         assert silent_first.recovery_attested is False
         # The run-level axis is a different question and does differ, correctly: one run holds
@@ -114,7 +111,7 @@ class TestThePerResponseRecordIsWhatTheFlagsAreDerivedFrom:
             (True, "length"),
         ]
 
-    def test_the_leaf_flags_agree_with_the_record_they_summarise(self) -> None:
+    def test_the_leaf_flags_agree_with_the_record_they_summarize(self) -> None:
         # The invariant that keeps the summary honest, rather than a second place to get it
         # wrong. Stated over a run where the two facts land on different responses.
         run_ = run(Answer(CUT_B), Answer(WHOLE_A, finish_reason="length"))
@@ -129,16 +126,9 @@ class TestThePerResponseRecordIsWhatTheFlagsAreDerivedFrom:
 
 
 class TestAClientThatWritesNoReceiptAttestsNothing:
-    """The other half of the defect, and it is about the double rather than the arity.
+    """A call without a receipt cannot inherit the previous call's attestation.
 
-    The reason reaches the leaf through the per-call receipts a client writes into the sink
-    it was handed. Reading the sink's *last* entry after a call assumed every call leaves
-    exactly one, which the client protocol does not require -- and a client that writes none
-    for this call hands back the previous call's reason.
-
-    No arity would have caught that, because the axis lives in the client's behaviour rather
-    than in ours. A double that always writes exactly one receipt hides it at every response
-    count, which is why fidelity to what the protocol *permits* is its own rule.
+    The client protocol permits zero receipts for a call.
     """
 
     class SkipsTheSecondReceipt:
@@ -184,7 +174,7 @@ class TestAClientThatWritesNoReceiptAttestsNothing:
 class TestTheAttestationReachesThePublicResult:
     """Check that a leaf attestation reaches caller-visible classification.
 
-    A leaf-only assertion cannot detect a missing handoff to ``Coverage._hit_a_ceiling``.
+    A leaf-only assertion would miss an attestation lost before ``Coverage._hit_a_ceiling``.
     """
 
     class AttestsALengthStop:
@@ -212,9 +202,7 @@ class TestTheAttestationReachesThePublicResult:
         return LlmSource(client=self.AttestsALengthStop(answer)).fetch("airports", attrs=["name"])
 
     def test_a_complete_response_the_provider_cut_is_not_reported_as_ok(self) -> None:
-        # The published contract is the oracle: `Usage.finish_reason` and `STOPPED_BY_OUTPUT`
-        # both say `length` is evidence the allowance fired. A run holding that attestation
-        # cannot report that nothing cut it short.
+        # A `length` finish reason attests that the output allowance fired.
         result = self.fetch(WHOLE_A)
 
         assert result.records

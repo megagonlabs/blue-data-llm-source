@@ -1,7 +1,7 @@
 """Whether a record contradicts the filter its leaf was asked under.
 
 A child leaf is asked for one slice, and a model answering it can return rows from a
-neighbouring slice. Those rows are not necessarily wrong records, but they are not the ones
+neighboring slice. Those rows are not necessarily wrong records, but they are not the ones
 that leaf was asked for, and a run that keeps many of them has leaves that ignored their
 filters. This module counts them and, when the caller asks, removes them at the leaf.
 
@@ -9,7 +9,7 @@ The comparison rule is deliberately narrow, because a false contradiction is wor
 missed one: under ``plan.filter_enforcement="drop"`` it deletes a good row. A filter is
 checked against a record only when all of these hold:
 
-- the filter names a declared attribute whose type the key normalizer recognises
+- the filter names a declared attribute whose type the key normalizer recognizes
   (``int``/``integer``, ``float``/``number``, ``bool``/``boolean``, ``date``,
   ``str``/``string``/``text``);
 - the record carries a value for that attribute, read through the same alignment identity

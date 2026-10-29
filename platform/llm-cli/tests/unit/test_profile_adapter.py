@@ -13,28 +13,23 @@ import stat
 from pathlib import Path
 
 import pytest
-
-from blue_data_llm_cli import configstore
-from blue_data_llm_cli.configstore import (
+from blue_data.utils.config import (
     MASK,
-    ConfigResolver,
+    ConfigSpec,
+    ParamSpec,
     ProfileError,
-    ProfileStore,
-    SettingError,
-    Spec,
-    base_spec,
     decode,
     display,
     encode,
     load_spec,
 )
+from blue_data.utils.config import (
+    ConfigError as SettingError,
+)
 
-SPEC_PATH = Path(configstore.__file__).with_name("profile_spec.json")
-
-
-def cli_spec() -> Spec:
-    """The same merge `profile.py` makes: family parameters plus this CLI's own."""
-    return base_spec().merged_with(load_spec(SPEC_PATH))
+from blue_data_llm_cli import profile_adapter as configstore
+from blue_data_llm_cli.profile import cli_spec
+from blue_data_llm_cli.profile_adapter import ConfigResolver, ProfileStore
 
 
 @pytest.fixture
@@ -59,8 +54,8 @@ def test_the_walked_list_is_the_two_parameters_a_first_run_is_asked_for() -> Non
     assert [p.name for p in cli_spec().required()] == ["OPENAI_API_KEY", "BLUE_DATA_LLM_MODEL"]
 
 
-def test_the_family_parameters_keep_the_family_names_and_casts() -> None:
-    spec = base_spec()
+def test_shared_parameters_keep_their_names_and_casts() -> None:
+    spec = cli_spec()
     assert spec["OPENAI_API_KEY"].is_secret
     assert spec["BLUE_DATA_LLM_MODEL"].default == "gpt-6-luna"
     assert spec["BLUE_DATA_CLI_FORMAT"].default == "table"
@@ -68,7 +63,7 @@ def test_the_family_parameters_keep_the_family_names_and_casts() -> None:
 
 
 def test_an_unknown_parameter_names_itself() -> None:
-    with pytest.raises(SettingError, match="unknown configuration parameter: NOT_A_PARAM"):
+    with pytest.raises(SettingError, match="unknown configuration parameter.*NOT_A_PARAM"):
         cli_spec()["NOT_A_PARAM"]
 
 
@@ -80,14 +75,14 @@ def test_a_cast_failure_names_the_parameter() -> None:
 def test_merging_keeps_both_halves_and_lets_the_cli_win(tmp_path: Path) -> None:
     extra = tmp_path / "spec.json"
     extra.write_text('{"BLUE_DATA_CLI_FORMAT": {"default": "json", "cast": "str"}}')
-    merged = base_spec().merged_with(load_spec(extra))
+    merged = cli_spec().merged_with(load_spec(extra))
     assert merged["BLUE_DATA_CLI_FORMAT"].default == "json"
     assert "OPENAI_API_KEY" in merged
 
 
 def test_a_spec_declaring_an_unknown_cast_does_not_load(tmp_path: Path) -> None:
     bad = tmp_path / "spec.json"
-    bad.write_text('{"X": {"cast": "colour"}}')
+    bad.write_text('{"X": {"cast": "color"}}')
     with pytest.raises(SettingError, match="unknown cast"):
         load_spec(bad)
 
@@ -98,6 +93,19 @@ def test_a_first_run_creates_and_selects_default(home: Path) -> None:
     store.initialize()
     assert store.list_profiles() == ["default"]
     assert store.selected() == "default"
+
+
+def test_malformed_profiles_do_not_echo_an_encoded_secret(store: ProfileStore) -> None:
+    private = encode("synthetic-private-value")
+    store.profiles_path.write_text(f"OPENAI_API_KEY = {private}\n")
+
+    with pytest.raises(ProfileError) as raised:
+        store.list_profiles()
+
+    message = str(raised.value)
+    assert "MissingSectionHeaderError at line 1" in message
+    assert private not in message
+    assert "synthetic-private-value" not in message
 
 
 def test_a_removed_profile_is_not_resurrected(store: ProfileStore) -> None:
@@ -210,7 +218,7 @@ def test_a_non_regular_profiles_path_is_refused(home: Path) -> None:
         ProfileStore(home).list_profiles()
 
 
-def test_a_non_regular_selection_path_is_refused(home: Path) -> None:
+def test_a_non_regular_selected_path_is_refused(home: Path) -> None:
     home.mkdir(parents=True)
     (home / ".selected.profile").mkdir()
     with pytest.raises(ProfileError, match="not a regular file"):
@@ -266,11 +274,7 @@ def test_a_home_that_cannot_be_written_is_an_error_too(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("value", ["a\rb", "a\nb", "a\r[injected]\rOPENAI_API_KEY = x"])
 def test_a_value_holding_a_line_break_is_refused(store: ProfileStore, value: str) -> None:
-    """configparser escapes a newline on the way out and not a carriage return.
-
-    A value pasted from a CRLF file came back as a separate setting, and one shaped like INI
-    came back as a separate profile — from a write that reported success.
-    """
+    """Line breaks cannot enter a setting or profile through a stored value."""
     with pytest.raises(SettingError, match="line break"):
         store.set_value("default", "BLUE_DATA_LLM_MODEL", value)
     assert "injected" not in (store.home / ".profiles").read_text()
@@ -380,7 +384,7 @@ def test_an_exposed_profiles_file_is_refused_without_mutation(
 def test_an_exposed_selection_file_is_refused_without_mutation(
     store: ProfileStore, mode: int
 ) -> None:
-    path = store.selection_path
+    path = store.selected_path
     before = path.read_bytes()
     os.chmod(path, mode)
 
@@ -397,14 +401,14 @@ def test_remove_checks_the_selection_before_mutating_profiles(store: ProfileStor
     store.add("staging")
     store.select("staging")
     profiles_before = store.profiles_path.read_bytes()
-    selection_before = store.selection_path.read_bytes()
-    os.chmod(store.selection_path, 0o644)
+    selection_before = store.selected_path.read_bytes()
+    os.chmod(store.selected_path, 0o644)
 
     with pytest.raises(ProfileError, match="mode 0600 with chmod"):
         store.remove("staging")
 
     assert store.profiles_path.read_bytes() == profiles_before
-    assert store.selection_path.read_bytes() == selection_before
+    assert store.selected_path.read_bytes() == selection_before
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO permissions are POSIX-only")
@@ -426,15 +430,15 @@ def test_a_profiles_fifo_is_refused_on_initialize_read_and_write(home: Path) -> 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO permissions are POSIX-only")
 def test_a_selection_fifo_is_refused_on_read_and_write(store: ProfileStore) -> None:
-    store.selection_path.unlink()
-    os.mkfifo(store.selection_path, mode=0o600)
+    store.selected_path.unlink()
+    os.mkfifo(store.selected_path, mode=0o600)
 
     with pytest.raises(ProfileError, match="not a regular file"):
         store.selected()
     with pytest.raises(ProfileError, match="not a regular file"):
         store.select("default")
 
-    assert stat.S_ISFIFO(store.selection_path.lstat().st_mode)
+    assert stat.S_ISFIFO(store.selected_path.lstat().st_mode)
 
 
 def test_a_profile_file_owned_by_another_uid_is_refused(
@@ -460,7 +464,7 @@ def test_a_selection_file_owned_by_another_uid_is_refused(
     store: ProfileStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     real_lstat = Path.lstat
-    path = store.selection_path
+    path = store.selected_path
 
     def other_owner(candidate: Path) -> os.stat_result:
         status = real_lstat(candidate)
@@ -544,7 +548,7 @@ def test_a_broken_profiles_symlink_is_refused_without_replacement(home: Path) ->
 
 
 def test_a_broken_selection_symlink_is_refused_without_replacement(store: ProfileStore) -> None:
-    path = store.selection_path
+    path = store.selected_path
     path.unlink()
     path.symlink_to(store.home / "missing")
 
@@ -563,7 +567,9 @@ def test_a_secret_is_not_stored_in_plain_text(store: ProfileStore) -> None:
     stored = (store.home / ".profiles").read_text()
     assert "typed-at-the-prompt" not in stored
     assert "enc:" in stored
-    assert decode(store.values("default")["OPENAI_API_KEY"]) == "typed-at-the-prompt"
+    assert (
+        decode(store.values("default")["OPENAI_API_KEY"], "OPENAI_API_KEY") == "typed-at-the-prompt"
+    )
 
 
 def test_a_reference_is_stored_as_written_and_resolved_at_use(
@@ -572,9 +578,9 @@ def test_a_reference_is_stored_as_written_and_resolved_at_use(
     store.set_value("default", "OPENAI_API_KEY", encode("$MY_KEY"))
     assert store.values("default")["OPENAI_API_KEY"] == "$MY_KEY"
     monkeypatch.delenv("MY_KEY", raising=False)
-    assert decode("$MY_KEY") is None
+    assert decode("$MY_KEY", "OPENAI_API_KEY") is None
     monkeypatch.setenv("MY_KEY", "exported-not-stored")
-    assert decode("$MY_KEY") == "exported-not-stored"
+    assert decode("$MY_KEY", "OPENAI_API_KEY") == "exported-not-stored"
 
 
 def test_display_masks_a_stored_secret_and_names_a_reference(
@@ -599,11 +605,7 @@ def test_the_environment_outranks_the_profile(store: ProfileStore) -> None:
 def test_an_empty_export_is_refused_rather_than_read_as_unset(
     store: ProfileStore, exported: str
 ) -> None:
-    """It used to win its tier and then hand the answer down to the profile in silence.
-
-    Which is the same defect the store already refuses at write time: the tier that
-    answered has to be the tier that had something to say.
-    """
+    """An empty export cannot fall through to a lower precedence tier."""
     store.set_value("default", "BLUE_DATA_LLM_MODEL", "profile-model")
     with pytest.raises(SettingError, match="BLUE_DATA_LLM_MODEL"):
         resolver(store, BLUE_DATA_LLM_MODEL=exported)
@@ -644,6 +646,45 @@ def test_a_resolved_value_arrives_cast(store: ProfileStore) -> None:
     assert config.get("BLUE_DATA_LLM_SOURCE_LIMIT_COST") == 0.5
     assert config.get("BLUE_DATA_LLM_SOURCE_MAX_RECORDS") == 20
     assert config.get("BLUE_DATA_LLM_SOURCE_CACHE") is True
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "expected"),
+    [
+        ("BLUE_DATA_LLM_SOURCE_CACHE", "maybe", "true or false"),
+        ("BLUE_DATA_CLI_LOG_LIMIT", "lots", "a whole number"),
+        ("BLUE_DATA_LLM_SOURCE_LIMIT_COST", "cheap", "a number"),
+    ],
+)
+def test_a_value_that_will_not_cast_is_named_with_the_type_it_needs(
+    store: ProfileStore, name: str, value: str, expected: str
+) -> None:
+    """The shared casts say `expected a boolean` or quote `int()`, naming no parameter."""
+    message = f"{name} must be {expected}, got {value!r}"
+    with pytest.raises(SettingError) as exported:
+        resolver(store, **{name: value}).get(name)
+    assert str(exported.value) == message
+    store.set_value("default", name, value)
+    with pytest.raises(SettingError) as stored:
+        resolver(store).source_of(name)
+    assert str(stored.value) == message
+
+
+def test_a_blank_stored_value_is_refused_when_the_profile_is_applied(
+    store: ProfileStore,
+) -> None:
+    """Read as unset, a blank ceiling would let a request run without it."""
+    store.profiles_path.write_text(
+        "[default]\nBLUE_DATA_LLM_MODEL = chosen\nBLUE_DATA_LLM_SOURCE_LIMIT_COST =\n"
+    )
+    config = resolver(store)
+    assert config.get("BLUE_DATA_LLM_SOURCE_LIMIT_COST") is None
+    with pytest.raises(SettingError) as refused:
+        config.export()
+    assert str(refused.value).startswith(
+        f"BLUE_DATA_LLM_SOURCE_LIMIT_COST is blank in profile 'default' in {store.profiles_path};"
+    )
+    assert "BLUE_DATA_LLM_MODEL" not in os.environ
 
 
 def test_export_writes_the_resolved_values_into_the_environment(
@@ -704,18 +745,23 @@ def test_a_secret_resolves_through_its_reference(
 ) -> None:
     store.set_value("default", "OPENAI_API_KEY", encode("$MY_KEY"))
     monkeypatch.setenv("MY_KEY", "exported-not-stored")
-    assert resolver(store).get("OPENAI_API_KEY") == "exported-not-stored"
+    assert (
+        resolver(store, MY_KEY="exported-not-stored").get("OPENAI_API_KEY") == "exported-not-stored"
+    )
 
 
 def test_an_inherited_parameter_is_tried_before_the_default(store: ProfileStore) -> None:
-    spec = Spec(
-        [
-            configstore.Parameter("BLUE_DATA_LLM_MODEL", default="gpt-4o"),
-            configstore.Parameter(
-                "BLUE_DATA_LLM_SOURCE_QUERY_MODEL",
-                inherits=("BLUE_DATA_LLM_MODEL",),
-            ),
-        ]
+    spec = ConfigSpec(
+        {
+            p.name: p
+            for p in [
+                ParamSpec("BLUE_DATA_LLM_MODEL", default="gpt-4o"),
+                ParamSpec(
+                    "BLUE_DATA_LLM_SOURCE_QUERY_MODEL",
+                    inherits=("BLUE_DATA_LLM_MODEL",),
+                ),
+            ]
+        }
     )
     store.set_value("default", "BLUE_DATA_LLM_MODEL", "gpt-4o-mini")
     config = ConfigResolver(spec, store, environment={})

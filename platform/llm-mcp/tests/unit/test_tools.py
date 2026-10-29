@@ -14,6 +14,7 @@ from blue_data_llm_source import (
     ConfigError,
     ExecMeta,
     FetchResult,
+    QueryError,
     TransportError,
     meta_view,
 )
@@ -44,12 +45,13 @@ def test_llmdb_query_returns_records_and_meta(source: Any) -> None:
     assert "elapsed_seconds" in payload["meta"]
 
 
-def test_the_readme_result_sample_matches_the_default_serializer_shape() -> None:
+def test_the_readme_result_sample_matches_the_cost_ceiling_serializer_shape() -> None:
     body = README.read_text(encoding="utf-8")
     blocks = re.findall(r"```json\n(.*?)\n```", body, re.DOTALL)
     sample = next(json.loads(block) for block in blocks if '"records"' in block)
     documented = sample["meta"]
-    actual = meta_view(ExecMeta(), verbose=True)
+    actual = meta_view(ExecMeta(accounting_known=False), verbose=True)
+    assert "accounting_known" not in meta_view(ExecMeta(), verbose=True)
 
     assert set(documented) == set(actual)
     for field, value in actual.items():
@@ -98,7 +100,7 @@ def test_meta_stays_out_of_the_way_when_there_is_nothing_to_report(source: Any) 
         assert key not in payload["meta"]
 
 
-def test_llmdb_query_result_is_json_serialisable(source: Any) -> None:
+def test_llmdb_query_result_is_json_serializable(source: Any) -> None:
     payload = tools.llmdb_query({"query": QUERY}, source=source)
     assert json.loads(json.dumps(payload)) == payload
 
@@ -147,7 +149,126 @@ def test_a_provider_failure_is_a_transport_error(make_source: Any) -> None:
     with pytest.raises(tools.ToolError) as caught:
         tools.llmdb_query({"query": QUERY}, source=source)
     assert caught.value.kind == "TransportError"
-    assert caught.value.message == "connection reset by peer"
+    assert caught.value.message == "Provider request failed."
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    ("code", "category"),
+    [
+        ("authentication_error", "authentication"),
+        ("connection_error", "network"),
+        ("rate_limit", "rate_limit"),
+        ("model_not_found", "model_not_found"),
+    ],
+)
+def test_structured_provider_failures_have_fixed_safe_categories(code: str, category: str) -> None:
+    marker = "SYNTHETIC_MARKER_123"
+    error = TransportError(f"provider rejected {marker} at https://private.example/path", code=code)
+    shown = tools._library_error(error)  # pyright: ignore[reportPrivateUsage]
+    assert shown.kind == "TransportError"
+    assert shown.message == f"Provider request failed ({category})."
+    assert marker not in shown.message
+    assert "private.example" not in shown.message
+
+
+def test_unknown_provider_failure_stays_generic() -> None:
+    error = TransportError(
+        "private text", code="provider_error", provider_error=ValueError("secret")
+    )
+    shown = tools._library_error(error)  # pyright: ignore[reportPrivateUsage]
+    assert shown.message == "Provider request failed."
+
+
+def test_structured_provider_type_is_classified_without_its_message() -> None:
+    provider_type = type("AuthenticationError", (Exception,), {"__module__": "litellm.exceptions"})
+    provider = provider_type("synthetic-secret in provider message")
+    shown = tools._library_error(  # pyright: ignore[reportPrivateUsage]
+        TransportError("synthetic-secret", code="provider_error", provider_error=provider)
+    )
+    assert shown.message == "Provider request failed (authentication)."
+
+
+def test_provider_404_alone_does_not_claim_model_not_found() -> None:
+    provider_type = type("NotFoundError", (Exception,), {"__module__": "litellm.exceptions"})
+    provider = provider_type("synthetic-secret")
+    setattr(provider, "status_code", 404)
+    shown = tools._library_error(  # pyright: ignore[reportPrivateUsage]
+        TransportError("synthetic-secret", code="provider_error", provider_error=provider)
+    )
+    assert shown.message == "Provider request failed."
+
+
+@pytest.mark.parametrize(
+    ("message", "field"),
+    [
+        (
+            "plan.leaf_prompt='keyed-leaf-fetch-2' requires a non-flat plan.mode; secret",
+            "plan.leaf_prompt",
+        ),
+        ("plan.keys ['secret'] are not among the requested attributes", "plan.keys"),
+        (
+            "planning.locked_sequential requires a non-empty caller schema and ordered plan.keys",
+            "plan.planning_order",
+        ),
+    ],
+)
+def test_known_argument_relationships_name_fields_without_echoing_values(
+    message: str, field: str
+) -> None:
+    shown = tools._library_error(ConfigError(message))  # pyright: ignore[reportPrivateUsage]
+    assert shown.kind == tools.INVALID_ARGUMENTS
+    assert field in shown.message
+    assert "secret" not in shown.message
+
+
+def test_inspect_model_blank_name_is_a_caller_error(source: Any) -> None:
+    with pytest.raises(tools.ToolError) as caught:
+        tools.dispatch("llmdb_inspect_model", {"model": " "}, source=source)
+    assert caught.value.kind == tools.INVALID_ARGUMENTS
+    assert "model" in caught.value.message
+
+
+@pytest.mark.parametrize(
+    ("detail", "expected"),
+    [
+        (
+            "attrs[0] must have a non-empty string 'name', got {}",
+            "attrs item must have a non-empty string 'name'.",
+        ),
+        (
+            "attrs[0]['type'] must be a string when present, got 27183",
+            "Query or attributes are invalid.",
+        ),
+        ("attrs[0] is an empty attribute name", "Query or attributes are invalid."),
+    ],
+)
+def test_distinct_attribute_failures_do_not_share_wrong_guidance(
+    detail: str, expected: str
+) -> None:
+    class Failing:
+        def fetch(self, *args: Any, **kwargs: Any) -> Any:
+            raise QueryError(detail)
+
+    with pytest.raises(tools.ToolError) as caught:
+        tools.llmdb_query({"query": QUERY}, source=Failing())
+    assert caught.value.kind == "QueryError"
+    assert caught.value.message == expected
+    assert "27183" not in caught.value.message
+
+
+def test_an_unhandled_budget_failure_keeps_its_kind_without_its_value() -> None:
+    class Failing:
+        def fetch(self, *args: Any, **kwargs: Any) -> Any:
+            raise BudgetExceeded("cost limit reached (27183)", limit="max_cost")
+
+    with pytest.raises(tools.ToolError) as caught:
+        tools.llmdb_query({"query": QUERY}, source=Failing())
+    assert caught.value.kind == "BudgetExceeded"
+    assert caught.value.message == "Configured limit reached."
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
 
 
 def test_a_rejected_setting_is_a_config_error(make_source: Any) -> None:
@@ -208,12 +329,7 @@ def test_dispatch_covers_every_declared_tool(source: Any) -> None:
 def test_the_withdrawn_rate_key_is_refused_before_the_source_is_touched(
     make_source: Any,
 ) -> None:
-    """A tool call never reaches the library's property validation, so it is checked here.
-
-    The handlers read the fields they recognise and drop the rest, so a caller setting a
-    ceiling this build does not support was told nothing and got an unbounded run — the
-    exact outcome withdrawing the knob was meant to prevent.
-    """
+    """Reject unsupported ceilings before a tool call reaches the source."""
     source, client = make_source()
     args = {"query": QUERY, "llm.rate_limit": 10}
 
@@ -263,12 +379,7 @@ def test_meta_omits_key_collisions_when_there_are_none(
 
 
 def test_a_nested_extra_in_an_attribute_is_refused_on_both_paths(make_source: Any) -> None:
-    """The attribute branch closes itself, and checking only the top level missed it.
-
-    A misspelled key inside an attribute object was accepted and then dropped by
-    normalisation, so a caller who asked for a declared type silently did not get one, and
-    a nested deferred key arrived as silence rather than as the refusal it gets at the top.
-    """
+    """Reject nested misspellings and deferred keys before calling the source."""
     source, client = make_source()
     misspelled = {"query": QUERY, "attrs": [{"name": "capital", "typ": "text"}]}
     nested_deferred = {"query": QUERY, "attrs": [{"name": "capital", "llm.rate_limit": 10}]}
@@ -354,9 +465,7 @@ class TestThePlanNamespaceCrossesTheBoundary:
         assert seen == {"plan.mode": "flat", "plan.max_continuations": 2}
 
     def test_the_closed_sets_are_advertised_and_enforced(self) -> None:
-        """A schema that advertises a closed set the server does not check is a lie to a
-        generated client; one that checks a set it does not advertise refuses calls the
-        client had no way to build. The enum and the check ship together."""
+        """Advertised enum values and server validation must agree."""
         assert tools.QUERY_INPUT_SCHEMA["properties"]["plan.mode"]["enum"] == [
             "flat",
             "partitioned",
@@ -429,8 +538,7 @@ class TestTheErrorRule:
     def test_the_two_vocabularies_do_not_overlap(self) -> None:
         """A caller reading the prefix has to be able to tell whose problem it is.
 
-        Both of these used to be `ConfigError`: a refused argument, which the caller fixes,
-        and a refused library setting, which the deployment fixes.
+        An invalid tool argument and a library configuration error use distinct kinds.
         """
         import blue_data_llm_source as library
 

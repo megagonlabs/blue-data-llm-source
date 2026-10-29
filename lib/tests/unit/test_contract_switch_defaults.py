@@ -1,14 +1,8 @@
-"""Every prompt-contract switch left at its default reproduces the release, and none adds a call.
-
-The switches exist to be compared one at a time before any default moves, so the comparison
-is only meaningful if the default arm is the release itself. The digests below were recorded
-against 2.1.0, before any switch existed, over every prompt sent and every published fact
-the switches could move. Each switch is then turned on alone and shown not to move a
-published call bound or to spend a call the default does not.
-"""
+"""Check default switches against current prompts and retained release behavior."""
 
 from __future__ import annotations
 
+from copy import copy
 from typing import Any
 
 import pytest
@@ -22,7 +16,22 @@ BASELINE_DIGESTS = {
     "row_by_row": "55a5fa86e3d39213441bec1cb657f4b2e22cbbf849e2c2b4a84b7ed5a5076c64",
     "flat": "5eb6924387fa3750d668133047548adefc827e28e1e91535a0dfe7632848320b",
 }
-"""Prompts and results of each scenario under 2.1.0, recorded before any switch existed."""
+"""Prompt and result digests from 0.2.1.0, before the optional switches."""
+
+
+CURRENT_DIGESTS = {
+    "partitioned": "2f3040ad3a1665df373921db7ccc669760aa54ab2ec05fb087e8a1dc39906259",
+    "row_by_row": "269013b1d461a157245b8348c4f9cb41dd77fbbef033f223aba5f3868aec74d5",
+    "flat": BASELINE_DIGESTS["flat"],
+}
+"""Current digests include the schema-stage key-inference clarification."""
+
+_KEY_INFERENCE_CLARIFICATION = (
+    "Caller-supplied primary keys must remain unchanged. When none were supplied, infer fields\n"
+    "from the schema and request that jointly identify one record, only when defensible.\n"
+    "An empty declared primary_keys list means no key was supplied; "
+    "it does not disable inference.\n"
+)
 
 DEFAULTS_SPELLED_OUT: dict[str, Any] = {
     "plan.leaf_prompt": "keyed-leaf-fetch-1",
@@ -33,7 +42,7 @@ DEFAULTS_SPELLED_OUT: dict[str, Any] = {
     "plan.split_policy": "always",
     "plan.split_threshold_rows": 120,
 }
-"""Every contract switch at its default, written explicitly."""
+"""The default values of the optional switches."""
 
 SWITCHES_ON: list[dict[str, Any]] = [
     {"plan.leaf_prompt": "keyed-leaf-fetch-2"},
@@ -43,21 +52,31 @@ SWITCHES_ON: list[dict[str, Any]] = [
     {"plan.leaf_prompt": "keyed-leaf-fetch-2", "plan.range_filters": True},
     {"plan.partition_guardrails": True},
 ]
-"""Each switch on alone, in the mode that accepts it, with only what it depends on."""
+"""Non-default settings tested independently, with required dependencies."""
 
 
-@pytest.mark.parametrize("scenario", sorted(BASELINE_DIGESTS))
+@pytest.mark.parametrize("scenario", sorted(CURRENT_DIGESTS))
 def test_an_unset_switch_sends_the_prompts_and_returns_the_rows_of_the_release(
     scenario: str,
 ) -> None:
     client, result = run_scenario(scenario)
-    assert digest(client, result) == BASELINE_DIGESTS[scenario]
+    assert digest(client, result) == CURRENT_DIGESTS[scenario]
 
 
-@pytest.mark.parametrize("scenario", sorted(BASELINE_DIGESTS))
+@pytest.mark.parametrize("scenario", sorted(CURRENT_DIGESTS))
 def test_the_defaults_written_out_change_nothing(scenario: str) -> None:
     client, result = run_scenario(scenario, DEFAULTS_SPELLED_OUT)
-    assert digest(client, result) == BASELINE_DIGESTS[scenario]
+    assert digest(client, result) == CURRENT_DIGESTS[scenario]
+
+
+@pytest.mark.parametrize("scenario", sorted(CURRENT_DIGESTS))
+def test_key_clarification_preserves_other_release_defaults(scenario: str) -> None:
+    client, result = run_scenario(scenario)
+    occurrences = sum(prompt.count(_KEY_INFERENCE_CLARIFICATION) for prompt in client.prompts)
+    assert occurrences == (0 if scenario == "flat" else 1)
+    prior = copy(client)
+    prior.prompts = [prompt.replace(_KEY_INFERENCE_CLARIFICATION, "") for prompt in client.prompts]
+    assert digest(prior, result) == BASELINE_DIGESTS[scenario]
 
 
 def _published_counts(settings: dict[str, Any], mode: str) -> tuple[int, ...]:

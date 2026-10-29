@@ -2,11 +2,11 @@
 
 ## Overview
 
-LlmSource stores no data: it has no database, schema to migrate, index, or state that survives a call. A model generates each answer when asked. The source shapes that answer, checks it against the caller's declaration, and reports what it took to obtain.
+LlmSource maintains no dataset, index, or schema to migrate. It obtains an answer from the model or an optional cache, shapes the records, checks them against the caller's declaration, and reports what it took to obtain them. A file-backed cache can retain responses across calls.
 
 The data model therefore consists of five contracts rather than a storage layout:
 
-- **The virtual hierarchy**: the databases, collections, and entities a registry expects to walk, synthesised because a model has none
+- **The virtual hierarchy**: the databases, collections, and entities a registry expects to walk, synthesized because a model has none
 - **The request**: what a caller supplies and what each part means
 - **The record**: what a returned row is, and what the source guarantees about it
 - **The result**: the records plus the accounting that describes the run
@@ -94,7 +94,7 @@ truth, completeness, or answer quality.
 
 A record is a JSON object. That is the whole contract, and the guarantees around it depend on whether attributes were requested.
 
-**With requested attributes.** Every returned record carries exactly the requested attribute names as its keys, in the order requested, with `None` where the model supplied no value. Keys the model returned under a different spelling are mapped onto the requested name where the mapping is unambiguous. Keys that map to nothing are reported and do not appear in the record. Where two returned keys map to the same attribute, the first holds it and the second is reported with the value it carried, since which spelling was meant is not knowable here.
+**With requested attributes.** In flat mode, every returned record carries exactly the requested attribute names as its keys, in the order requested, with `None` where the model supplied no value. Non-flat planning can enrich the output schema with inferred attributes; `requested_attrs` still records the caller declaration. Keys the model returned under a different spelling are mapped onto the requested name where the mapping is unambiguous. Keys that map to nothing are reported and do not appear in the record. Where two returned keys map to the same attribute, the first holds it and the second is reported with the value it carried, since which spelling was meant is not knowable here.
 
 **Without requested attributes.** Flat records pass through as the model produced them, so keys may vary between records and no key is guaranteed. In non-flat modes, bootstrap infers a schema and may identify a key; the effective schema then shapes the records. `requested_attrs` remains empty so the caller can distinguish inferred shape from its own declaration.
 
@@ -111,11 +111,11 @@ A declared type drives coercion in the verifier.
 | `int`, `integer` | integer; whole float; digit string, with optional thousands separators | `int` |
 | `float`, `number` | number; numeric string, with optional thousands separators | `float` |
 | `bool`, `boolean` | boolean; `true` / `yes` / `y` / `1`; `false` / `no` / `n` / `0`, in any case | `bool` |
-| `date` | `YYYY-MM-DD`, `YYYY/MM/DD`, `DD-MM-YYYY`, or `Month D, YYYY` | ISO date `str` |
+| `date` | `YYYY-MM-DD`, `YYYY/MM/DD`, `DD-MM-YYYY` (only when the day is above 12 or equals the month; any other `NN-NN-YYYY` value is kept and reported as a type mismatch), or `Month D, YYYY` | ISO date `str` |
 | `str`, `string`, `text` | a string | unchanged |
 | anything else | any | unchanged, and the name is reported |
 
-A comma is treated as a thousands separator only where it actually is one: groups of exactly three digits, optionally signed, optionally with a dot decimal part. Stripping every comma turned `"3,80"`, the decimal comma most of the world writes, into `380.0` and reported the record as clean, so a caller received a number three orders of magnitude wrong with nothing in the result to reconcile it against. Anything that is not a thousands grouping keeps its commas, fails to convert, and is reported as a type mismatch.
+A comma is treated as a thousands separator only where it actually is one: groups of exactly three digits, optionally signed, optionally with a dot decimal part. The decimal comma `"3,80"` stays unchanged and is reported as a type mismatch; removing its comma would change the value to `380.0`. Anything that is not a thousands grouping keeps its commas, fails to convert, and is reported as a type mismatch.
 
 `str`, `string` and `text` are checked rather than converted. A declared string that arrives as the number `1299` is reported as a mismatch and left as it arrived, because `str()` succeeds on every value in Python: a string declaration that coerced could never fail, which would make it a check that validates nothing while the caller believes their records are typed. Declare `string` for a value that is textually meaningful, such as an identifier or a code, where a bare number coming back is worth knowing about. For a quantity, declare `int` or `float`, which do convert and report only when conversion is impossible.
 
@@ -150,7 +150,7 @@ results without distribution search keep the two-key form. The CLI and MCP omit 
 | `calls` | `int` | Provider attempts claimed against the run's budget. A cache hit is not one, and a contacted attempt that failed is |
 | `prompt_tokens`, `completion_tokens` | `int` | Token counts, summed across the usage entries this call produced; zero for a cache hit |
 | `cost` | `float` | Spend charged against the run's budget; zero for a cache hit. When `accounting_known` is false, this is bookkeeping or a conservative bound rather than an exact bill |
-| `accounting_known` | `bool` | Whether `calls`, `cost` and the token counts describe measured provider work. False when a caller-supplied `llm_fn` answered, provider accounting is missing, or a call under a cost ceiling was charged a usage bound or its reservation because the response does not prove every billed category. Treat provider spend as unknown rather than zero |
+| `accounting_known` | `bool` | Whether `calls`, `cost` and the token counts describe measured provider work. False when a caller-supplied `llm_fn` answered, provider accounting is missing, or a cost-ceiling charge rests on the reservation, a usage bound, or incomplete calculator categories. Treat provider spend as unknown rather than zero |
 | `latency_seconds` | `float` | Wall-clock time for the whole run, including parsing and reduction |
 | `cache_hits` | `int` | Calls answered from cache |
 | `requested_attrs` | `list[str]` | The attribute names the caller asked for |
@@ -163,7 +163,7 @@ results without distribution search keep the two-key form. The CLI and MCP omit 
 | `normalization_collisions` | `list[dict]` | Per-leaf complete keys that compare equal after declared-type-aware normalization but use different display values; each entry carries `primary_keys`, `kept`, and `collided` |
 | `split_decision` | `str \| None` | What the root probe decided under `plan.split_policy="evidence"`: `probe_accepted` (the probe's answer is the result), `probe_split_length` (the provider said its output allowance ended the answer), `probe_split_incomplete` (the answer ended mid-document and only its complete records were read, with no reason from the provider), `probe_split_shortfall` (fewer than half the keys an estimate above `plan.split_threshold_rows` expects) or `probe_split_failed` (no usable answer). `None` under the default policy, when the root could not split and was not probed, or when `plan.exact_rows=0` answered the root without a call, and then absent from `FetchResult.to_dict()` and `meta_view` |
 | `repaired_numbers` | `int` | Numbers the model wrote with thousands separators in an object value, such as `4,470`, read as `4470`. Such a response is not valid JSON; strict parsing is tried first and this is the one repair applied before parsing it again. `0` when nothing was repaired |
-| `filter_contradictions` | `int` | Records whose checkable filter column contradicts the filter of the leaf that returned them, counted once per record before reduction. A filter is checkable when it names a declared attribute of a recognised type and that type can read both the record's value and the filter's; strings compare after case and whitespace folding, numbers by value. Kept under `plan.filter_enforcement="flag"`, removed at the leaf under `"drop"`, and counted either way. `0` means none was observed |
+| `filter_contradictions` | `int` | Records whose checkable filter column contradicts the filter of the leaf that returned them, counted once per record before reduction. A filter is checkable when it names a declared attribute of a recognized type and that type can read both the record's value and the filter's; strings compare after case and whitespace folding, numbers by value. Kept under `plan.filter_enforcement="flag"`, removed at the leaf under `"drop"`, and counted either way. `0` means none was observed |
 | `observed_keys` | `list[str]` | Every key the model produced, in order of first appearance |
 | `remapped_keys` | `dict[str, str]` | Returned key mapped to the requested attribute it was matched to |
 | `unmapped_keys` | `list[str]` | Returned keys that matched no requested attribute |
@@ -191,7 +191,7 @@ An empty result is a valid answer from this source rather than a failure, which 
 | `model_returned_none` | The model returned no records at all |
 | `filtered_to_empty` | The model returned records and reduction left none, which happens when no record answered any requested attribute |
 | `partial` | Extraction was answered but some work was interrupted, including a failed split leaf or a late continuation failure after records were parsed |
-| `stopped_by_limit` | A ceiling ended the run and left no usable result, whether it refused the attempt before the provider was reached, emptied the result through the row cap, or was found crossed once the work was done |
+| `stopped_by_limit` | A non-row stop fired without an interrupted partial answer; records may remain when a limit is detected after extraction. A row cap that leaves no records also takes this outcome |
 | `truncated` | The row ceiling cut the result short and records remain |
 
 The field rides on `FetchResult`, so it reaches a caller through `fetch` and `afetch` alone. `execute_query` and `execute_query_nl` return the record list by the contract of the surface they match, and a caller that needs the reason for an empty list uses the library surface.
@@ -226,7 +226,7 @@ Each entry in `key_collisions` is a mapping with five keys.
 | `ignored_key` | `str` | The returned key whose value was not used |
 | `ignored_value` | any | The value that key carried |
 
-Match rules that ignore case and separators are what recover `IATA Code` or `iataCode` for a requested `iata_code`, and the same tolerance lets two returned keys reach one attribute. The first answer is kept, because overwriting would make the surviving value depend on the order the model happened to emit its keys, which is not a property a caller can reason about. Which of the two spellings the model meant is not knowable here, so the second is reported with the value it carried rather than resolved or dropped.
+Match rules that ignore case and separators are what recover `IATA Code` or `iataCode` for a requested `iata_code`, and the same tolerance lets two returned keys reach one attribute. The first encountered answer is kept, so JSON key order determines the surviving value. Which of the two spellings the model meant is not knowable here, so the later one is reported with the value it carried rather than resolved or dropped.
 
 Two occurrences of the identical key in one JSON object are a different case and never reach alignment: parsing rejects the object with a `ParseError`, at any nesting depth. Python's decoder keeps the last of a duplicate pair and leaves no trace of the first, which resolves the ambiguity in the opposite direction from every other collision here and does it silently. Two spellings leave two distinguishable keys, so the ignored one can be named in a report; one key repeated leaves nothing to name, and rejecting is the only answer that is not a guess the caller cannot see.
 
@@ -240,11 +240,11 @@ Per call rather than per run, recorded by the client and folded into `ExecMeta`.
 |-------|------|-------------|
 | `model` | `str` | Model used for this call |
 | `prompt_tokens`, `completion_tokens` | `int` | Token counts; zero on a cache hit |
-| `cost` | `float` | Spend for this call, or the reserved bound when the provider's accounting could not be read; zero on a cache hit |
+| `cost` | `float` | Recorded attempt cost. It is zero for a cache hit or a failed attempt with unknown accounting; a successful unpriced response may carry a conservative bound. The budget owns the run's retained charge |
 | `latency_seconds` | `float` | Wall-clock time for this call, recorded on a cache hit as well |
 | `cache_hit` | `bool` | Whether the response came from cache |
 | `finish_reason` | `str \| None` | Provider-reported generation stop reason, or `None` when no usable reason was reported |
-| `cost_known` | `bool` | Whether this call's provider cost was observed; false when the admitted bound was retained instead |
+| `cost_known` | `bool` | Whether this call's provider cost was observed; false when the reservation or a usage bound determines the charge, or calculator categories are incomplete |
 
 A cache hit records latency and marks itself, and carries no tokens and no cost. This is deliberate: a caller reading a cost total should see what was spent, and a caller reading a latency total should see what was waited for, and those two are not the same measurement.
 
@@ -298,7 +298,7 @@ Not persisted. Scoped to a single fetch unless the caller supplies a budget of i
 
 Call count, elapsed time, and cost are all checked and claimed under one lock before a provider is contacted, so a concurrent fan-out cannot admit two calls that each saw room for one. Rows are admitted after parsing, because the count is not known until then.
 
-Cost is claimed against an upper bound rather than an average-case estimate. The bound is reserved before the attempt and reconciled against verified, category-complete accounting afterward, releasing the difference. When the response cannot prove the charge, [the cost bound](../lib/README.md#the-cost-bound) sets it. If no bound can be established, the request is refused. Concurrent attempts therefore cannot all spend against the same remaining budget.
+Cost is claimed against a bound built from the package or configured rates rather than an average-case estimate. The bound is reserved before the attempt and remains the minimum ledger charge after provider contact. A higher readable calculator figure or usage bound raises it; incomplete calculator categories leave accounting unknown ([cost bound](../lib/README.md#the-cost-bound)). If no bound can be established, the request is refused. Concurrent attempts therefore cannot all spend against the same remaining budget.
 
 A derived child holds its own copy of every field above and spends from what its parent has left, so a claim recorded here is also recorded in every budget up the chain, and the effective ceiling on each axis is the smallest along it, retry depth included. The one field a child does not take from its parent is `stopped_by`, because it records what refused a particular attempt, and inheriting it would make a later affordable request report the earlier refusal as its own.
 
@@ -306,7 +306,7 @@ A derived child holds its own copy of every field above and spends from what its
 
 ## 8. The Cache Key
 
-The optional response cache is keyed on the serialised provider call arguments, sorted by key. That covers the model name, the fully rendered prompt, and every forwarded parameter such as temperature and maximum tokens.
+The optional response cache is keyed on the serialized provider call arguments, sorted by key. That covers the model name, the fully rendered prompt, and every forwarded parameter such as temperature and maximum tokens.
 
 | Included in the key | Not included in the key |
 |---------------------|-------------------------|

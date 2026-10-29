@@ -29,7 +29,7 @@ SMALL_ORDINAL_SPAN: Final = 1_000
 """The most integers a numeric key's proposed values may cover and still be a small ordinal set.
 
 A thousand is room for years across a millennium, ranks, seasons and editions, and far less
-than a population, a price or an area bucketed by a model. The number is a judgement, not a
+than a population, a price or an area bucketed by a model. The number is a judgment, not a
 measurement; it is published so a refused key can be understood."""
 
 _DASHES: Final = "-\u2010\u2011\u2012\u2013\u2014\u2212"

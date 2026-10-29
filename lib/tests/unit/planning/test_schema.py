@@ -27,7 +27,7 @@ def attrs(*pairs: tuple[str, str | None]) -> list[Attr]:
 
 class TestTheCallersDeclarationWins:
     def test_a_declared_type_is_never_changed(self) -> None:
-        """v1.0 promises to honour a supplied list. Enrichment is where that breaks."""
+        """The caller's declared types take precedence over inferred types."""
         declared = attrs(("country", "string"), ("population", "integer"))
         got = schema_from_response(
             response(
@@ -140,8 +140,8 @@ class TestMalformedAttrEntries:
         got = schema_from_response(response(attrs=[entry, {"name": "ok", "type": "string"}]), [])
         assert [a.name for a in got.attrs] == ["ok"]
 
-    def test_an_unrecognised_type_becomes_untyped_rather_than_invented(self) -> None:
-        """v1.0 reports a type it cannot check so a caller is not misled about typing."""
+    def test_an_unrecognized_type_becomes_untyped_rather_than_invented(self) -> None:
+        """An unrecognized type is reported as unchecked."""
         got = schema_from_response(response(attrs=[{"name": "when", "type": "datetime"}]), [])
         assert got.attrs == (Attr(name="when", type=None),)
 

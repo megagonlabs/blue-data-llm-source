@@ -1,8 +1,6 @@
-"""The `model` and `metadata` components.
+"""The ``model`` and ``metadata`` commands.
 
-`model` is the real version of the `database` component the family expects: this source has
-no databases to choose between, but it does have models, and the price table is the thing a
-caller actually has to choose from.
+The model commands expose selection and the built-in price table.
 """
 
 from __future__ import annotations

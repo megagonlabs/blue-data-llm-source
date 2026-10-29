@@ -4,6 +4,14 @@ This page provides a short, runnable example of each major library feature.
 
 Every example runs offline when supplied with an `llm_fn`, a plain `(prompt) -> str` callable used as the model for that call. Omit `llm_fn` to use a configured provider. Review [the provider settings](guide.md#choosing-a-model-and-provider-settings) first; provider calls may incur charges.
 
+## Uses and limits
+
+`LlmSource` supplies typed records from model knowledge, including common-sense information, when no maintained source covers a request. It has no table, document corpus, or index; optional caches reuse model responses. Callers can filter or aggregate the records and combine them with results from other Blue sources. The source advertises protocol `llm` and variant `openai` through the shared `DataSource` interface.
+
+A data planner can request a table needed to connect existing sources. For example, it can generate `eu_members(country, accession_year)` and join those records on `country` with Postgres `vendors(name, country)` rows. The downstream operator performs the join. See the [data-layer walkthrough](guide.md#using-it-through-the-data-layer) and [registration example](../examples/integration-demos/register_source_demo.py).
+
+Long lists may exceed one model response or omit entries. Partitioned retrieval divides the request into bounded parts, can ask a part for more records, and merges records by key. Its gap and limit reports describe what the run observed; they do not verify facts or prove coverage. See [what to check before trusting the records](guide.md#what-to-check-before-trusting-the-records).
+
 ## Structured records from a model's own knowledge
 
 The library asks a model a natural-language question and returns the answer as a list of dictionaries. It does not query a backing store.
@@ -58,7 +66,7 @@ print(result.meta.remapped_keys)  # {'Name': 'name'}
 print(result.meta.unmapped_keys)  # ['IATA']
 ```
 
-`IATA` does not reach `iata_code`: the normalised forms are `iata` and `iatacode`, and assigning it would be a guess. It is reported instead.
+`IATA` does not reach `iata_code`: the normalized forms are `iata` and `iatacode`, and assigning it would be a guess. It is reported instead.
 
 ## A closed outcome vocabulary
 
@@ -116,7 +124,7 @@ print(len(first), len(second), len(third), third.meta.stopped_by)
 
 ## An upper bound on cost, before spending anything
 
-`estimate` builds the prompt this source would actually send, bounds it, and contacts nothing. It is the same bound a run reserves against, so a request that sizes inside a ceiling is not refused when it runs.
+`estimate` builds the prompt this source would actually send, bounds it at the package or configured rates, and contacts nothing. It does not guarantee the provider invoice. It is the same bound a run reserves against, so a request that sizes inside a ceiling is not refused when it runs.
 
 ```python
 from blue_data_llm_source import LlmSource
@@ -197,14 +205,14 @@ cache.set("c", {"answer": 3})
 print(cache.get("a"), cache.get("c"), isinstance(cache, CacheStore))
 # None {'answer': 3} True
 
-disk = FileCache(directory=".llm_cache")
+disk = FileCache(directory=".llm_file_cache")
 disk.set("a", {"answer": 1})
 print(disk.get("a"), disk.get("nothing-was-stored-here"))
 # {'answer': 1} None
 disk.clear()
 ```
 
-`MemoryCache` evicts least-recently-used entries when it reaches its bound. `FileCache` writes one JSON file per entry, using the SHA-256 of its key as the filename. Its `clear` method removes only files it wrote, so it cannot delete other JSON files in the directory.
+`MemoryCache` evicts least-recently-used entries when it reaches its bound. `FileCache` writes one JSON file per entry in a private directory, using the SHA-256 of its key as the filename. On POSIX systems it refuses a directory accessible to others. `clear()` removes files written by that `FileCache` instance and leaves other files in the directory intact. To remove entries from earlier runs, [purge its dedicated directory](guide.md#caching-responses) after stopping every process that uses it.
 
 ## Decomposing a large request
 
@@ -262,7 +270,7 @@ A model asked for two hundred records returns forty and reports nothing wrong. `
 
 ## Composite identity keys
 
-`plan.keys` declares the ordered fields that jointly identify one record. The same normalisation is used when merging parts, when excluding held records from a continuation, and when validating a partition rule, so two stages cannot disagree about whether two records are the same record.
+`plan.keys` declares the ordered fields that jointly identify one record. The same normalization is used when merging parts, when excluding held records from a continuation, and when validating a partition rule, so two stages cannot disagree about whether two records are the same record.
 
 ```python
 from blue_data_llm_source import Attr, key_identity
@@ -314,19 +322,19 @@ print(source.execute_query_nl(
 
 ## An orchestrator tool surface
 
-The base class advertises eight tools for an orchestrating model to call one at a time. Four of them can be answered from a model's own knowledge, so four are advertised and four are not.
+The base class defines eight tools for an orchestrating model to call one at a time. This source advertises five: hierarchy discovery, query execution, and `get_sample`. Sampling returns `None` for unavailable statistics without a provider call.
 
 ```python
 from blue_data_llm_source import LlmSource
 
 source = LlmSource()
 print([tool["name"] for tool in source.get_nl_tools()])
-# ['list_databases', 'list_collections', 'get_schema', 'execute_query']
+# ['list_databases', 'list_collections', 'get_schema', 'execute_query', 'get_sample']
 print(source.execute_nl_tool("list_databases", {}))
 # ['llm']
 ```
 
-`execute_nl_tool` refuses any other name with a message listing the four, and nothing on that path escapes the `LlmSourceError` hierarchy.
+`execute_nl_tool` refuses unadvertised names with `ConfigError` and lists the five available tools. Supply the required arguments from each advertised input schema.
 
 ## One serialization of the result metadata
 
@@ -345,7 +353,7 @@ Three tiers: always present, present only when the thing happened, and verbose-o
 
 ## Synchronous and asynchronous entry points
 
-`afetch` is the real one; `fetch` wraps it. Calling `fetch` from inside a running event loop raises `ConfigError` naming `afetch` rather than deadlocking.
+`afetch` is the real one; `fetch` wraps it. Called from inside a running event loop, `fetch` blocks the calling thread and runs the coroutine on a worker thread; use `afetch` there.
 
 ```python
 import asyncio
@@ -387,6 +395,10 @@ except ConfigError as exc:
 
 Two adapters ship over this library. Neither holds retrieval logic of its own. See [cli.md](cli.md) and [mcp.md](mcp.md).
 
-## Not built
+## Model choice and execution scope
 
-There is no REST interface, no retrieval or grounding path, no factual validator, and no completeness measure. [architecture.md](architecture.md) describes these boundaries and the three implemented interfaces.
+The caller chooses `llm.model`; planning and extraction use that configured model. There is no automatic choice based on task difficulty, cost or expected quality.
+
+Task execution uses bounded asynchronous concurrency in one process. `llm.max_parallel` (default 8) sets the bound for the built-in provider client; with `llm_fn` or an injected client, leaves run concurrently up to `plan.max_leaves`, and that client sets any tighter limit itself. Tasks and results serialize to plain dicts, so a service wrapper could dispatch them, but the source has no executor injection point and the local executor starts no worker processes or remote compute instances.
+
+Key normalization and keyed deduplication compare declared keys. For a key declared as a string, `" IBM "` and `"ibm"` normalize alike; a key with no declared type is compared exactly. `"IBM"` and `"International Business Machines"` remain distinct either way. Alias resolution, coreference and entity linking require a separate system.

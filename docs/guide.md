@@ -90,13 +90,15 @@ print(result.meta.remapped_keys, result.meta.unmapped_keys)
 print(meta_view(result.meta, verbose=True)["unmapped_keys"])
 ```
 
-`Name` matched `name` because matching ignores case, and the remapping is reported. `IATA` matched nothing (`iata` and `iatacode` are different normalised forms), so it is reported as unmapped rather than assigned by guesswork.
+`Name` matched `name` because matching ignores case, and the remapping is reported. `IATA` matched nothing (`iata` and `iatacode` are different normalized forms), so it is reported as unmapped rather than assigned by guesswork.
 
 `meta_view` is the JSON-ready serialization published by every adapter. Use it instead of writing your own to keep the result description consistent across consumers.
 
 **`gaps` being empty means no supported diagnostic fired.** It is not a completeness claim. Nothing in a short answer says it is short, so this library does not pretend to detect one.
 
 ## Bounding one request
+
+Source settings override client settings; a call can only tighten the resulting ceilings. For the rules on `None`, zero, retries, row caps, caller-supplied prices, and a per-call model or rates under a configured cost ceiling, see the [compatibility guide](../lib/COMPATIBILITY.md#deviations-from-the-earlier-implementation).
 
 A ceiling passed with the call binds that call. It is merged over the instance's properties for the duration of the request and is not written back.
 
@@ -113,7 +115,7 @@ print(len(bounded), bounded.meta.outcome, bounded.meta.truncated_to)
 print(len(unbounded), unbounded.meta.outcome)
 ```
 
-`max_records` is the same row ceiling as a positional argument, and it replaces `limits.max_rows` for that call.
+`max_records` is the same row ceiling as a positional argument, and it is clamped by the effective `limits.max_rows` for that call.
 
 Four axes exist. Which of them bind depends on the client that answers. See [Which ceilings bind](#which-ceilings-bind) below.
 
@@ -123,7 +125,7 @@ Four axes exist. Which of them bind depends on the client that answers. See [Whi
 | `limits.max_seconds` | Refuses an attempt once elapsed time reaches it, and cancels a wait in flight |
 | `limits.max_cost` | Refuses an attempt whose cost bound would cross it |
 | `limits.max_calls` | Refuses an attempt past that many, counting every retry |
-| `limits.max_retries` | Retries per call, at most 9,999; the client makes this many attempts plus one |
+| `limits.max_retries` | Retries per call, at most 9,999; the built-in client makes this many attempts plus one. An injected client owns its own retries |
 
 The names are a closed set. `limits.max_cst` raises `ConfigError` listing what is accepted, and so does `limit.max_rows` or a bare `limits`. Every value is checked as the ceiling is built: a wrong type, a `bool`, a negative number, or a `NaN` is refused rather than accepted while enforcing nothing.
 
@@ -165,7 +167,7 @@ print(sized.max_attempts, round(sized.max_cost_per_attempt, 6))
 
 `max_cost` bounds the whole fetch, not one try: it is the per-attempt figure accumulated once per attempt the fetch is permitted, added the way the budget ledger adds it. Size a ceiling against `max_cost`, not against `max_cost_per_attempt`, or one transient failure consumes the ceiling and the retry is refused.
 
-**The minimum cost bound is the full output allowance.** The prompt contributes relatively little; `llm.max_tokens` at the model's output rate, with OpenAI's 10% regional-processing uplift where it applies, contributes the rest. With the default `gpt-6-luna` model and 25,000 output tokens, the minimum is about $0.01375. A lower `limits.max_cost` refuses the call before provider contact. Reduce `llm.max_tokens` when the answer needs fewer tokens.
+**The minimum cost bound is the full output allowance.** The prompt contributes relatively little; `llm.max_tokens` at the model's output rate, with the long-context multiplier and OpenAI's 10% regional-processing uplift where they apply, contributes the rest. With the default `gpt-6-luna` model and 25,000 output tokens, the output-only floor is about $0.020625. A lower `limits.max_cost` refuses the call before provider contact. Reduce `llm.max_tokens` when the answer needs fewer tokens.
 
 An unpriced model is answered, not raised on:
 
@@ -180,7 +182,7 @@ print(unpriced.bounded, unpriced.reason)
 
 Supply `llm.price_per_input_token` and `llm.price_per_output_token` together to bound a model the table does not carry; they are used as given, so they must cover every tier the model can be billed at. Rates supplied for a model the table carries keep its cache-write, long-context and regional charges and never lower its bound. The table is a static snapshot of published list prices with no effective date and no freshness check, so treat `limits.max_cost` as a control against known rates rather than as a hard billing stop. [The cost bound](../lib/README.md#the-cost-bound) says how a call is charged once it returns, and the [known limitations](../lib/README.md#supported-models) say where the table falls short.
 
-`estimate` reads no `plan.*` setting. It describes a flat fetch; a decomposed request costs this figure times the calls it makes.
+`estimate` reads no `plan.*` setting. Its bound covers one flat fetch, including retries. A non-flat run may make planning and extraction calls with different prompts; this estimate does not bound their combined cost.
 
 ## Choosing a model and provider settings
 
@@ -207,11 +209,11 @@ print(len(result), result.meta.model, result.meta.calls, result.meta.cost)
 
 [Supported models](../lib/README.md#supported-models) lists the models the package knows, the reasoning efforts and default each takes, when each accepts a temperature, and its prices. A setting the model rules out raises `ConfigError` before anything is spent.
 
-The last four are consumed here and never sent to the provider. `llm.rate_limit` is refused by name with a `ConfigError`: client-side call spacing has to reconcile with per-attempt budget admission, and this library does not do it. Cap concurrency with `llm.max_parallel`, or throttle above this library where the whole request sequence is visible.
+The cache, concurrency, and caller-supplied price settings are used by the library and are not sent to the provider. `llm.rate_limit` is refused by name with a `ConfigError`: client-side call spacing has to reconcile with per-attempt budget admission, and this library does not do it. Cap concurrency with `llm.max_parallel`, or throttle above this library where the whole request sequence is visible.
 
 `llm.stream=True` is accepted and **does not make anything faster**: a fetch parses one whole JSON document, so the chunks are read to the end and reassembled before anything downstream sees them. Set it only because a provider configuration or proxy requires it. One thing changes: a stream carries token counts only if the provider chooses to send them, and when none arrive the call cannot be priced, so the reservation stays at its bound and the result reports `accounting_known=False`.
 
-This library never reads a credential, so it cannot report one missing. An absent or wrong key arrives as a `TransportError` from the provider SDK.
+The provider SDK handles authentication. An absent or wrong key can cause a failed provider attempt. With no answered extraction response and no retained records, the fetch raises `TransportError` if the retry policy is exhausted or `max_calls` prevents the next retry. If `max_cost` or `max_seconds` refuses that retry, or a ceiling refuses the first attempt, it returns `stopped_by_limit`. If an extraction response has already been parsed, the fetch keeps its records with `outcome=partial` and a gap for the failed part. The library reads credential environment values only to mask diagnostics.
 
 ## Caching responses
 
@@ -230,9 +232,11 @@ print(first.meta.cache_hits, second.meta.cache_hits, second.meta.cost)
 
 A cache hit consumes no provider call, no tokens, and no cost, and its usage record marks it. Rows it returns still count against a row ceiling, and admission still checks elapsed time, which is what keeps those ceilings binding across a sequence.
 
-`MemoryCache(max_entries=512)` is in-process and evicts least-recently-used entries. `FileCache(directory=".llm_cache")` writes one JSON file per entry; its `clear()` removes only entries it wrote, so pointing it at a directory that already holds JSON cannot delete that JSON. Anything with `get` and `set` works (see [extending.md](extending.md#cache-backends)).
+`MemoryCache(max_entries=512)` is in-process and evicts least-recently-used entries. `FileCache(directory=".llm_file_cache")` writes one JSON file per entry in a private directory; the explicit directory keeps this example separate from `llm.cache`, whose default is `.llm_cache`. Omitting the `FileCache` directory also uses `.llm_cache`. On POSIX systems it refuses a directory accessible to other users. Its `clear()` removes files written by that instance, leaving pre-existing files and entries written by another instance intact. Anything with `get` and `set` works (see [extending.md](extending.md#cache-backends)).
 
-The separate `llm.cache` switch opens a `diskcache` backend instead and does not use either store. Treat the two paths as unconnected.
+To remove `FileCache` entries left by earlier runs, first stop every process using its directory and confirm that the directory holds only this cache. Then remove that directory. For the dedicated `.llm_file_cache` directory in this example, run `rm -r -- .llm_file_cache` from the directory where it was created. A later `FileCache` construction recreates it. Do not remove a directory shared with another cache or application.
+
+The separate `llm.cache` switch opens a `diskcache` backend instead and does not use either store. It creates its cache directory with private permissions and refuses an existing directory that is not owned by the current user or is accessible to others on POSIX systems. If an earlier run created `.llm_cache` with broader permissions, change its mode to `0700` before enabling this cache again.
 
 ## Splitting a large request
 
@@ -281,7 +285,7 @@ print(result.meta.calls, result.meta.row_estimate, result.meta.record_origins)
 print(result.meta.gaps)
 ```
 
-Six calls: three planning stages, one partition proposal, two leaves. A real run sends each of those prompts to a provider, so a split request costs several times what the same request costs flat. Size it with the part count in hand, or ask in `flat` mode and read [Estimating before you spend](#estimating-before-you-spend).
+Six calls to `answer`: three planning stages, one partition proposal, two leaves. A provider-backed run prices each prompt separately; the flat estimate does not bound their sum. Set a cost ceiling for the run or use `flat` mode. See [Estimating before you spend](#estimating-before-you-spend).
 
 The settings worth knowing first:
 
@@ -293,7 +297,7 @@ The settings worth knowing first:
 | `plan.partition_key` | none | Preferred root split dimension. Descendants may choose another and cannot repeat an ancestor's |
 | `plan.max_depth` | `2` | Deepest partition level. `0` keeps the planning stages and disables subdivision |
 | `plan.max_partitions` | `20` | Most children one proposal may create |
-| `plan.max_leaves` | `100` | Most terminal slices. A plan that cannot fit is rejected whole, not run as a prefix |
+| `plan.max_leaves` | `100` | Most terminal slices. Partitioned root values are grouped when over the cap; later expansions that cannot fit stay intact |
 | `plan.planning_order` | `planning.schema_first` | Which fact schedule runs, and how many calls it may make |
 
 The full set is in [api-reference.md](api-reference.md#plan-properties).
@@ -355,7 +359,7 @@ print(short.meta.split_decision, short.meta.calls, len(short.records))
 # probe_split_shortfall 7 3
 ```
 
-The first request is answered by the probe: three planning calls and one probe, where the default policy would have made six. In the second, the estimate of 200 is above the threshold and the probe holds one key, so the plan splits: the probe, one proposal and two leaves, with the probe's record merged into the result under the origin `root`. `meta.split_decision` names the outcome and is absent when no probe ran. The probe adds one call to every published bound. The setting is opt-in; the [changelog](../CHANGELOG.md#220--candidate) records what it was measured on.
+The first request is answered by the probe: three planning calls and one probe, where the default policy would have made six. In the second, the estimate of 200 is above the threshold and the probe holds one key, so the plan splits: the probe, one proposal and two leaves, with the probe's record merged into the result under the origin `root`. `meta.split_decision` names the outcome and is absent when no probe ran. The probe adds one call to every published bound. The setting is opt-in.
 
 ## Asking again for what did not come back
 
@@ -398,7 +402,7 @@ for gap in result.meta.gaps:
 
 The continuation prompt names the records the leaf already holds, which is the `Already returned:` line the stand-in above keys off. `plan.max_depth=0` keeps the planning stages and disables subdivision, so this is one leaf asking twice rather than a split.
 
-At the default of `0` each part asks once. Every continuation is another billed call, which is why it is off by default.
+At the default of `0`, each part asks once. A continuation may make another provider call and incur a charge; a cache hit does neither. Continuations are off by default to limit additional calls.
 
 When the cap ends a run that was still producing records, `meta.stopped_by` reports `plan.max_continuations`. Read that as "completeness was not established", not as "more records exist": the last permitted response looks identical whether the model had one row left or a thousand.
 
@@ -419,7 +423,9 @@ print(source.execute_query({"op": "LLM.ESTIMATE", "query": "airports in France",
                             "attrs": ["name"]})[0]["bounded"])
 ```
 
-Build the source and hand the instance to `register_source`. Inheriting the base class does not make the source reachable by protocol name: the registry records the class alongside `name` and `properties`, and `connect_source` returns the live instance while it is present and reconstructs an equivalent one from that record afterwards.
+Build the source and hand the instance to `register_source`. Inheriting the base class does not make the source reachable by protocol name: the registry records the class alongside `name` and `properties`, and `connect_source` returns the live instance while it is present and reconstructs a new source from that record afterwards.
+
+The registry stores the source's own properties, not its injected client or the client's settings. Put ceilings, model and rates on the source when they must survive registration and reconstruction; a rebuilt source starts with the default client.
 
 `execute_query` accepts a natural-language string or a dict carrying an `op` key, one of `LLM.FETCH`, `LLM.MODELS`, or `LLM.ESTIMATE`. Both `execute_query` and `execute_query_nl` return a plain `list[dict]`, because that is what the shared surface returns. Call `fetch` when you also need the outcome, the accounting, or the diagnostics.
 
@@ -461,28 +467,27 @@ print(source.execute_query("commercial airports in France",
                            optional_properties={"attrs": ["name"], "limits.max_rows": 1}))
 ```
 
-The orchestrator tool surface works the same way. `get_nl_tools` advertises the four tools this source can answer, `execute_nl_tool` runs one by name, and `execute_query_nl_tools` is refused with a `ConfigError` naming the bounded path: it drives a loop of up to ten provider calls that this source's ceilings never see.
+The orchestrator tool surface works the same way. `get_nl_tools` advertises the five tools this source can answer, `execute_nl_tool` runs one by name, and `execute_query_nl_tools` is refused with a `ConfigError` naming the bounded path: it drives a loop of up to ten provider calls that this source's ceilings never see.
 
 ```python
-from blue_data_llm_source import ConfigError, LlmSource
+from blue_data_llm_source import LlmSource
 
 source = LlmSource()
 print([tool["name"] for tool in source.get_nl_tools()])
 print(source.execute_nl_tool("get_schema", {"database": "llm", "collection": "public"}))
-try:
-    source.execute_nl_tool("get_sample", {"database": "llm"})
-except ConfigError as exc:
-    print(exc)
+print(source.execute_nl_tool("get_sample", {
+    "database": "llm", "collection": "public", "entity": "llm_entity", "sample_size": 10,
+}))  # None: statistics and stored samples are unavailable.
 ```
 
 ## Driving it from async code
 
-`afetch` is the real entry point and `fetch` wraps it. Calling `fetch` from inside a running event loop raises rather than deadlocking.
+Synchronous query methods work inside a running event loop by waiting for an owned worker thread. They block the calling thread and delay its cancellation callbacks. Use `afetch` for concurrent async work and for a client or `llm_fn` that needs the caller's own event loop; a synchronous call hangs on such a client. Thread-affine objects, such as an sqlite connection used inside `llm_fn`, fail on the worker thread. Under `asyncio.run` on Python 3.11 and later, the first Ctrl-C cancels the in-flight fetch when the synchronous call runs in the runner's main task. A call in another task observes cancellation only if that task receives the request. In a plain event-loop callback, that signal cancels the runner's main task while the fetch continues; a second Ctrl-C interrupts the waiting thread. Schedule and await `afetch` in a task for cancellable asynchronous work. Once the bridge receives an interrupt or task-cancellation request, it raises as soon as the fetch stops, or after five seconds if the client ignores cancellation; that work then finishes in the background. Time limits cancel the same cooperative way, so they cannot forcibly stop a client that ignores cancellation either. See [`lib/COMPATIBILITY.md`](../lib/COMPATIBILITY.md).
 
 ```python
 import asyncio
 
-from blue_data_llm_source import ConfigError, LlmSource
+from blue_data_llm_source import LlmSource
 
 
 async def main() -> None:
@@ -490,10 +495,8 @@ async def main() -> None:
     answer = lambda prompt: '[{"name": "Orly"}]'
     result = await source.afetch("airports in France", attrs=["name"], llm_fn=answer)
     print(result.records)
-    try:
-        source.fetch("airports in France", attrs=["name"], llm_fn=answer)
-    except ConfigError as exc:
-        print(exc)
+    # This synchronous call blocks the caller thread until the worker finishes.
+    print(source.fetch("airports in France", attrs=["name"], llm_fn=answer).records)
 
 
 asyncio.run(main())
@@ -503,7 +506,7 @@ asyncio.run(main())
 
 ## Which ceilings bind
 
-A ceiling binds only on an axis the answering client declares, and a configured ceiling on an axis it does not declare raises `ConfigError` at the first fetch. Reporting a ceiling that is not holding anything is worse than declining to hold it, because you would believe it.
+A ceiling binds only on an axis the answering client declares. A configured ceiling on an undeclared axis raises `ConfigError` at the first fetch.
 
 ```python
 from blue_data_llm_source import ConfigError, LlmSource
@@ -551,11 +554,11 @@ except LlmSourceError as exc:
 
 ## What to check before trusting the records
 
-Results are model-generated. This library verifies shape, never truth.
+Results are model-generated. This library verifies shape, never truth. Model knowledge may be outdated. Use a maintained source for authoritative facts and a document or vector source for information held in private documents.
 
 1. **`meta.outcome`.** `ok` means no detected execution failure, not a complete answer.
 2. **`meta.stopped_by` and `meta.stop_reasons`.** A ceiling that fired is the commonest reason an answer is short.
-3. **`meta.gaps`.** A failed part, a continuation cap, a response cut off at the model's output limit, a plan refused for exceeding `plan.max_leaves`.
+3. **`meta.gaps`.** A failed part, a continuation cap, a response cut off at the model's output limit, an expansion held intact by `plan.max_leaves`.
 4. **`meta.unmapped_keys`, `meta.key_collisions`, `meta.type_mismatches`, `meta.unchecked_types`.** Whether the records are shaped the way you asked.
 5. **`meta.accounting_known`.** Whether the cost figure is a measurement.
 6. **`None` values.** A requested attribute the model omitted and an explicit JSON `null` both arrive as `None`, and the result does not distinguish them. An empty `type_mismatches` means "nothing present failed its type", not "every field is populated". Check for `None` yourself when a field is required.

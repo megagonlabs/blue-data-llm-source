@@ -1,15 +1,9 @@
-"""What the provider said about why it stopped, and what may be claimed from it.
+"""Record provider finish reasons separately from response text.
 
-A response that ends mid-structure and one that was merely written badly are the same
-document. Only the provider knows which happened, and it says so in ``finish_reason`` --
-a field the client reads past today, because ``complete`` returns text and the reason has
-nowhere to travel.
-
-Read asymmetrically, and the asymmetry is the whole design. ``length`` is evidence the
-output allowance fired. ``stop`` and an absent reason are *absence of evidence*, not
-evidence of absence: litellm defaults a provider reason it does not recognise to ``stop``,
-so treating ``stop`` as proof the model finished would convert an unrecognised truncation
-into a claim of completeness -- which is the one claim this package may not make.
+``length`` indicates that the output allowance was reached. ``stop`` and an absent
+reason do not establish completeness: LiteLLM may map an unrecognized provider
+reason to ``stop``. The client keeps the reason in a receipt because ``complete``
+returns only text.
 """
 
 from __future__ import annotations
@@ -32,11 +26,6 @@ ATTRS = [Attr(name="name")]
 
 WHOLE = '[{"name": "A"}, {"name": "B"}]'
 CUT = '[{"name": "A"}, {"name": "B'
-"""A prefix of a longer document. One whole record, then a value that never closes.
-
-Indistinguishable from a malformed answer by inspection, which is the point: what tells
-the two apart arrives beside the text, not inside it.
-"""
 
 
 def answered(content: str, reason: str | None) -> dict[str, Any]:
@@ -56,8 +45,7 @@ class TestTheClientRecordsWhatTheProviderSaid:
     On the receipt rather than in the return value: ``complete`` returns ``str`` and is a
     published protocol other clients implement, including one wrapping a caller's plain
     callable. Widening it would make every implementer answer a question most of them
-    cannot, and the honest answer -- "no reason available" -- is what the receipt's default
-    already says.
+    cannot. A client without one uses the receipt's default of "no reason available".
     """
 
     @pytest.mark.parametrize("reason", ["length", "stop", "content_filter", "tool_calls"])
@@ -118,9 +106,7 @@ class TestARecoveredPrefixIsNotAnAttestedCeiling:
         assert run.recovered_prefix is False
 
     def test_an_unattested_recovery_does_not_claim_the_provider_ceiling(self) -> None:
-        # The adversarial twin for this pair. A callable model has no reason to give, so a
-        # recovery through it is the case where the claim is least supportable -- and it is
-        # also the default path, which is where an overclaim does the most damage.
+        # A callable model reports no finish reason, so its recovered prefix is unattested.
         run = self.run(CUT)
         assert run.provider_output_limit is False
 
@@ -142,8 +128,7 @@ class TestAnAttestedCeilingIsClaimed:
     The seam is internal. ``run_leaf`` and ``arun_leaf`` take the model as a callable and are
     not exported from the package; what stays exactly as published is
     ``LlmClientProtocol.complete() -> str``, which no caller-supplied client has to change.
-    A callable that answers with bare text keeps working and reports no reason, which is the
-    honest answer for a model that cannot give one.
+    A callable that answers with bare text keeps working and reports no reason.
     """
 
     def run(self, answer: Any) -> Any:
@@ -157,9 +142,7 @@ class TestAnAttestedCeilingIsClaimed:
         assert run.provider_output_limit is True
 
     def test_the_same_prefix_without_an_attestation_claims_nothing(self) -> None:
-        # The adversarial twin: one document, two runs, differing only in what arrived
-        # beside it. The pair is the whole point -- a flag that reads the same either way is
-        # a flag carrying no information.
+        # Only the run with a matching finish reason may claim the provider limit.
         from blue_data_llm_source.execution.mapper import Answer
 
         attested = self.run(Answer(CUT, finish_reason="length"))
@@ -168,9 +151,9 @@ class TestAnAttestedCeilingIsClaimed:
         assert attested.provider_output_limit != silent.provider_output_limit
 
     def test_a_reported_stop_is_not_evidence_the_model_finished(self) -> None:
-        # litellm defaults an unrecognised provider reason to `stop`, so a stop beside a
+        # litellm defaults an unrecognized provider reason to `stop`, so a stop beside a
         # document that did not parse whole is exactly the case where believing it would
-        # convert an unrecognised truncation into a claim of completeness.
+        # convert an unrecognized truncation into a claim of completeness.
         from blue_data_llm_source.execution.mapper import Answer
 
         run = self.run(Answer(CUT, finish_reason="stop"))

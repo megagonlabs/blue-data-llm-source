@@ -21,8 +21,8 @@ from blue_data_llm_source import (
 )
 
 from blue_data_llm_cli import config
-from blue_data_llm_cli.configstore import ConfigResolver, ProfileStore
 from blue_data_llm_cli.profile import cli_spec
+from blue_data_llm_cli.profile_adapter import ConfigResolver, ProfileStore
 
 
 # ------------------------------------------------------------------ attrs --

@@ -50,7 +50,7 @@ from typing import Optional
 def strip_fence(text: Optional[str]) -> str: ...
 ```
 
-`Any` appears in exactly one situation: a public parameter that deliberately accepts several shapes and is normalised on the first line of the method. `attrs` accepts names, `Attr` instances, or mappings; `context` accepts a string or a list of strings; `client` and `llm_fn` accept anything structurally adequate. Each is passed straight to a `checks` function or a wrapper that produces a precise type, and nothing downstream sees `Any`. Widening a parameter to avoid an annotation elsewhere is not the same thing and is not allowed.
+Use `Any` where the source accepts several input shapes or holds data whose structure is determined at runtime. Public parameters such as `attrs`, `context`, `client`, and `llm_fn` cross that boundary, as do record values, provider payloads, configuration mappings, and stored provider errors. Normalize or validate values before operations that require a narrower type. Do not widen an annotation merely to hide a type error.
 
 The library includes a `py.typed` marker file to declare inline type information. The two service packages do not: they are applications, not libraries, and nothing imports them as a typed dependency. `blue-data-kb-source` and `blue-data-user-source` mark only their libraries for the same reason.
 
@@ -79,7 +79,7 @@ class LlmSource:
         # ... a second implementation of the same algorithm
 ```
 
-Calling `fetch` from inside a running event loop raises `ConfigError` and names `afetch` as the method to use. This avoids a nested event loop failure that would otherwise surface far from its cause.
+Called from inside a running event loop, `fetch` blocks the calling thread and runs the coroutine on a worker thread, which avoids a nested event loop failure. Code already on a loop should use `afetch`.
 
 Reduction and validation modules use synchronous functions. They perform no I/O and are pure, so each can be tested without a fixture.
 
@@ -142,21 +142,11 @@ Classes and public methods use a one-line docstring unless callers need addition
 Private functions use a docstring only when it preserves a non-obvious invariant or ordering requirement. Otherwise the function name and signature are sufficient.
 
 ```python
-"""Budget on five axes, reserved before spend and reconciled after it.
+"""Track five spend axes through claims made before provider contact.
 
-The implementation this client is derived from accounted usage after each call. That
-records an overrun rather than preventing one, which is fine for a single call and wrong
-for a fan-out: by the time the total is read, the money is gone.
-
-Every axis is claimed before the provider is contacted, under one lock, so concurrent
-callers cannot race past a ceiling. Cost is claimed the only way an unknown price can be:
-an estimated upper bound is reserved before the attempt, then resolved against the best
-accounting the client can verify.
-
-Reserving rather than settling is what makes the two hard cases work. A cost that cannot be
-read leaves its reservation standing, so an accounting failure is not a free call. And ten
-concurrent leaves each commit an estimate before spending, so they cannot collectively
-overshoot by ten calls' worth while each sees room for one.
+An attempt claims a cost bound under one lock, then resolves it against available
+accounting. An unreadable cost keeps its claim. Concurrent leaves cannot spend
+against the same headroom.
 """
 
 
@@ -191,7 +181,7 @@ The second form needs the additional contract text because `reserve` reads as on
 
 ## Comments
 
-Write a comment only when the *why* is non-obvious, such as a hidden constraint, subtle invariant, or workaround for external behaviour. Do not describe what the code does; a well-named identifier already does that.
+Write a comment only when the *why* is non-obvious, such as a hidden constraint, subtle invariant, or workaround for external behavior. Do not describe what the code does; a well-named identifier already does that.
 
 ```python
 # correct — explains a non-obvious constraint
@@ -239,11 +229,11 @@ An exception that a caller may need to act on carries the data required to act. 
 
 - Usage accounting converts an unreadable token count to zero instead of failing a call that already succeeded. Accounting is total by contract.
 - Cost extraction from a provider response reports an unreadable cost as unknown rather than failing the call, and the reservation's estimate remains charged. Unknown is not zero: converting an accounting failure into a free call is how a ceiling comes to admit every remaining attempt while the running total stays where it started.
-- The client resolves its reservation on any failure before re-raising and converts an unrecognised provider failure into a `TransportError` carrying the original. These rules cover every failure path: an outstanding reservation permanently removes headroom from the budget, and an unknown provider exception is not part of this library's contract. If the provider was contacted, a failure resolves at the estimate rather than releasing it; otherwise every failed retry would be free.
-- `FileCache` treats an entry it cannot read, write, or serialise as a miss and returns. A cache that can fail the request it was meant to make cheaper is worse than no cache. The catch names the error types, never catching broadly, and a partially written file is removed before the error leaves.
+- The client resolves its reservation on any failure before re-raising and converts an unrecognized provider failure into a `TransportError` carrying the original. These rules cover every failure path: an outstanding reservation permanently removes headroom from the budget, and an unknown provider exception is not part of this library's contract. If the provider was contacted, a failure resolves at the estimate rather than releasing it; otherwise every failed retry would be free.
+- `FileCache` treats an entry it cannot read, write, or serialize as a miss and returns. A cache that can fail the request it was meant to make cheaper is worse than no cache. The catch names the error types, never catching broadly, and a partially written file is removed before the error leaves.
 - The client's cache *write* swallows errors raised by the store. By then, the provider has been contacted and billed, so a cache error should not discard the answer. The read is not guarded: it happens before provider contact, so nothing has been lost. A caller whose store is broken should hear about it rather than silently pay full price for every request.
 - Closing a cache backend swallows whatever close raises. A store that cannot shut down cleanly is not the caller's problem at that point.
-- `LlmSource` wraps unexpected exceptions from `fetch`, `afetch`, or `estimate` in `LlmSourceError` and chains the original. This broad catch enforces the promised error hierarchy, which was previously maintained by per-site handling and missed in some cases. `BaseException` is not caught, so cancellations and interrupts still propagate.
+- `LlmSource` wraps unexpected exceptions from `fetch`, `afetch`, or `estimate` in `LlmSourceError` and chains the original. This broad catch enforces the promised error hierarchy. `BaseException` is not caught, so cancellations and interrupts still propagate.
 - Deciding whether a client attests to an axis treats any failure as "does not attest". A client that raises when asked what it can be held to has not declared anything, and refusing the ceiling is the safe reading.
 
 Anywhere else, a broad catch is a defect.

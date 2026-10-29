@@ -1223,7 +1223,7 @@ async def test_leaf_cap_rejection_consumes_distribution_node_allowance() -> None
 
 
 @pytest.mark.asyncio
-async def test_d_off_prompt_and_leaf_wire_are_unchanged_when_rules_are_supplied() -> None:
+async def test_disabled_distribution_search_preserves_prompt_and_leaf_wire() -> None:
     old = ScriptedClient(
         bootstrap(["Console", "Game", "Sales"], ["Console", "Game"]),
         json.dumps(

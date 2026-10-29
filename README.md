@@ -1,42 +1,75 @@
 # blue-data-llm-source
 
-`blue-data-llm-source` is a Blue data source that makes a language model's general knowledge, including common-sense information, queryable as typed records (natural language → LLM → table). A caller submits a natural-language request and may declare an attribute schema. For larger data requests, the source can plan retrieval beyond a single model response. In planned modes, it can rewrite the request, infer or complete the output schema, estimate row count, and divide the query into hierarchical data tasks. It executes those tasks under explicit limits, checks the returned records against the schema, and merges records that share an identified key. Together, partitioning, task execution, and merging form a map-reduce process. The Python library, command-line interface, and MCP server expose the records and execution metadata. The records can be used alongside those from other Blue data sources.
+`blue-data-llm-source` makes an LLM's parametric knowledge queryable as structured tables (natural language → LLM → table).
 
-[Full documentation](docs/README.md) · [Quick start](docs/quickstart.md) · [Installation](docs/installation.md) · [Examples](examples/README.md) · [Changelog](CHANGELOG.md)
+Agentic systems may require common-sense information beyond the coverage of maintained data sources, or additional tables that connect records across sources. For large data requests, the source can rewrite queries, infer an output schema, estimate row count, and organize retrieval into hierarchical tasks, with partitioned execution and result aggregation following a MapReduce pattern.
 
-## Data source
+→ **[Full documentation](docs/README.md)** · **[Quick start](docs/quickstart.md)** · **[Installation](docs/installation.md)** · **[Examples](examples/README.md)** · **[CLI](docs/cli.md)** · **[MCP](docs/mcp.md)**
 
-`LlmSource` uses a language model as its source of records. It has no maintained table, document corpus, or index; optional caches can reuse earlier model responses. For example, a query for European Union member states can declare `country` and `accession_year:int` as output attributes.
+## What it does
+A caller submits a natural-language request and may declare an attribute schema. For larger data requests, the source can plan retrieval beyond a single model response. In planned modes, it can rewrite the request, infer or complete the output schema, estimate row count, and divide the query into hierarchical data tasks. It executes those tasks under explicit limits, checks the returned records against the schema, and merges records that share an identified key. The Python library, command-line interface, and MCP server expose the records and execution metadata. The records can be used alongside those from other Blue data sources.
 
-The source implements the Blue `DataSource` interface under protocol `llm` and variant `openai`. A Postgres source uses the same interface under protocol `sql` and variant `postgres`.
+- **Fetch** records from a natural-language request, using caller-declared attributes and types or a schema inferred in a planned mode.
+- **Plan** requests in a selected non-flat mode by rewriting the query, estimating row count, and forming bounded hierarchical tasks. The estimate is a planning hint, not a coverage measure.
+- **Partition** a request into smaller model calls, continue a part when more records are needed, and merge records by an identified key.
+- **Check** returned fields and declared types while reporting outcomes, model usage, costs, observed gaps, and record origins in partitioned runs.
+- **Bound** returned rows when a row limit is set and, with a reservation-aware client, provider calls, time, and estimated cost. Optional caches reuse equivalent responses.
+- **Integrate** generated records with other Blue sources through the shared `DataSource` interface. The Python library, `blue-llmdb` command, and MCP server expose the records to callers.
 
-## Primary uses
+See [features](docs/features.md) for the behavior and its limits, and [examples](examples/README.md) for runnable programs.
 
-* `LlmSource` gives structured access to common-sense and other model knowledge, particularly when an agent needs a large set of records or lacks a suitable maintained data source. Callers can use the typed records directly or pass them to operators for filtering, aggregation, and joins with other sources.
+## Repository layout
 
-* `LlmSource` can generate a table needed to combine data from existing sources. An agent or data planner can request the table on demand. For example, generated `eu_members(country, accession_year)` records can be joined on `country` with Postgres `vendors(name, country)` rows. A downstream operator performs the join.
+```text
+blue-data-llm-source/
+├── README.md                       # this overview
+├── CHANGELOG.md                    # release history
+├── LICENSE                         # repository license
+├── NOTICE                          # attribution notice shipped with each package
+├── CODE_OF_CONDUCT.md              # Contributor Covenant code of conduct
+├── .gitignore                      # local environments, caches, and build output
+├── lib/                            # blue-data-llm-source Python library
+│   ├── README.md                   # library methods, settings, and limits
+│   ├── COMPATIBILITY.md            # DataSource integration and migration
+│   ├── LICENSE                     # library license
+│   ├── NOTICE                      # attribution notice
+│   ├── pyproject.toml              # package metadata and development tools
+│   ├── scripts/install.sh          # installs sibling blue-data and the library
+│   ├── scripts/build.sh            # builds wheel and sdist
+│   ├── scripts/publish.sh          # validates and uploads distributions
+│   ├── src/blue_data_llm_source/   # source, planning, execution, and model clients
+│   └── tests/                      # library tests
+├── platform/
+│   ├── llm-cli/                    # blue-llmdb command, installer, license and notice, and tests
+│   └── llm-mcp/                    # blue-data-llm-mcp stdio server, installer, license and notice, and tests
+├── docs/                           # installation, user guides, and API reference
+│   ├── README.md                   # documentation index
+│   ├── quickstart.md               # provider-backed walkthrough
+│   ├── installation.md             # installation paths and extras
+│   ├── features.md                 # feature examples and limits
+│   ├── guide.md                    # Python usage
+│   ├── api-reference.md            # library API and settings
+│   ├── extending.md                # client and cache extensions
+│   ├── cli.md                      # command reference
+│   ├── mcp.md                      # server and tool reference
+│   └── architecture.md             # component and request flows
+├── examples/                       # runnable scripts and captured output
+│   ├── backends/                   # model-client and cache examples
+│   ├── feature-demos/              # individual source behaviors
+│   ├── framework-demos/            # agent framework integrations
+│   ├── integration-demos/          # Blue data-layer examples
+│   └── scenario-demos/             # complete retrieval tasks
+└── design/                         # architecture, interface, and repository documents
+```
 
-* Large sets of records can exceed the capacity of a single model response or be returned incompletely. Partitioned retrieval divides a request into bounded parts, can request additional records for a part, and merges results by key. It reports observed gaps and limits, but does not verify factual accuracy or guarantee full coverage.
+## Requirements
 
-Model-generated records require independent verification when factual accuracy or coverage matters. The model's knowledge may be outdated. Use a maintained source for authoritative data, and a document or vector source for facts in private documents.
+- Python 3.10 or later (declared minimum); Python 3.12 is the tested setup.
+- A `blue-data` checkout beside this repository, on its `1.0` branch: the CLI requires `blue-data==1.0.0`, which provides `blue_data.utils.config`. Its `lib/` directory is a local dependency and is not available from a package index. The installer looks for `../blue-data/lib` from this repository root; set `BLUE_DATA_PATH` to that directory if the checkout is elsewhere.
+- Access to the declared Python dependencies through a package index or local wheels during installation.
+- A provider API key for calls made through the built-in model client. The offline quick start below uses a local function and needs no key.
 
-## Features
-
-- Natural-language queries return records with caller-declared attributes and types. In planned modes, the source can infer an output schema and key when the caller does not provide them.
-- Planning can rewrite the request, estimate the expected number of rows, and divide a large request into bounded parts. The row estimate is a planning hint, not a completeness measure.
-- Partitioned retrieval can continue a part to request more records, merge records with the same key, and report which parts produced each record. The opt-in `plan.split_policy="evidence"` asks once before splitting; [the changelog](CHANGELOG.md#220--candidate) reports its measured results. With the default client, `llm.max_parallel` limits concurrent provider calls per event loop.
-- Values are checked against declared types, and returned fields are aligned with requested attributes. Mismatches and unmatched fields remain visible in result metadata.
-- Every request can cap returned rows. Provider-call, time, and cost ceilings are available when the configured client supports usage reservation. `estimate` checks a flat fetch without provider contact and returns a cost bound when pricing is available; otherwise it reports why no bound is available.
-- Each `fetch` result includes records and metadata about the outcome, model usage, cost, elapsed time, and detected gaps. Optional caches can reuse equivalent model responses.
-- The Python library, command-line interface, MCP server, and Blue `DataSource` interface expose the source to applications and agent workflows.
-
-`LlmSource` does not verify facts or measure completeness. `meta.outcome=ok` means no execution failure was detected; an empty `meta.gaps` means no supported diagnostic fired. Neither field establishes that the records are correct or complete. [docs/guide.md](docs/guide.md) explains these fields and their limits.
-
-## Using it
-
-### Install
-
-Keep `blue-data` in a separate checkout beside `blue-data-llm-source`, under the same parent directory. From this repository root, its library is at `../blue-data/lib`:
+Keep the two checkouts under one parent directory:
 
 ```text
 workspace/
@@ -44,142 +77,98 @@ workspace/
 └── blue-data-llm-source/
 ```
 
-Run these commands from `blue-data-llm-source`. Create the environment once; Conda may ask for confirmation. If `blue-llmdb` already exists, skip this block and activate it below.
+For a provider-backed OpenAI call, enter the key without putting its value in shell history:
 
 ```bash
-ls -d ../blue-data/lib &&
-conda create --name blue-llmdb python=3.12 pip
+printf 'OpenAI API key: '
+IFS= read -rs OPENAI_API_KEY
+printf '\n'
+export OPENAI_API_KEY
 ```
 
-Paste the next block after Conda finishes. The chain stops if activation or an install fails.
+See [installation](docs/installation.md) for component installers, extras, and other supported environments.
+
+## Quick start
+
+From the `blue-data-llm-source` checkout, with `blue-data` beside it and Python 3.12 installed. Use a new environment; for an existing `.venv`, check its Python version before reusing it. Python 3.15 uses a compatibility wheelhouse; see [installation](docs/installation.md#python-315-installation).
 
 ```bash
-conda activate blue-llmdb &&
-python -m pip install -e ../blue-data/lib &&
-python -m pip install -e "./lib[llm]" &&
-python -m pip install -e ./platform/llm-cli &&
-blue-llmdb metadata inspect
+test ! -e .venv &&
+python3.12 -m venv .venv &&
+source .venv/bin/activate &&
+python --version &&
+./lib/scripts/install.sh &&
+./platform/llm-cli/scripts/install.sh &&
+python examples/backends/function_client_quickstart.py
 ```
 
-If Conda cannot activate the environment, run `conda init zsh` (or `conda init bash`) once, open a new terminal, return to this checkout, and rerun the second block. If the CLI is already installed, activate its environment and start with `blue-llmdb metadata inspect`. [Installation](docs/installation.md) also covers `venv`, the install scripts, and the MCP package.
-
-### Python
-
-`fetch` asks for records; `estimate` checks the cost of one flat fetch without contacting a provider and returns a bound when pricing is available. The `llm_fn` below stands in for the model so the snippet runs offline. Omit it to use the model named by `llm.model`, which needs the `llm` extra and a provider key in the environment.
-
-```python
-from blue_data_llm_source import LlmSource
-
-source = LlmSource()
-query = "the member states of the European Union"
-attrs = [{"name": "country", "type": "string"}, {"name": "accession_year", "type": "int"}]
-
-sized = source.estimate(query, attrs=attrs)
-print(sized.bounded, sized.model, sized.max_cost)
-
-result = source.fetch(
-    query,
-    attrs=attrs,
-    llm_fn=lambda prompt: '[{"country": "France", "accession_year": "1958"}]',
-)
-print(result.records, result.meta.outcome, result.meta.type_mismatches)
-```
-
-[docs/guide.md](docs/guide.md) works through the library task by task, and [lib/README.md](lib/README.md) is the reference.
-
-### Command line
-
-```bash
-# Keep the key where the CLI can find it, out of shell history
-blue-llmdb profile config OPENAI_API_KEY
-
-# Price the request first. This contacts nothing and needs no key.
-blue-llmdb data estimate "the member states of the European Union" --format nl
-
-# Ask for records, and cap what the request may spend
-blue-llmdb data query "the member states of the European Union" \
-    --attr country --attr accession_year:int --limit-cost 0.50
-```
-
-The table ends with a footer naming the model, calls, tokens, cost and elapsed time, and a line listing each setting and where it came from. [docs/quickstart.md](docs/quickstart.md) walks through the CLI with the output at each step, and [docs/cli.md](docs/cli.md) is the reference.
-
-### MCP server for agents
-
-`blue-data-llm-mcp` serves five tools over stdio: `llmdb_query`, `llmdb_estimate`, `llmdb_list_models`, `llmdb_inspect_model` and `llmdb_inspect_metadata`. Only `llmdb_query` contacts a provider. The operator sets the model and ceilings in the client's server config, and an agent can tighten a ceiling for one call but not raise it:
-
-```json
-{
-  "mcpServers": {
-    "blue-data-llm": {
-      "command": "blue-data-llm-mcp",
-      "env": {
-        "OPENAI_API_KEY": "<YOUR_PROVIDER_KEY>",
-        "BLUE_DATA_LLM_SOURCE_LIMIT_COST": "0.50"
-      }
-    }
-  }
-}
-```
-
-Install it with `python -m pip install -e ./platform/llm-mcp` in the environment above. [docs/mcp.md](docs/mcp.md) covers every tool and setting.
-
-### In the data layer
-
-Build the source, register it, and reach it through the registry like any other source. `execute_query_nl` returns a plain `list[dict]`; use `fetch` when you need the metadata. This call reaches the provider:
-
-```python
-from blue_data.registry.data_registry import DataRegistry
-from blue_data_llm_source import LlmSource
-
-registry = DataRegistry(name="MY_REGISTRY")
-registry.register_source(LlmSource(name="llm"))
-
-eu_members = registry.connect_source("llm").execute_query_nl(
-    "the member states of the European Union",
-    optional_properties={"attrs": ["country", "accession_year"], "limits.max_cost": 0.25},
-)
-```
-
-A `limits.*` key in `optional_properties` bounds that call only. [lib/COMPATIBILITY.md](lib/COMPATIBILITY.md) describes how the source fits the data-layer interface and what it does differently.
-
-## Models and cost
-
-The default model is `gpt-6-luna` at medium reasoning. The package knows OpenAI's GPT-6, GPT-5.x, GPT-4.1, GPT-4o and o-series models, sends each the request settings it accepts, and bounds a cost ceiling against its published rates; the [supported models](lib/README.md#supported-models) table lists them with prices. The rates are a static snapshot, so treat `limits.max_cost` as a control against known rates, not a billing stop, and supply `llm.price_per_input_token` and `llm.price_per_output_token` to use rates you maintain. [The cost bound](lib/README.md#the-cost-bound) explains the bound and how a call is charged, and [what `cost` means](lib/README.md#what-cost-means) how to read the figure a run reports.
-
-## Requirements
-
-- Python 3.10 or later.
-- A local checkout of the `blue-data` repository, beside this one. It is not published to a package index, so it is installed from the checkout. `lib/scripts/install.sh` looks for it at `../blue-data/lib` from the repository root; set `BLUE_DATA_PATH` to its `lib` directory if it is elsewhere.
-- A model provider API key, for anything other than an injected client or an `llm_fn`. The library never reads the key; the provider SDK does, so a missing or wrong key arrives as a failed call: `TransportError` from the library, exit code 5 from the CLI.
-
-The runtime dependencies are `blue-data>=0.1.0` and `tenacity>=9.0.0`, with provider support in the optional `llm` extra. `blue-data` has no pinned revision, so run the library tests after installing or upgrading it; `lib/tests/unit/compat/test_contract.py` checks the installed contract.
-
-## Repository layout
-
-```
-blue-data-llm-source/
-├── lib/                        # Python library (blue-data-llm-source)
-│   ├── src/blue_data_llm_source/
-│   └── tests/
-├── platform/
-│   ├── llm-cli/                # Command line: blue-data-llm-cli, the blue-llmdb command
-│   │   ├── src/blue_data_llm_cli/
-│   │   └── tests/
-│   └── llm-mcp/                # MCP server: blue-data-llm-mcp, five tools over stdio
-│       ├── src/blue_data_llm_mcp/
-│       └── tests/
-├── docs/                       # User-facing documentation (start at docs/README.md)
-├── examples/                   # Runnable scripts with captured output (start at examples/README.md)
-├── design/                     # Architecture and design-process documents
-├── CHANGELOG.md
-└── LICENSE
-```
-
+The example passes a local answer through the normal fetch, parsing, type-checking, and result-metadata path. The CLI is also installed in this environment. For a provider-backed query or optional MCP setup, continue with the [full quick start](docs/quickstart.md).
 
 ## Packages
 
 | Package | Description |
 |---|---|
-| [lib/](lib/README.md) | `blue-data-llm-source`, the library |
-| [platform/llm-cli/](platform/llm-cli/README.md) | `blue-data-llm-cli`, the `blue-llmdb` command |
-| [platform/llm-mcp/](platform/llm-mcp/README.md) | `blue-data-llm-mcp`, the MCP server |
+| [lib/](lib/README.md) | `blue-data-llm-source`: the `LlmSource` Python library; installs no console command |
+| [platform/llm-cli/](platform/llm-cli/README.md) | `blue-data-llm-cli`: installs the `blue-llmdb` command for profiles, model inspection, cost estimation, and record queries |
+| [platform/llm-mcp/](platform/llm-mcp/README.md) | `blue-data-llm-mcp`: installs the `blue-data-llm-mcp` command serving five tools over stdio |
+
+## Testing
+
+With each component's `dev` extra and the library's `llm` extra installed, run from the repository root:
+
+```bash
+(cd lib && python -m pytest)
+(cd platform/llm-cli && python -m pytest)
+(cd platform/llm-mcp && python -m pytest)
+python -m pytest -q tests/integration/test_offline_examples.py
+```
+
+The last command runs the 14 no-key examples in isolated processes and compares their output with the captured examples. The guard blocks Python socket connections, datagram sends and subprocess helpers. Provider-backed examples are excluded. This smoke suite is verified on macOS with Python 3.12 and 3.15; Linux, Windows and free-threaded builds have not been verified.
+
+## Code of conduct
+
+This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md), the same one that governs [Blue](https://github.com/megagon-internal/blue?tab=coc-ov-file). By participating, you are expected to uphold it. Report unacceptable behavior to contact_oss@megagon.ai.
+
+## Disclosures
+
+This software may include, incorporate, or access open source software (OSS) components, datasets and other third party components, including those identified below. The license terms respectively governing the datasets and third-party components continue to govern those portions, and you agree to those license terms may limit any distribution, use, and copying. You may use any OSS components under the terms of their respective licenses, which may include BSD 3, Apache 2.0, and other licenses. In the event of conflicts between Megagon Labs, Inc. (“Megagon”) license conditions and the OSS license conditions, the applicable OSS conditions governing the corresponding OSS components shall prevail. You agree not to, and are not permitted to, distribute actual datasets used with the OSS components listed below. You agree and are limited to distribute only links to datasets from known sources by listing them in the datasets overview table below. You agree that any right to modify datasets originating from parties other than Megagon are governed by the respective third party’s license conditions. You agree that Megagon grants no license as to any of its intellectual property and patent rights. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS (INCLUDING MEGAGON) “AS IS” AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. You agree to cease using, incorporating, and distributing any part of the provided materials if you do not agree with the terms or the lack of any warranty herein. While Megagon makes commercially reasonable efforts to ensure that citations in this document are complete and accurate, errors may occur. If you see any error or omission, please help us improve this document by sending information to contact_oss@megagon.ai.
+
+This repository's [LICENSE](LICENSE) is BSD 3-Clause with an additional Attribution / NOTICE Requirement. Redistributions must retain the [NOTICE](NOTICE) or equivalent attribution; it is not an unmodified BSD-3-Clause grant. Each package archive includes its license and notice. Third-party components retain their own terms.
+
+### Datasets
+
+All datasets used within the product are listed below (including their copyright holders and the license information).
+
+For Datasets having different portions released under different licenses, please refer to the included source link specified for each of the respective datasets for identifications of dataset files released under the identified licenses.
+
+</br>
+
+| ID  | Dataset Name | Modified | Copyright Holder | Upstream Link | License  |
+|-----|----------------------------------|----------|------------------|-----------------------------------------------------------------------------------------------------------|--------------------|
+| 1 | WikiTabGen (table #15 query and 11 column names, embedded in [`examples/scenario-demos/partitioned_wikitabgen_demo.py`](examples/scenario-demos/partitioned_wikitabgen_demo.py); the dataset is not distributed) | No | Not established | [link](https://github.com/analysis-bots/WikiTabGen) | Not established locally |
+
+The test cassettes contain generated model responses, with a recording script and receipt under `lib/tests/`; they are fixtures, not an external benchmark dataset. The local source does not establish the WikiTabGen license or redistribution rights; this reference grants none. Provider-generated output and data supplied by callers require their own rights and accuracy review.
+
+### Open Source Software (OSS) Components
+
+All OSS components used within the product are listed below (including their copyright holders and the license information).
+
+For OSS components having different portions released under different licenses, please refer to the included Upstream link(s) specified for each of the respective OSS components for identifications of code files released under the identified licenses.
+
+</br>
+
+| ID  | OSS Component Name | Modified | Copyright Holder | Upstream Link | License  |
+|-----|----------------------------------|----------|------------------|-----------------------------------------------------------------------------------------------------------|--------------------|
+| 1 | Blue data | No | Megagon Labs, Inc. | [link](https://github.com/megagon-internal/blue-data) | BSD 3-Clause with Attribution / NOTICE Requirement |
+| 2 | tenacity | No | Julien Danjou | [link](https://github.com/jd/tenacity) | Apache Software License |
+| 3 | LiteLLM | Yes (Python 3.15 build) | Berri AI | [link](https://github.com/BerriAI/litellm) | MIT License |
+| 4 | fastuuid | Yes (Python 3.15 build) | Omer Katz | [link](https://pypi.org/project/fastuuid/) | BSD License |
+| 5 | diskcache | No | Grant Jenks | [link](https://github.com/grantjenks/python-diskcache) | Apache Software License |
+| 6 | click | No | Pallets | [link](https://github.com/pallets/click) | BSD License |
+| 7 | rich | No | Will McGugan | [link](https://github.com/Textualize/rich) | MIT License |
+| 8 | MCP Python SDK | No | Anthropic, PBC | [link](https://github.com/modelcontextprotocol/python-sdk) | MIT License |
+| 9 | langgraph (examples only) | No | LangChain, Inc. | [link](https://github.com/langchain-ai/langgraph) | MIT License |
+| 10 | langchain-openai (examples only) | No | LangChain, Inc. | [link](https://pypi.org/project/langchain-openai/) | MIT License |
+| 11 | langchain-mcp-adapters (examples only) | No | LangChain, Inc. | [link](https://github.com/langchain-ai/langchain-mcp-adapters) | MIT License |
+
+The first eight rows cover the direct runtime dependencies and the transitive fastuuid dependency used in the Python 3.15 compatibility build. The last three are installed separately to run the framework examples, which list them in their install commands. "Modified" marks the Python 3.15 compatibility builds, which are patched copies of the upstream releases (see [installation](docs/installation.md#python-315-installation)); the LiteLLM row covers the MIT-licensed core, and separately licensed enterprise code has its own terms. Transitive dependencies, including pandas, NumPy and jsonpath-ng through Blue data, retain their own licenses and bundled notices. Development tools (`pytest`, `pytest-asyncio`, `pytest-cov`, `jsonschema`, Ruff, Pyright, build and Twine) are separate from the runtime inventory; consult their licenses when installing them.

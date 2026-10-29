@@ -18,10 +18,9 @@ Every path that returns records ends up in `LlmSource.afetch`. The adapters tran
 ```
                           External interfaces
 
-  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
-  │  Python lib   │  │  MCP server   │  │      CLI      │  │   REST API    │
-  │  (available)  │  │  (available)  │  │  (available)  │  │(not available)│
-  └───────┬───────┘  └───────┬───────┘  └───────┬───────┘  └───────────────┘
+  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+  │  Python lib   │  │  MCP server   │  │      CLI      │
+  └───────┬───────┘  └───────┬───────┘  └───────┬───────┘
           └──────────────────┴──────────────────┘
                              │
                              ▼
@@ -60,31 +59,31 @@ Every path that returns records ends up in `LlmSource.afetch`. The adapters tran
                      └────────────────────────────┘
 ```
 
-There is no REST interface, and none is scheduled. No package contains an HTTP application, route handler, or server dependency.
+The MCP server uses stdio.
 
 ## Components
 
 | Component | Module | Role |
 |---|---|---|
 | `LlmSource` | `source.py` | The facade, and the only class most callers touch. Resolves the client, assembles limits, folds accounting into the result, decides the outcome |
-| Argument checks | `checks.py` | Normalises the query, attributes, context, and counts. Every message names the offending value and the accepted form |
+| Argument checks | `checks.py` | Normalizes the query, attributes, context, and counts. Every message names the offending value and the accepted form |
 | Prompts | `prompts/` | Every prompt this package sends, in one module. Caller text is inserted as a value and never re-read as a template |
 | Planning | `planning/` | Builds analysis, schema, and cardinality facts for a non-flat request, then a bounded task tree |
-| Execution | `execution/` | Turns accepted plan leaves into versioned tasks and runs them concurrently under the shared budget |
+| Execution | `execution/` | Turns accepted plan leaves into versioned tasks and runs them with bounded asynchronous concurrency in one process under the shared budget |
 | Model boundary | `llm/` | `DefaultLlmClient`, `FunctionClient`, `Budget`, `Limits`, `Reservation`, the model table in `models`, and the cost bound in `pricing` |
 | Cache stores | `cache/` | `MemoryCache` and `FileCache`, both standard-library only |
 | Reduction | `reduction/` | Parses the response, aligns returned keys to requested attributes, coerces declared types, and removes duplicates |
 | Shared contracts | `types.py`, `views.py`, `_constants.py` | The dataclasses, protocols, exception hierarchy, outcome vocabulary, and the one serialization of `ExecMeta` every adapter publishes |
 | Compatibility alias | `compat/blue_data.py` | Binds `BlueDataLlmSource` to `LlmSource` so an older import keeps working |
 
-`LlmSource` extends `blue_data.source.source.DataSource`, so it implements the data-layer source type directly. Only `source.py` imports `blue_data`; the package does not import the `blue` or `blue_data_ops` orchestration layers. A test enforces that dependency boundary.
+`LlmSource` extends `blue_data.source.source.DataSource`, so it implements the data-layer source type directly. Within the library, only `source.py` imports `blue_data`; the CLI uses its shared configuration engine; the package does not import the `blue` or `blue_data_ops` orchestration layers. A test enforces that dependency boundary.
 
 ## Data flow: a flat fetch
 
 The default path sends one question in one model call and returns one list of records.
 
-1. Arguments are normalised. A query that is not a string is a caller mistake and raises; an empty one is an empty ask and returns immediately with `outcome="empty_query"`, before a budget or a client exists.
-2. Instance properties, an injected client's own properties, and per-call properties are merged in that precedence order. Every `llm.*`, `limits.*`, and `plan.*` name is checked against a closed set, so a misspelling is refused rather than accepted and ignored.
+1. Requested attributes, context, and row caps are normalized. Properties are resolved in order: defaults, injected-client properties, instance properties, then per-call properties. Later values take precedence, so source properties override client settings. Per-call ceilings are then combined by minimum with the resolved configuration. A call's `None` adds no cap and cannot clear an explicit source ceiling; an explicit source `None` can override a client ceiling through property precedence. Explicit retry `None` is invalid; `max_records` is clamped by the effective row ceiling. Every `llm.*`, `limits.*`, and `plan.*` name is checked against a closed set.
+2. The query is checked next. `None` and empty or whitespace strings return `outcome="empty_query"` after property-name and limit validation, before a run budget is built or a client is called. Other non-string inputs raise.
 3. The run's budget is built from the resulting `Limits`: a fresh one, or a child derived from a `Budget` you supplied, which spends only what you have left.
 4. A client is resolved: an `llm_fn` passed to this call wins, then a client injected at construction, then the built-in provider client. Its shape is checked, and every configured ceiling on an axis it does not declare is refused.
 5. The prompt is rendered and sent. Before each provider attempt the client bounds what that attempt can cost and claims it, along with one call and the elapsed-time check, under a lock.
@@ -108,7 +107,7 @@ For a non-flat request the planning stages run first, under one of five closed s
 
 A planning stage that fails to parse does not fail the request. It falls back to what the caller declared, records a diagnostic in `meta.gaps`, and the run continues, so a decomposed request degrades to a flat one rather than raising.
 
-Planning is breadth-first and bounded on all axes: `plan.max_depth`, `plan.max_partitions`, `plan.max_leaves`, `plan.max_strategy_candidates`, and the shared budget. A plan that cannot fit the leaf cap is rejected whole rather than run as a prefix.
+Planning is breadth-first and bounded on all axes: `plan.max_depth`, `plan.max_partitions`, `plan.max_leaves`, `plan.max_strategy_candidates`, and the shared budget. At a partitioned root, values beyond the leaf cap are grouped into at most that many leaves. Other expansions that cannot fit are left intact.
 
 Ready leaves then run concurrently through the leaf driver, each asking the same client under the same budget. Each leaf may ask again for records it did not get, up to `plan.max_continuations`. Records from overlapping parts are merged on an identity built from `plan.keys`, and `meta.record_origins` records which parts produced each record.
 
@@ -126,7 +125,7 @@ Direct Python callers can additionally opt into rule-backed distribution search 
 
 The estimate and runtime reservation use the same prompt, model, output allowance, and bound calculation. A request estimated within a ceiling therefore uses the same bound when it runs.
 
-`estimate` reads no `plan.*` setting. A decomposed request costs this figure times the calls it makes.
+`estimate` reads no `plan.*` setting. Its bound covers one flat fetch, including retries. A non-flat run may make planning and extraction calls with different prompts; this estimate does not bound their combined cost.
 
 ## The budget
 
@@ -136,10 +135,10 @@ The budget has four optional axes. `None` means unlimited on that axis.
 |---|---|---|
 | `limits.max_calls` | Claimed before each provider attempt, retries included | The answering client |
 | `limits.max_seconds` | Checked at admission and bounds each cooperative wait | The answering client |
-| `limits.max_cost` | An upper bound is claimed before the attempt. A measured cost settles it; otherwise [the cost bound](../lib/README.md#the-cost-bound) sets the charge | The answering client |
+| `limits.max_cost` | An upper bound is claimed before the attempt. A contacted attempt keeps at least the reservation; a higher readable figure raises the charge ([cost bound](../lib/README.md#the-cost-bound)) | The answering client |
 | `limits.max_rows` | Applied once the records are parsed, because that is when the count exists | `LlmSource` itself |
 
-Calls, time, and cost are claimed *before* the provider is contacted. Cost is unknown until a call returns, so the reservation uses an upper bound: the prompt's UTF-8 byte length plus a framing allowance at the model's input rate, plus the full output allowance at its output rate, raised for the cache-write, long-context and regional-processing charges the model's table entry records. If the bound cannot be established, the request is refused under a cost ceiling. [The cost bound](../lib/README.md#the-cost-bound) has the full rule, including how a call is settled once it returns.
+Calls, time, and cost are claimed *before* the provider is contacted. Cost is unknown until a call returns, so the reservation uses a bound against the package or configured rates: the prompt's UTF-8 byte length plus a framing allowance at the model's input rate, plus the full output allowance at its output rate, raised for the cache-write, long-context and regional-processing charges the model's table entry records. If the bound cannot be established, the request is refused under a cost ceiling. Stale rates or inaccurate provider usage can still leave the ledger below the invoice. [The cost bound](../lib/README.md#the-cost-bound) has the full rule, including how a call is settled once it returns.
 
 Claims use one lock shared by a budget family, so concurrent leaves cannot collectively overspend while each sees room for another call. Each claim resolves exactly once: it is settled at the charge [the cost bound](../lib/README.md#the-cost-bound) assigns, or released if the attempt never reached the provider.
 
@@ -166,27 +165,29 @@ Four stages of plain functions. None of them calls a model, holds state, or impo
 | Stage | What it does | What it reports |
 |---|---|---|
 | `parsing` | Strips one surrounding code fence, reads the body as JSON, and produces a list of record objects. A single object is wrapped; a wrapper object whose only key is `items`, `rows`, `data`, or `results` is unwrapped | `ParseError` carrying the raw text when the response cannot be read as records, including when an object repeats a key at any depth |
-| `aligner` | Maps returned keys onto requested attributes (exact, then case-insensitive, then a normalised match ignoring separators) | `meta.remapped_keys`, `meta.unmapped_keys`, `meta.key_collisions` |
+| `aligner` | Maps returned keys onto requested attributes (exact, then case-insensitive, then a normalized match ignoring separators) | `meta.remapped_keys`, `meta.unmapped_keys`, `meta.key_collisions` |
 | `verifier` | Coerces values to their declared types where the coercion is unambiguous, drops records that answered nothing, removes exact duplicates | `meta.type_mismatches`, `meta.unchecked_types` |
 | `identity` and `coverage` | Builds a composite key from `plan.keys`, consistently across continuations, merging, and rule validation | `meta.primary_keys`, `meta.observed_key_count`, `meta.marginal_key_yields`, `meta.incomplete_key_records`, `meta.normalization_collisions` |
 
-Nothing is discarded quietly. A value that will not coerce is kept and reported rather than dropped, because losing a record over a formatting mismatch loses data you asked for. A returned key that matched nothing is reported, never swallowed, because a caller who asked for `iata_code` and got `IATA` should learn it from the result and not from an empty column.
+A value that will not coerce is kept and reported because a formatting mismatch should not lose a record. An unmatched returned key is reported so a caller can diagnose an empty column.
 
 ## The data layer
 
-`LlmSource` registers and answers like any other source in the layer. It reports protocol `llm` and variant `openai`, and synthesises a one-database, one-collection, one-entity hierarchy so a registry sync has something to walk. A model has none of its own.
+`LlmSource` registers and answers like any other source in the layer. It reports protocol `llm` and variant `openai`, and synthesizes a one-database, one-collection, one-entity hierarchy so a registry sync has something to walk. A model has none of its own.
 
-Inheriting the base class does not make the source reachable by protocol name. Build the source and hand the instance to `register_source`; the registry records the class alongside `name` and `properties`, and `connect_source` returns the live instance while it is present and reconstructs an equivalent one from the record afterwards.
+Inheriting the base class does not make the source reachable by protocol name. Build the source and hand the instance to `register_source`; the registry records the class alongside `name` and `properties`, and `connect_source` returns the live instance while it is present and reconstructs a new source from the record afterwards.
+
+The registry stores the source's own properties, not its injected client or the client's settings. Put ceilings, model and rates on the source when they must survive registration and reconstruction; a rebuilt source starts with the default client.
 
 `execute_query` and `execute_query_nl` return a plain `list[dict]`, because that is what the shared surface returns. Call `fetch` when you need the outcome, the stop information, the accounting, or the schema diagnostics.
 
-## What this architecture does not contain
+## Result limits and local execution
 
-- A completeness or recall measure. Per-slice row estimates guide splitting. `meta.row_estimate` is an accepted planning hint, not an expected count, and `meta.gaps` being empty says no supported diagnostic fired rather than that nothing is missing.
-- A factual validator. Format verification against declared types ships; verification that a record is true does not.
-- A retrieval or grounding path. The premise is closed-book: answers come from the model's own knowledge, not from a corpus.
-- A distributed runtime. Leaves run with bounded local concurrency through serializable task and result contracts. No worker service, broker, or cluster is supplied.
-- A cache server. The two included stores are a process-local dictionary and a directory of JSON files. Other backends can be supplied through the `CacheStore` protocol.
+- Per-slice row estimates guide splitting. `meta.row_estimate` is a planning hint, not a completeness or recall measure; an empty `meta.gaps` means no supported diagnostic fired.
+- Type verification checks format against declared types. The library does not verify whether a record is true. Answers come from the model's own knowledge, without corpus retrieval or grounding.
+- Leaves run with bounded local concurrency through serializable task and result contracts. The included caches are a process-local dictionary and a directory of JSON files; other backends can use the `CacheStore` protocol.
+- The configured `llm.model` is used for planning and extraction; the source does not select a model automatically.
+- Reduction normalizes declared keys and deduplicates by those keys; it does not resolve aliases between differently named entities.
 
 ## Where to go next
 

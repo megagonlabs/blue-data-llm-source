@@ -449,11 +449,9 @@ class TestImpossibleConfigurationIsRefused:
 
 
 class TestATruncatedAnswerIsRecoveredRatherThanDiscarded:
-    """The loop used to lose a whole call to a response that stopped mid-record.
+    """A truncated response keeps whole records above the cut.
 
-    A parse failure ended the leaf, so the records already finished above the cut went with
-    it — and the call that produced them had been billed. These fix that the rows survive,
-    that the leaf carries on from them, and that the answer still says it is short.
+    The leaf continues from those records and still reports a short answer.
     """
 
     def a_model(self, count: int = 6, *, after: int = 2, **kw: Any) -> TruncatingModel:
@@ -469,8 +467,7 @@ class TestATruncatedAnswerIsRecoveredRatherThanDiscarded:
         assert result.error is None
 
     def test_a_truncated_answer_is_never_an_exception(self) -> None:
-        # The whole point. Before this the caller got a ParseError instead of the rows it
-        # had paid for.
+        # Completed records remain available when the response ends mid-record.
         result = run_one(self.a_model(), key="name", limits=PlanLimits(max_continuations=0))
 
         assert result.failed is False
@@ -589,7 +586,7 @@ class TestTheAsyncDriverAgreesWithTheSyncOne:
         assert asynchronous.outcome == synchronous.outcome
         assert asynchronous.at_cap == synchronous.at_cap
 
-    async def test_the_async_driver_honours_the_continuation_cap(self) -> None:
+    async def test_the_async_driver_honors_the_continuation_cap(self) -> None:
         result = await self.arun(
             [rows("Paris"), rows("Lyon"), rows("Nice")],
             key="name",

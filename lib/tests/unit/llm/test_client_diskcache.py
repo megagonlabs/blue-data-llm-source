@@ -3,17 +3,15 @@
 Every test here carries ``uses_local_store``: diskcache is backed by a local sqlite file,
 which the offline guard blocks by default. Remote drivers stay blocked throughout.
 
-This is the one part of the ported client whose tests do not carry over from the project
-it was cloned from. That client drives its store with ``key in cache`` and ``cache[key]``;
-this one uses ``get`` and ``set`` so a store written to the published ``CacheStore``
-protocol works. Their cache tests therefore exercise a code path this package no longer
-has, and this file covers the one it does.
+The tests exercise the client's ``get`` and ``set`` calls on a disk-backed store.
 """
 
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -25,9 +23,103 @@ from tests.doubles import LitellmStub, chat_payload
 BASE = {"llm.model": "gpt-4o-mini", "llm.max_tokens": 512}
 
 
+@pytest.fixture(autouse=True)
+def diskcache_for_store_tests(request: pytest.FixtureRequest) -> None:
+    case = cast("pytest.Function", getattr(request, "node"))
+    if case.name != "test_requesting_the_cache_without_diskcache_fails_loudly":
+        pytest.importorskip("diskcache")
+
+
 def _client(tmp_path: Path, **props: Any) -> tuple[DefaultLlmClient, dict[str, Any]]:
     merged = {**BASE, "llm.cache": True, "llm.cache_dir": str(tmp_path / "c"), **props}
     return DefaultLlmClient(merged), merged
+
+
+@pytest.mark.uses_local_store
+def test_default_disk_cache_directory_is_private(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, litellm_stub: Any
+) -> None:
+    litellm_stub(LitellmStub(chat_payload("[]")))
+    monkeypatch.chdir(tmp_path)
+    client = DefaultLlmClient({**BASE, "llm.cache": True})
+
+    client.complete("p")
+
+    directory = tmp_path / ".llm_cache"
+    assert stat.S_IMODE(directory.stat().st_mode) & 0o077 == 0
+    assert (directory / "cache.db").exists()
+
+
+@pytest.mark.uses_local_store
+def test_permissive_disk_cache_directory_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, litellm_stub: Any
+) -> None:
+    stub = litellm_stub(LitellmStub(chat_payload("[]")))
+    monkeypatch.chdir(tmp_path)
+    directory = tmp_path / ".llm_cache"
+    directory.mkdir(mode=0o755)
+    os.chmod(directory, 0o755)
+    client = DefaultLlmClient({**BASE, "llm.cache": True})
+
+    with pytest.raises(ConfigError, match="private directory"):
+        client.complete("p")
+
+    assert stat.S_IMODE(directory.stat().st_mode) == 0o755
+    assert not (directory / "cache.db").exists()
+    assert stub.calls == []
+
+
+@pytest.mark.uses_local_store
+def test_expanded_disk_cache_directory_is_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, litellm_stub: Any
+) -> None:
+    stub = litellm_stub(LitellmStub(chat_payload("[]")))
+    monkeypatch.chdir(tmp_path)
+    directory = tmp_path / "shared"
+    directory.mkdir(mode=0o755)
+    os.chmod(directory, 0o755)
+    monkeypatch.setenv("LLM_TEST_CACHE_DIR", str(directory))
+    client = DefaultLlmClient({**BASE, "llm.cache": True, "llm.cache_dir": "$LLM_TEST_CACHE_DIR"})
+
+    with pytest.raises(ConfigError, match="private directory"):
+        client.complete("p")
+
+    assert not (directory / "cache.db").exists()
+    assert not (tmp_path / "$LLM_TEST_CACHE_DIR").exists()
+    assert stub.calls == []
+
+
+@pytest.mark.uses_local_store
+def test_private_expanded_disk_cache_directory_is_used(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, litellm_stub: Any
+) -> None:
+    stub = litellm_stub(LitellmStub(chat_payload("[]")))
+    directory = tmp_path / "private"
+    monkeypatch.setenv("LLM_TEST_CACHE_DIR", str(directory))
+    client = DefaultLlmClient({**BASE, "llm.cache": True, "llm.cache_dir": "$LLM_TEST_CACHE_DIR"})
+
+    client.complete("p")
+    client.complete("p")
+
+    assert (directory / "cache.db").exists()
+    assert len(stub.calls) == 1
+
+
+@pytest.mark.uses_local_store
+def test_cache_directory_error_does_not_quote_expanded_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, litellm_stub: Any
+) -> None:
+    stub = litellm_stub(LitellmStub(chat_payload("[]")))
+    blocker = tmp_path / "private_marker"
+    blocker.write_text("file, not a directory")
+    monkeypatch.setenv("LLM_TEST_CACHE_DIR", str(blocker / "cache"))
+    client = DefaultLlmClient({**BASE, "llm.cache": True, "llm.cache_dir": "$LLM_TEST_CACHE_DIR"})
+
+    with pytest.raises(ConfigError, match="llm.cache_dir cannot be opened") as caught:
+        client.complete("p")
+
+    assert "private_marker" not in str(caught.value)
+    assert stub.calls == []
 
 
 @pytest.mark.uses_local_store
@@ -184,13 +276,7 @@ def test_requesting_the_cache_without_diskcache_fails_loudly(
 
 @pytest.mark.uses_local_store
 def test_open_cache_backends_are_bounded_and_closable(tmp_path: Path) -> None:
-    """Every distinct cache_dir opened a backend and nothing ever closed one.
-
-    A retained client rotating cache directories — one per tenant, per day, per run —
-    accumulated SQLite descriptors until the process ran out of them, at which point
-    unrelated `open()` calls elsewhere in the same program began failing too. What surfaced
-    was `sqlite3.OperationalError`, from outside the documented error hierarchy.
-    """
+    """The client bounds open cache backends and closes them on shutdown."""
     client = DefaultLlmClient({**BASE, "llm.cache": True})
     for i in range(40):
         client._cache_for(  # pyright: ignore[reportPrivateUsage]  # the map under test

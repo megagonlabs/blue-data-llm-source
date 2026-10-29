@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from blue_data_llm_source.llm import pricing
+from blue_data_llm_source.llm import models, pricing
 from blue_data_llm_source.types import ConfigError
 
 
@@ -19,7 +19,7 @@ def test_the_pricing_surface_a_caller_may_rely_on_is_exported_from_the_package_r
 
     `PRICES` deliberately stays out of it: it is a mutable snapshot of time-sensitive list
     prices, so publishing the table would be a contract this package cannot keep across a
-    price change. What is published is behaviour over it.
+    price change. What is published is behavior over it.
     """
     import blue_data_llm_source as pkg
 
@@ -52,27 +52,27 @@ def test_gpt_6_luna_reservation_accounts_for_cache_writes() -> None:
     write_rate = 0.125 / 1_000_000
     output_rate = 0.50 / 1_000_000
     assert pricing.bound_cost(prompt, "gpt-6-luna", output_cap) == pytest.approx(
-        ((len(prompt) + pricing.FRAMING_TOKENS) * write_rate + output_cap * output_rate) * 1.10
+        ((len(prompt) + pricing.FRAMING_TOKENS) * write_rate * 2 + output_cap * output_rate * 1.5)
+        * 1.10
     )
 
 
-def test_gpt_6_luna_cache_threshold_includes_chat_framing() -> None:
+def test_gpt_6_luna_short_prompt_keeps_the_conservative_usage_factors() -> None:
     output_cap = 1
     standard_prompt = "x" * (1_024 - pricing.FRAMING_TOKENS - 1)
     cacheable_prompt = standard_prompt + "x"
-    standard_rate = 0.10 / 1_000_000
     write_rate = 0.125 / 1_000_000
     output_rate = 0.50 / 1_000_000
 
     assert pricing.bound_cost(standard_prompt, "gpt-6-luna", output_cap) == pytest.approx(
-        (1_023 * standard_rate + output_cap * output_rate) * 1.10
+        (1_023 * write_rate * 2 + output_cap * output_rate * 1.5) * 1.10
     )
     assert pricing.bound_cost(cacheable_prompt, "gpt-6-luna", output_cap) == pytest.approx(
-        (1_024 * write_rate + output_cap * output_rate) * 1.10
+        (1_024 * write_rate * 2 + output_cap * output_rate * 1.5) * 1.10
     )
 
 
-def test_gpt_6_luna_long_context_tier_cannot_be_underpriced() -> None:
+def test_gpt_6_luna_long_context_boundary_does_not_lower_the_reservation() -> None:
     output_cap = 100
     below = "x" * (272_000 - pricing.FRAMING_TOKENS)
     above = below + "x"
@@ -80,7 +80,7 @@ def test_gpt_6_luna_long_context_tier_cannot_be_underpriced() -> None:
     cache_write = 0.125 / 1_000_000
 
     assert pricing.bound_cost(below, "gpt-6-luna", output_cap) == pytest.approx(
-        (272_000 * cache_write + output_cap * base_out) * 1.10
+        (272_000 * cache_write * 2 + output_cap * base_out * 1.5) * 1.10
     )
     assert pricing.bound_cost(above, "gpt-6-luna", output_cap) == pytest.approx(
         (272_001 * cache_write * 2 + output_cap * base_out * 1.5) * 1.10
@@ -92,7 +92,7 @@ def test_a_dated_variant_resolves_to_its_family() -> None:
 
 
 def test_an_unlisted_model_is_refused_rather_than_guessed() -> None:
-    """A figure invented for an unknown price is not a bound, and a ceiling on it is a lie."""
+    """An unknown model price cannot establish a cost bound."""
     with pytest.raises(ConfigError, match="no published prices"):
         pricing.bound_cost("x", "some-model-released-next-year", 100)
 
@@ -140,7 +140,7 @@ def test_a_longer_name_is_a_different_model_not_a_variant() -> None:
 
 
 def test_the_bound_counts_bytes_because_tokens_can_outnumber_characters() -> None:
-    """The premise the bound rests on, and the one that had to be corrected.
+    """UTF-8 bytes bound token counts even when character counts do not.
 
     A tokenizer with no merge for a character emits several tokens for it, so characters do
     not bound tokens. Bytes do: every token consumes at least one byte of the encoding.
@@ -252,20 +252,10 @@ def _tokenizer_data_is_cached() -> bool:
 
 
 def _encoder() -> Any:
-    """The real tokenizer, or a skip when its data is not already on this machine.
-
-    `importorskip` covers the package being absent. It does not cover the case that actually
-    happens: the package is installed and its encoding table is not, which turns these tests
-    into a network call in a suite that forbids one. The cross-check is genuinely optional —
-    it verifies a premise against an external artifact rather than against this code — so an
-    absent table is a skip rather than a failure. Warm the cache once with network access and
-    these run everywhere after.
-    """
-    # Not bound to a name ending in "token": the repository's credential scanner reads that
-    # shape as an assigned secret, and it is right to.
+    """Use the tokenizer only when its encoding table is cached locally."""
     encoders = pytest.importorskip("tiktoken")
     if not _tokenizer_data_is_cached():
-        pytest.skip("tokenizer encoding table is not cached locally; run once with network")
+        pytest.skip("tokenizer encoding table is not cached locally")
     return encoders.get_encoding("o200k_base")
 
 
@@ -281,12 +271,7 @@ def _encoder() -> Any:
     ],
 )
 def test_the_byte_bound_is_never_below_a_real_tokenizer(label: str, text: str) -> None:
-    """The claim the whole cost ceiling rests on, checked against an actual tokenizer.
-
-    Skipped where the tokenizer is not installed, because it is not a dependency of this
-    package. Where it is available this is the only test that can falsify the premise, and
-    the premise has been wrong once already: characters do not bound tokens, bytes do.
-    """
+    """Check the UTF-8 byte bound against a tokenizer, when one is installed."""
     encoder = _encoder()
 
     real_tokens = len(encoder.encode(text))
@@ -298,9 +283,39 @@ def test_the_byte_bound_is_never_below_a_real_tokenizer(label: str, text: str) -
 
 
 def test_characters_would_not_have_been_a_bound() -> None:
-    """Kept as the counter-example, so the corrected premise cannot quietly regress."""
+    """An emoji sequence can require more tokens than characters."""
     encoder = _encoder()
 
     text = "\U0001f468‍\U0001f469‍\U0001f467‍\U0001f466" * 300
     assert len(encoder.encode(text)) > len(text), "characters under-count for this input"
     assert len(encoder.encode(text)) <= len(text.encode("utf-8")), "bytes do not"
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        name
+        for name, entry in models.MODELS.items()
+        if entry.long_context is not None or entry.cache_write is not None
+    ],
+)
+@pytest.mark.parametrize("prompt_tokens", [176, 1023, 1024, 272000, 272001])
+@pytest.mark.parametrize("cached", [False, True])
+@pytest.mark.parametrize("completion", [17000, 25000])
+def test_reservation_covers_valid_tiered_usage_at_the_output_cap(
+    model: str, prompt_tokens: int, cached: bool, completion: int
+) -> None:
+    from blue_data_llm_source.llm.client import _usage_bound  # pyright: ignore[reportPrivateUsage]
+
+    payload = {
+        "model": model,
+        "service_tier": "default",
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion,
+            "prompt_tokens_details": {"cached_tokens": prompt_tokens if cached else 0},
+        },
+    }
+    actual = _usage_bound(model, payload, {})
+    assert actual is not None
+    assert actual <= pricing.bound_cost("x" * prompt_tokens, model, 25000)

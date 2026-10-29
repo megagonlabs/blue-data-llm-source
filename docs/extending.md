@@ -4,7 +4,7 @@ This page describes the library's extension points and the contract required by 
 
 There is no plugin registry and no hook mechanism. Every extension point below is a protocol you satisfy structurally: an object with the right methods, handed in as an argument or a property. Nothing here performs an `isinstance` check against a concrete class.
 
-| Seam | What you supply | Handed in as | What it replaces |
+| Extension point | What you supply | Handed in as | What it replaces |
 |---|---|---|---|
 | [The injected client](#the-injected-client) | An object with `complete` and `acomplete` | `LlmSource(client=...)` | The provider call for every request through that source |
 | [`llm_fn`](#llm_fn-the-one-function-form) | A `(prompt) -> str` callable | `fetch(llm_fn=...)` | The provider call for one request |
@@ -39,7 +39,7 @@ class InjectedClient(Protocol):
     def bound_for_attempt(self, prompt: str, properties: dict[str, Any]) -> float: ...
 ```
 
-The shape is checked when the client is resolved, not at the first call. A missing method, or one whose signature cannot be called as `complete(prompt, properties)` (a keyword-only or one-argument form included) raises `ConfigError` naming the contract rather than failing later with a raw `TypeError`.
+The shape is checked when the client is resolved for the first fetch, not when `LlmSource` is constructed. A missing method, or one whose signature cannot be called as `complete(prompt, properties)` (a keyword-only or one-argument form included) raises `ConfigError` naming the contract rather than failing later with a raw `TypeError`.
 
 `afetch` calls `acomplete`, and `fetch` wraps `afetch`, so the asynchronous form is the one every fetch reaches. `complete` is there for a caller driving the client directly.
 
@@ -54,7 +54,9 @@ Two keys are written by the source on every call it makes.
 
 Both are passed per call instead of being set on the client, because one client can serve several concurrent fetches and an attribute would let them overwrite each other's ceiling. For the same reason, read the budget out of `properties` rather than caching it on `self`.
 
-Everything else in `properties` is the merged property map for that call. Your client's own properties sit under the caller's.
+`meta.calls` and `meta.cost` come from the budget claims and settlements, not from counting `Usage` entries. `meta.accounting_known` also depends on the capabilities your client declares. Appending `Usage` without making a claim can report tokens while leaving calls and cost at zero.
+
+An optional `cache_store` arrives in this map unchanged, but an injected client must read it and implement its own cache behavior. Everything else in `properties` is the merged property map for that call. Your client's own properties sit under the caller's.
 
 ### Declaring capabilities
 
@@ -78,12 +80,24 @@ Claim inside `budget.attempt(...)` and resolve on every path out of it. The cont
 
 | Call | For |
 |---|---|
-| `reservation.settle(actual)` | A call that returned and whose cost you can read. Releases the overshoot |
+| `reservation.settle(actual)` | A call that returned and whose cost you can read. A custom client may release the unused part of its reservation |
 | `reservation.settle(actual, cache_hit=True)` | An answer that never reached the provider. Releases the attempt too |
 | `reservation.keep_unpriced()` | A call that reached the provider and failed, or one whose cost you cannot read |
 | `reservation.release()` | An attempt abandoned before the provider entry point was invoked |
 
-A claim left outstanding is headroom the budget never grants again, and the retry that follows takes more of it.
+An unresolved claim inside `budget.attempt(...)` is released when the block exits, including its call count. If the provider was contacted, settle it or call `keep_unpriced()` before leaving the block. A claim made with `reserve()` remains outstanding until you resolve it.
+
+The library does not retry an injected client's calls. Implement retries inside your client, claim each provider attempt, and keep `Usage` aligned with those attempts. A configured `limits.max_retries` bounds the built-in client only.
+
+### Errors from a custom client
+
+| Raise | Caller sees |
+|---|---|
+| `TransportError`, `ParseError`, or `ConfigError` | The same error kind when no extraction response answered |
+| `BudgetExceeded` | A result with `outcome="stopped_by_limit"` or `partial`, depending on earlier answers |
+| Another exception | `LlmSourceError` naming the exception type and message when no extraction response answered |
+
+If the time limit also stops work, the failure message names `max_seconds`. Resolve a contacted attempt before raising so its budget claim is retained.
 
 ### A complete client
 
@@ -102,12 +116,10 @@ async def my_provider_call(prompt: str) -> str:
 
 class MyClient:
     def budget_capabilities(self) -> frozenset[str]:
-        return Capability.ALL
+        return frozenset({Capability.CALLS, Capability.COST, Capability.ROWS, Capability.ESTIMATE})
 
     def bound_for_attempt(self, prompt: str, properties: dict[str, Any]) -> float:
-        # The same figure the reservation below claims. Declaring ALL includes ESTIMATE,
-        # so without this the client says it supports a bounded estimate and cannot
-        # produce one.
+        # ESTIMATE requires a bound consistent with the reservation below.
         return PER_ATTEMPT_BOUND
 
     def complete(self, prompt: str, properties: dict[str, Any] | None = None) -> str:
@@ -138,6 +150,8 @@ print(result.records)
 print(result.meta.model, result.meta.calls, round(result.meta.cost, 4))
 print(result.meta.prompt_tokens, result.meta.completion_tokens, result.meta.accounting_known)
 ```
+
+This client does not declare `Capability.SECONDS`. A client that awaits a provider must enforce the deadline on that wait before it can promise a time ceiling.
 
 Raising from `complete` is a deliberate choice in that example, not a requirement: every fetch reaches `acomplete`, so a client embedded in async code need not implement a synchronous path that would never run. Implement both if you intend to drive the client yourself.
 
@@ -208,19 +222,55 @@ print(source.fetch("airports", attrs=["name"], llm_fn=lambda p: '[{"name": "Orly
 
 The client that reaches a provider drives the store with `get` and `set` alone. Do not assume `in` or `[]` will be used. They will not, so a store written to the published interface is enough.
 
+The built-in client checks that a supplied `cache_store` has callable, synchronous `get(key)` and `set(key, value)` methods before provider contact. A missing, noncallable, or declared async method raises `ConfigError` naming that contract. A custom client must validate any store it uses itself.
+
 | Rule | Why |
 |---|---|
-| A read that fails is a miss, not an error | Cache failure must not fail the underlying request. Both included stores treat read failures as misses |
+| A read that fails must be handled by your `get` method | Both included stores treat read failures as misses; a custom store that raises from `get` fails the fetch |
 | A write that fails is skipped, not raised | The same reasoning on the other side |
-| The key is a long serialised mapping | It covers the model, the prompt, and every forwarded parameter. It is not path-safe; `FileCache` hashes it before using it as a filename |
+| The key is a long serialized mapping | It covers the model, the prompt, and every forwarded parameter. It is not path-safe; `FileCache` hashes it before using it as a filename |
 | Keep `get` fast | `CacheStore` is synchronous, and a store that reaches a network sits outside the time ceiling entirely. This is listed in [what the time ceiling bounds](../lib/README.md#what-the-time-ceiling-actually-bounds) |
-| Values are JSON-shaped provider payloads | Whatever the client stored comes back to the client. Keep it serialisable if your store persists |
+| Values are JSON-shaped provider payloads | Whatever the client stored comes back to the client. Keep it serializable if your store persists |
 
 The `cache_store` property takes precedence over the separate `llm.cache` switch. That switch opens a `diskcache` backend and does not use either included store; the two cache paths are independent.
 
-Before implementing another cache, review `MemoryCache` and `FileCache`. `cache/memory.py` contains a small locked LRU implementation, while `cache/file.py` demonstrates atomic replacement and the ownership check that prevents `clear()` from deleting unrelated JSON files.
+Before implementing another cache, review `MemoryCache` and `FileCache`. `cache/memory.py` contains a locked LRU implementation; `cache/file.py` uses atomic replacement and tracks the files its instance wrote so `clear()` leaves unrelated files intact.
 
-**A cache backend cannot be wired through an `llm_fn`.** The client is what consults the cache, and `FunctionClient` does not. The example above accepts the store and never reads it. To cache your own model calls, consult the store inside the client you inject.
+**A cache backend cannot be wired through an `llm_fn`.** The client is what consults the cache, and `FunctionClient` does not. The example above accepts the store and never reads it. The same is true of an injected client unless it reads `cache_store` itself; `llm.cache` is also built-in-client only. To cache your own model calls, consult the store inside the client you inject.
+
+This offline client reads the passed store and counts its own hits:
+
+```python
+from blue_data_llm_source import Capability, LlmSource, MemoryCache
+
+
+class CachedClient:
+    def __init__(self):
+        self.hits = 0
+
+    def budget_capabilities(self):
+        return frozenset({Capability.ROWS})
+
+    def complete(self, prompt, properties=None):
+        raise NotImplementedError("fetch calls acomplete")
+
+    async def acomplete(self, prompt, properties=None):
+        store = properties["cache_store"]
+        cached = store.get(prompt)
+        if cached is not None:
+            self.hits += 1
+            return cached
+        answer = '[{"name": "Orly"}]'
+        store.set(prompt, answer)
+        return answer
+
+
+client = CachedClient()
+source = LlmSource(client=client, properties={"cache_store": MemoryCache()})
+source.fetch("airports", attrs=["name"])
+source.fetch("airports", attrs=["name"])
+print(client.hits)  # 1
+```
 
 ## Your own price table
 
@@ -239,7 +289,7 @@ sized = source.estimate("commercial airports in France", attrs=["name"])
 print(sized.bounded, round(sized.max_cost, 6), sized.model)
 ```
 
-Presence decides that you meant to override, not validity: supplying one key commits you to both, and a value that is not a finite positive number raises `ConfigError` instead of falling back to the table. Falling back would accept an explicit instruction and then ignore it, which against a stale table produces a bound below the one you asked for.
+Presence decides that you meant to override, not validity: supplying one key commits you to both. When a cost bound is needed, a value that is not a finite positive number raises `ConfigError` instead of falling back to the table. Without a requested bound, `estimate` can report `bounded=False` with a reason. Falling back would accept an explicit instruction and then ignore it, which against a stale table produces a bound below the one you asked for.
 
 Rates for a model the table does not carry are used as given, so they must already cover every tier it can be billed at: cache writes, a long-context tier, regional processing. Rates supplied for a model the table does carry are read as its base rates. The table's cache-write ratio, long-context tier and regional uplift still apply to them, and the bound never falls below the table's own, so supplying a model's published base rates cannot drop a charge it is known to carry.
 
@@ -330,7 +380,7 @@ print(payload["planning_facts"]["partition_safety_status"])
 | `dimension` | One of `plan.keys` |
 | `ordered_primary_keys` | Exactly `plan.keys`, in order |
 | `kind` | `"finite_domain"`, the only kind supported |
-| `allowed_domain` | Non-empty JSON scalars, with no duplicates after normalisation |
+| `allowed_domain` | Non-empty JSON scalars, with no duplicates after normalization |
 | `parent_scope` | The constraints under which this rule applies. `{}` makes it root-applicable, and at least one rule must be |
 | `provenance` | `"caller_declared"` for a rule passed with the call, `"source_configuration"` for one set on the source |
 | `contract_version` | `"identity-partition-rule-1"` |
@@ -343,7 +393,7 @@ Per-call rules **replace** the source's list; they do not add to it. Rules may n
 
 A split proposed under a rule is accepted only after `PartitionSafety` establishes containment, pairwise disjointness, and coverage against the declared domain. A proposal that fails leaves the node unsplit rather than producing children that overlap or miss values.
 
-An accepted run may carry a `PlanningReceipt`, reachable as `result.planning_receipt` and serialisable with `to_dict()`. It binds the configured rule digests, the planning facts, and the versioned plan, and it checks that the three agree: that every applied rule was configured, that the counts match, and that the last applied decision is the one the facts name.
+An accepted run may carry a `PlanningReceipt`, reachable as `result.planning_receipt` and serializable with `to_dict()`. It binds the configured rule digests, the planning facts, and the versioned plan, and it checks that the three agree: that every applied rule was configured, that the counts match, and that the last applied decision is the one the facts name.
 
 **It proves internal agreement and nothing else.** It does not establish rule authenticity, factual truth, completeness, or answer quality. Read it as a record of what the planner did, not as evidence that what it did was right.
 
@@ -402,6 +452,12 @@ print(unusable.parse_status, unusable.expected, unusable.diagnostics)
 A parser that cannot read its input returns a value saying so instead of raising, which is what lets a planning stage fall back to the caller's declaration and record a diagnostic instead of failing the request.
 
 `SchemaGenerator.parse(text, declared, *, mode)` is the third. Its `declared` argument is a `Schema`, which is reachable as `blue_data_llm_source.planning.schema.Schema` but is not exported from the package root. Import it from that module if you need to call this parser directly.
+
+## Embedding the source in an application
+
+`LlmSource.afetch` returns a `FetchResult`. Call `result.to_dict()` when an application needs a dictionary for serialization; the result and metadata objects themselves are dataclasses. This dictionary contains the original record values and metadata. If an application publishes diagnostics, `meta_view(result.meta)` applies the metadata masking used by the CLI and MCP adapters. It leaves records unchanged, so the application must decide which record fields it can disclose.
+
+Set operator limits on the source or on a shared `Budget` when callers can supply request properties. A limit supplied only with one request controls that request; it does not establish an application-wide ceiling. See [a budget you own](#a-budget-you-own) for a shared-budget example.
 
 ## Where to go next
 

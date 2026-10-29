@@ -60,12 +60,9 @@ _WRAPPER_KEYS = ("items", "rows", "data", "results")
 def _unwrapped(envelope: dict[str, Any], wanted: list[str] | None) -> list[Any] | None:
     """The records inside *envelope*, or None if it is itself a record.
 
-    Both readings are legitimate and the shapes are identical. ``{"items": [...],
-    "count": 2}`` is a wrapper around records with a metadata sibling; ``{"country":
-    "France", "data": [...]}`` is one record with a list-valued attribute. Nothing about
-    their structure separates them — matching on the key alone threw away `country`, and
-    requiring a sole key threw away the records under `items`, each silently reporting that
-    the model had returned nothing.
+    Both readings can have the same shape. ``{"items": [...], "count": 2}`` can wrap
+    records with metadata; ``{"country": "France", "data": [...]}`` can be one record
+    with a list-valued attribute. The key alone does not distinguish them.
 
     What separates them is the request. When the caller named attributes, the reading that
     answers more of them is the one the caller meant. With nothing requested there is no
@@ -186,23 +183,16 @@ def read_records(
         # number written in full — 1e309 — is an ordinary JSON literal that overflows to
         # inf in float(), never reaches that hook, and lands in a record. json.dumps then
         # writes it back as `Infinity`, which strict JSON readers reject, so a caller who
-        # re-serialises the result produces something they cannot read again.
+        # re-serializes the result produces something they cannot read again.
         value = float(number)
         if value != value or value in (float("inf"), float("-inf")):
             raise ValueError(f"{number} is out of range for a JSON number")
         return value
 
     def _reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        # Python's decoder keeps the last of two identical keys and leaves no trace that
-        # the first existed, which is the opposite of the first-wins-and-report rule
-        # alignment applies to keys that merely normalize alike.
-        #
-        # An earlier version preserved both by renaming the later one with a private
-        # marker. That marker was itself legal JSON, reached callers verbatim when no
-        # attributes were requested, and marked duplicates nested inside values where
-        # alignment never looks. Rejecting is the honest answer: which of two values for
-        # one key the model meant is not knowable here, and silently keeping either is a
-        # guess the caller cannot see.
+        # Python's decoder silently keeps the last duplicate. Alignment handles
+        # names that merely normalize alike, but identical JSON keys are ambiguous
+        # even inside nested values, so reject the object.
         seen: set[str] = set()
         for key, _ in pairs:
             if key in seen:

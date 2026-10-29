@@ -1,6 +1,6 @@
 # LlmSource — API / Interface Spec
 
-The core library has three interfaces: the Python API, an MCP server, and a CLI. Each is a separate package installed from source. No REST API is implemented or scheduled. Interface packages translate arguments and results, but contain no retrieval, planning, or budgeting logic. They preserve library error messages. Authentication and authorization belong to the deployment layer. No interface reads or forwards a provider credential.
+The core library has three interfaces: the Python API, an MCP server, and a CLI. Each is a separate package installed from source. Interface packages translate arguments and results, but contain no retrieval, planning, or budgeting logic. The MCP server maps most library failures to fixed messages while retaining known error kinds. The provider SDK handles authentication. The CLI can store a provider credential in a profile and export it to the process environment for the SDK. MCP tools do not accept credentials as arguments. The library reads environment values held under credential-like names only to mask diagnostic text.
 
 ---
 
@@ -83,6 +83,7 @@ class LlmSource:
         schema: dict[str, Any] | None = None,
         llm_fn: Any = None,
         optional_properties: dict[str, Any] | None = None,
+        read_only: bool = True,
     ) -> list[dict[str, Any]]: ...
     def translate_nl_to_native_query(
         self, query: str, schema: dict[str, Any] | None, llm_fn: Any
@@ -99,6 +100,7 @@ class LlmSource:
         database: str | None = None,
         collection: str | None = None,
         optional_properties: dict[str, Any] | None = None,
+        read_only: bool = True,
     ) -> Any: ...
     def execute_query_nl_tools(
         self,
@@ -110,6 +112,8 @@ class LlmSource:
         max_iterations: int = 10,
         extra_tools: list[dict[str, Any]] | None = None,
         extra_tool_fn: Any = None,
+        read_only: bool = True,
+        max_sample_size: int | None = None,
     ) -> list[dict[str, Any]]: ...
 
     # Metadata surface
@@ -139,7 +143,7 @@ class LlmSource:
         sample_limit: int | None = None,
     ) -> dict[str, Any] | None: ...
     def fetch_entity_stats(
-        self, database: str, collection: str, entity: str
+        self, database: str, collection: str, entity: str, *, row_sample_size: int = 10
     ) -> dict[str, Any] | None: ...
     def fetch_property_stats(
         self,
@@ -152,10 +156,10 @@ class LlmSource:
 
     # Write surface
     def create_database(
-        self, database: str, properties: dict[str, Any] | None = None
+        self, database: str, properties: dict[str, Any] | None = None, overwrite: bool = False
     ) -> dict[str, Any]: ...
     def create_database_collection(
-        self, database: str, collection: str, properties: dict[str, Any] | None = None
+        self, database: str, collection: str, properties: dict[str, Any] | None = None, overwrite: bool = False
     ) -> dict[str, Any]: ...
     def create_database_collection_entity(
         self,
@@ -163,6 +167,7 @@ class LlmSource:
         collection: str,
         entity: str,
         properties: dict[str, Any] | None = None,
+        overwrite: bool = False,
     ) -> dict[str, Any]: ...
     def create_database_collection_relation(
         self,
@@ -170,6 +175,7 @@ class LlmSource:
         collection: str,
         relation: str,
         properties: dict[str, Any] | None = None,
+        overwrite: bool = False,
     ) -> dict[str, Any]: ...
     def import_data(
         self,
@@ -188,13 +194,13 @@ class LlmSource:
 
 Every statistics method returns `None`, because a model has no row counts. Every write method returns `{}`, because a model has nothing to write to; they exist so that a registry walking the full source surface reaches a defined method rather than an `AttributeError`.
 
-`fetch` raises `ConfigError` when called from inside a running event loop, directing the caller to `afetch`. Both annotate `query` as `Any` rather than `str`, because handling an absent or wrong-typed request is part of the contract: an absent one is answered with an empty result, a wrong-typed one with a readable `QueryError`. Annotating `str` would describe a narrower contract than the one that ships.
+Inside a running event loop, synchronous query methods run on an owned worker and block the caller's thread. Prefer `afetch` for concurrent async work and for clients tied to the caller's loop. Cancellation remains cooperative; a client that ignores it cannot be forcibly stopped. Both `fetch` and `afetch` annotate `query` as `Any` rather than `str`: `None` returns an empty result, while another non-string raises a readable `QueryError`.
 
 ### Request arguments
 
 | Argument | Type | Accepted forms |
 |----------|------|----------------|
-| `query` | `Any`, normalised to `str` | A natural language request. `None`, an empty string, or whitespace is an empty ask and returns an empty result with `outcome` set to `empty_query`; any other non-string raises `QueryError` |
+| `query` | `Any`, normalized to `str` | A natural language request. `None`, an empty string, or whitespace is an empty ask and returns an empty result with `outcome` set to `empty_query`; any other non-string raises `QueryError` |
 | `attrs` | list | Names (`["country", "accession_year"]`), `Attr` instances, or mappings (`[{"name": "country", "type": "string"}]`) |
 | `context` | `str` or list of `str` | Additional text; its documented use is to say what an attribute name means |
 | `max_records` | `int` | A positive integer; replaces the row limit for this run |
@@ -210,9 +216,9 @@ When `execute_query` receives a mapping, its `op` key selects the operation.
 |----|------------------------|---------|
 | `LLM.FETCH` | `query`, `attrs` or `attr_names`, `context`, `max_records` | The record list |
 | `LLM.MODELS` | — | `[{"protocol": "llm", "variant": "openai"}]` |
-| `LLM.ESTIMATE` | `query`, `attrs`, `context` | `[{"bounded": true, "max_cost": 0.0415305, "reason": null, "model": "gpt-6-luna", "prompt_bytes": 786, "max_output_tokens": 25000, "max_attempts": 3, "max_cost_per_attempt": 0.0138435, "attempts_within_ceiling": null}]` |
+| `LLM.ESTIMATE` | `query`, `attrs`, `context` | `[{"bounded": true, "max_cost": 0.06257625, "reason": null, "model": "gpt-6-luna", "prompt_bytes": 786, "max_output_tokens": 25000, "max_attempts": 3, "max_cost_per_attempt": 0.020858750000000002, "attempts_within_ceiling": null}]` |
 
-An unrecognised op raises `QueryError` listing the supported operations. A plain string is treated as the request and runs a fetch. `LLM.ESTIMATE` calls `estimate` with `optional_properties` as its properties and contacts no provider. This surface returns a one-record list; callers that need the `Estimate` object can call the method directly.
+An unrecognized op raises `QueryError` listing the supported operations. A plain string is treated as the request and runs a fetch. `LLM.ESTIMATE` calls `estimate` with `optional_properties` as its properties and contacts no provider. This surface returns a one-record list; callers that need the `Estimate` object can call the method directly.
 
 On this surface, `optional_properties` also carries ceilings. Recognized keys become arguments; the remaining keys are merged over the instance properties as per-call configuration. A `limits.*` key therefore bounds this call only, and the next call through the same source is unbounded again.
 
@@ -257,6 +263,13 @@ Properties may be set on the instance or per call, with per-call values winning.
 | `plan.exact_rows` | `int` | none | Hard target when the plan has one leaf; a multi-leaf plan does not apply it and reports `exact_rows_not_leaf_bound` |
 | `plan.max_exclusion_bytes` | `int` | `16384` | Encoded byte cap for whole-key exclusions in a continuation prompt |
 | `plan.max_excluded_keys` | `int` | `50` | Direct-Python-only count cap for whole-key exclusions; CLI and MCP use this default |
+| `plan.leaf_prompt` | `str` | `keyed-leaf-fetch-1` | Leaf prompt contract in non-flat modes; `keyed-leaf-fetch-2` asks for every matching record and separates column filters from request scope |
+| `plan.child_wording` | `str` | `parent` | `canonical` derives each partitioned child's wording from the root request and its validated filters |
+| `plan.filter_enforcement` | `str` | `flag` | `flag` keeps records contradicting a leaf filter; `drop` removes them before reduction. Both count contradictions |
+| `plan.range_filters` | `bool` | `False` | Reads integer spans as range filters in partitioned mode; requires `plan.leaf_prompt=keyed-leaf-fetch-2` |
+| `plan.partition_guardrails` | `bool` | `False` | Adds partition proposal rules and rejects unsuitable numeric key buckets in partitioned mode |
+| `plan.split_policy` | `str` | `always` | `evidence` probes the root once before deciding whether to split in partitioned mode |
+| `plan.split_threshold_rows` | `int` | `120` | Under `evidence`, the estimate above which a probe with fewer than half the expected keys triggers a split |
 | `plan.distribution_search` | `bool` | `False` | Direct-Python-only opt-in for rule-backed distribution selection; requires `plan.mode='partitioned'` |
 | `plan.identity_partitions` | list | empty | Direct-Python-only closed rule mappings from source configuration or a per-call declaration |
 | `plan.max_strategy_candidates` | `int` | `5` | Direct-Python-only distribution candidate bound; at least `1` when distribution search is enabled |
@@ -274,7 +287,7 @@ must be one of them. Source rules use provenance `source_configuration`; per-cal
 malformed scopes, empty or duplicate domains, key mismatches, and unsupported provenance fail before
 provider contact. All three distribution-search properties are removed from the provider property map.
 
-`limits.max_cost` requires a calculable bound. The bound uses the prompt's UTF-8 byte length plus a framing allowance at the model's published input rate, and the full `llm.max_tokens` allowance at its output rate. For a model in the package's table, it also applies the listed cache-write price to prompts of at least 1,024 tokens, the long-context tier to prompts over 272,000 tokens, and the 10% regional uplift, where specified in the model entry. If the model has no published or caller-supplied price, or `llm.max_tokens` is not finite and positive, the source raises `ConfigError`. The output allowance alone sets the bound's floor. For the default `gpt-6-luna` and 25,000 tokens, that floor is about $0.01375 with the uplift, so a smaller ceiling refuses every call before provider contact. `estimate` reports the same bound for a request, allowing a caller to size a ceiling against that request.
+`limits.max_cost` requires a calculable bound. The bound uses the prompt's UTF-8 byte length plus a framing allowance at the model's published input rate, and the full `llm.max_tokens` allowance at its output rate. For a model in the package's table, it includes the cache-write price and long-context multipliers wherever the entry supplies them, even for a short request, and includes any regional uplift. If the model has no published or caller-supplied price, or `llm.max_tokens` is not finite and positive, the source raises `ConfigError`. The output allowance alone sets the bound's floor. For the default `gpt-6-luna` and 25,000 tokens, that floor is about $0.020625, so a smaller ceiling refuses every call before provider contact. `estimate` reports the same bound for a request, allowing a caller to size a ceiling against that request.
 
 ### Result types
 
@@ -370,6 +383,7 @@ class Estimate:
     max_output_tokens: int = 0
     max_attempts: int = 1
     max_cost_per_attempt: float | None = None
+    attempts_within_ceiling: int | None = None
 ```
 
 `FetchResult` keeps exactly those two dataclass fields. Direct Python callers can read its optional
@@ -408,7 +422,7 @@ An empty result is a valid answer from this source, not a failure. `ExecMeta.out
 | `empty_query` | The request was absent, empty, or whitespace, so no model was called |
 | `model_returned_none` | The model returned no records at all |
 | `filtered_to_empty` | The model returned records and reduction left none, which happens when no record answered any requested attribute |
-| `stopped_by_limit` | A ceiling ended the run and left no usable result, whether it refused the attempt before the provider was reached, emptied the result through the row cap, or was found crossed once the work was done |
+| `stopped_by_limit` | A non-row stop fired without an interrupted partial answer; records may remain when a limit is detected after extraction. A row cap that leaves no records also takes this outcome |
 | `partial` | Extraction was answered but some work was interrupted, including a failed split leaf or a late continuation failure after records were parsed |
 | `truncated` | The row ceiling cut the result short and records remain |
 
@@ -433,7 +447,7 @@ The field rides on `FetchResult`, so it is available through `fetch` and `afetch
 
 ### Key collisions
 
-`ExecMeta.key_collisions` lists returned keys whose values were unused because another key had already answered the same requested attribute. The first key keeps the attribute. If the later key won, the result would depend on the order in which the model emitted its keys; the intended spelling cannot be determined here. The source reports the ignored value, so a caller can still decide between both values.
+`ExecMeta.key_collisions` lists returned keys whose values were unused because another key had already answered the same requested attribute. The first encountered key keeps the attribute, so JSON key order determines the surviving value. The intended spelling cannot be determined here. The source reports the ignored value, so a caller can still decide between both values.
 
 | Key | Type | Description |
 |-----|------|-------------|
@@ -453,7 +467,7 @@ All inherit from `LlmSourceError`, defined in `types.py`.
 |-----------|-------------|
 | `ConfigError` | An unknown `llm.*` override, an unknown or invalid `limits.*` key, a missing model, a requested cache backend that is not installed, a ceiling configured on an axis the resolved client does not declare, or a cost ceiling that cannot be bounded because the model has no published price or the output allowance is not a finite positive number |
 | `QueryError` | A malformed request or argument, an unknown op, or the same attribute is requested twice, including two identical spellings |
-| `TransportError` | A provider call fails, or a response cannot be materialised, has no choices, or has no message content |
+| `TransportError` | A provider call fails, or a response cannot be materialized, has no choices, or has no message content |
 | `ParseError` | A model response cannot be read as a list of records |
 | `BudgetExceeded` | A configured limit would be crossed by the next call |
 
@@ -473,7 +487,7 @@ Seven module-level functions are exported from the package root alongside the ty
 | `key_identity` | `key_identity(record: Mapping[str, Any], primary_keys: Sequence[str], attrs: Sequence[Attr]) -> KeyTuple \| None` | The record's complete ordered identity, or `None` when a key component is absent. `KeyTuple` is exported with it |
 | `redact` | `redact(text: str) -> str` | *text* with anything that could be a credential replaced by `***`. One rule for every surface that hands a caller text it did not write: an error message, a log line, a traceback, a request-side field of a run report. Not applied to records, which are the answer |
 
-The price table itself stays internal. It is a mutable snapshot of time-sensitive list prices, and publishing it would be a contract this package cannot keep across a price change; what is published is behaviour over it. Supply `llm.price_per_input_token` and `llm.price_per_output_token` to bound a model the table does not carry.
+The price table itself stays internal. It is a mutable snapshot of time-sensitive list prices, and publishing it would be a contract this package cannot keep across a price change; what is published is behavior over it. Supply `llm.price_per_input_token` and `llm.price_per_output_token` to bound a model the table does not carry.
 
 `meta_view` publishes three field tiers:
 
@@ -483,15 +497,15 @@ The price table itself stays internal. It is a mutable snapshot of time-sensitiv
 
 `observed_keys` is omitted because it grows with the answer and `observed_key_count` carries the usable count. The MCP server requests the verbose view; the CLI exposes it through `--verbose`.
 
-`redact` processes `model`, `requested_attrs`, `asked`, and `unchecked_types`. Other fields are published unchanged because they contain records or indexes into records. A test examines every returned string and requires it to be redacted or explicitly exempted.
+`meta_view` masks credential-shaped text in every string in result metadata, including diagnostic keys and values that refer to discarded records. Returned records remain unchanged. Direct Python `ExecMeta` values remain raw; callers publishing them need to mask their own output.
 
 ---
 
-## 1a. Orchestrator tools: four of the eight
+## 1a. Orchestrator tools: five of the eight
 
-`DataSource` offers `get_nl_tools`, `execute_nl_tool` and `execute_query_nl_tools`, a tool-calling interface for an orchestrating model. It is built around the relational shape the rest of the data layer has: databases, collections, columns, row samples, foreign keys. A source answering from a model's own knowledge has only part of that, so four of the eight tools are advertised and four are not.
+`DataSource` offers `get_nl_tools`, `execute_nl_tool` and `execute_query_nl_tools`, a tool-calling interface for an orchestrating model. It is built around the relational shape the rest of the data layer has: databases, collections, columns, row samples, foreign keys. A source answering from a model's own knowledge has only part of that, so five of the eight tools are advertised and three are not.
 
-| Tool | Served | Behaviour |
+| Tool | Served | Behavior |
 |------|--------|-----------|
 | `list_databases` | yes | `["llm"]`, the one virtual database |
 | `list_collections` | yes | `["public"]`, the one virtual collection |
@@ -500,13 +514,13 @@ The price table itself stays internal. It is a mutable snapshot of time-sensitiv
 | `get_metadata` | no | Would return `{}` |
 | `get_column_stats` | no | Would return `None` |
 | `get_relations` | no | Would return `{}` |
-| `get_sample` | no | Raises `TypeError`: the base dispatcher passes `row_sample_size` to `fetch_entity_stats`, which takes no such argument |
+| `get_sample` | yes | Returns `None`; shared `sample_size` forwards to keyword-only `fetch_entity_stats(..., row_sample_size=10)`, without a provider call |
 
-A tool that answers with an empty result and no explanation is worse than one that is absent, because the model calling it has no way to tell "nothing here" from "wrong question". The four unserved ones are therefore filtered out of the advertisement instead of answered.
+A tool that answers with an empty result and no explanation is worse than one that is absent, because the model calling it has no way to tell "nothing here" from "wrong question". The three unserved ones are therefore filtered out of the advertisement instead of answered.
 
-`get_nl_tools` returns the base class's own definitions for the four, filtered by name. They are not rewritten here: the base dispatcher is what reads the input, so a schema written locally would be a second copy of its contract, and a key renamed or a `required` entry added upstream would leave this source advertising a call the dispatcher then rejects. `database` and `collection` stay in the schemas as upstream declares them, and the dispatcher reads each from the tool input with a fallback to the argument of the same name.
+`get_nl_tools` returns the base class's own definitions for the five, filtered by name. They are not rewritten here: the base dispatcher is what reads the input, so a schema written locally would be a second copy of its contract, and a key renamed or a `required` entry added upstream would leave this source advertising a call the dispatcher then rejects. `database` and `collection` stay in the schemas as upstream declares them, and the dispatcher reads each from the tool input with a fallback to the argument of the same name.
 
-`execute_nl_tool` serves those four by delegating to the base dispatcher, and refuses any other name with a `ConfigError` listing the ones that are available. Nothing on this path leaves the `LlmSourceError` hierarchy: an unknown name, a `name` that is not a string, a `tool_input` that is not a mapping, and a missing required key all arrive as `ConfigError`, `QueryError`, or `LlmSourceError`, which the base's own `ValueError`, `KeyError`, and `AttributeError` do not.
+`execute_nl_tool` serves those five by delegating to the base dispatcher, and refuses any other name with a `ConfigError` listing the ones that are available. Nothing on this path leaves the `LlmSourceError` hierarchy: an unknown name, a `name` that is not a string, a `tool_input` that is not a mapping, and a missing required key all arrive as `ConfigError`, `QueryError`, or `LlmSourceError`, which the base's own `ValueError`, `KeyError`, and `AttributeError` do not.
 
 Ceilings reach the `execute_query` tool the way they reach the query surface. A `limits.*` key in `optional_properties` is handed to `execute_query` by the dispatcher and binds that call and no other; a misspelled one is refused on every tool rather than only on the one that spends.
 
@@ -518,7 +532,7 @@ Package `blue-data-llm-mcp`, entry point `blue-data-llm-mcp`, speaking MCP over 
 
 The server validates argument shape against the published JSON schema before calling the library. It checks object shape, allowed keys, required fields, JSON types, non-blank strings, unique arrays, and numeric minima. The SDK prevalidator is disabled for this handler so withdrawn settings can receive the package's migration message rather than a generic schema error. The library retains domain and configuration validation, including empty queries, accepted overrides, enforceable ceilings, model pricing, and response parsing.
 
-Library rejections preserve the library message, including the setting and accepted form. Schema rejections name the argument and its declared constraint. Values outside a declared set are not repeated; unknown keys are quoted so callers can locate misspellings. Credential-shaped text is masked in every returned message.
+Library failures retain a known error kind and use fixed messages. Schema rejections name the argument and its declared constraint. Values outside a declared set are not repeated; unknown keys are quoted so callers can locate misspellings. Credential-shaped text is masked in every returned message.
 
 The server uses the low-level API because tool schemas are maintained explicitly as the JSON contract presented to clients.
 
@@ -730,7 +744,7 @@ The server uses the low-level API because tool schemas are maintained explicitly
 }
 ```
 
-The twenty-one plan settings and the three ceilings are the library's own property names, unrenamed. They are passed through as the call's properties, which is the same route `optional_properties` takes on the query surface and `--limit-*` takes on the command line: merged over the source's properties for this call and not written back, so one agent's ceiling cannot bind the next call over the same server. A key this layer did not recognise would never reach the library's own limit validation, so a translated name would have been dropped in silence rather than refused.
+The twenty-one plan settings and the three ceilings are the library's own property names, unrenamed. They are passed through as the call's properties, which is the same route `optional_properties` takes on the query surface and `--limit-*` takes on the command line: merged over the source's properties for this call and not written back, so one agent's ceiling cannot bind the next call over the same server. A key this layer did not recognize would never reach the library's own limit validation, so a translated name would have been dropped in silence rather than refused.
 
 **Returns:** JSON text content, `{"records": [...], "meta": {...}}`. The meta object always carries `outcome`, accounting fields, `gaps`, `stop_reasons`, `requested_attrs`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records`, and `filter_contradictions`. `normalization_collisions` appears when non-empty, `repaired_numbers` when non-zero, and `split_decision` when a root probe ran. The cardinality estimate is accepted non-flat bootstrap evidence or JSON `null`; neither it nor the observed-key fields is a completeness measure. `gaps` contains operational diagnostics and an empty list means only that none fired. `stop_reasons` is the ordered list of simultaneous extraction limits; `stopped_by`, when present, is its first member. `accounting_known` appears only when false, and format diagnostics, `truncated_to`, `record_origins`, and `asked` appear when applicable.
 
@@ -745,7 +759,7 @@ A ceiling reaches the ledger the same way one configured on a source does: claim
 
 The input schema is the whole of what this tool exposes, and the ceilings in it are per call. The server builds a fresh source for each call from the `llm.*` settings in its environment (`BLUE_DATA_LLM_MODEL` for `llm.model`, and `BLUE_DATA_LLM_SOURCE_REASONING_EFFORT`, `_MAX_TOKENS`, `_TEMPERATURE`, `_TIMEOUT`, `_MAX_PARALLEL`, `_CACHE`, `_CACHE_DIR`, `_PRICE_PER_INPUT_TOKEN` and `_PRICE_PER_OUTPUT_TOKEN` for the matching keys), read on every call. An unset or blank variable leaves the library default; a malformed or refused value fails that call with a `ConfigError` naming the variable, never its value. The operator's ceilings come from `BLUE_DATA_LLM_SOURCE_LIMIT_COST`, `_LIMIT_CALLS` and `_LIMIT_SECONDS`, also read on every call, and are merged with the call's own `limits.*` arguments with the lower value winning, so a call can tighten an operator ceiling but never raise or remove it. Without an operator ceiling, a call that names none has none. No `plan.*` setting is read from the environment; a call's `plan.*` arguments apply to that call only.
 
-**On error:** a failed tool call whose text is the error kind followed by the library's message, for example `QueryError: attrs[0] is an empty attribute name`.
+**On error:** a failed tool call whose text is an error kind followed by a safe message, for example `QueryError: Query or attributes are invalid.`
 
 ---
 
@@ -828,8 +842,8 @@ The request half of the schema is the same object `llmdb_query` declares, shared
 ```json
 {
   "bounded": true,
-  "max_cost": 0.04153545,
-  "max_cost_per_attempt": 0.01384515,
+  "max_cost": 0.06258862500000001,
+  "max_cost_per_attempt": 0.020862875000000003,
   "max_attempts": 3,
   "reason": null,
   "model": "gpt-6-luna",
@@ -839,7 +853,7 @@ The request half of the schema is the same object `llmdb_query` declares, shared
 }
 ```
 
-Neither cost is rounded, unlike the spend in a fetch's `meta`. That one is a measurement of what was already paid; these are upper bounds, and rounding a bound to six places can round it down. An agent that set `limits.max_cost` to a figure this tool understated would have the last attempt that figure accounted for refused.
+Neither cost is rounded, unlike the spend in a fetch's `meta`. That one is the ledger charge for completed work and may retain a conservative reservation; these are upper bounds, and rounding a bound to six places can round it down. An agent that set `limits.max_cost` to a figure this tool understated would have the last attempt that figure accounted for refused.
 
 `bounded` is `false` with a `reason` when no bound can be established, which is a successful call rather than an error, for the reason §1 gives for the method. Nothing on this path contacts the provider, so an agent can size a request without paying for the question.
 
@@ -929,7 +943,7 @@ These tools let clients check pricing support before a query is refused under `l
 }
 ```
 
-**Returns:** JSON text content, `{"protocol": "llm", "variant": "openai", "version": "2.2.0"}`.
+**Returns:** JSON text content, `{"protocol": "llm", "variant": "openai", "version": "1.0.0"}`.
 
 The MCP schema exposes the same 21 standard planning controls as the CLI. It intentionally omits the
 three distribution-search properties, and `llmdb_query` does not return the direct-Python planning
@@ -977,7 +991,7 @@ blue-llmdb [--version] [-h|--help] [--profile NAME]
 | `model select` | CLI-local, plus `rates_for` for the unpriced warning |
 | `metadata inspect` | `LlmSource.fetch_metadata`, `__version__` |
 
-No `database`, `schema` or `cache` component is built. `fetch_databases()` returns one synthetic name and the create/import methods return `{}`, so a `database` component would be a two-row constant over four operations that do nothing; the source has no stored schema to expose; and cache management would need cache-introspection APIs the library does not have. `data search` is absent because searching and querying are one operation for this source, and `data import`/`data export` are absent because materialising belongs to the receiving source and export is `--format` plus shell redirection.
+No `database`, `schema` or `cache` component is built. `fetch_databases()` returns one synthetic name and the create/import methods return `{}`, so a `database` component would be a two-row constant over four operations that do nothing; the source has no stored schema to expose; and cache management would need cache-introspection APIs the library does not have. `data search` is absent because searching and querying are one operation for this source, and `data import`/`data export` are absent because materializing belongs to the receiving source and export is `--format` plus shell redirection.
 
 ### Global options
 
@@ -1000,15 +1014,16 @@ Four family parameters — `OPENAI_API_KEY` (secret), `BLUE_DATA_LLM_MODEL`, `BL
 
 `BLUE_DATA_LLM_SOURCE_HOME` moves the CLI home. It is an environment setting, not a profile parameter, because it is the directory the profiles themselves are read from.
 
-Profiles live at `~/.blue-llmdb/.profiles` as INI, one section per profile, at file mode 0600 inside a directory at 0700. Every write is atomic (a temporary file in the same directory, fsynced, then `os.replace`), so an interrupted run cannot leave a profiles file the next run refuses to parse. A path inside the home that is a symlink out of it is refused. `profile remove` deletes that section and nothing else; if the removed profile was selected, the selection moves to a profile that exists (`default` where that survives, otherwise the first one left), and the command says which. The last profile cannot be removed, because the selection has to name one that is there: a store with no profiles left the selection pointing at nothing and every later run resolving against a section that was not in the file.
+Profiles live at `~/.blue-llmdb/.profiles` as INI, one section per profile, at file mode 0600. The CLI creates the profile directory at 0700. An existing directory is refused if group or other users can write to it; an existing 0755 directory is accepted with a warning and left unchanged. Writes use a temporary file in the same directory, fsync, and `os.replace`, so an interrupted write cannot leave a partial profile file. A path inside the home that is a symlink out of it is refused. `profile remove` deletes only the named section. If that profile was selected, the command selects an existing one (`default` if available, otherwise the first remaining profile) and reports the choice. The last profile cannot be removed because the selection must name an existing profile.
 
-A secret is never accepted as a value on the command line. The prompt hides input, `$NAME` is stored as a reference and resolved from the environment at use, and a directly entered secret is stored as `enc:` plus base64 of the UTF-8 value. That is obfuscation, not encryption; the file mode is the protection. `MASK` is `***`, and no command prints a secret value.
+A secret is never accepted as a value on the command line. The prompt hides input. A `$NAME` reference is resolved from the environment at use and keeps the secret out of the profile. A directly entered secret is stored as `enc:` plus reversible base64 of its UTF-8 value. The `0600` file mode restricts local access on POSIX systems; anyone who can read the profile or a copied backup can decode the secret. `MASK` is `***`, and profile commands do not print a secret value.
 
 ### `blue-llmdb data query`
 
 ```
 blue-llmdb data query QUERY [--attr NAME[:TYPE]]... [--context TEXT] [--max-records N]
                 [--model MODEL] [--max-tokens N] [--temperature X] [--timeout SECONDS]
+                [--reasoning-effort NAME]
                 [--max-parallel N] [--cache|--no-cache] [--cache-dir PATH]
                 [--price-in X] [--price-out X]
                 [--limit-cost AMOUNT] [--limit-seconds N] [--limit-calls N] [--max-retries N]
@@ -1033,7 +1048,7 @@ blue-llmdb data query QUERY [--attr NAME[:TYPE]]... [--context TEXT] [--max-reco
 | `QUERY` | `fetch(query=)` | Natural language request (required) |
 | `--attr NAME[:TYPE]` | `fetch(attrs=)` | Requested output attribute; repeat for several. Types understood: `int`, `float`, `bool`, `date`, and `str`/`string`/`text`, which is checked but not converted. Any other name is accepted, checks nothing, and is reported in `unchecked_types` |
 | `--context TEXT` | `fetch(context=)` | Extra text that clarifies the query |
-| `--max-records N` | `fetch(max_records=)` | The row ceiling. `fetch` assigns it to `Limits.max_rows`, overwriting any configured value, so this is the only flag for that knob and there is no `--limit-rows` |
+| `--max-records N` | `fetch(max_records=)` | The row ceiling. `fetch` clamps it by the effective `Limits.max_rows`, so this is the only flag for that knob and there is no `--limit-rows` |
 | `--model MODEL` | `llm.model` | Model to call |
 | `--max-tokens N` | `llm.max_tokens` | Output allowance for the call, and the lever on the cost floor |
 | `--temperature X` | `llm.temperature` | Sampling temperature |
@@ -1070,7 +1085,7 @@ $ blue-llmdb data query "the member states of the European Union" --attr country
 settings: llm.cache_dir=~/.blue-llmdb/cache (default), llm.model=gpt-6-luna (default), plan.max_continuations=0 (default)
 ```
 
-Under `--format json` the same run prints one object with **three** keys, `records`, `meta` and `settings`. This replaces the two-key object v1.2.0 printed; the MCP tool result is unchanged and stays two-key.
+Under `--format json` the same run prints one object with **three** keys: `records`, `meta`, and `settings`. The MCP tool result has `records` and `meta`.
 
 `meta` is `meta_view(result.meta, verbose=...)` and follows the three-tier policy in §1. It always carries `outcome`, the accounting fields, `gaps`, `stop_reasons`, `requested_attrs`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records`, and `filter_contradictions`. `normalization_collisions`, `repaired_numbers`, `split_decision`, `unchecked_types`, `record_origins`, `asked`, `stopped_by`, `truncated_to` and `cache_hits` appear when populated; `accounting_known` appears only when false. `--verbose` adds `unmapped_keys`, `remapped_keys`, `type_mismatches` and `key_collisions`. The table footer prints the point row estimate or `unknown`, and `stopped_by` is not gated on `--verbose`.
 
@@ -1087,6 +1102,7 @@ Its scope is exactly the values this invocation resolved and passed to the libra
 ```
 blue-llmdb data estimate QUERY [--attr NAME[:TYPE]]... [--context TEXT]
                 [--model MODEL] [--max-tokens N] [--temperature X] [--timeout SECONDS]
+                [--reasoning-effort NAME]
                 [--price-in X] [--price-out X]
                 [--limit-cost AMOUNT] [--limit-seconds N] [--limit-calls N] [--max-retries N]
                 [--variant NAME] [--format table|json|nl|csv] [-l|--log]
@@ -1111,11 +1127,11 @@ Prints the protocol, the variant, and the version of the library underneath, fro
 `--format table|json|nl|csv` is on every command that returns a result, with the default taken from `BLUE_DATA_CLI_FORMAT`. One renderer module serves all four formats for all commands.
 
 - `table`: a Rich table, bold header, `markup=False`, `highlight=False`.
-- `json`: one object on standard output and nothing else. The same command always produces the same keys, and an absent value is `null`, not a missing key.
+- `json`: one object on standard output and nothing else. The command's top-level envelope is stable; metadata keys that do not apply are omitted as specified by `meta_view`.
 - `nl`: a short plain-sentence paragraph.
 - `csv`: RFC 4180, header row from the same columns as `table`; for a non-tabular result the columns are `key,value`.
 
-Every column name and every cell, in every format, passes the C0/C1 control-character strip. Model output is untrusted, and that guard is not optional. In `csv` a cell whose first character is `=`, `+`, `-`, `@`, tab or carriage return is additionally prefixed with a single quote, because a spreadsheet reads those as formulas.
+Table, CSV, and natural-language output strip C0/C1 controls from displayed text, including table and CSV headers. JSON strips controls from string values; dictionary keys retain their spelling and JSON encoding escapes any controls in them. In `csv` a cell whose first character is `=`, `+`, `-`, `@`, tab or carriage return is additionally prefixed with a single quote, because a spreadsheet reads those as formulas.
 
 Informational output, progress and logs go to standard error; the result goes to standard output, so every format is safe to pipe. Progress is a Rich `console.status` spinner on standard error, shown only when standard error is a terminal and never under `--format json` or `--format csv`, checked explicitly rather than left to Rich's own detection.
 
@@ -1138,8 +1154,8 @@ Errors reach the terminal as one line on standard error, `ERROR: <CODE> <descrip
 
 `CONFIG` and `PROFILE` share exit 4 and are told apart by the code token. No command here is a batch command, so there is no partial-success rule beyond `PARTIAL`, which is about one request rather than several.
 
-An absent provider credential is not code 4. The library never reads a credential, so a missing one is not a setting it can find missing; the provider SDK reports it as a call that failed, which becomes a `TransportError` and exits 5. The message names `blue-llmdb profile config OPENAI_API_KEY`.
+An absent provider credential is not code 4. The provider SDK handles authentication. A failed call may raise `TransportError` (exit 5), or a configured call ceiling may stop retries first (exit 7). The library reads credential environment values for diagnostic masking, not authentication. A credential-related transport message names `blue-llmdb profile config OPENAI_API_KEY`.
 
-**JSON-mode errors depend on when parsing fails.** A Click parse failure occurs before the command body runs, so the CLI does not yet know the requested format. These failures use `USAGE`, plain text on standard error, and exit code 2. Under `--format json`, every error raised after the command body starts is also emitted on standard output as `{"error": {"code": ..., "message": ...}}`; the same line appears on standard error. The root callback runs before the command body, so it passes errors (an unknown `--profile`, an unreadable profiles file, or a stored value that will not cast) to the body. The body raises them as its first action, when it knows the format. The exception is an invalid value in `BLUE_DATA_CLI_FORMAT`: the lookup that would identify the format has failed, and without a `--format` flag the error is reported as text. A machine consumer that needs structured errors for bad flags must validate its own flags; the CLI cannot do so without reimplementing Click's parser.
+**JSON-mode errors.** On a format-bearing command, an explicit `--format json` or a valid `BLUE_DATA_CLI_FORMAT=json` default also writes a Click parse failure to standard output as `{"error": {"code": "USAGE", "message": ...}}`. It exits 2 and retains the `ERROR: USAGE` line on standard error. The last explicit `--format` flag wins over the default; a flag after `--` is an argument. A profile default is available after the root callback exports it. Root-option parse failures can use an already exported environment default, but not a profile-only default; an explicit `--format json` on the selected command covers that boundary. Commands without `--format` use standard error only. Errors after parsing use the same JSON envelope when JSON is already selected. The root callback passes startup errors (an unknown `--profile`, an unreadable profiles file, or a stored value that will not cast) to the command body. Before a profile can be read, the error publisher uses an explicit format flag or an already exported environment default. An invalid `BLUE_DATA_CLI_FORMAT` value without an explicit format flag reports only on standard error because the format lookup itself failed.
 
-During a fetch, the CLI redirects interpreter-level writes through `sys.stdout` to standard error. This covers the known provider banners, so normal successful `--format json` output is one JSON object and handled failures leave standard output empty. Provider diagnostics and normalized errors remain on standard error. Direct writes to file descriptor 1 and writes made after fetch returns are outside the redirect.
+During a fetch, the CLI discards interpreter-level writes through `sys.stdout`. This keeps provider diagnostics out of the JSON result and standard error streams. Handled errors remain on standard error. Direct writes to file descriptor 1 and writes made after fetch returns are outside the redirect.

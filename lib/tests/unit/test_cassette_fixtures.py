@@ -4,7 +4,7 @@ The cassettes in ``tests/cassettes/`` are recorded provider responses from real 
 made once by ``tests/record_cassettes.py`` and committed. Replaying them exercises the
 whole path a live call takes, parsing included, without a network connection.
 
-These tests assert **shape and behaviour, never the fact**. The recorded model named a
+These tests assert **shape and behavior, never the fact**. The recorded model named a
 different president than the specification's example does, because a model answers from
 its own knowledge and that knowledge has a date on it. Asserting the name would make the
 suite fail on re-record for a reason that has nothing to do with this library, and would
@@ -130,7 +130,7 @@ def test_case_three_context_disambiguates_an_attribute_name() -> None:
     assert isinstance(name, str) and name
     assert " " not in name.strip(), (
         f"context asked for a last name only, got {name!r}. The prompt carries the "
-        "context, so a multi-token name means it was not honoured."
+        "context, so a multi-token name means it was not honored."
     )
     assert "last name" in client.prompts[0], "the context text must reach the model"
 

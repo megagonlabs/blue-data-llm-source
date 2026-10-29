@@ -138,7 +138,7 @@ class TestSizing:
     def test_a_real_estimate_is_used_as_given(self, estimate: str) -> None:
         assert for_sizing(estimate) == estimate
 
-    def test_an_unrecognised_bucket_is_refused(self) -> None:
+    def test_an_unrecognized_bucket_is_refused(self) -> None:
         """Silently sizing an unknown string would be the failure class this package removes."""
         with pytest.raises(ValueError, match="not a cardinality"):
             for_sizing("enormous")

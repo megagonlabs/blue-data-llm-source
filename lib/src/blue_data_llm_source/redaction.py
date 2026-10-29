@@ -1,28 +1,13 @@
-"""Use one credential definition for every surface that returns external text to a caller.
+"""Mask credential-shaped text on diagnostic and adapter output boundaries.
 
-Both adapters print text from elsewhere: provider SDK exception messages, tracebacks under
-``--log``, log lines, and arguments quoted in refusals. An SDK may include a request header
-or part of a key in an exception message, and the adapters cannot predict which message will.
-
-**Where this applies.** Text this package writes *about* a call: an error message, a log
-line, a traceback, and the request-side fields of a run report.
-
-**Where it does not apply.** The records a fetch returns, and the ``meta`` fields
-that describe them. This source returns arbitrary model output *as data*: a record value
-that happens to look like a token is the answer, and masking it would be this package
-corrupting the thing it was asked to fetch. The key-level diagnostics name keys that appear
-in those records, so masking one there would publish a diagnostic that no longer matches the
-record. The distinction is whether the text is narration or returned data.
-
-**What counts as a credential** is settled four ways, strongest first. An exact value the
-environment holds under a name that says credential catches key material of any shape,
-including a provider's whose spelling nobody here has seen. The other three are shape:
-a labelled assignment, a key literal a provider stamps with its own prefix, and an opaque
-run long enough that nothing else is spelled that way.
+Provider errors, logs, and metadata can quote caller or model text. CLI and MCP adapters
+redact those surfaces, including nested metadata. Returned records remain raw model data;
+callers must decide whether to disclose or store them.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 
@@ -31,7 +16,7 @@ __all__ = ["MASK", "redact"]
 MASK = "***"
 """What a masked span reads as, spelled the way the CLI already spells a hidden value."""
 
-_SHORTEST_SECRET = 8
+_SHORTEST_SECRET = 6
 """Shorter than this, an environment value is not treated as key material.
 
 A variable holding ``1`` or ``true`` would otherwise blank out every digit and every such
@@ -43,15 +28,9 @@ _SECRET_VARIABLE = re.compile(
     r"|PASSWORD|PASSWD|CREDENTIALS?|AUTH|AUTHORIZATION)(?:_|$)",
     re.IGNORECASE,
 )
-"""Which environment variable holds key material, read off the name.
+"""Names that identify credential values in the environment.
 
-The CLI identifies secrets by declaration, using profile parameters whose cast is
-``secret``. The library cannot use that configuration engine because its copy will be
-replaced by a shared one, so it must not import it. Instead, this module uses the variable
-name. A CLI test checks that every parameter declared secret is recognised by this rule.
-
-Bare ``KEY`` is left out. ``plan.key`` names a record column, and a column name treated as
-key material would mask an ordinary word everywhere it appeared.
+Bare ``KEY`` is excluded: ``plan.key`` can name an ordinary record column.
 """
 
 _LABELLED = re.compile(
@@ -131,7 +110,10 @@ def _environment_secrets() -> list[str]:
 def redact(text: str) -> str:
     """*text* with anything that could be a credential replaced by :data:`MASK`."""
     for value in _environment_secrets():
-        text = text.replace(value, MASK)
+        encoded = json.dumps(value, ensure_ascii=False)
+        variants = {value, repr(value), repr(value)[1:-1], encoded, encoded[1:-1]}
+        for variant in sorted(variants, key=len, reverse=True):
+            text = text.replace(variant, MASK)
     text = _LABELLED.sub(lambda found: found.group(1) + MASK, text)
     text = _CARRIED.sub(lambda found: f"{found.group(1)} {MASK}", text)
     text = _STAMPED.sub(MASK, text)

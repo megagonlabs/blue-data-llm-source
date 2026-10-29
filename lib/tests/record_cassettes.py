@@ -29,12 +29,9 @@ from blue_data_llm_source.prompts import build_fetch_prompt  # noqa: E402
 CASSETTES = Path(__file__).resolve().parent / "cassettes"
 RECEIPT = CASSETTES / "RECEIPT.json"
 
-# A hard ceiling for the whole run, well under the authorised limit. The script stops
-# before a call that would cross it rather than after.
+# Reserve each call's upper bound before making it.
 MAX_SPEND_USD = 1.00
-# The worst a single call here can cost, derived rather than guessed: this model's
-# published rates times the largest request this script can send. Reserved before each
-# call so the ceiling bounds spend instead of reporting it afterwards.
+# Published rates times this script's maximum prompt and output tokens.
 MAX_PROMPT_TOKENS = 2_000
 MAX_OUTPUT_TOKENS = 4_096
 PRICE_PER_PROMPT_TOKEN = 0.15 / 1_000_000
@@ -44,7 +41,7 @@ MAX_CALL_COST_USD = (
 )
 MODEL = "gpt-4o-mini"
 
-# The four cases the data-source specification gives, which are the v1.0 fixtures.
+# The four cases the data-source specification gives, which are the 0.1.0.0 fixtures.
 CASES: list[dict[str, Any]] = [
     {
         "name": "president_no_attrs",
@@ -76,9 +73,8 @@ CASES: list[dict[str, Any]] = [
 class _Provider(Protocol):
     """The two litellm entry points this script calls.
 
-    litellm annotates much of its surface as bare ``List`` and ``dict``, which a strict
-    checker reads as unknown. This mirrors the narrower declaration the library client
-    makes for the same reason.
+    litellm's broad ``List`` and ``dict`` annotations leave these return types
+    unknown to a strict checker.
     """
 
     def completion(self, **kwargs: Any) -> Any: ...
@@ -93,11 +89,7 @@ def _provider() -> _Provider:
 
 
 def _cost(provider: _Provider, response: Any) -> float | None:
-    """The call's cost, or None when it cannot be read.
-
-    None is not zero. Treating an unreadable cost as free is what lets a ceiling admit
-    every remaining call while the running total stays where it started.
-    """
+    """Return the call's cost, or None if accounting is unavailable."""
     try:
         return float(provider.completion_cost(completion_response=response))
     except Exception:
@@ -113,12 +105,7 @@ def _usage(payload: dict[str, Any], field: str) -> Any:
 
 
 def fits(spent: float, ceiling: float) -> bool:
-    """Whether another call can be afforded at its worst plausible cost.
-
-    Checking only what has been spent lets the next unreserved call cross the ceiling by
-    its full cost, which makes the ceiling a report rather than a limit. Reserving the
-    worst case before the call is what turns it back into one.
-    """
+    """Whether another call fits after reserving its maximum cost."""
     return spent + MAX_CALL_COST_USD <= ceiling
 
 
@@ -127,8 +114,7 @@ def record(
 ) -> tuple[list[dict[str, Any]], float]:
     """Record every case that fits under *ceiling*, and report what was spent.
 
-    Separated from ``main`` so the ceiling can be driven offline with a scripted
-    provider. A guard that is only exercised by spending real money is not a guard.
+    ``provider`` can be scripted to test the ceiling without a live call.
     """
     spent = 0.0
     written: list[dict[str, Any]] = []

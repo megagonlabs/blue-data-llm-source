@@ -1,28 +1,14 @@
-"""Option translation and the CLI's own vocabulary: errors, tiers, progress.
+"""Translate CLI options and report errors, setting tiers, and progress.
 
-Every mapping between what the user typed and what the library accepts lives here, so
-``commands.py`` is argument declaration and printing and nothing else.
+Errors use ``ERROR: <CODE> <description>`` on stderr with distinct exit codes.
+JSON mode reports errors as objects on stdout, including errors raised while
+Click parses a format-bearing command's arguments.
 
-Three things beyond translation belong here because they are one decision each, and a
-decision made twice is a decision that drifts:
+The resolver handles environment, profile, and default values. :class:`Settings`
+records those tiers and command options for the settings envelope and table footer.
 
-*The error vocabulary.* ``ERROR: <CODE> <description>`` on stderr, one line, and an exit
-code a script can branch on without parsing the message. Click's own parse failures are
-converted to the same shape by the group and command classes below, so a caller sees one
-format whether the CLI refused the flag or the library refused the value. Under
-``--format json`` the same failure is an object on stdout, from the moment Click has parsed
-the arguments: the parse itself is the only thing outside that, because until it finishes
-there is no ``--format`` to honour.
-
-*The tier a value came from.* The resolver owns environment, profile and default; a command
-option sits above all three and never reaches the resolver at all. :class:`Settings` records
-both the value and its tier as each option is read, which is what the ``settings`` envelope
-publishes and what the table footer prints.
-
-*Where the not-result goes.* Progress, logs and warnings are stderr; stdout carries the
-result. :class:`Reporter` is the only thing that writes to stderr during a run, and it stays
-quiet under ``--format json`` and ``--format csv`` where a spinner would otherwise be the
-one thing standing between a caller and a clean pipe.
+Results go to stdout; progress, logs, and warnings go to stderr. :class:`Reporter`
+stays quiet under JSON and CSV output.
 """
 
 from __future__ import annotations
@@ -37,6 +23,8 @@ from pathlib import Path
 from typing import IO, Any, cast
 
 import click
+from blue_data.utils.config import ConfigError as SettingError
+from blue_data.utils.config import ProfileError, SecretError
 from blue_data_llm_source import (
     Attr,
     BudgetExceeded,
@@ -53,8 +41,10 @@ from blue_data_llm_source.llm import DEFAULT_MODEL
 from rich.console import Console
 
 from blue_data_llm_cli import __version__
-from blue_data_llm_cli.configstore import ConfigResolver, StoreError
 from blue_data_llm_cli.formats import FORMATS, printable
+from blue_data_llm_cli.profile_adapter import ConfigResolver
+
+STORE_ERRORS = (SettingError, ProfileError, SecretError)
 
 PROGRAM = "blue-llmdb"
 CLI_HOME_DEFAULT = "~/.blue-llmdb"
@@ -172,7 +162,7 @@ def _remedy_for(error: LlmSourceError) -> str:
     ):
         return f" Set the key with `{PROGRAM} profile config OPENAI_API_KEY`."
     if isinstance(error, ConfigError) and "no published prices" in text:
-        return " From this command those are --price-in, --price-out and --limit-cost."
+        return ". From this command those are --price-in, --price-out and --limit-cost."
     return ""
 
 
@@ -181,18 +171,74 @@ def cli_error_for(error: LlmSourceError) -> CliError:
 
 
 def as_usage(error: click.UsageError, hint: str = "") -> CliError:
-    """A Click parse failure in this CLI's own error shape.
-
-    This is the one failure outside the JSON error contract, and the boundary is the parse
-    itself: until Click has read the arguments there is no ``--format`` to honour, so a
-    parse failure is always plain text on stderr and always exit 2. Everything the CLI does
-    after that — including the root callback's own work, which :func:`start` re-raises from
-    inside the command body — is published in the requested format. A machine consumer
-    wanting structured errors for bad flags validates its own flags; a CLI cannot do that
-    for them without reimplementing Click's parser.
-    """
+    """A Click parse failure in this CLI's own error shape."""
     where = f" Try '{error.ctx.command_path} --help'." if error.ctx is not None else ""
     return CliError(USAGE, f"{error.format_message()}{hint}{where}")
+
+
+def _json_format_for_parse_error(command: click.Command, args: list[str]) -> bool:
+    """Use the last format flag, or the exported default when no flag was given."""
+    if not any(param.name == "output_format" for param in command.params):
+        return False
+
+    options = {
+        name: param
+        for param in command.params
+        if isinstance(param, click.Option)
+        for name in (*param.opts, *param.secondary_opts)
+    }
+    requested: str | None = None
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--":
+            break
+        name, separator, value = token.partition("=")
+        option = options.get(name)
+        if option is not None and name.startswith("--"):
+            if option.name == "output_format":
+                requested = (
+                    value if separator else (args[index + 1] if index + 1 < len(args) else "")
+                )
+            if not separator:
+                index += option.nargs if not option.is_flag else 0
+        index += 1
+    if requested is None:
+        requested = os.environ.get("BLUE_DATA_CLI_FORMAT")
+    return requested == "json"
+
+
+def _json_format_on_descendant(group: click.Group, args: list[str]) -> bool:
+    """Find a format-bearing command when a group rejects an earlier argument."""
+    options = {
+        name: param
+        for param in group.params
+        if isinstance(param, click.Option)
+        for name in (*param.opts, *param.secondary_opts)
+    }
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--":
+            index += 1
+            break
+        name, separator, _ = token.partition("=")
+        option = options.get(name)
+        if option is not None:
+            index += (option.nargs if not option.is_flag and not separator else 0) + 1
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        break
+    if index >= len(args):
+        return False
+    selected = group.commands.get(args[index])
+    if isinstance(selected, click.Group):
+        return _json_format_on_descendant(selected, args[index + 1 :])
+    if selected is not None:
+        return _json_format_for_parse_error(selected, args[index + 1 :])
+    return False
 
 
 class Command(click.Command):
@@ -205,10 +251,14 @@ class Command(click.Command):
         parent: click.Context | None = None,
         **extra: Any,
     ) -> click.Context:
+        raw_args = list(args)
         try:
             return super().make_context(info_name, args, parent, **extra)
         except click.UsageError as error:
-            raise as_usage(error, self.usage_hint(error)) from None
+            failure = as_usage(error, self.usage_hint(error))
+            if _json_format_for_parse_error(self, raw_args):
+                _publish("json", failure)
+            raise failure from None
 
     def usage_hint(self, error: click.UsageError) -> str:
         """Extra guidance for a parse failure. Empty unless a subclass knows better."""
@@ -230,10 +280,14 @@ class Group(click.Group):
         parent: click.Context | None = None,
         **extra: Any,
     ) -> click.Context:
+        raw_args = list(args)
         try:
             return super().make_context(info_name, args, parent, **extra)
         except click.UsageError as error:
-            raise as_usage(error) from None
+            failure = as_usage(error)
+            if _json_format_on_descendant(self, raw_args):
+                _publish("json", failure)
+            raise failure from None
 
     def invoke(self, ctx: click.Context) -> Any:
         try:
@@ -245,17 +299,18 @@ class Group(click.Group):
 class Output:
     """The format an error is published in, which the run refines as it learns it.
 
-    A command knows three things about its format at three different moments: what
-    ``--format`` said, which Click has parsed before the body starts; what the profile's
-    ``BLUE_DATA_CLI_FORMAT`` says, which needs the store read; and nothing at all, if
-    reading the store is what failed. Holding it in one mutable object is what lets the
-    prologue publish a failure in the best format known when it happens rather than in the
-    one it was going to use.
+    An explicit flag or exported environment default can be known before the store
+    read. A profile-only default becomes known when the resolver runs. Keep the format
+    current so a startup failure uses the best one available at that point.
     """
 
     def __init__(self, requested: str | None = None) -> None:
         self.requested = requested
-        self.value = requested or "table"
+        if requested is not None:
+            self.value = requested
+        else:
+            configured = os.environ.get("BLUE_DATA_CLI_FORMAT")
+            self.value = configured if configured in FORMATS else "table"
 
     def resolve(self, resolver: ConfigResolver) -> str:
         """Settle on the profile's default where no flag was given, and record it."""
@@ -269,25 +324,26 @@ def failure_for(error: Exception) -> CliError:
         return error
     if isinstance(error, LlmSourceError):
         return cli_error_for(error)
-    if isinstance(error, StoreError):
+    if isinstance(error, STORE_ERRORS):
         return CliError(PROFILE, str(error))
-    # Everything this CLI has not classified. Left to the interpreter it printed the whole
-    # chain, provider SDK frames included, on a path that has no `--log` to ask for that;
-    # the type name says what happened and the traceback stays behind --log.
+    # Keep unclassified error details in the log; include the type in the user message.
     return CliError(INTERNAL, f"{type(error).__name__}: {error}")
 
 
-def start(obj: Mapping[str, Any]) -> ConfigResolver:
+def start(obj: Mapping[str, Any], *, read_only: bool = False) -> ConfigResolver:
     """Raise what the root callback could not, and hand over the resolver it built.
 
     The callback runs before Click has parsed the subcommand's arguments, so a failure
-    reported from there has no ``--format`` to honour. It holds the failure instead, and
+    reported from there has no ``--format`` to honor. It holds the failure instead, and
     every command raises it here — first thing, inside the reporting context — where the
     requested format is known.
     """
     failure = obj.get("failure")
     if isinstance(failure, CliError):
         raise failure
+    fallback_failure = obj.get("read_only_fallback_failure")
+    if isinstance(fallback_failure, CliError) and not read_only:
+        raise fallback_failure
     return cast("ConfigResolver", obj["config"])
 
 
@@ -364,12 +420,12 @@ class Settings:
             return option
         if parameter is None:
             return None
-        found = self._resolver.resolve(parameter)
-        if found.value is None:
+        value = self._resolver.get(parameter)
+        if value is None:
             return None
-        self.applied[key] = found.value
-        self.source[key] = found.source
-        return found.value
+        self.applied[key] = value
+        self.source[key] = self._resolver.source_of(parameter)
+        return value
 
     def envelope(self) -> dict[str, Any]:
         return {
@@ -393,25 +449,18 @@ class Settings:
         return f"Ceilings applied: {named}."
 
 
-MASKED_SETTINGS = frozenset({"llm.model"})
-"""Applied settings whose value is masked wherever the envelope is published.
-
-The model name only. It is the one setting a run also echoes back through the metadata, and
-it is masked there for a reason that applies here too: a deployment that pasted a credential
-into it gets the value printed in the default table footer. Nothing else is masked, because
-the rule reads shape and a path is high-entropy by construction — masking ``llm.cache_dir``
-turned a cache directory into ``***`` on an ordinary machine, which is the footer failing at
-the one thing it is for.
-"""
-
-
 def _published(key: str, value: Any) -> Any:
-    """One applied value as it may leave.
-
-    Masked where the envelope is published rather than where the value is taken, so what
-    reaches the library stays exactly what the caller asked for.
-    """
-    return redact(value) if key in MASKED_SETTINGS and isinstance(value, str) else value
+    """Mask text in applied settings before displaying it or returning JSON."""
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, (list, tuple)):
+        return [_published(key, item) for item in cast("list[Any] | tuple[Any, ...]", value)]
+    if isinstance(value, dict):
+        return {
+            redact(name) if isinstance(name, str) else name: _published(key, item)
+            for name, item in cast("dict[Any, Any]", value).items()
+        }
+    return value
 
 
 # -------------------------------------------------------------- the streams --
@@ -422,10 +471,8 @@ def truncate(text: str, limit: int) -> str:
 class Reporter:
     """Everything that is not the result: the spinner, the log lines, the warnings.
 
-    All of it on stderr, so every format is safe to pipe. The spinner is suppressed outright
-    under the machine formats rather than left to Rich's own terminal detection: both
-    sibling CLIs rely on that detection and both corrupt their JSON under ``--log``, which
-    is the same bug one layer up.
+    All reporting goes to stderr. Machine formats suppress the spinner so stdout
+    remains parseable under ``--log``.
     """
 
     def __init__(self, fmt: str = "table", log: bool = False, log_limit: int = 80) -> None:
@@ -457,9 +504,7 @@ class Reporter:
 def format_option(command: Any) -> Any:
     """`--format`, declared once rather than on twelve commands.
 
-    Every command that returns a result carries it, and every one of them accepts all four
-    values. Re-declaring the option per command is how a CLI ends up with a format one
-    command has never heard of — both siblings do it thirty-odd times each.
+    Every command that returns a result accepts all four values.
     """
     return click.option(
         "--format",
@@ -481,7 +526,8 @@ def resolve_format(resolver: ConfigResolver, option: str | None) -> str:
     if configured not in FORMATS:
         raise CliError(
             PROFILE,
-            f"BLUE_DATA_CLI_FORMAT is {configured!r}; expected one of {', '.join(FORMATS)}",
+            f"BLUE_DATA_CLI_FORMAT is {configured!r}; expected one of {', '.join(FORMATS)}. "
+            f"Run `{PROGRAM} profile config BLUE_DATA_CLI_FORMAT VALUE` to fix it.",
         )
     return str(configured)
 
@@ -489,8 +535,7 @@ def resolve_format(resolver: ConfigResolver, option: str | None) -> str:
 def resolve_log_limit(resolver: ConfigResolver, option: int | None) -> int:
     """The flag, else the profile's ``BLUE_DATA_CLI_LOG_LIMIT``, else 80.
 
-    ``is None`` rather than a truth test: a configured ``0`` is a limit of zero, and reading
-    it as "unset" gave the same value two meanings depending on which tier supplied it.
+    A configured ``0`` is a valid limit, so test for ``None`` explicitly.
     """
     if option is not None:
         return option
@@ -506,7 +551,7 @@ def _resolved(resolver: ConfigResolver, parameter: str) -> Any:
     """
     try:
         return resolver.get(parameter)
-    except StoreError as error:
+    except STORE_ERRORS as error:
         raise CliError(PROFILE, str(error)) from None
 
 
@@ -519,8 +564,7 @@ def cli_home() -> str:
     """
     configured = os.environ.get(HOME_VARIABLE)
     if configured is not None and not configured.strip():
-        # `Path("")` is the working directory, so an empty export quietly moved the whole
-        # profile store to wherever the command was run from and wrote a `.profiles` there.
+        # `Path("")` resolves to the working directory; refuse an empty home setting.
         raise CliError(
             PROFILE,
             f"{HOME_VARIABLE} is exported with an empty value, which would put the profile "

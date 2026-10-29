@@ -27,10 +27,10 @@ def test_a_bool_string_is_coerced_to_a_bool(text: str, expected: bool) -> None:
     ]
 
 
-@pytest.mark.parametrize("text", ["2024-11-05", "2024/11/05", "05-11-2024", "November 5, 2024"])
+@pytest.mark.parametrize("text", ["2024-11-15", "2024/11/15", "15-11-2024", "November 15, 2024"])
 def test_a_date_string_is_coerced_to_an_iso_date(text: str) -> None:
     assert verify([{"sworn_in": text}], [Attr("sworn_in", "date")])[0] == [
-        {"sworn_in": "2024-11-05"}
+        {"sworn_in": "2024-11-15"}
     ]
 
 

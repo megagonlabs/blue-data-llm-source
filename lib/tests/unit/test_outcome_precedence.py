@@ -75,7 +75,7 @@ class OneLeafRaises(Planner):
 
 
 class OneLeafRaisesAndTheRestAreEmpty(OneLeafRaises):
-    """The zero-record partial: one part raised and the others honestly had nothing."""
+    """A partial result with no records: one part raised and the others returned none."""
 
     def answer(self, prompt: str) -> str:
         if self.broken in prompt:
@@ -118,9 +118,8 @@ class TestAPartlyAnsweredRunSaysSo:
         assert result.meta.outcome != Outcome.OK
 
     def test_a_complete_run_and_a_partly_failed_run_do_not_look_alike(self) -> None:
-        # The adversarial twin. Two runs over the same plan, differing only in whether one
-        # part came back, must be distinguishable from `outcome` alone -- which is the
-        # field's entire purpose.
+        # Two runs over the same plan must differ in outcome when one part fails, even
+        # when their row counts match.
         whole = partitioned(Planner())
         lost_one = partitioned(OneLeafRaises())
         assert whole.meta.outcome != lost_one.meta.outcome

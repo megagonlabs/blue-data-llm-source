@@ -68,9 +68,8 @@ class OfflineRecord:
 def install_offline_guard(monkeypatch: Any, allow_local_store: bool = False) -> OfflineRecord:
     """Block and record network, subprocess, and database access for one test.
 
-    The locked criterion asks for all three event classes at zero, not just sockets. A
-    suite that guards only sockets can still shell out or open a database and call
-    itself offline, which is the sort of gap that is invisible until it is not.
+    Track all three event classes so subprocess and database access cannot pass as
+    offline work.
     """
     record = OfflineRecord()
 

@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import inspect
+import sys
+import threading
 import time
 from collections.abc import Generator
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, fields, replace
 from typing import Any, Final, cast
 
@@ -116,6 +120,9 @@ def _declared(client: Any) -> frozenset[str]:
 # Accepted limit keys; reject misspellings instead of ignoring them.
 _LIMIT_KEYS = frozenset(f.name for f in fields(Limits))
 
+# The rates a cost bound reads in place of published prices.
+_PRICE_KEYS: Final = ("llm.price_per_input_token", "llm.price_per_output_token")
+
 _PLAN_LIMIT_KEYS = frozenset(
     {
         "max_leaves",
@@ -151,33 +158,30 @@ _PLAN_KEYS = _PLAN_LIMIT_KEYS | {
     "split_policy",
     "split_threshold_rows",
 }
-"""The `plan.*` namespace, held apart from `limits.*` rather than merged into it.
+"""The `plan.*` keys supported by the source settings interface.
 
-Written out rather than read off :class:`PlanLimits`, which is the wider object. Deriving
-the set from its fields accepted every field it has, including four this release's pipeline
-never reaches: two that only feed the full-design worst case, a threshold compared against
-an ambiguity score no shipped path produces, and a retry count that duplicates the one the
-client actually retries on. A setting accepted, echoed back in the error message as
-available, and then unable to change any outcome is worse than one refused — the caller
-sets it, reads the default's behaviour, and has nothing to tell them why.
-
-Retries are the clearest case. Both objects carry a `max_retries` and they are not the same
-setting: `limits.max_retries` bounds the attempts inside a single call and is what the
-budget is sized against, while the `PlanLimits` field sizes a recommendation nothing on this
-path asks for. Offering both here is how a caller sets one and moves the other. A library
-caller holding :class:`PlanLimits` directly still has every field; what closes is the
-settings door, which cannot deliver them."""
+This set is narrower than :class:`PlanLimits`. It excludes settings used only
+for whole-request recommendations, the ambiguity threshold (which has no
+score to compare here), and the planning retry count. In particular,
+`limits.max_retries` bounds provider attempts, while `PlanLimits.max_retries`
+sizes a recommendation. Direct :class:`PlanLimits` callers retain all fields.
+"""
 
 # The keys that carry no namespace. `connection` is the transport block every source in the
 # data layer has, `cache_store` hands a client a cache object directly, and `budget` and
 # `usage_sink` are the per-call channels a fetch writes into the map it passes down — an
 # injected client constructed with either carries it back through the resolved map.
-# `_class` is not this package's. `blue_data.registry.DataRegistry.register_source` records
-# it alongside the source's own properties and `connect_source` reads it back to rebuild the
-# class, so a source that has been through the registry round trip arrives carrying it.
-# Refusing it would break that round trip for every source in the layer, not only this one.
+# The data registry adds `_class` at registration and `metadata` at sync.
 _BARE_KEYS = frozenset(
-    {"connection", "cache_store", "_class", C.BUDGET_PROPERTY, C.USAGE_SINK_PROPERTY}
+    {
+        "connection",
+        "cache_store",
+        "_class",
+        "metadata",
+        "commit",
+        C.BUDGET_PROPERTY,
+        C.USAGE_SINK_PROPERTY,
+    }
 )
 
 # The namespaces with a closed key set of their own. A key inside one has already been
@@ -188,6 +192,11 @@ _NAMESPACES: Final = ("llm.", "limits.", "plan.")
 # signatures have nowhere else to put them. `fetch` takes each as a parameter, so these
 # fields are removed from the map before validating the property names.
 _REQUEST_KEYS: Final = ("attrs", "attr_names", "context", "max_records")
+
+
+def _changes_model(configured: dict[str, Any], call: dict[str, Any]) -> bool:
+    """Whether *call* names a model other than the one configured."""
+    return "llm.model" in call and call["llm.model"] != configured.get("llm.model")
 
 
 def _take_request_keys(options: dict[str, Any]) -> dict[str, Any]:
@@ -204,6 +213,13 @@ def _accepted_properties() -> list[str]:
         | {f"plan.{name}" for name in _PLAN_KEYS}
     )
 
+
+# How long an interrupted synchronous call inside a running loop waits for its owned fetch
+# to finish cancelling before it re-raises. A further interrupt stops the wait at once.
+_INTERRUPT_GRACE_SECONDS: Final = 5.0
+
+# How often that call checks whether its caller's task has been cancelled while it waits.
+_CANCEL_POLL_SECONDS: Final = 0.1
 
 _STOP_REASON_PRECEDENCE: Final = (
     "max_seconds",
@@ -321,25 +337,10 @@ def decide_outcome(
 
 @contextlib.contextmanager
 def _in_hierarchy() -> Generator[None]:
-    """Convert anything escaping a public entry point into the documented hierarchy.
+    """Wrap unclassified public-entry errors as ``LlmSourceError``.
 
-    Four documents promise every error this package raises is an ``LlmSourceError``, and the
-    CLI's exit-code table and the MCP server's error format are both built on that promise.
-    It was nevertheless maintained by per-site discipline across dozens of call sites, with
-    no chokepoint anywhere — so it held everywhere someone remembered and failed everywhere
-    they did not: an oversized literal raised ``OverflowError`` out of coercion, a deeply
-    nested response raised ``RecursionError``, a corrupt cache file raised
-    ``UnicodeDecodeError``, an exhausted descriptor table raised ``sqlite3.OperationalError``,
-    and a caller-supplied cache store raised whatever it liked.
-
-    Patching each site would leave the promise resting on the same discipline that already
-    failed. This makes it structural; the per-site guards remain as defence in depth, and
-    where one of them classifies an error better than this can, it still wins by running
-    first.
-
-    ``BaseException`` is deliberately not caught: a cancellation, a ``KeyboardInterrupt`` or
-    a ``SystemExit`` is not this package's to reclassify, and swallowing one would break the
-    reservation lifecycle that depends on those unwinding cleanly.
+    Existing subclasses retain their classification. ``BaseException`` remains outside
+    this boundary so cancellation and process interrupts can unwind reservations.
     """
     try:
         yield
@@ -402,9 +403,7 @@ def _renumber_by_record(
 def _reported_allowance(max_tokens: object) -> int:
     """The output allowance the cost bound actually reserved.
 
-    `isinstance(max_tokens, int)` reported 0 for a float allowance while pricing accepted it
-    and reserved the whole thing, so the published estimate disagreed with the reservation
-    it describes. The predicate pricing uses is the one that decides, so it is the one asked.
+    Use pricing's acceptance rule so the published allowance matches the reservation.
     """
     allowance = pricing.positive_finite(max_tokens)
     return int(allowance) if allowance is not None else 0
@@ -442,12 +441,10 @@ def _attempts_within(per_attempt: float, attempts: int, ceiling: float | None) -
     return fits
 
 
-# The base class's relational tool set covers databases, collections, columns, row samples,
-# and foreign keys. Four of its eight tools work with a source whose only knowledge comes
-# from a model. Three others return an unexplained empty result. `get_sample` raises a
-# TypeError in the base dispatcher, which passes `row_sample_size` to `fetch_entity_stats`,
-# a method without that parameter. Advertise only the four supported tools.
-_SERVED_NL_TOOLS = frozenset({"list_databases", "list_collections", "get_schema", "execute_query"})
+# Keep base schemas and dispatch; sampling returns unavailable statistics as None.
+_SERVED_NL_TOOLS = frozenset(
+    {"list_databases", "list_collections", "get_schema", "execute_query", "get_sample"}
+)
 
 
 @dataclass(frozen=True)
@@ -458,10 +455,9 @@ class _DistributionControls:
 
 @dataclass(frozen=True)
 class _ContractControls:
-    """The prompt-contract and child-construction switches, each defaulting to 2.1.0 behaviour.
+    """Prompt and child-construction settings, each with its own default.
 
-    Held together because they are read together and compared one at a time: a switch here
-    changes what a leaf is asked, never how many calls a plan may make.
+    These change what a leaf is asked, not how many calls a plan may make.
     """
 
     leaf_prompt: str = prompts.KEYED_LEAF_FETCH_PROMPT_VERSION
@@ -519,7 +515,7 @@ class LlmSource(DataSource):
     Base-class order matters and is not cosmetic. ``DataSource`` defines every method this
     class also defines. Most of its implementations return an empty result, so anything left
     unoverridden silently answers nothing rather than failing; the transaction methods raise
-    instead, and the orchestrator-tool methods carry behaviour this class narrows to the part
+    instead, and the orchestrator-tool methods carry behavior this class narrows to the part
     it can answer. The contract test asserts that the methods this source must answer resolve
     here.
     """
@@ -560,24 +556,32 @@ class LlmSource(DataSource):
         self.properties = {"connection": connection}
 
     def _resolved_properties(self, per_call: dict[str, Any] | None) -> dict[str, Any]:
-        """Three layers, in the order a caller would expect them to win.
+        """Merge defaults, injected client settings, source settings, and call settings.
 
-        Source defaults first, then whatever an injected client was constructed with, then
-        the caller's own — on the source or with the call. Flattening the first two let a
-        default overwrite a client's deliberate configuration while the rest of that
-        configuration survived, which is how a call came to be priced at one model's rates
-        and made against another.
+        Source settings override client settings. Call ceilings can only tighten them;
+        other call settings take precedence. Model and rates resolve together, and under a
+        configured cost ceiling the rates come from the configuration alone.
         """
-        # Preserve an injected client's configuration. Previously, the source's default model
-        # replaced the client's model while its rate overrides remained. The call then used
-        # one model and was priced as another, crossing the cost ceiling by the difference.
         chosen = self.properties
         defaults = self._defaults
         client_own: Any = getattr(self._client, "properties", None)
         from_client: dict[str, Any] = (
             dict(cast("dict[str, Any]", client_own)) if isinstance(client_own, dict) else {}
         )
-        resolved = {**defaults, **from_client, **chosen, **(per_call or {})}
+        configured = {**from_client, **chosen}
+        call = per_call or {}
+        # Validate each declaration before precedence can hide it.
+        for layer in (from_client, chosen, call):
+            self._limits_from_properties(layer)
+        resolved = {**defaults, **configured, **call}
+        if configured.get("limits.max_cost") is not None:
+            self._hold_rates_to_configuration({**defaults, **configured}, call, resolved)
+        for name in _LIMIT_KEYS:
+            key = f"limits.{name}"
+            declared = [layer[key] for layer in (configured, call) if key in layer]
+            bounded = [value for value in declared if value is not None]
+            if bounded:
+                resolved[key] = min(bounded)
         reasoning_is_explicit = any(
             "llm.reasoning_effort" in layer for layer in (from_client, chosen, per_call or {})
         )
@@ -592,20 +596,60 @@ class LlmSource(DataSource):
         )
         if not max_tokens_is_explicit:
             resolved["llm.max_tokens"] = default_max_tokens_for(resolved.get("llm.model"))
-        # Validate the resolved properties, not only caller-supplied values. An injected
-        # client's properties previously bypassed the closed boundary: `llm.stream=True` was
-        # forwarded instead of rejected, and `llm.max_parallel=0` created a semaphore with no
-        # permits and waited indefinitely.
         self._check_property_keys(resolved)
         return resolved
+
+    @staticmethod
+    def _hold_rates_to_configuration(
+        configured: dict[str, Any], call: dict[str, Any], resolved: dict[str, Any]
+    ) -> None:
+        """Keep a configured cost ceiling bounded against rates the caller did not choose.
+
+        A call could otherwise bound an unlisted model at whatever rates it supplied, and
+        no ceiling the owner configured would bind it. Rates configured for one model do
+        not follow a per-call change of model either: a listed model is then bounded at
+        its published prices, and an unlisted one is refused by the bound.
+        """
+        asserted = [key for key in _PRICE_KEYS if key in call]
+        if asserted:
+            raise ConfigError(
+                f"{' and '.join(asserted)} cannot be set per call when limits.max_cost is "
+                f"configured on the source or its client, since that ceiling holds only "
+                f"against published prices or rates configured with it. Configure the rates "
+                f"on the source, or choose a model with published prices; "
+                f"priceable_models() lists them"
+            )
+        if _changes_model(configured, call):
+            for key in _PRICE_KEYS:
+                # None rather than removed: an injected client merges its own properties
+                # under these and would otherwise restore its own rates.
+                resolved[key] = None
+
+    def _refuse_unpriced_call_model(self, per_call: dict[str, Any] | None) -> None:
+        """Refuse, with a remedy this caller can take, a model the configured ceiling cannot bound.
+
+        The bound refuses it in any case, but its message offers supplying rates or dropping
+        the ceiling, and a call can do neither under a configured one.
+        """
+        call = per_call or {}
+        configured = self._resolved_properties(None)
+        if configured.get("limits.max_cost") is None or not _changes_model(configured, call):
+            return
+        model = call["llm.model"]
+        if isinstance(model, str) and model and pricing.rates_for(model) is None:
+            raise ConfigError(
+                f"no published prices for model {model!r}, so the limits.max_cost configured "
+                f"on the source or its client cannot bound it; configured rates apply only to "
+                f"the configured model. Choose a model with published prices "
+                f"(priceable_models() lists them), or configure {model!r} and its rates "
+                f"on the source"
+            )
 
     def max_tokens_for_model(self, model: str) -> object:
         """Return the output allowance a call to *model* would use."""
         return self._resolved_properties({"llm.model": model}).get("llm.max_tokens")
 
-    # The default matches the base class, which gained one upstream. Without it this override
-    # is incompatible: a caller holding a `DataSource` may call it with no argument, and ours
-    # would raise where the base class accepts it.
+    # Match the base class default so DataSource callers may omit properties.
     def _update_properties(self, properties: dict[str, Any] | None = None) -> None:
         if not properties:
             return
@@ -628,19 +672,17 @@ class LlmSource(DataSource):
         return str(self.properties["connection"].get("variant", C.DEFAULT_VARIANT))
 
     def _limits(self, overrides: dict[str, Any] | None = None) -> Limits:
-        # Built from the same three-layer map every other setting is read from. Merging only
-        # this source's properties meant a ceiling an injected client carried in its own
-        # configuration was validated and then never entered the budget: a client configured
-        # with `limits.max_calls: 0` reached the provider, and `estimate` published three
-        # attempts for a client configured for one.
+        # Resolve all property layers so injected client ceilings enter the budget.
         merged = self._resolved_properties(overrides)
+        return self._limits_from_properties(merged)
+
+    @staticmethod
+    def _limits_from_properties(merged: dict[str, Any]) -> Limits:
         return Limits(
             max_rows=merged.get("limits.max_rows"),
             max_seconds=merged.get("limits.max_seconds"),
             max_cost=merged.get("limits.max_cost"),
             max_calls=merged.get("limits.max_calls"),
-            # Unconverted, so Limits validates it the way it validates every other
-            # field. int() here turned True into 1 and "abc" into a bare ValueError.
             max_retries=merged.get("limits.max_retries", 2),
         )
 
@@ -649,10 +691,10 @@ class LlmSource(DataSource):
         """The plan shape for this request, read from the same three-layer property map.
 
         Read here rather than defaulted at each seam, so a caller's `plan.max_leaves` is the
-        one the budget is sized against and the one the planner honours."""
+        one the budget is sized against and the one the planner honors."""
         # `_PLAN_KEYS` rather than every PlanLimits field, so this reads exactly what the
         # validator accepts. Two different answers to "is this a plan setting" is how a key
-        # gets refused at the door and honoured inside, or the reverse.
+        # gets refused at the door and honored inside, or the reverse.
         given = {
             key[len("plan.") :]: value
             for key, value in merged.items()
@@ -809,7 +851,7 @@ class LlmSource(DataSource):
 
     @staticmethod
     def _contract_controls(merged: dict[str, Any], mode: str) -> _ContractControls:
-        """Read and check the contract switches, refusing one the chosen mode cannot honour.
+        """Read and check the contract switches, refusing one the chosen mode cannot honor.
 
         A switch accepted in a mode that never reaches it would be the setting this source's
         closed key set exists to prevent: set, echoed back, and changing nothing.
@@ -917,29 +959,14 @@ class LlmSource(DataSource):
         leaf_prompt: str = prompts.KEYED_LEAF_FETCH_PROMPT_VERSION,
         probed: ProbeOutcome | None = None,
     ) -> list[Any]:
-        """Every leaf of the plan, concurrently, bounded by the client's own parallelism.
+        """Run all plan leaves concurrently under the client's parallelism limit.
 
-        A leaf that raises comes back as a failed result rather than an exception: its
-        siblings have already been paid for, and letting one propagate discards their rows
-        to report a failure that belongs to one of them.
-
-        Every leaf, including the ones that raise. ``gather`` without ``return_exceptions``
-        hands the first exception back the moment it is raised and leaves the siblings
-        running: on the async surface the caller is returned to with money committed and not
-        yet settled, reads its own budget, and sees a figure that keeps moving after the
-        call it asked about has finished. Collecting every result first costs the latency of
-        the slowest sibling and makes the spend the caller reads final.
-
-        ``arun_leaf`` classifies the failures it knows. One it does not — a recursion or
-        memory failure out of the parser rather than out of the model — would otherwise be
-        the one class of leaf exception this method's own contract does not cover, so it is
-        wrapped here into the same failed result. A request whose leaves all failed still
-        raises: that decision belongs downstream, where the whole plan is known."""
-        # A receipt list per leaf, not one for the run. Leaves execute concurrently below,
-        # so a shared sink records which calls happened and not which leaf made them — and
-        # anything a leaf has to conclude from its own last call then reads whichever entry
-        # arrived most recently, from any leaf. The run total is unchanged: the caller sees
-        # these folded together afterwards.
+        Collect every result before returning so the caller sees final budget spend.
+        Ordinary and unexpected leaf errors become failed results, preserving sibling rows;
+        cancellation still propagates. The all-failed decision is made downstream.
+        """
+        # Keep receipts per leaf so concurrent calls cannot exchange finish reasons or
+        # costs. The run total combines these lists after execution.
         per_leaf: list[list[Usage]] = [[] for _ in plan.leaves]
         if sinks is not None:
             sinks.extend(per_leaf)
@@ -1064,10 +1091,7 @@ class LlmSource(DataSource):
             except (TypeError, ValueError):  # pragma: no cover - exotic callables
                 continue
             try:
-                # Bound the way the source actually calls it, rather than counted. Counting
-                # parameters accepted `acomplete(prompt, *, properties=None)` and
-                # `acomplete(prompt, **kwargs)`, which cannot take a second positional
-                # argument and so still failed with the raw TypeError this replaces.
+                # The source passes properties positionally; keyword-only signatures cannot bind.
                 signature.bind("prompt", {})
             except TypeError as e:
                 raise ConfigError(
@@ -1081,10 +1105,7 @@ class LlmSource(DataSource):
     def _require_bindable(client: Any, budget: Budget) -> None:
         """Refuse a ceiling this client cannot be held to, per axis.
 
-        Capability is declared by the client, not inferred from its shape. Inferring it
-        from an attribute named ``budget`` accepted a client carrying ``budget = None``,
-        which then made unbounded calls under a configured ceiling — a limit that was
-        present, accepted, and enforcing nothing.
+        Capability is declared by the client, not inferred from a ``budget`` attribute.
 
         The axes differ in what is provable. This source counts records itself, so rows
         always bind. Everything else depends on the client: one that drives the provider
@@ -1093,9 +1114,7 @@ class LlmSource(DataSource):
         """
         declared = _declared(client)
 
-        # The whole chain, not this fetch's own limits. A ceiling carried only by a
-        # caller's budget is still a ceiling, and reading the child alone let a parent-only
-        # max_cost reach a client that had never claimed it could hold one.
+        # Include ancestor ceilings when checking the client's declared capabilities.
         configured = budget.configured_axes()
         unbindable = [
             name
@@ -1141,7 +1160,7 @@ class LlmSource(DataSource):
         # only the built-in client reads them, so validating there let a typo through on
         # every other path.
         check_adapter_keys(properties)
-        # `limits.max_cst` was accepted and ignored, so a run that looked bounded was not.
+        # Reject unknown limits so a misspelled ceiling cannot be ignored.
         unknown = sorted(
             key
             for key in properties
@@ -1201,15 +1220,11 @@ class LlmSource(DataSource):
         ctx = checks.normalize_context(context)
         cap = checks.require_positive_int(max_records, "max_records")
 
-        # An empty query is an empty answer, matching how the other sources in this layer
-        # treat an absent result, and matching the behaviour this source replaces. The
-        # reason is reported rather than lost: the caller can tell "you asked nothing"
-        # from "the model knows nothing".
-        # Before the empty-query short circuit: a closed key set that only applies to
-        # requests that reach the model is not a closed key set, and an empty request is
-        # the cheapest way to validate configuration without spending anything.
+        # Validate settings before the empty-query return. Report an empty query separately
+        # from a model response containing no records.
         limits = self._limits(properties)
         merged = self._resolved_properties(properties)
+        self._refuse_unpriced_call_model(properties)
         distribution = self._distribution_controls(merged, properties, wanted)
 
         text = checks.normalize_query(query)
@@ -1225,12 +1240,13 @@ class LlmSource(DataSource):
 
         if cap is not None:
             limits = Limits(
-                max_rows=cap,
+                max_rows=cap if limits.max_rows is None else min(cap, limits.max_rows),
                 max_seconds=limits.max_seconds,
                 max_cost=limits.max_cost,
                 max_calls=limits.max_calls,
                 max_retries=limits.max_retries,
             )
+            merged["limits.max_rows"] = limits.max_rows
         # A caller's budget accumulates across every call it is handed to, so this fetch
         # draws a child from it rather than spending it directly: the configured limits
         # apply to this call, and never beyond what the caller has left.
@@ -1433,9 +1449,7 @@ class LlmSource(DataSource):
                 before = len(sink)
                 text = await client.acomplete(prompt, props)
                 written = sink[before:]
-                # The last of them on a retried call, which is the attempt that produced the
-                # text being returned. None when the call wrote nothing, which is the honest
-                # answer for a client that reports no accounting.
+                # Use the final attempt's reason. A client that wrote no usage has no reason.
                 reason = written[-1].finish_reason if written else None
                 return Answer(text, finish_reason=reason)
 
@@ -1618,10 +1632,8 @@ class LlmSource(DataSource):
         )
         meta.record_origins = origins
 
-        # `record_index` was assigned against the list `verify` saw, and dropping, deduping
-        # and capping all renumber that list — so an index published to the caller pointed at
-        # a different record than the one it described, or past the end of the result.
-        # Renumbered here, against the records the caller actually receives.
+        # Reindex mismatches after dropping, deduplication, and capping so they refer to
+        # records the caller receives.
         meta.type_mismatches = _renumber_by_record(mismatches, checked, deduped)
 
         meta.observed_keys = alignment.observed_keys
@@ -1684,30 +1696,15 @@ class LlmSource(DataSource):
         properties: dict[str, Any] | None = None,
         llm_fn: Any = None,
     ) -> Estimate:
-        """The most one flat fetch of *query* could cost, without contacting the provider.
+        """Bound one flat fetch of *query* without contacting the provider.
 
-        Asked of the client that would actually answer, using the same call arguments the
-        attempt itself would build, so the figure cannot disagree with what the run reserves.
-        Computing it separately is how an estimate came to differ from the reservation by
-        three orders of magnitude for an injected client.
-
-        **This does not price a decomposed request.** It reads no ``plan.*`` setting, so a
-        plan with parts or continuations costs this figure times the calls it makes. Size a
-        ceiling for a split request from its part count, or ask in ``flat`` mode, which is
-        what this describes.
-
-        A *fetch* is bounded, not an attempt. A fetch may retry, so the figure is the
-        per-attempt bound accumulated once per attempt permitted, added the way the ledger
-        adds it — with the shipped retry default that is three attempts' worth, and
-        reporting the per-attempt figure as the fetch's meant a request sized against it
-        was refused when it ran.
-
-        Returns an unbounded :class:`Estimate` with a reason rather than raising: asking
-        what a request might cost is reasonable even where the answer is unknown, and the
-        honest answer to that is that it cannot be given.
+        Use the client and arguments the fetch would use. The result reads no ``plan.*``
+        settings and does not bound a non-flat run's total cost. The bound accumulates
+        the per-attempt cost in ledger order across permitted retries (three
+        attempts by default). When pricing is unavailable, return an unbounded
+        :class:`Estimate` with a reason.
         """
-        # Resolved the same way a fetch resolves them, so the estimate is priced against the
-        # configuration the run will actually use — including an injected client's own.
+        # Include injected client settings in the configuration used for pricing.
         merged = self._resolved_properties(properties)
         # The model actually configured, not the default it would fall back to. Reporting
         # the fallback alongside a reason saying none was configured is a contradiction a
@@ -1719,10 +1716,7 @@ class LlmSource(DataSource):
         # Before the empty-request short circuit, so the closed key set is closed on this
         # route too and a caller can check its configuration without spending anything.
         limits = self._limits(properties)
-        # What can actually happen: the chain's retry allowance, under the call cap. The
-        # allowance itself comes from the same accessor the client's retry policy and
-        # admission both read, so the three agree about the quantity and differ only where
-        # they are meant to.
+        # Apply the chain's retry allowance and the call cap to the attempt count.
         attempts = self._attempts_reachable(Budget(limits), limits)
 
         text = checks.normalize_query(query)
@@ -1760,7 +1754,9 @@ class LlmSource(DataSource):
 
         max_tokens = merged.get("llm.max_tokens")
         try:
-            per_attempt = float(cast("float", bound_for_attempt(prompt, merged)))
+            per_attempt = Budget.checked_amount(
+                "the attempt bound", bound_for_attempt(prompt, merged)
+            )
         except ConfigError as e:
             return Estimate(
                 bounded=False,
@@ -1777,11 +1773,8 @@ class LlmSource(DataSource):
         return Estimate(
             bounded=True,
             attempts_within_ceiling=_attempts_within(per_attempt, attempts, limits.max_cost),
-            # Accumulated the way the ledger will accumulate it, one attempt at a time.
-            # Neither the product nor `fsum` is that: the ledger settles each charge and then
-            # compares the running total against the next bound, and two-stage aggregation
-            # lands an ulp above a single-shot sum. Publishing the smaller figure meant a
-            # ceiling set to exactly it refused the last attempt it had accounted for.
+            # Match the ledger's per-attempt addition order so a ceiling set from this
+            # estimate admits every attempt it includes.
             max_cost=_accumulated(per_attempt, attempts),
             max_cost_per_attempt=per_attempt,
             model=model,
@@ -1794,14 +1787,9 @@ class LlmSource(DataSource):
     def _attempts_allowed(budget: Budget) -> int:
         """How many attempts the retry allowance permits, before any other ceiling.
 
-        ``effective_retries`` and not ``limits.max_retries``: a caller's budget accumulates
-        across every call it is handed to, and a fetch derives a child from it, so the
-        allowance that binds is the narrowest anywhere in the chain. Read from the request's
-        own limits, this saw a retry depth a parent had already forbidden — then refused a
-        request the parent could comfortably afford, reporting a call ceiling never
-        approached. Adding a redundant retry setting to the request made the same request
-        run, which is the clearest statement of that defect: two spellings of one budget
-        disagreeing. The client builds its own retry policy from exactly this figure.
+        ``effective_retries`` uses the narrowest allowance in the budget chain, not
+        just this request's ``limits.max_retries``. The client builds its retry policy
+        from this figure.
         """
         return max(1, budget.effective_retries() + 1)
 
@@ -1858,22 +1846,111 @@ class LlmSource(DataSource):
         llm_fn: Any = None,
         budget: Budget | None = None,
     ) -> FetchResult:
-        """Synchronous wrapper over afetch."""
-        # The loop check comes before the coroutine is built. Building it first and then
-        # raising would leave an un-awaited coroutine behind and emit a RuntimeWarning
-        # pointing at this library rather than at the caller's mistake.
-        _reject_running_loop()
-        return asyncio.run(
-            self.afetch(
-                query,
-                attrs=attrs,
-                context=context,
-                max_records=max_records,
-                properties=properties,
-                llm_fn=llm_fn,
-                budget=budget,
+        """Fetch synchronously, blocking the calling thread even inside a running loop."""
+
+        def run() -> FetchResult:
+            return asyncio.run(
+                self.afetch(
+                    query,
+                    attrs=attrs,
+                    context=context,
+                    max_records=max_records,
+                    properties=properties,
+                    llm_fn=llm_fn,
+                    budget=budget,
+                )
             )
-        )
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return run()
+
+        context_snapshot = contextvars.copy_context()
+        # The worker publishes its task here so an interrupt in this thread can cancel it.
+        # The flag covers an interrupt that arrives before the task exists.
+        owned: dict[str, Any] = {"task": None, "interrupted": False}
+        owned_lock = threading.Lock()
+
+        def worker() -> FetchResult:
+            # Close owned async resources before releasing the loop entry.
+            loop: asyncio.AbstractEventLoop | None = None
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    fetch_task = loop.create_task(
+                        self.afetch(
+                            query,
+                            attrs=attrs,
+                            context=context,
+                            max_records=max_records,
+                            properties=properties,
+                            llm_fn=llm_fn,
+                            budget=budget,
+                        )
+                    )
+                    with owned_lock:
+                        owned["task"] = fetch_task
+                        if owned["interrupted"]:
+                            fetch_task.cancel()
+                    return loop.run_until_complete(fetch_task)
+                finally:
+                    pending = asyncio.all_tasks(loop)
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                    if sys.version_info >= (3, 12):
+                        # The same bound asyncio.run puts on threads the default executor keeps.
+                        loop.run_until_complete(
+                            loop.shutdown_default_executor(asyncio.constants.THREAD_JOIN_TIMEOUT)
+                        )
+                    else:
+                        loop.run_until_complete(loop.shutdown_default_executor())
+                    loop.close()
+                    asyncio.set_event_loop(None)
+            finally:
+                if loop is not None:
+                    DefaultLlmClient._release_loop(loop)  # pyright: ignore[reportPrivateUsage]
+
+        # The first Ctrl-C under asyncio.run only requests cancellation of the caller's task,
+        # which cannot act on it while this thread waits. A new request is checked for between
+        # waits instead. Python 3.10 tasks do not count requests; there Ctrl-C raises
+        # KeyboardInterrupt here directly.
+        caller_cancelling: Any = getattr(asyncio.current_task(), "cancelling", None)
+        requests_at_entry = caller_cancelling() if caller_cancelling is not None else 0
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="llm-source")
+        future: Future[FetchResult] | None = None
+        try:
+            # Submitted inside the try: an interrupt can arrive after the work is queued but
+            # before the future is returned.
+            future = executor.submit(context_snapshot.run, worker)
+            while not future.done():
+                wait([future], timeout=_CANCEL_POLL_SECONDS)
+                if caller_cancelling is not None and caller_cancelling() > requests_at_entry:
+                    if not future.done():
+                        raise asyncio.CancelledError
+            return future.result()
+        except BaseException:
+            if future is None or not future.done():
+                # An interrupt or cancellation while waiting would otherwise leave the fetch
+                # running unseen, or keep this thread blocked until every provider call had
+                # answered.
+                with owned_lock:
+                    owned["interrupted"] = True
+                    task = owned["task"]
+                if task is not None:
+                    with contextlib.suppress(RuntimeError):
+                        task.get_loop().call_soon_threadsafe(task.cancel)
+                if future is not None:
+                    wait([future], timeout=_INTERRUPT_GRACE_SECONDS)
+            raise
+        finally:
+            # Join a finished worker. One still running past the grace period is left to end,
+            # and work that never started is dropped.
+            executor.shutdown(wait=future is not None and future.done(), cancel_futures=True)
 
     @staticmethod
     def _fold_usage(
@@ -1893,18 +1970,13 @@ class LlmSource(DataSource):
                 meta.cache_hits += 1
             if usage.model:
                 meta.model = usage.model
-        # Provider entries and spend, from the authority that admitted them. A contacted
-        # attempt that failed produced no usage entry and still cost a call.
+        # The budget retains contacted attempts and their charge, including ordinary
+        # provider failures whose usage entries have unknown accounting.
         meta.calls = budget.calls
         meta.cost = budget.cost
-        # A callable's provider work is invisible from here, so these describe this
-        # library's own bookkeeping rather than what was actually spent. Saying so is the
-        # difference between "unknown" and a confident zero.
-        # ...and only if every contacted attempt could actually be priced. The default
-        # client is entitled to answer an unfamiliar model when no cost ceiling is
-        # configured, and the provider's own accounting can fail for one that is familiar.
-        # Either way the figure is a bound or a zero, not a measurement, and reporting it as
-        # known makes an unpriced call look free.
+        # A callable's provider work is outside this ledger. Accounting is known only
+        # when every contacted attempt was priced; an unfamiliar model or failed
+        # provider accounting may leave a bound or zero instead of a measured cost.
         priced = all(usage.cost_known for usage in usages if not usage.cache_hit)
         meta.accounting_known = accounting_known and priced
         crossed = budget.note_exhausted()
@@ -1933,10 +2005,7 @@ class LlmSource(DataSource):
         """
         options = dict(optional_properties or {})
         request = _take_request_keys(options)
-        # Before the op is read, so a bad key is refused on every op rather than on the ones
-        # that happen to reach a fetch. LLM.MODELS answered from local state and returned
-        # before the check, which made the same ceiling accepted on one op and refused on
-        # the next.
+        # Check keys before dispatch so every operation rejects unknown settings.
         self._check_property_keys(options)
 
         if isinstance(query, dict):
@@ -1957,10 +2026,8 @@ class LlmSource(DataSource):
             if op == C.OP_ESTIMATE:
                 if request.get("max_records") is not None:
                     raise ConfigError(
-                        "max_records does not change an estimate and this op does not take "
-                        "one: the model is asked once and the surplus records are dropped on "
-                        "arrival, so the call costs the same. Drop it, or bound the spend "
-                        "with limits.max_cost."
+                        "max_records does not change an estimate, which prices a flat fetch "
+                        "without a row cap. Drop it, or bound spend with limits.max_cost."
                     )
                 # Returned as a one-record list because that is what this surface returns.
                 # A caller wanting the record itself calls estimate() directly.
@@ -1991,6 +2058,7 @@ class LlmSource(DataSource):
         schema: dict[str, Any] | None = None,
         llm_fn: Any = None,
         optional_properties: dict[str, Any] | None = None,
+        read_only: bool = True,
     ) -> list[dict[str, Any]]:
         """Run a natural-language query.
 
@@ -2053,6 +2121,7 @@ class LlmSource(DataSource):
         database: str | None = None,
         collection: str | None = None,
         optional_properties: dict[str, Any] | None = None,
+        read_only: bool = True,
     ) -> Any:
         """Run one advertised tool, or refuse by name.
 
@@ -2061,10 +2130,8 @@ class LlmSource(DataSource):
         it takes its ceilings the way the query surface does: ``limits.*`` in
         *optional_properties*, which the base dispatcher hands on unchanged.
         """
-        # Everything is inside the chokepoint, not only the delegation. A name that is not a
-        # string, a tool input that is not a mapping, and a required key the dispatcher
-        # indexes directly all leave here as an LlmSourceError, which is what four documents
-        # promise and what an orchestrating model's `except` clause is written against.
+        # Include validation and dispatch in the error boundary so callers receive
+        # LlmSourceError for invalid tool input.
         with _in_hierarchy():
             served = {str(tool["name"]): tool for tool in self.get_nl_tools(database, collection)}
             if name not in served:
@@ -2095,6 +2162,7 @@ class LlmSource(DataSource):
                     database=database,
                     collection=collection,
                     optional_properties=optional_properties,
+                    read_only=read_only,
                 ),
             )
 
@@ -2108,6 +2176,8 @@ class LlmSource(DataSource):
         max_iterations: int = 10,
         extra_tools: list[dict[str, Any]] | None = None,
         extra_tool_fn: Any = None,
+        read_only: bool = True,
+        max_sample_size: int | None = None,
     ) -> list[dict[str, Any]]:
         """Refuse, and name the path that is bounded."""
         raise ConfigError(
@@ -2150,6 +2220,32 @@ class LlmSource(DataSource):
     def fetch_database_collection_relations(self, database: str, collection: str) -> dict[str, Any]:
         return {}
 
+    def fetch_database_collection_entity_metadata(
+        self, database: str, collection: str, entity: str
+    ) -> dict[str, Any]:
+        return {}
+
+    def fetch_database_collection_entity_attributes(
+        self, database: str, collection: str, entity: str
+    ) -> dict[str, Any]:
+        entities = self.fetch_database_collection_entities(database, collection)
+        return entities.get(entity, {}).get("properties", {})
+
+    def fetch_database_collection_relation_metadata(
+        self, database: str, collection: str, relation: str
+    ) -> dict[str, Any]:
+        return {}
+
+    def fetch_database_collection_relation_attributes(
+        self, database: str, collection: str, relation: str
+    ) -> dict[str, Any]:
+        return {}
+
+    def fetch_relation_stats(
+        self, database: str, collection: str, relation: str
+    ) -> dict[str, Any] | None:
+        return None
+
     def fetch_source_stats(self) -> dict[str, Any] | None:
         return None
 
@@ -2167,7 +2263,7 @@ class LlmSource(DataSource):
         return None
 
     def fetch_entity_stats(
-        self, database: str, collection: str, entity: str
+        self, database: str, collection: str, entity: str, *, row_sample_size: int = 10
     ) -> dict[str, Any] | None:
         return None
 
@@ -2186,12 +2282,19 @@ class LlmSource(DataSource):
     # source surface reaches a defined method rather than an AttributeError, and each
     # returns the same empty result the surface specifies for an unsupported operation.
     def create_database(
-        self, database: str, properties: dict[str, Any] | None = None
+        self,
+        database: str,
+        properties: dict[str, Any] | None = None,
+        overwrite: bool = False,
     ) -> dict[str, Any]:
         return {}
 
     def create_database_collection(
-        self, database: str, collection: str, properties: dict[str, Any] | None = None
+        self,
+        database: str,
+        collection: str,
+        properties: dict[str, Any] | None = None,
+        overwrite: bool = False,
     ) -> dict[str, Any]:
         return {}
 
@@ -2201,6 +2304,7 @@ class LlmSource(DataSource):
         collection: str,
         entity: str,
         properties: dict[str, Any] | None = None,
+        overwrite: bool = False,
     ) -> dict[str, Any]:
         return {}
 
@@ -2210,16 +2314,14 @@ class LlmSource(DataSource):
         collection: str,
         relation: str,
         properties: dict[str, Any] | None = None,
+        overwrite: bool = False,
     ) -> dict[str, Any]:
         return {}
 
     def import_data(
         self,
         source: Any,
-        # `database` before `collection`, matching the base class. They were the other way
-        # round here, so a positional call reaching this override bound each to the other's
-        # value. The contract test compares against the installed base and caught it when
-        # the data layer settled on this order.
+        # Match the base class's positional argument order.
         database: str = "default",
         collection: str = "default",
         entity: str | None = None,
@@ -2228,7 +2330,7 @@ class LlmSource(DataSource):
     ) -> dict[str, Any]:
         """Not supported: there is no store here to import into.
 
-        Materialising model knowledge into a real store is the receiving source's
+        Materializing model knowledge into a real store is the receiving source's
         ``import_data``, with this source as its argument, not this method.
         """
         return {}
@@ -2240,12 +2342,3 @@ class LlmSource(DataSource):
 
     def disconnect(self) -> None:
         return None
-
-
-def _reject_running_loop() -> None:
-    """Raise if a synchronous entry point is called from inside an event loop."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return
-    raise ConfigError("fetch() was called from inside a running event loop. Use afetch() instead.")

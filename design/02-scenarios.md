@@ -1,5 +1,7 @@
 # LlmSource — Scenarios
 
+The fetch examples in this design document share the `source` created in Scenario 1 and require the `llm` extra and provider credentials. Their record excerpts illustrate result shape; model answers can vary. Scenario 6 uses an application-supplied callback.
+
 ## Scenario 1: A planner needs a small table no source holds
 
 A planner needs to join a vendor table in Postgres with European Union membership, but the registry has no membership table. The planner asks LlmSource for the membership data, specifies the required columns and types, and passes the returned records to a relational operator.
@@ -108,7 +110,7 @@ source.execute_query(
 # → [{"bounded": True, "max_cost": …, "model": "gpt-6-luna", ...}]
 ```
 
-Its connection properties report protocol `llm` and variant `openai`, following the same scheme under which the relational sources report `sql`/`postgres` and `sql`/`mysql`. `execute_query` also accepts a plain string, which is treated as the request itself, and an unrecognised op raises `QueryError` listing the three above.
+Its connection properties report protocol `llm` and variant `openai`, following the same scheme under which the relational sources report `sql`/`postgres` and `sql`/`mysql`. `execute_query` also accepts a plain string, which is treated as the request itself, and an unrecognized op raises `QueryError` listing the three above.
 
 Registration requires a constructed instance. `register_source` records the instance name, properties, and class path; `connect_source` returns the live instance or reconstructs it from that record. Construction by protocol name is not supported.
 
@@ -140,7 +142,7 @@ The wrapper can enforce only the row limit because it cannot observe the callabl
 
 ## Scenario 7: A caller caps what a request may spend
 
-An exploratory planner sets limits of a few cents and five seconds for a speculative request, and wants a definite answer if the request cannot stay within them. Limits are configured as properties. Each axis is claimed before provider contact, so a run that would cross a limit is refused in advance. Because a call's price is unknown until it returns, cost is claimed against an upper bound. Verified accounting can release the difference; missing or category-incomplete accounting retains at least the bound.
+An exploratory planner sets limits of a few cents and five seconds for a speculative request, and wants a definite answer if the request cannot stay within them. Limits are configured as properties. Each axis is claimed before provider contact, so a run that would cross a limit is refused in advance. Because a call's price is unknown until it returns, cost is claimed against a bound built from the package or configured rates. After provider contact the reservation remains the minimum ledger charge, including when calculator accounting is missing or incomplete.
 
 **Example:**
 
@@ -160,7 +162,7 @@ result = source.fetch(
 
 The four axes are row count, elapsed time, API cost, and call count. Rows are capped after the records are in hand, because that is when the count is known. Time, calls, and cost are reserved before each provider attempt, under a lock, so neither a fan-out nor a retry sequence can race past a ceiling. A cache hit consumes no provider call, no tokens and no cost. Rows it returns still count against the row cap, and elapsed-time admission still applies, so a hit under a spent deadline is refused. The time axis bounds admission and cooperative waiting, not the whole run; [what it bounds](../lib/README.md#what-the-time-ceiling-actually-bounds) lists the exclusions.
 
-The cost calculation uses the prompt's UTF-8 byte length and the full `llm.max_tokens` allowance to produce an upper bound. With the default `gpt-6-luna` model and 25,000 output tokens, its minimum is about $0.01375, OpenAI's 10% regional-processing uplift included. A `limits.max_cost` of 0.10 admits the example request, while 0.01 refuses it before provider contact. Reduce `llm.max_tokens` when the answer needs fewer tokens.
+The cost calculation uses the prompt's UTF-8 byte length and the full `llm.max_tokens` allowance. For listed models it includes the cache-write and long-context worst cases, plus any regional uplift. With the default `gpt-6-luna` model and 25,000 output tokens, its minimum is about $0.020625. A `limits.max_cost` of 0.10 admits the example request, while 0.01 refuses it before provider contact. Reduce `llm.max_tokens` when the answer needs fewer tokens.
 
 The source refuses a cost ceiling when it cannot establish a bound, including when model rates are unavailable or `llm.max_tokens` is not a finite positive number. Callers can supply both token rates for an unlisted model. See [Pricing helpers](../docs/api-reference.md#pricing-helpers) for the name-matching and validation rules.
 
@@ -228,14 +230,14 @@ source.execute_query(
 )
 # [{'bounded': True, 'max_cost': 0.00084015, 'reason': None, 'model': 'gpt-4o-mini',
 #   'prompt_bytes': 779, 'max_output_tokens': 256, 'max_attempts': 3,
-#   'max_cost_per_attempt': 0.00028005}]
+#   'max_cost_per_attempt': 0.00028005, 'attempts_within_ceiling': None}]
 ```
 
 ---
 
 ## Scenario 9: A tool-using agent reaches the source over MCP
 
-An agent in another framework with the MCP server configured sees five tools: `llmdb_query` fetches records; `llmdb_estimate` bounds the cost of an unsplit fetch without running it; `llmdb_list_models` and `llmdb_inspect_model` report which models have a published price and whether a cost ceiling can be calculated; and `llmdb_inspect_metadata` reports the protocol, variant, and library version. Each tool name has the server's prefix, avoiding collisions when an agent uses two Blue Data servers. Each tool also has a JSON input schema. The library validates arguments and passes rejection messages through unchanged. Because agents supply arguments programmatically and see only the exception text, each rejection names the offending value and accepted form.
+An agent in another framework with the MCP server configured sees five tools: `llmdb_query` fetches records; `llmdb_estimate` bounds the cost of an unsplit fetch without running it; `llmdb_list_models` and `llmdb_inspect_model` report which models have a published price and whether a cost ceiling can be calculated; and `llmdb_inspect_metadata` reports the protocol, variant, and library version. Each tool name has the server's prefix, avoiding collisions when an agent uses two Blue Data servers. Each tool also has a JSON input schema. The server validates arguments against that schema before calling the library. Schema errors identify the rejected field and constraint; library failures retain a known error kind and use fixed messages.
 
 **Example:**
 
@@ -246,6 +248,8 @@ An agent in another framework with the MCP server configured sees five tools: `l
   "limits.max_cost": 0.25 }
 ```
 
+The following response is illustrative; records and usage vary by run.
+
 ```json
 {
   "records": [{"country": "France", "accession_year": 1958}],
@@ -253,9 +257,9 @@ An agent in another framework with the MCP server configured sees five tools: `l
     "outcome": "ok",
     "model": "gpt-6-luna",
     "calls": 1,
-    "prompt_tokens": 12,
+    "prompt_tokens": 202,
     "completion_tokens": 34,
-    "cost": 0.000031,
+    "cost": 0.020863,
     "elapsed_seconds": 0.31,
     "row_estimate": null,
     "cardinality_estimate": null,
@@ -272,7 +276,7 @@ An agent in another framework with the MCP server configured sees five tools: `l
 }
 ```
 
-`cost` here is a usage bound rather than a measurement, which is what `accounting_known: false` says. Under a ceiling, a GPT-6 Luna response does not prove its cache-write and long-context charges, so the call is charged the most its reported usage could have been billed.
+`cost` here is a conservative ledger charge rather than a measurement, which is what `accounting_known: false` says. Under a ceiling, a GPT-6 Luna response retains at least its reservation; a higher usage bound raises the charge.
 
 An agent sets a ceiling on its own call with `limits.max_cost`, `limits.max_seconds`, and `limits.max_calls`. The operator can also set ceilings for every call through `BLUE_DATA_LLM_SOURCE_LIMIT_COST`, `BLUE_DATA_LLM_SOURCE_LIMIT_CALLS` and `BLUE_DATA_LLM_SOURCE_LIMIT_SECONDS`, and a call's own ceiling applies only where it is lower. A request with neither has no ceiling. An agent that has to stay inside one asks `llmdb_estimate` first and sets it.
 
@@ -324,6 +328,6 @@ The following capabilities are outside this source's scope:
 
 - Grounding an answer against a retrieved document. Closed-book is the premise, not a gap. Cross-checking against another source in the layer is a composition the planner performs, not a feature of this source.
 - Verifying that a returned claim is true. The source verifies that a record matches the shape it was asked for. Nothing in it establishes correctness, and no validator ships.
-- Owning provider credentials. The source is given a client or a callable and never reads, stores, or logs a key.
-- A deployed distributed executor. The library exposes serializable tasks and results and runs them with bounded local concurrency; process or machine distribution belongs in a service wrapper.
+- Managing provider authentication. The provider SDK uses the credential; the source reads credential environment values only to mask diagnostics.
+- A deployed distributed executor. The library exposes serializable tasks and results and runs them with bounded asynchronous concurrency in one process; process or machine distribution belongs in a service wrapper.
 - Planning across sources or operators. That belongs to the operator layer, which calls this source rather than the other way round.
