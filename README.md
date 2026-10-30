@@ -64,7 +64,7 @@ blue-data-llm-source/
 
 ## Requirements
 
-- Python 3.10 or later (declared minimum); Python 3.12 is the tested setup.
+- Python 3.12 or 3.13 (declared range `>=3.12,<3.14`); Python 3.12 is the tested setup.
 - A `blue-data` checkout beside this repository, on its `1.0` branch: the CLI requires `blue-data==1.0.0`, which provides `blue_data.utils.config`. Its `lib/` directory is a local dependency and is not available from a package index. The installer looks for `../blue-data/lib` from this repository root; set `BLUE_DATA_PATH` to that directory if the checkout is elsewhere.
 - Access to the declared Python dependencies through a package index or local wheels during installation.
 - A provider API key for calls made through the built-in model client. The offline quick start below uses a local function and needs no key.
@@ -90,7 +90,7 @@ See [installation](docs/installation.md) for component installers, extras, and o
 
 ## Quick start
 
-From the `blue-data-llm-source` checkout, with `blue-data` beside it and Python 3.12 installed. Use a new environment; for an existing `.venv`, check its Python version before reusing it. Python 3.15 uses a compatibility wheelhouse; see [installation](docs/installation.md#python-315-installation).
+From the `blue-data-llm-source` checkout, with `blue-data` beside it and Python 3.12 installed. Use a new environment; for an existing `.venv`, check its Python version before reusing it.
 
 ```bash
 test ! -e .venv &&
@@ -123,7 +123,7 @@ With each component's `dev` extra and the library's `llm` extra installed, run f
 python -m pytest -q tests/integration/test_offline_examples.py
 ```
 
-The last command runs the 14 no-key examples in isolated processes and compares their output with the captured examples. The guard blocks Python socket connections, datagram sends and subprocess helpers. Provider-backed examples are excluded. This smoke suite is verified on macOS with Python 3.12 and 3.15; Linux, Windows and free-threaded builds have not been verified.
+The last command runs the 14 no-key examples in isolated processes and compares their output with the captured examples. The guard blocks Python socket connections, datagram sends and subprocess helpers. Provider-backed examples are excluded. This smoke suite is verified on macOS with Python 3.12; Linux, Windows and free-threaded builds have not been verified.
 
 ## Code of conduct
 

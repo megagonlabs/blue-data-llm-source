@@ -24,7 +24,7 @@ The `mcp` requirement is bounded below 2 rather than only floored. The low-level
 
 ## Requirements
 
-- Python 3.10 or later (declared minimum). Python 3.12 is the standard setup; regular CPython 3.15 needs the [compatibility wheels](#python-315-installation).
+- Python 3.12 or 3.13 (declared range `>=3.12,<3.14`). Python 3.12 is the standard setup.
 - A local checkout of the `blue-data` repository. It is not on a public package index, so it must be installed from source.
 - A provider credential in the environment for any request that reaches a model. The provider SDK uses it for authentication; the library reads credential environment values only for diagnostic masking. A request with an injected client or an `llm_fn` needs none.
 
@@ -86,7 +86,7 @@ Satisfy [Requirements](#requirements) first. Both routes below assume a `blue-da
 
 Every route below needs network access. Only `blue-data` comes from the local checkout; all other dependencies are resolved from a package index. These editable installs make Python import each package from its working tree rather than from a copy under `site-packages`. After installing the CLI component, `blue-llmdb --version` prints the installed version.
 
-Use a new Python 3.12 environment for these commands. If `.venv` exists, activate it and check `python --version`; use the compatibility-wheel instructions below for Python 3.15. The creation blocks stop if `.venv` already exists.
+Use a new Python 3.12 environment for these commands. If `.venv` exists, activate it and check `python --version`. The creation blocks stop if `.venv` already exists.
 
 The whole repository, in dependency order. Run this from the `blue-data-llm-source` root:
 
@@ -137,7 +137,7 @@ This is the route to take when `blue-data` is already installed, or when you wan
 
 | Extra | Packages | Required for |
 |---|---|---|
-| `llm` | `litellm>=1.102.0,<2` and `diskcache>=5.6,<6`; on Python 3.15 the [compatibility build](#python-315-installation) supplies LiteLLM | Reaching a provider through the built-in client, and the `llm.cache` on-disk response cache |
+| `llm` | `litellm>=1.102.0,<2` and `diskcache>=5.6,<6` | Reaching a provider through the built-in client, and the `llm.cache` on-disk response cache |
 | `all` | the same dependencies | An alias for `llm` |
 | `dev` | `pytest`, `pytest-asyncio`, `pytest-cov`, `ruff`, `pyright`, `build`, `twine` | Running the tests and the lint, type, build, and publish gates |
 
@@ -169,69 +169,11 @@ python -m pip install --no-index --no-deps --force-reinstall \
 
 Run outside the source trees with `PYTHONPATH` unset. `--no-deps` does not resolve dependencies: check the installed requirements separately. An ordinary upgrade from 0.2.2.1 (installed copies report 2.2.1) will not select 1.0.0, which pip ranks lower.
 
-Tested with Python 3.12.14 and LiteLLM 1.106.5, and with regular Python 3.15.0 and the compatibility builds below, on macOS ARM64. The package's declared Python minimum does not establish compatibility for every provider dependency on later interpreters.
+Tested with Python 3.12.14 and LiteLLM 1.106.5 on macOS ARM64. The packages declare Python 3.12 and 3.13, the versions on which the whole Blue DI 1.0 family installs and runs together.
 
 ### Python 3.15 installation
 
-Regular CPython 3.15 uses two local compatibility wheels: `fastuuid==0.14.0+blue.1` and `litellm==1.106.5+blue.1`. The upstream LiteLLM 1.106.5 wheel used here excludes Python 3.15. The upstream fastuuid release has no 3.15 wheel, and its PyO3 release supports builds through 3.14. The fastuuid build enables the stable ABI on the unchanged native implementation. The LiteLLM build replaces imports of the removed `sre_constants` and `sre_parse` wrappers with their CPython `re` implementation modules, preserving its regex validation, and narrows its Python requirement to `>=3.15, <3.16`. Both builders verify upstream SHA-256 checksums and preserve upstream licenses. These local versions are not published on PyPI.
-
-The library's metadata does not name either build. The `llm` and `all` extras require `litellm>=1.102.0,<2` on every Python version; the local builds are selected separately by `lib/scripts/python315-constraints.txt`. This avoids requiring unpublished local versions during universal dependency resolution. The wheelhouse supplies the tested LiteLLM build for the procedure below, and the constraints keep pip on both builds if a newer upstream release appears on the index. Another upstream release may provide a compatible route; verify its complete dependency closure on the target interpreter and platform before switching. Python 3.10–3.14 ignores the LiteLLM build even when the wheelhouse is visible. Pip may still pick the fastuuid build there; it is the upstream code compiled for the stable ABI.
-
-Build the wheels once, or use a wheelhouse provided by your deployment instead. Building needs:
-
-- regular CPython 3.12, 3.13 or 3.14 for the build environment, not a free-threaded build;
-- a Rust toolchain with `cargo` and `rustc` on `PATH`, with Cargo 1.78 or later, because fastuuid's `Cargo.lock` is version 4 and the build runs with `--locked`;
-- the Xcode command-line tools (`xcode-select --install`) for the C compiler and linker;
-- network access to PyPI and crates.io while the build runs.
-
-The fastuuid builder gives Cargo its own `HOME` and `CARGO_HOME` inside the work directory, and passes on only `PATH`, `TMPDIR` and the rustup settings from your environment. Proxy variables, CA bundle settings and your own Cargo configuration do not reach Cargo, so crates.io must be reachable directly.
-
-The commands below are for macOS ARM64, the only verified platform; Linux, Windows and free-threaded Python have not been runtime-verified. Run from this repository's root, using new directories. `python3.13` or `python3.14` can replace `python3.12`:
-
-```bash
-test ! -e .build315 &&
-python3.12 -m venv .build315 &&
-.build315/bin/python -m pip install 'maturin==1.15.0' &&
-.build315/bin/python lib/scripts/build-python315-wheel.py \
-  --work-dir .native315 --wheel-dir .wheels315
-```
-
-The builder downloads the fastuuid source to `.native315.tar.gz`, and it refuses to reuse that archive, `.native315` or `.wheels315`. To build again after a failure, remove all three and rerun the last command with the existing `.build315`:
-
-```bash
-rm -rf .native315 .native315.tar.gz .wheels315
-```
-
-Download the official LiteLLM macOS ARM64 wheel and apply the two-import patch. The patch script checks its pinned hash, updates the version, Python requirement and RECORD, and preserves native code and wheel tags. It refuses to overwrite an existing output wheel.
-
-```bash
-test ! -e litellm-1.106.5-cp310-abi3-macosx_11_0_arm64.whl &&
-curl --fail --location \
-  --output litellm-1.106.5-cp310-abi3-macosx_11_0_arm64.whl \
-  https://files.pythonhosted.org/packages/89/42/d31451542cfd62d7989d62b6c075d212bc66f06b738a3133003f27b06575/litellm-1.106.5-cp310-abi3-macosx_11_0_arm64.whl &&
-.build315/bin/python lib/scripts/patch-litellm-python315-wheel.py \
-  litellm-1.106.5-cp310-abi3-macosx_11_0_arm64.whl --wheel-dir .wheels315
-```
-
-Create a separate 3.15 environment. PyYAML 6.0.3 also lacks a 3.15 wheel; its normal source build needs setuptools and Cython. `PYYAML_FORCE_LIBYAML=0` selects its supported pure-Python implementation, so LibYAML headers are unnecessary. PyYAML's source build runs its packaging code. Pip continues to resolve dependencies throughout installation.
-
-```bash
-test ! -e .venv315 &&
-python3.15 -m venv .venv315 &&
-source .venv315/bin/activate &&
-export PIP_FIND_LINKS="$PWD/.wheels315" &&
-export PYYAML_FORCE_LIBYAML=0 &&
-python -m pip install -e ../blue-data/lib &&
-python -m pip install -c lib/scripts/python315-constraints.txt \
-  -e './lib[llm]' -e ./platform/llm-cli -e ./platform/llm-mcp &&
-python -m pip check &&
-blue-llmdb --version &&
-blue-data-llm-mcp --version
-```
-
-In this environment, keep `PIP_FIND_LINKS` set and pass `-c lib/scripts/python315-constraints.txt` whenever you install the `all` extra or reinstall a package. `lib/scripts/install.sh` applies the constraints file itself on Python 3.15. The LiteLLM patch depends on CPython's private regex parser, so a future interpreter or upstream upgrade needs a new compatibility check.
-
-Once a stable LiteLLM release supports Python 3.15 and you have verified it, install it without the wheelhouse or the constraints file and retire these local builds. The library's requirement already admits that release, so no new library version is needed. LiteLLM's merged upstream fix also stops requiring fastuuid on 3.15.
+Python 3.15 is outside the supported range, and pip refuses to install these packages on it. The fastuuid and LiteLLM compatibility builders under `lib/scripts/` and `lib/scripts/python315-constraints.txt` are kept in the repository but are not part of a supported installation.
 
 ## Building distributions
 

@@ -7,7 +7,7 @@ name = "blue-data-llm-source"
 version = "1.0.0"
 description = "Blue data source for generating typed records with a language model"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "blue-data>=1.0.0,<2",
     "tenacity>=9.0.0",

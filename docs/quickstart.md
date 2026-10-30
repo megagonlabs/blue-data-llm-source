@@ -8,9 +8,9 @@ workspace/
 └── blue-data-llm-source/
 ```
 
-Run the commands below from `blue-data-llm-source` with Python 3.12; the package declares Python >=3.10; `../blue-data/lib` points to the sibling checkout. [installation.md](installation.md) covers the installers, optional extras, and the Conda alternative.
+Run the commands below from `blue-data-llm-source` with Python 3.12; the packages declare Python 3.12 and 3.13 (`>=3.12,<3.14`); `../blue-data/lib` points to the sibling checkout. [installation.md](installation.md) covers the installers, optional extras, and the Conda alternative.
 
-Create a new environment with the explicit Python 3.12 executable. If `.venv` already exists, activate it and check `python --version` before reusing it. For Python 3.15, prepare its compatibility wheels and use a separate environment; see [Python 3.15 installation](installation.md#python-315-installation).
+Create a new environment with the explicit Python 3.12 executable. If `.venv` already exists, activate it and check `python --version` before reusing it.
 
 ```bash
 ls -d ../blue-data/lib &&

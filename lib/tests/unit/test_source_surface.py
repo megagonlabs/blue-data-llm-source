@@ -74,6 +74,20 @@ def test_an_unknown_op_raises_query_error_listing_the_supported_ops() -> None:
     assert client.prompts == []
 
 
+def test_every_served_op_is_declared_exactly_once_as_a_read_or_a_write() -> None:
+    reads, writes = LlmSource._READ_OPS, LlmSource._WRITE_OPS  # pyright: ignore[reportPrivateUsage]
+
+    assert reads.isdisjoint(writes)
+    assert reads | writes == set(C.OPS)
+
+
+def test_no_served_op_needs_commit() -> None:
+    source = LlmSource(client=ScriptedClient())
+    for op in C.OPS:
+        assert not source._query_requires_commit({"op": op})  # pyright: ignore[reportPrivateUsage]
+        assert not source._query_requires_commit(json.dumps({"op": op}))  # pyright: ignore[reportPrivateUsage]
+
+
 def test_a_dict_query_without_an_op_is_rejected() -> None:
     with pytest.raises(QueryError, match="unknown op"):
         LlmSource(client=ScriptedClient()).execute_query({"query": "who?"})

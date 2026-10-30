@@ -7,7 +7,7 @@ name = "blue-data-llm-mcp"
 version = "1.0.0"
 description = "MCP server for the Blue language model data source"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "blue-data-llm-source[llm]==1.0.0",
     # Bounded below 2, not merely floored. The low-level Server's decorator API this module

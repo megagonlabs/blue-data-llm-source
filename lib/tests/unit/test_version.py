@@ -115,6 +115,17 @@ def test_every_package_declares_its_readme(name: str, pyproject: str, _module: s
     assert (project.parent / "README.md").is_file()
 
 
+@pytest.mark.parametrize(("name", "pyproject", "_module"), PACKAGES, ids=[p[0] for p in PACKAGES])
+def test_every_package_declares_the_family_python_range(
+    name: str, pyproject: str, _module: str
+) -> None:
+    """The Blue DI 1.0 family installs and runs together on Python 3.12 and 3.13 only."""
+    text = (ROOT / pyproject).read_text(encoding="utf-8")
+    assert re.search(r'^requires-python = ">=3\.12,<3\.14"$', text, re.MULTILINE), (
+        f'{name} does not declare requires-python = ">=3.12,<3.14"'
+    )
+
+
 def test_every_documented_version_output_quotes_the_current_release() -> None:
     """Check each documented output shape against the current version."""
     current = blue_data_llm_source.__version__

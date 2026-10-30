@@ -520,6 +520,12 @@ class LlmSource(DataSource):
     here.
     """
 
+    # The read-only paths of the data layer run an op without ``commit`` only when it is a
+    # declared read. Every op this source serves answers from the model or prices that
+    # answer, and none changes stored data, so all of them are reads.
+    _READ_OPS: frozenset[str] = frozenset(C.OPS)
+    _WRITE_OPS: frozenset[str] = frozenset()
+
     def __init__(
         self,
         name: str = "llm",

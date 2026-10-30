@@ -7,7 +7,7 @@ name = "blue-data-llm-cli"
 version = "1.0.0"
 description = "Command-line interface for the Blue language model data source"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "blue-data==1.0.0",
     "blue-data-llm-source[llm]==1.0.0",

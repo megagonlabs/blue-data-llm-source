@@ -9,7 +9,7 @@ This repository builds three packages that are not available on a package index:
 | Concern | Choice |
 |---------|--------|
 | Language | Python |
-| Minimum version | 3.10 |
+| Supported versions | 3.12 and 3.13 (`requires-python = ">=3.12,<3.14"`) |
 | Package manager | pip |
 | Project config | `pyproject.toml` |
 | Build backend | setuptools |
