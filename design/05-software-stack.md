@@ -177,7 +177,7 @@ Four recorded provider responses are committed under `lib/tests/cassettes/` and 
 | Build | `build` | `lib/scripts/build.sh` |
 | Publish | `twine` | `lib/scripts/publish.sh` |
 
-Line length is 100 and the target version is 3.10. Details are in [08-coding-style.md](08-coding-style.md).
+Line length is 100 and the target version is 3.12 (supported 3.12–3.13). Details are in [08-coding-style.md](08-coding-style.md).
 
 ---
 

@@ -15,13 +15,13 @@ Run all three checks before committing a change. They currently run manually bec
 ```toml
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]   # pycodestyle, pyflakes, isort, pyupgrade
 
 [tool.pyright]
-pythonVersion = "3.10"
+pythonVersion = "3.12"
 typeCheckingMode = "strict"
 venvPath = "."
 venv = ".venv"
@@ -33,7 +33,7 @@ venv = ".venv"
 
 Type hints are required on all public methods, public class attributes, module-level constants, and private methods.
 
-Use Python 3.10+ syntax throughout, with no imports from `typing` where newer syntax applies:
+Use Python 3.12+ syntax (supported 3.12–3.13) throughout, with no imports from `typing` where newer syntax applies:
 
 ```python
 # correct
