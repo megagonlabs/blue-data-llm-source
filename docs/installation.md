@@ -173,7 +173,7 @@ Tested with Python 3.12.14 and LiteLLM 1.106.5 on macOS ARM64. The packages decl
 
 ### Python 3.15 installation
 
-Python 3.15 is outside the supported range, and pip refuses to install these packages on it. The fastuuid and LiteLLM compatibility builders under `lib/scripts/` and `lib/scripts/python315-constraints.txt` are kept in the repository but are not part of a supported installation.
+Python 3.15 is unsupported. The family packages declare `>=3.12,<3.14`, so pip refuses to install them on Python 3.15.
 
 ## Building distributions
 

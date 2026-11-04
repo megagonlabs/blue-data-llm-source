@@ -110,7 +110,7 @@ source.execute_query(
 # → [{"bounded": True, "max_cost": …, "model": "gpt-6-luna", ...}]
 ```
 
-Its connection properties report protocol `llm` and variant `openai`, following the same scheme under which the relational sources report `sql`/`postgres` and `sql`/`mysql`. `execute_query` also accepts a plain string, which is treated as the request itself, and an unrecognized op raises `QueryError` listing the three above.
+Its connection properties report protocol `llm` and variant `openai`, following the same scheme under which the relational sources report `sql`/`postgres` and `sql`/`mysql`. `execute_query` also accepts a JSON-encoded object with an `op` key and dispatches it like a dict. Other strings, including malformed JSON, are treated as the request itself. An unrecognized op raises `QueryError` listing the three above.
 
 Registration requires a constructed instance. `register_source` records the instance name, properties, and class path; `connect_source` returns the live instance or reconstructs it from that record. Construction by protocol name is not supported.
 
@@ -170,15 +170,15 @@ Which ceilings bind at all depends on the client that answers. A client declares
 
 Capability checks include ceilings inherited through the budget chain, not only values configured on the current request.
 
-A caller using the query surface sets the same per-call ceilings through `optional_properties`, which is merged over the instance properties without changing later calls.
+A caller using the query surface sets per-call ceilings through `optional_properties`. General per-call properties merge over the instance properties; `limits.*` can only tighten the effective ceiling, and `None` leaves it unchanged; `limits.max_retries=None` is invalid.
 
 ```python
 records = source.execute_query(
     {"op": "LLM.FETCH", "query": "commercial airports in France", "attrs": ["name"]},
     optional_properties={"limits.max_cost": 0.10, "limits.max_seconds": 5},
 )
-# The next call through the same source is unbounded again: the properties were merged for
-# this request and not written back.
+# Per-call ceilings are not written back. The next call uses the source ceilings,
+# which are unbounded in this example.
 ```
 
 Both routes above bound one request. A caller that wants one ceiling over a sequence of requests passes its own budget instead, which accumulates across every call it is handed to.

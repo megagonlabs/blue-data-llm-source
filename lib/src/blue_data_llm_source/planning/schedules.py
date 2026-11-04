@@ -6,7 +6,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import replace
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 
 from blue_data_llm_source import _constants as C
 from blue_data_llm_source import prompts
@@ -50,8 +50,6 @@ from blue_data_llm_source.types import (
 )
 
 _MAX_RESPONSE_CHARS = 65_536
-_T = TypeVar("_T")
-_U = TypeVar("_U")
 
 
 def schema_payload(schema: Schema) -> dict[str, object]:
@@ -215,10 +213,10 @@ def _parallel_preflight(
     return remaining_cost is not None and remaining_cost >= required
 
 
-async def gather_siblings(
-    first: Coroutine[Any, Any, _T],
-    second: Coroutine[Any, Any, _U],
-) -> tuple[_T, _U]:
+async def gather_siblings[T, U](
+    first: Coroutine[Any, Any, T],
+    second: Coroutine[Any, Any, U],
+) -> tuple[T, U]:
     """Run two siblings and drain both before any exceptional return."""
     first_task = asyncio.create_task(first)
     second_task = asyncio.create_task(second)

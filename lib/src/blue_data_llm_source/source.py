@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import contextvars
 import inspect
-import sys
+import json
 import threading
 import time
 from collections.abc import Generator
@@ -37,7 +37,7 @@ from blue_data_llm_source.planning.bounds import (
     MODES,
     PlanLimits,
 )
-from blue_data_llm_source.planning.cardinality import Cardinality
+from blue_data_llm_source.planning.cardinality import PARSE_PARSED, Cardinality, CardinalityEstimate
 from blue_data_llm_source.planning.context import (
     PLANNING_SCHEMA_FIRST,
     validate_planning_order,
@@ -1295,6 +1295,7 @@ class LlmSource(DataSource):
             key_from=KEY_FROM_CALLER if declared_keys else KEY_FROM_NONE,
         )
         planning_gaps: list[str] = []
+        root_cardinality: CardinalityEstimate | None = None
         schema_mode = merged.get("plan.schema_mode", SCHEMA_PRESERVE)
         if schema_mode not in SCHEMA_MODES:
             raise ConfigError(
@@ -1402,6 +1403,7 @@ class LlmSource(DataSource):
                     plan=bundle.plan,
                 )
             meta.row_estimate = bundle.analysis.row_estimate
+            root_cardinality = bundle.analysis.cardinality
             meta.cardinality_estimate = bundle.analysis.cardinality.to_dict()
             planning_gaps = list(bundle.diagnostics)
             if any(usage.finish_reason == "length" for usage in bundle.usages):
@@ -1618,10 +1620,30 @@ class LlmSource(DataSource):
         deduped, origins = verifier.dedupe(
             answered, origins=_origins_for(coverage.record_origins, checked, answered)
         )
+        result_gaps: list[str] = []
+        if (
+            schema.primary_keys
+            and root_cardinality is not None
+            and root_cardinality.parse_status == PARSE_PARSED
+            and root_cardinality.lower is not None
+        ):
+            observed_before_cap = len(
+                {
+                    identity
+                    for record in deduped
+                    if (identity := key_identity(record, schema.primary_keys, schema.attrs))
+                    is not None
+                }
+            )
+            if observed_before_cap < root_cardinality.lower:
+                result_gaps.append(
+                    f"observed_coverage_short: {observed_before_cap} distinct complete "
+                    "identities before the row cap, below the root model's lower "
+                    f"estimate {root_cardinality.lower} (estimate-based warning)"
+                )
         rows_before_cap = len(deduped)
         kept = run_budget.add_rows(rows_before_cap)
         row_cap_fired = kept < rows_before_cap
-        result_gaps: list[str] = []
         if row_cap_fired:
             deduped = deduped[:kept]
             origins = origins[:kept]
@@ -1908,13 +1930,10 @@ class LlmSource(DataSource):
                     if pending:
                         loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
                     loop.run_until_complete(loop.shutdown_asyncgens())
-                    if sys.version_info >= (3, 12):
-                        # The same bound asyncio.run puts on threads the default executor keeps.
-                        loop.run_until_complete(
-                            loop.shutdown_default_executor(asyncio.constants.THREAD_JOIN_TIMEOUT)
-                        )
-                    else:
-                        loop.run_until_complete(loop.shutdown_default_executor())
+                    # Match asyncio.run's five-minute executor shutdown bound.
+                    loop.run_until_complete(
+                        cast(asyncio.BaseEventLoop, loop).shutdown_default_executor(timeout=300)
+                    )
                     loop.close()
                     asyncio.set_event_loop(None)
             finally:
@@ -1923,8 +1942,7 @@ class LlmSource(DataSource):
 
         # The first Ctrl-C under asyncio.run only requests cancellation of the caller's task,
         # which cannot act on it while this thread waits. A new request is checked for between
-        # waits instead. Python 3.10 tasks do not count requests; there Ctrl-C raises
-        # KeyboardInterrupt here directly.
+        # waits instead. A plain loop callback has no current task to check.
         caller_cancelling: Any = getattr(asyncio.current_task(), "cancelling", None)
         requests_at_entry = caller_cancelling() if caller_cancelling is not None else 0
         executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="llm-source")
@@ -2006,13 +2024,25 @@ class LlmSource(DataSource):
     ) -> list[dict[str, Any]]:
         """Run a query and return records.
 
-        Accepts a natural-language string, or a dict carrying an ``op`` key. Supported
-        ops are listed in the error raised for an unknown one.
+        Accepts natural-language text or an operation dict, including a JSON-encoded
+        object carrying an ``op`` key. Other strings remain natural-language queries.
+        Supported ops are listed in the error raised for an unknown one.
         """
         options = dict(optional_properties or {})
         request = _take_request_keys(options)
         # Check keys before dispatch so every operation rejects unknown settings.
         self._check_property_keys(options)
+
+        if isinstance(query, str):
+            stripped = query.strip()
+            if stripped.startswith("{"):
+                try:
+                    decoded = json.loads(stripped)
+                except (ValueError, TypeError, RecursionError):
+                    pass
+                else:
+                    if isinstance(decoded, dict) and "op" in decoded:
+                        query = cast("dict[str, Any]", decoded)
 
         if isinstance(query, dict):
             spec = cast("dict[str, Any]", query)

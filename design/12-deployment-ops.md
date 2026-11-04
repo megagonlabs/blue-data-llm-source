@@ -92,7 +92,7 @@ Neither shipped store expires an entry. `MemoryCache` evicts least-recently-used
 
 Library configuration uses **properties** passed to the constructor or an individual call, not process-wide environment variables. This allows two `LlmSource` instances in the same process to use different budgets.
 
-Per-call configuration has operational significance. Each property below can be passed to one request through `properties` on `fetch` or `optional_properties` on the query surface. It is merged over the instance properties for that request and is not written back. One source can therefore serve a cheap speculative question and an expensive authorized one under different ceilings, without a second source or a period in which the source has the wrong configuration.
+Each property below can be passed to one request through `properties` on `fetch` or `optional_properties` on the query surface. General per-call properties merge over the instance properties and are not written back. `limits.*` can only tighten effective ceilings, and `None` leaves a configured ceiling unchanged; `limits.max_retries=None` is invalid. One source can serve requests with different tighter ceilings without changing its configuration.
 
 The full property table is in [09-api-interface-spec.md](09-api-interface-spec.md). The operationally significant ones:
 
@@ -109,7 +109,7 @@ The full property table is in [09-api-interface-spec.md](09-api-interface-spec.m
 | `limits.max_calls`, `limits.max_seconds`, `limits.max_rows` | The other three run ceilings |
 | `limits.max_retries` | Retry allowance per call; the default permits two retries after the first attempt |
 
-All five `limits.*` keys are also the ones to hand in per request. A ceiling set on the source is the deployment's default, and a ceiling passed with a request is that request's own.
+All five `limits.*` keys can also be passed per request. Source ceilings remain binding on every request; per-request values can only tighten them and are not written back.
 
 ### Environment variables
 
@@ -144,7 +144,7 @@ Provider cost is the primary operational risk. The following controls can be app
 - A ceiling applies only to an axis the answering client declares through `budget_capabilities()`. The default client declares all four. A callable passed as `llm_fn` declares rows alone: the source cannot know its cost, stop it, or determine how many provider calls it makes. A call, cost, or time ceiling over that callable is therefore refused. Each configured ceiling on an undeclared axis raises a `ConfigError` on the first fetch, so a deployment that injects its own client learns at the boundary rather than from a bill. `limits.max_rows` is unaffected because the source counts the records itself.
 - `LlmSource.estimate` reports the same bound for a request before it runs, and reaching it costs nothing and contacts nothing. That is the tool for sizing a ceiling against real traffic rather than against the worked example in this document, and for a service that wants to refuse an oversized request itself instead of leaving it to the budget.
 
-An operator embedding the library in a service sets default ceilings at construction and tightens them per request. `limits.max_cost` and `limits.max_calls` on the source apply to every fetch. The same keys in `properties` on `fetch`, or in `optional_properties` on `execute_query` and `execute_query_nl`, apply only to the request that carries them and are not written back. A request with a different tolerance carries its own value; the next request uses the default again.
+An operator embedding the library in a service sets default ceilings at construction and tightens them per request. `limits.max_cost` and `limits.max_calls` on the source apply to every fetch. The same keys in `properties` on `fetch`, or in `optional_properties` on `execute_query` and `execute_query_nl`, apply only to the request that carries them and are not written back. A request can supply a tighter ceiling. A later request without that per-call ceiling still uses the source ceilings.
 
 Size `limits.max_cost` above the floor described above and set `llm.max_tokens` to what the answers actually need, since those two numbers are the ones that decide whether the ceiling is a bound or a blanket refusal. `estimate` is how to pick them against real requests rather than against the worked example here.
 
@@ -156,7 +156,7 @@ Over MCP, the operator and the caller both set ceilings. `BLUE_DATA_LLM_SOURCE_L
 
 ## 6. Observability
 
-The library emits no logs, metrics, or traces. It has no logging configuration, OpenTelemetry dependency, or metrics endpoint. Adding observability to a library that runs inside someone else's process is a decision for that process.
+The library emits no logs, metrics, or traces of its own. It has no OpenTelemetry dependency or metrics endpoint. The default client limits provider logging as described in [05-software-stack.md](05-software-stack.md); the embedding process owns observability.
 
 Instead, the library returns accounting data. Every `FetchResult` carries an `ExecMeta` describing the run:
 

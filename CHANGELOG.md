@@ -6,6 +6,10 @@ Notable changes by release. Prompt changes are listed explicitly because they ca
 
 Earlier internal versions were numbered 1.0.0 to 2.2.1. They are listed here as 0.1.0.0 to 0.2.2.1 so they read in order below 1.0.0, and each heading gives the original number. None was published to a package index. Installed copies still report their original numbers: pip ranks an installed 0.1.1.0 to 0.2.2.1 (1.1.0 to 2.2.1) above 1.0.0, so an ordinary upgrade does not select this release, and an installed 0.1.0.0 also reports 1.0.0. See [installing exact built wheels](docs/installation.md#installing-exact-built-wheels).
 
+- **Provider diagnostics.** The default client suppresses LiteLLM INFO/DEBUG messages before importing the provider and disables its error help banner. Existing handlers and stricter logging levels are retained.
+- **Native operations.** JSON-encoded operation objects use the same dispatcher as operation dicts. `LLM.MODELS` and `LLM.ESTIMATE` remain offline. Names are case-sensitive, and an invalid tag raises `QueryError` before a fetch. Other query strings keep their natural-language meaning.
+- **Partition estimates.** Non-flat results report `split_coverage_short` for accepted child estimates below the parent's lower estimate, and `observed_coverage_short` for complete identities below the root lower estimate before row capping. These are estimate-based warnings; execution outcomes and model prompts are unchanged.
+- **CLI and examples.** Natural-language estimates use the configured-rate wording shown in the docs. The JSON ceiling examples include conditional accounting and provenance fields. The WikiTabGen demo reserves a cost, call and time share for each selected mode under the shared total budget. The LangGraph MCP demo uses `create_agent` and carries its conversation history between tasks.
 - **Dates.** An `NN-NN-YYYY` date converts day-first only when the first part is above 12 or both parts are equal (`03-03-2026` becomes `2026-03-03`). Any other `NN-NN-YYYY` value is kept as given and reported in `meta.type_mismatches`.
 - **Planner types.** The planner accepts the ten documented type spellings (`string`, `str`, `text`, `integer`, `int`, `number`, `float`, `boolean`, `bool`, `date`). A caller-declared custom type such as `money` keeps the planner's schema and key and is listed in `meta.unchecked_types`. An unsupported inferred type still makes the schema unusable, so the caller schema is used.
 - **Limits.** A per-call `limits.*` setting can only tighten a configured ceiling, and `max_records` is clamped to `limits.max_rows`. While the client or source sets `limits.max_cost`, a per-call `llm.price_per_input_token` or `llm.price_per_output_token` is refused, and a per-call `llm.model` does not inherit the configured rates. See [`lib/COMPATIBILITY.md`](lib/COMPATIBILITY.md).
@@ -13,7 +17,7 @@ Earlier internal versions were numbered 1.0.0 to 2.2.1. They are listed here as 
 - **Synchronous calls inside a running event loop.** `fetch`, `execute_query` and `execute_query_nl` now block the calling thread and run on a worker thread instead of raising `ConfigError`. Under `asyncio.run` on Python 3.11 and later, the first Ctrl-C cancels the in-flight fetch when the synchronous call runs in the runner's main task. A call in another task observes cancellation only if that task receives the request. In a plain event-loop callback, that signal cancels the runner's main task while the fetch continues; a second Ctrl-C interrupts the waiting thread. Schedule and await `afetch` in a task for cancellable asynchronous work. Once the bridge receives an interrupt or task-cancellation request, it raises as soon as the fetch stops, or after five seconds if the client ignores cancellation; that work then finishes in the background. A client that needs the caller's loop should use `afetch`.
 - **CLI configuration.** The CLI uses the shared `blue_data.utils.config` engine. Boolean settings accept `y` and `n`, and environment values are stripped. A blank value edited into a profile by hand no longer blocks the `profile` commands, so it can be repaired; data, model and metadata commands still refuse it.
 - **MCP.** A blank `BLUE_DATA_LLM_SOURCE_LIMIT_*` variable fails the call instead of being read as unset. Every `mcp` requirement is `mcp>=1.28.1,<2`. The CLI and MCP packages require `blue-data-llm-source[llm]==1.0.0`, the core requires `blue-data>=1.0.0,<2`, and the CLI also requires `blue-data==1.0.0`.
-- **Python 3.15.** Regular CPython 3.15 uses checksum-verified local fastuuid and LiteLLM builds, selected at install time with `lib/scripts/python315-constraints.txt`; the package extras name no local version. [Installation](docs/installation.md#python-315-installation) covers building the wheelhouse.
+- **Python support.** All packages support Python 3.12 and 3.13 (`>=3.12,<3.14`). The obsolete compatibility-wheel builders, constraints and Python 3.15 installer branch are removed; the [installation anchor](docs/installation.md#python-315-installation) explains that 3.15 is unsupported.
 - **Documentation and license files.** Configured model choice, single-process asynchronous task execution, and key normalization with keyed deduplication are described as they behave: there is no model router, remote executor or general entity resolution. Setup uses `source .venv/bin/activate` and names Python 3.12 as the tested version. The repository adds `NOTICE` files, a code of conduct and license disclosures.
 
 **Prompt changes**
@@ -294,20 +298,13 @@ A minor release with opt-in planning features and compatibility-oriented behavio
 
 **Fixed**
 
-The shipped documentation now describes current package behavior consistently and removes obsolete or redundant guidance.
-
-Runtime messages and documentation no longer date current behavior to a release. A refusal from `execute_query_nl_tools`, the CLI's `--rate-limit` help, and four property tables described what the package does today as something it does in a named version, which is correct on that release and wrong on the next. No refusal itself changed. A scan over shipped source now fails the suite on any such qualifier; a forward-looking deferral, which names a version the reader is not on, stays legal.
-
-The optional tokenizer cross-check no longer reaches the network. It skipped unless its encoding table was already cached, but tested for *any* cached table rather than the one it needs, so a machine holding a different encoding reported the cache as warm and the check downloaded — inside a suite that forbids network access. It now tests for the specific table, by the same name tiktoken files it under.
-
-Headings in `06-library.md` were made unique. Three constructors, two method sections and two capability sections shared four slugs between them, so a link to `#constructor` would have landed on whichever came first.
-
-- `docs/design/12-deployment-ops.md` declared that no CI/CD platform is selected and then described automated publication as current fact, so a maintainer could not tell whether the release procedure was operational or aspirational. The pipeline is now labeled as proposed, and the publish step says plainly that it is manual and has never been exercised.
-- `docs/design/09-api-interface-spec.md` carried a numbered REST section whose only content was that nothing under it exists, which the opening paragraph already says. The section is gone and the later sections are renumbered.
-- `docs/design/10-data-model.md` called the cache "the fourth contract" three lines after enumerating five, and dated current deduplication behavior to a superseded release.
-- `lib/COMPATIBILITY.md` now explains migration behavior directly.
-- The full base-class order explanation is in `docs/design/04-detailed-architecture.md`; the CLI README command test is documented in `docs/design/11-testing-strategy.md`.
-- `docs/design/08-coding-style.md` states its conventions directly.
+- Removed release qualifiers from the `execute_query_nl_tools` refusal, CLI `--rate-limit` help and four property tables. The refusal behavior is unchanged.
+- The optional tokenizer cross-check checks for its specific encoding table before running, preventing a download when only a different table is cached.
+- Gave duplicate constructor, method and capability headings unique anchors in `06-library.md`.
+- Corrected `docs/design/12-deployment-ops.md` to describe CI/CD as proposed and publication as manual and unverified.
+- Removed the empty REST section from `docs/design/09-api-interface-spec.md` and renumbered the later sections.
+- Corrected the cache-contract count and deduplication description in `docs/design/10-data-model.md`.
+- Clarified migration in `lib/COMPATIBILITY.md`, base-class order in `docs/design/04-detailed-architecture.md`, and conventions in `docs/design/08-coding-style.md`.
 
 ## 0.1.1.0 — released (as 1.1.0)
 

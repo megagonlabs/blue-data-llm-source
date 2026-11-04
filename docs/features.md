@@ -102,7 +102,7 @@ print(len(result), result.meta.outcome, result.meta.truncated_to)
 # 1 truncated 1
 ```
 
-A ceiling passed with the call binds that call and is not written back, so the next request through the same source is unbounded again.
+A ceiling passed with the call binds that call and is not written back. Later requests still follow the source ceilings and any shared `Budget`; a request without its own ceiling is unbounded only if neither of those supplies one.
 
 ## One total across a sequence of requests
 
@@ -302,7 +302,7 @@ An ordinary result carries no receipt, and `FetchResult.to_dict()` keeps its two
 
 ## The data-layer source surface
 
-`LlmSource` extends the shared `DataSource` base class, so it registers and answers like any other source in the layer. `execute_query` takes a natural-language string or a dict carrying an `op` key.
+`LlmSource` extends the shared `DataSource` base class, so it registers and answers like any other source in the layer. `execute_query` takes natural language, an operation dict, or a JSON-encoded object carrying an `op` key. Other strings remain natural-language queries.
 
 ```python
 from blue_data_llm_source import LlmSource

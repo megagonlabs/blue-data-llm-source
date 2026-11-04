@@ -203,14 +203,14 @@ Inside a running event loop, synchronous query methods run on an owned worker an
 | `query` | `Any`, normalized to `str` | A natural language request. `None`, an empty string, or whitespace is an empty ask and returns an empty result with `outcome` set to `empty_query`; any other non-string raises `QueryError` |
 | `attrs` | list | Names (`["country", "accession_year"]`), `Attr` instances, or mappings (`[{"name": "country", "type": "string"}]`) |
 | `context` | `str` or list of `str` | Additional text; its documented use is to say what an attribute name means |
-| `max_records` | `int` | A positive integer; replaces the row limit for this run |
-| `properties` | mapping | Per-call configuration, merged over the instance properties for this call and not written back. A `limits.*` key here bounds this request alone, which is the primary way to cap what one request may spend |
+| `max_records` | `int` | A positive integer; can only tighten the effective row limit for this run |
+| `properties` | mapping | Per-call configuration, merged over the instance properties for this call and not written back. A `limits.*` value can only tighten the effective ceiling; `None` leaves it unchanged; `limits.max_retries=None` is invalid |
 | `llm_fn` | callable | A `(prompt: str) -> str` callable used as the model client for this run |
 | `budget` | `Budget` | A budget the caller owns. Supplied, this fetch derives a child from it and the ceilings accumulate across every call the budget is handed to; omitted, one is built from the configured limits for this call alone. The secondary route, for one total across several requests rather than a bound on each |
 
 ### Op codes for `execute_query`
 
-When `execute_query` receives a mapping, its `op` key selects the operation.
+An `op` key selects the operation when `execute_query` receives a dict or a JSON-encoded operation object. Other strings remain natural-language queries.
 
 | Op | Reads from the mapping | Returns |
 |----|------------------------|---------|
@@ -218,13 +218,13 @@ When `execute_query` receives a mapping, its `op` key selects the operation.
 | `LLM.MODELS` | — | `[{"protocol": "llm", "variant": "openai"}]` |
 | `LLM.ESTIMATE` | `query`, `attrs`, `context` | `[{"bounded": true, "max_cost": 0.06257625, "reason": null, "model": "gpt-6-luna", "prompt_bytes": 786, "max_output_tokens": 25000, "max_attempts": 3, "max_cost_per_attempt": 0.020858750000000002, "attempts_within_ceiling": null}]` |
 
-An unrecognized op raises `QueryError` listing the supported operations. A plain string is treated as the request and runs a fetch. `LLM.ESTIMATE` calls `estimate` with `optional_properties` as its properties and contacts no provider. This surface returns a one-record list; callers that need the `Estimate` object can call the method directly.
+An unrecognized op raises `QueryError` listing the supported operations, whether supplied in a dict or a JSON-encoded operation object. Other strings, including malformed JSON, are treated as the request and run a fetch. `LLM.ESTIMATE` calls `estimate` with `optional_properties` as its properties and contacts no provider. This surface returns a one-record list; callers that need the `Estimate` object can call the method directly.
 
-On this surface, `optional_properties` also carries ceilings. Recognized keys become arguments; the remaining keys are merged over the instance properties as per-call configuration. A `limits.*` key therefore bounds this call only, and the next call through the same source is unbounded again.
+On this surface, `optional_properties` also carries ceilings. Recognized keys become arguments; the remaining keys are merged over the instance properties as per-call configuration. A `limits.*` value can only tighten the effective ceiling, and `None` leaves it unchanged; `limits.max_retries=None` is invalid. The per-call configuration is not written back.
 
 ### Configuration properties
 
-Properties may be set on the instance or per call, with per-call values winning.
+General properties may be set on the instance or per call, with per-call values winning. A `limits.*` value can only tighten the effective ceiling; `None` leaves it unchanged; `limits.max_retries=None` is invalid.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -242,7 +242,7 @@ Properties may be set on the instance or per call, with per-call values winning.
 | `llm.rate_limit` | — | — | **Not supported.** Refused by name with `ConfigError`, because client-side call spacing has to reconcile with per-attempt budget admission and this library does not do it. Use `llm.max_parallel`, or throttle above the library |
 | `cache_store` | `CacheStore` | none | A cache with `get` and `set`, taking precedence over `llm.cache`. `MemoryCache` and `FileCache` ship for this slot, and any object with the two methods is accepted |
 | `limits.max_retries` | `int` | `2` | Retries on a transport failure, at most 9,999; the client makes this many plus one attempt, narrowed to the smallest depth along the budget chain, and reserves budget for each |
-| `limits.max_rows` | `int` | unlimited | Row ceiling; overridden by a `max_records` argument. Enforced by the source itself, so it binds any client |
+| `limits.max_rows` | `int` | unlimited | Row ceiling; a `max_records` argument can only tighten it. Enforced by the source itself, so it binds any client |
 | `limits.max_seconds` | `float` | unlimited | Time ceiling on admission and cooperative waits, not on work that never yields; requires a client declaring `Capability.SECONDS`. See [what it bounds](../lib/README.md#what-the-time-ceiling-actually-bounds) |
 | `limits.max_cost` | `float` | unlimited | API cost ceiling, claimed against a computed upper bound before each attempt; requires a client declaring `Capability.COST` |
 | `limits.max_calls` | `int` | unlimited | Provider call ceiling, counted per attempt including retries; requires a client declaring `Capability.CALLS` |
@@ -744,7 +744,7 @@ The server uses the low-level API because tool schemas are maintained explicitly
 }
 ```
 
-The twenty-one plan settings and the three ceilings are the library's own property names, unrenamed. They are passed through as the call's properties, which is the same route `optional_properties` takes on the query surface and `--limit-*` takes on the command line: merged over the source's properties for this call and not written back, so one agent's ceiling cannot bind the next call over the same server. A key this layer did not recognize would never reach the library's own limit validation, so a translated name would have been dropped in silence rather than refused.
+The twenty-one plan settings and the three ceilings are the library's own property names, unrenamed. They are passed through as the call's properties, which is the same route `optional_properties` takes on the query surface and `--limit-*` takes on the command line. General properties merge over the source's for that call and are not written back; `limits.*` can only tighten effective ceilings, and `None` leaves them unchanged; `limits.max_retries=None` is invalid. A key this layer did not recognize would never reach the library's own limit validation, so a translated name would have been dropped in silence rather than refused.
 
 **Returns:** JSON text content, `{"records": [...], "meta": {...}}`. The meta object always carries `outcome`, accounting fields, `gaps`, `stop_reasons`, `requested_attrs`, `row_estimate`, `cardinality_estimate`, `primary_keys`, `observed_key_count`, `marginal_key_yields`, `incomplete_key_records`, and `filter_contradictions`. `normalization_collisions` appears when non-empty, `repaired_numbers` when non-zero, and `split_decision` when a root probe ran. The cardinality estimate is accepted non-flat bootstrap evidence or JSON `null`; neither it nor the observed-key fields is a completeness measure. `gaps` contains operational diagnostics and an empty list means only that none fired. `stop_reasons` is the ordered list of simultaneous extraction limits; `stopped_by`, when present, is its first member. `accounting_known` appears only when false, and format diagnostics, `truncated_to`, `record_origins`, and `asked` appear when applicable.
 

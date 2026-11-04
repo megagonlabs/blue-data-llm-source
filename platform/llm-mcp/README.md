@@ -16,7 +16,7 @@ This package exposes `blue-data-llm-source` through an MCP server named `blue-da
 
 The `llmdb_` prefix prevents collisions when a client loads several data-source servers into one tool namespace. The remainder of each name matches the corresponding `blue-llmdb` operation.
 
-Versions before 0.2.0.0 exposed `llm_fetch`, `llm_estimate` and `llm_info`. These names are no longer supported. A client that calls one receives an `UnknownTool` error listing the available tools.
+Internal builds before 0.2.0.0 exposed `llm_fetch`, `llm_estimate` and `llm_info`. These names are no longer supported. A client that calls one receives an `UnknownTool` error listing the available tools.
 
 ### `llmdb_query`
 
@@ -297,7 +297,7 @@ The `blue-llmdb` CLI spells the same settings as hyphenated flags, because a dot
 | `plan.split_policy` | `--plan-split-policy` |
 | `plan.split_threshold_rows` | `--plan-split-threshold-rows` |
 
-`max_records` maps to `Limits.max_rows` and overrides any configured value for that call. The MCP surface has no separate `limits.max_rows` argument; the server refuses that spelling to avoid two names for the same setting.
+`max_records` maps to `Limits.max_rows` and uses the tighter of the argument and any configured row ceiling for that call. The MCP surface has no separate `limits.max_rows` argument; the server refuses that spelling to avoid two names for the same setting.
 
 ## What this server does not expose
 
@@ -347,7 +347,7 @@ Caller mistakes such as an invalid `plan.leaf_prompt` for flat mode, `plan.keys`
 
 That one is a deployment message: the variable is set where the server is started, not on this surface, and `llmdb_query`, `llmdb_estimate` and `llmdb_inspect_model` fail with it until the variable is fixed. See [Configuration](#configuration).
 
-Before 0.2.0.0 an argument refusal was also reported as `ConfigError`, so "unknown argument" and "no model configured" shared one prefix with two different remedies. They are told apart now.
+In internal builds before 0.2.0.0 an argument refusal was also reported as `ConfigError`, so "unknown argument" and "no model configured" shared one prefix with two different remedies. They are told apart now.
 
 These are payload facts rather than errors:
 
@@ -463,6 +463,8 @@ The `blue-llmdb` CLI stores profiles and applies its own environment-variable pr
 `tools.py` defines the tools and translates their arguments without importing `mcp`. `server.py` implements the transport and is the only module that imports `mcp`. This separation lets tests call the tools directly without the server or `mcp` installed, including in CI.
 
 ## Tests
+
+Run these commands from `platform/llm-mcp/` in the active environment.
 
 ```bash
 python3 -m pytest tests/unit -q

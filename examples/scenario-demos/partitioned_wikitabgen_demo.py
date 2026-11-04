@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from dataclasses import replace
 from typing import Any
 
 from blue_data_llm_source import (
@@ -47,7 +48,7 @@ FETCH_ATTRS = [
     {"name": name, "type": "integer"} if name in ("Z", "Period") else {"name": name}
     for name in ATTRS
 ]
-MODES = ("flat", "row_by_row", "partitioned")
+MODES = ("flat", "partitioned", "row_by_row")
 PERIOD_RULE = {
     "dimension": "Period",
     "ordered_primary_keys": ["Period", "Z"],
@@ -71,6 +72,33 @@ COMMON = {
     "plan.max_continuations": 0,
 }
 TOTAL_LIMITS = Limits(max_cost=0.30, max_calls=160, max_seconds=900, max_retries=0)
+
+
+def mode_allowances(modes: tuple[str, ...]) -> dict[str, Limits]:
+    """Divide cost, calls and time among the selected modes."""
+    assert TOTAL_LIMITS.max_cost is not None
+    assert TOTAL_LIMITS.max_calls is not None
+    assert TOTAL_LIMITS.max_seconds is not None
+    calls, remainder = divmod(TOTAL_LIMITS.max_calls, len(modes))
+    return {
+        mode: Limits(
+            max_cost=TOTAL_LIMITS.max_cost / len(modes),
+            max_calls=calls + (index < remainder),
+            max_retries=0,
+            max_seconds=TOTAL_LIMITS.max_seconds / len(modes),
+        )
+        for index, mode in enumerate(modes)
+    }
+
+
+def run_modes(modes: tuple[str, ...], budget: Budget) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for mode, limits in mode_allowances(modes).items():
+        assert limits.max_seconds is not None
+        # Derived budgets share the parent's start; express this mode's deadline on that clock.
+        limits = replace(limits, max_seconds=budget.elapsed + limits.max_seconds)
+        summaries.append(run_mode(mode, budget.derive(limits)))
+    return summaries
 
 
 def properties_for(mode: str) -> dict[str, Any]:
@@ -206,6 +234,11 @@ def main() -> None:
         "model: gpt-6-luna; reasoning none; 4096 output tokens per call; no cache or retries"
     )
     print("shared cap: $0.30, 160 calls, 900 seconds")
+    for mode, limits in mode_allowances(modes).items():
+        print(
+            f"{mode} allowance: ${limits.max_cost:.6f}, {limits.max_calls} calls, "
+            f"{limits.max_seconds:g} seconds; shared 900-second deadline"
+        )
     if not args.live:
         print("Add --live to call GPT-6 Luna and print every model response.")
         return
@@ -213,7 +246,7 @@ def main() -> None:
         parser.error("OPENAI_API_KEY is not exported")
 
     budget = Budget(TOTAL_LIMITS)
-    summaries = [run_mode(mode, budget) for mode in modes]
+    summaries = run_modes(modes, budget)
     print("\n=== run summary ===")
     for item in summaries:
         print(

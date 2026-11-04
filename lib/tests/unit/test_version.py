@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
-import importlib.util
 import re
 import stat
-import zipfile
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 
@@ -43,7 +39,7 @@ VERSION_OUTPUTS = {
     "the CLI version line": re.compile(r"^blue-llmdb (\d+\.\d+\.\d+)$"),
 }
 
-# The last four are the Python 3.15 build directories docs/installation.md creates here.
+# Exclude local environments and build artifacts from documentation scans.
 SKIP = {
     ".venv",
     "build",
@@ -51,10 +47,6 @@ SKIP = {
     ".pytest_cache",
     ".ruff_cache",
     "cassettes",
-    ".build315",
-    ".native315",
-    ".venv315",
-    ".wheels315",
 }
 
 RELEASE_SCRIPTS = (
@@ -212,23 +204,8 @@ def test_platforms_require_the_exact_reset_library() -> None:
     assert '"blue-data==1.0.0"' in cli
 
 
-# The Python 3.15 compatibility builds are chosen at install time, never by metadata.
-SCRIPTS = ROOT / "lib" / "scripts"
-
-
-def _script(name: str) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(name.replace("-", "_"), SCRIPTS / f"{name}.py")
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def test_the_provider_extras_name_no_local_build() -> None:
-    """A local-version pin in published metadata breaks universal lockers on every Python.
-
-    It would also hold Python 3.15 users to that build until another library release.
-    """
+    """Published extras must resolve without local compatibility builds."""
     from packaging.requirements import Requirement
 
     text = PYPROJECT.read_text(encoding="utf-8")
@@ -240,46 +217,3 @@ def test_the_provider_extras_name_no_local_build() -> None:
         for requirement in requirements:
             assert requirement.marker is None, f"{extra}: {requirement}"
             assert not any("+" in spec.version for spec in requirement.specifier), requirement
-
-
-def test_the_python315_constraints_pin_the_builds_the_scripts_make() -> None:
-    from packaging.requirements import Requirement
-
-    path = SCRIPTS / "python315-constraints.txt"
-    lines = path.read_text(encoding="utf-8").splitlines()
-    constraints = [Requirement(line) for line in lines if line and not line.startswith("#")]
-    assert {r.name: str(r.specifier) for r in constraints} == {
-        "litellm": f"=={_script('patch-litellm-python315-wheel').VERSION}",
-        "fastuuid": f"=={_script('build-python315-wheel').VERSION}",
-    }
-    for requirement in constraints:
-        assert requirement.marker is not None
-        assert requirement.marker.evaluate({"python_version": "3.15"})
-        assert not requirement.marker.evaluate({"python_version": "3.14"})
-    manifest = (ROOT / "lib" / "MANIFEST.in").read_text(encoding="utf-8")
-    assert f"include scripts/{path.name}" in manifest.splitlines()
-
-
-def test_the_patched_litellm_wheel_admits_only_python_315(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Its patched imports fail on 3.10, so an older Python seeing the wheelhouse must skip it."""
-    patch = _script("patch-litellm-python315-wheel")
-    source = tmp_path / "litellm-1.106.5-cp310-abi3-macosx_11_0_arm64.whl"
-    info = "litellm-1.106.5.dist-info/"
-    with zipfile.ZipFile(source, "w") as wheel:
-        wheel.writestr(patch.CONFIG, b"def check():\n" + patch.OLD_IMPORTS)
-        wheel.writestr(
-            info + "METADATA",
-            "Metadata-Version: 2.1\nName: litellm\nVersion: 1.106.5\n"
-            "Requires-Python: >=3.10, <3.15\n\n",
-        )
-        wheel.writestr(info + "RECORD", "")
-    digest = hashlib.sha256(source.read_bytes()).hexdigest()
-    monkeypatch.setitem(patch.UPSTREAM_SHA256, "macosx_11_0_arm64", digest)
-
-    target = patch.transform(source, tmp_path / "wheelhouse")
-
-    with zipfile.ZipFile(target) as wheel:
-        metadata = wheel.read(f"litellm-{patch.VERSION}.dist-info/METADATA").decode()
-    assert "\nRequires-Python: >=3.15, <3.16\n" in metadata

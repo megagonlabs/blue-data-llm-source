@@ -9,8 +9,9 @@ the injected client.
 
 From there the source answers through the shared surface: ``execute_query_nl`` for a
 natural-language string, ``execute_query`` for a dict carrying an ``op``. Both take a
-``limits.*`` ceiling in ``optional_properties``, merged over the instance's properties for
-that call only.
+``limits.*`` ceiling in ``optional_properties`` for one call. Per-call ceilings can only
+tighten configured limits; ``None`` leaves cost, row, call and time ceilings unchanged.
+``limits.max_retries=None`` is invalid.
 
 For other sources in this layer, ``llm_fn`` translates natural language into a native
 dialect. This source has no other dialect, so ``translate_nl_to_native_query`` returns its

@@ -94,13 +94,13 @@ print(meta_view(result.meta, verbose=True)["unmapped_keys"])
 
 `meta_view` is the JSON-ready serialization published by every adapter. Use it instead of writing your own to keep the result description consistent across consumers.
 
-**`gaps` being empty means no supported diagnostic fired.** It is not a completeness claim. Nothing in a short answer says it is short, so this library does not pretend to detect one.
+**`gaps` being empty means no supported diagnostic fired.** It is not a completeness claim. Non-flat keyed fetches can report `split_coverage_short` when every accepted immediate child has a known estimate and their sum is below the parent's lower estimate. `observed_coverage_short` compares complete distinct identities with the root's parsed lower estimate, before any row cap. A comparison is skipped when its required estimates are unavailable. Model overestimates can trigger these warnings even for complete results; the warnings do not change `outcome`.
 
 ## Bounding one request
 
 Source settings override client settings; a call can only tighten the resulting ceilings. For the rules on `None`, zero, retries, row caps, caller-supplied prices, and a per-call model or rates under a configured cost ceiling, see the [compatibility guide](../lib/COMPATIBILITY.md#deviations-from-the-earlier-implementation).
 
-A ceiling passed with the call binds that call. It is merged over the instance's properties for the duration of the request and is not written back.
+Per-call properties merge over the instance's properties for that request and are not written back. A `limits.*` value can only tighten the effective ceiling; `None` leaves the configured ceiling unchanged; `limits.max_retries=None` is invalid. `max_records` follows the same rule for the row ceiling.
 
 ```python
 from blue_data_llm_source import LlmSource
@@ -427,7 +427,7 @@ Build the source and hand the instance to `register_source`. Inheriting the base
 
 The registry stores the source's own properties, not its injected client or the client's settings. Put ceilings, model and rates on the source when they must survive registration and reconstruction; a rebuilt source starts with the default client.
 
-`execute_query` accepts a natural-language string or a dict carrying an `op` key, one of `LLM.FETCH`, `LLM.MODELS`, or `LLM.ESTIMATE`. Both `execute_query` and `execute_query_nl` return a plain `list[dict]`, because that is what the shared surface returns. Call `fetch` when you also need the outcome, the accounting, or the diagnostics.
+`execute_query` accepts natural language, an operation dict, or a JSON-encoded object with an `op` key: `LLM.FETCH`, `LLM.MODELS`, or `LLM.ESTIMATE`. Other strings remain natural-language queries. Both `execute_query` and `execute_query_nl` return a plain `list[dict]`, because that is what the shared surface returns. Call `fetch` when you also need the outcome, the accounting, or the diagnostics.
 
 A per-request ceiling goes in `optional_properties`:
 

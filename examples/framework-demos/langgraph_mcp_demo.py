@@ -3,7 +3,7 @@
 The LangGraph code does not depend on the source implementation. ``langchain-mcp-adapters`` launches
 ``blue-data-llm-mcp`` as a stdio subprocess, discovers the five tools it advertises --
 ``llmdb_query``, ``llmdb_estimate``, ``llmdb_list_models``, ``llmdb_inspect_model`` and
-``llmdb_inspect_metadata`` -- and hands them to a ``create_react_agent``
+``llmdb_inspect_metadata`` -- and hands them to a ``create_agent``
 agent, which decides what to call and when.
 
 The system prompt tells the agent to estimate a request before running it.
@@ -15,14 +15,17 @@ whether to proceed.
 environment as ceilings for every call; an agent's ``limits.*`` can lower them but never
 raise them. Without an operator ceiling, an agent that omits ``limits.max_cost`` can spend
 whatever the provider charges. The system prompt also asks the agent to pass its own. The operator ceiling covers MCP
-queries; the agent's ``ChatOpenAI`` calls are separate provider calls.
+queries; it does not cap the agent's ``ChatOpenAI`` calls. Each follow-up resends the full
+conversation history, including raw tool results, to the chat model. Chat-model input tokens
+grow as that history accumulates.
 
-Requires: OPENAI_API_KEY, the provider extra, and the MCP package installed so the
+Requires: OPENAI_API_KEY, the provider extra, ``langgraph``, ``langchain``,
+``langchain-openai``, ``langchain-mcp-adapters``, and the MCP package installed so the
 ``blue-data-llm-mcp`` console script is on PATH.
 
 Run from the repository root in the active root .venv:
     ./platform/llm-mcp/scripts/install.sh
-    python -m pip install langgraph langchain-openai langchain-mcp-adapters
+    python -m pip install langgraph 'langchain>=1.0' langchain-openai langchain-mcp-adapters
     export BLUE_DATA_LLM_SOURCE_LIMIT_COST=0.02
     export BLUE_DATA_LLM_SOURCE_MAX_TOKENS=4000
     python3 examples/framework-demos/langgraph_mcp_demo.py
@@ -31,10 +34,11 @@ Run from the repository root in the active root .venv:
 import asyncio
 import math
 import os
+from typing import Any
 
+from langchain.agents import create_agent
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import create_react_agent
 
 SYSTEM = (
     "You answer questions by calling the blue-data-llm tools. "
@@ -110,18 +114,23 @@ async def main() -> None:
     print("tools discovered:", [tool.name for tool in tools])
     print()
 
-    agent = create_react_agent(
+    agent = create_agent(
         ChatOpenAI(model="gpt-4o-mini", temperature=0),
         tools,
-        prompt=SYSTEM,
+        system_prompt=SYSTEM,
     )
 
+    history: list[Any] = []
     for task in TASKS:
         print("task  ", task)
-        state = await agent.ainvoke({"messages": [{"role": "user", "content": task}]})
+        turn_start = len(history)
+        history.append({"role": "user", "content": task})
+        state = await agent.ainvoke({"messages": history})
+        history = list(state["messages"])
+        turn_messages = history[turn_start:]
         called = [
             call["name"]
-            for message in state["messages"]
+            for message in turn_messages
             for call in getattr(message, "tool_calls", []) or []
         ]
         print("called", called or "no tools")

@@ -122,7 +122,7 @@ Source settings override client settings; a call can only tighten the resulting 
 | `attrs` | `Any` | `None` | A list of names, a list of `Attr`, or a list of `{"name": str, "type": str \| None}` dicts. Anything else raises `QueryError` naming the index |
 | `context` | `Any` | `None` | A string or a list of strings, joined into one block. Free text clarifying what an attribute name means |
 | `max_records` | `int \| None` | `None` | Row ceiling for this call, clamped by the effective `limits.max_rows`. Must be a positive non-`bool` integer |
-| `properties` | `dict[str, Any] \| None` | `None` | Per-call properties, merged over the instance's for this call only and not written back |
+| `properties` | `dict[str, Any] \| None` | `None` | Per-call properties merge over the instance's for this call only and are not written back. `limits.*` can only tighten an effective ceiling; `None` leaves it unchanged; `limits.max_retries=None` is invalid |
 | `llm_fn` | `Any` | `None` | A `(prompt) -> str` callable, or a coroutine function, used as the model for this call. Wrapped in a `FunctionClient` |
 | `budget` | `Budget \| None` | `None` | A budget you own. The fetch derives a child from it, so ceilings accumulate across every call you hand it to |
 
@@ -142,7 +142,7 @@ Inherited from `DataSource` and overridden here.
 
 | Method | Returns | Behavior |
 |---|---|---|
-| `execute_query(query, database=None, collection=None, optional_properties=None)` | `list[dict[str, Any]]` | Runs a query. `query` is a natural-language string or a dict carrying an `op` key. `database` and `collection` are accepted for signature compatibility and unused |
+| `execute_query(query, database=None, collection=None, optional_properties=None)` | `list[dict[str, Any]]` | Runs natural language, an operation dict, or a JSON-encoded object carrying an `op` key. Operation names are case-sensitive; other strings remain natural-language queries. `database` and `collection` are accepted for signature compatibility and unused |
 | `execute_query_nl(query, database=None, collection=None, schema=None, llm_fn=None, optional_properties=None, read_only=True)` | `list[dict[str, Any]]` | Runs a natural-language query. `llm_fn` is the model for this call, not a translator |
 | `translate_nl_to_native_query(query, schema, llm_fn)` | `str \| None` | The identity, because natural language is this source's native form. Returns `None` for an empty query |
 
@@ -380,7 +380,7 @@ Every field, in declaration order.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `gaps` | `list[str]` | `[]` | Observed failures, discarded output, or interrupted work. Empty means no supported diagnostic fired, not that nothing is missing |
+| `gaps` | `list[str]` | `[]` | Observed failures, discarded output, interrupted work, or estimate-based coverage warnings. `split_coverage_short` compares accepted child estimates with the parent lower estimate; `observed_coverage_short` compares complete distinct identities before the row cap with the root lower estimate. The warnings do not change `outcome` or prove missing records. Empty means no supported diagnostic fired, not that nothing is missing |
 | `outcome` | `str` | `"ok"` | One of the `Outcome` members |
 | `model` | `str` | `""` | The model name the usage entries reported |
 | `calls` | `int` | `0` | Provider attempts claimed against the budget, retries included |
@@ -393,7 +393,7 @@ Every field, in declaration order.
 | `row_estimate` | `int \| None` | `None` | Accepted non-flat planning hint for the root slice. `None` in flat mode or when none was accepted. Not a row count and not a completeness claim |
 | `cardinality_estimate` | `dict[str, object] \| None` | `None` | The structured form of the same evidence; `row_estimate` is its point-value alias |
 | `primary_keys` | `list[str]` | `[]` | The ordered identity fields the run used |
-| `observed_key_count` | `int` | `0` | Distinct complete keys seen |
+| `observed_key_count` | `int` | `0` | Distinct complete identities in the returned records, after any row cap |
 | `marginal_key_yields` | `list[int]` | `[]` | New keys added by each successive ask |
 | `incomplete_key_records` | `int` | `0` | Records with a key component missing |
 | `normalization_collisions` | `list[dict[str, Any]]` | `[]` | Distinct raw key values that normalized together |

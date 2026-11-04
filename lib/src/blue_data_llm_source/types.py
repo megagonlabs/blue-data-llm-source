@@ -6,7 +6,7 @@ import json
 import math
 from collections.abc import Hashable, Iterator, Sequence
 from dataclasses import asdict, dataclass, field
-from typing import Any, Final, Protocol, TypeAlias, cast, runtime_checkable
+from typing import Any, Final, Protocol, cast, runtime_checkable
 
 
 def value_identity(value: object) -> Hashable:
@@ -101,7 +101,7 @@ def resolve_attr(name: str, attrs: Sequence[Attr]) -> Attr | None:
     return matches[0] if len(matches) == 1 else None
 
 
-JsonScalar: TypeAlias = str | int | float | bool
+JsonScalar = str | int | float | bool
 """A JSON scalar suitable for an exact, locally comparable constraint."""
 
 
@@ -307,8 +307,10 @@ class ExecMeta:
     """What happened during a fetch, alongside the records themselves."""
 
     gaps: list[str] = field(default_factory=list[str])
-    """Observed failures, discarded output, or interrupted work.
+    """Observed failures, discarded output, interrupted work, or estimate-based warnings.
 
+    Coverage warnings compare accepted estimates or complete identities before row capping
+    with model lower estimates. They do not change the execution outcome or prove omissions.
     An empty list means no supported diagnostic fired. It does not establish that every
     real-world row was found.
     """

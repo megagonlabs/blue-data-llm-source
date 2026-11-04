@@ -6,7 +6,7 @@ This page mirrors [`platform/llm-cli/README.md`](../platform/llm-cli/README.md),
 
 ## Upgrading from `llm`
 
-Version 0.2.0.0 replaced the `llm` command. `llm fetch` is now `blue-llmdb data query`, and `llm info` is now `blue-llmdb metadata inspect`. The old entry point has no alias, so existing scripts must be updated. That release also added profiles, a configuration precedence chain, the `model` and `metadata` components, `data estimate`, four output formats, and coded errors. See [`CHANGELOG.md`](../CHANGELOG.md) for the complete migration notes.
+Internal build 0.2.0.0 replaced the `llm` command. `llm fetch` is now `blue-llmdb data query`, and `llm info` is now `blue-llmdb metadata inspect`. The old entry point has no alias, so existing scripts must be updated. That release also added profiles, a configuration precedence chain, the `model` and `metadata` components, `data estimate`, four output formats, and coded errors. See [`CHANGELOG.md`](../CHANGELOG.md) for the complete migration notes.
 
 ## Install
 
@@ -355,7 +355,7 @@ blue-llmdb data query "the member states of the European Union" \
 
 The remaining standard controls are `--plan-keys` for ordered composite identity, `--plan-exact-rows` for a hard target when the plan has one leaf, `--plan-exclusion-bytes` for continuation-prompt size, `--plan-planning-order` for one of the five schedules, and `--plan-expose-estimate`/`--no-plan-expose-estimate` for extraction-prompt context.
 
-Five optional controls change how a split is asked. Each keeps the 0.2.1.0 behavior unless selected:
+Five optional controls change how a split is asked. Each keeps its default behavior unless selected:
 
 - `--plan-leaf-prompt keyed-leaf-fetch-2` asks a leaf for every matching record rather than a sample. It is experimental; check the returned records when using it.
 - `--plan-child-wording canonical` builds each child's request from the original request and its own filters rather than the parent's wording.
@@ -398,11 +398,21 @@ blue-llmdb data query "the member states of the European Union" --log --log-limi
 `data estimate` prices a request without contacting a provider, so it runs with no credential present.
 
 ```bash
-blue-llmdb data estimate "the member states of the European Union" --format nl
+blue-llmdb data estimate "the member states of the European Union" --model gpt-4o --format nl
 ```
 
 ```text
 One flat fetch of this request is bounded at $0.1293 against the configured rates for gpt-4o, across 3 attempt(s). Non-flat requests may make planning and extraction calls with different prompts; this figure does not bound their total cost. No ceiling was set.
+```
+
+Add `--limit-cost` to see how many permitted attempts fit:
+
+```bash
+blue-llmdb data estimate "the member states of the European Union" --model gpt-4o --limit-cost 0.50 --format nl
+```
+
+```text
+One flat fetch of this request is bounded at $0.1293 against the configured rates for gpt-4o, across 3 attempt(s). At this ceiling 3 of 3 attempts fit. Non-flat requests may make planning and extraction calls with different prompts; this figure does not bound their total cost. Ceilings applied: max_cost 0.5.
 ```
 
 The same figures in the machine formats:
@@ -531,38 +541,59 @@ blue-llmdb data query "the member states of the European Union" \
     --limit-cost 0.50 --format json
 ```
 
-The following shortened response illustrates the JSON shape; values vary by run.
+Sample output, shortened to one of 27 records and its matching `record_origins`. `<cache-path>` stands for the local cache directory; values vary by run.
 
 ```text
 {
   "records": [
     {
-      "country": "France",
-      "accession_year": 1958
+      "country": "Austria",
+      "accession_year": 1995
     }
   ],
   "meta": {
     "outcome": "ok",
-    "model": "gpt-4o",
+    "model": "gpt-4o-2024-08-06",
     "calls": 1,
-    "prompt_tokens": 202,
-    "completion_tokens": 34,
-    "cost": 0.043143,
-    "elapsed_seconds": 0.31,
+    "prompt_tokens": 177,
+    "completion_tokens": 461,
+    "cost": 0.043123,
+    "elapsed_seconds": 5.22,
     "row_estimate": null,
     "cardinality_estimate": null,
     "primary_keys": [],
     "observed_key_count": 0,
-    "marginal_key_yields": [1],
+    "marginal_key_yields": [
+      27
+    ],
     "incomplete_key_records": 0,
     "filter_contradictions": 0,
     "gaps": [],
     "stop_reasons": [],
-    "requested_attrs": ["country", "accession_year"]
+    "requested_attrs": [
+      "country",
+      "accession_year"
+    ],
+    "record_origins": [
+      [
+        "0.0"
+      ]
+    ],
+    "accounting_known": false
   },
   "settings": {
-    "applied": {"llm.model": "gpt-4o", "limits.max_cost": 0.5, "plan.max_continuations": 0},
-    "source": {"llm.model": "flag", "limits.max_cost": "flag", "plan.max_continuations": "default"}
+    "applied": {
+      "llm.model": "gpt-4o",
+      "llm.cache_dir": "<cache-path>",
+      "limits.max_cost": 0.5,
+      "plan.max_continuations": 0
+    },
+    "source": {
+      "llm.model": "flag",
+      "llm.cache_dir": "default",
+      "limits.max_cost": "flag",
+      "plan.max_continuations": "default"
+    }
   }
 }
 ```

@@ -95,7 +95,7 @@ builders cover flat extraction, planned extraction, fact collection, partitionin
 and entity enumeration. `Slot` marks each inserted value as encoded, raw, or already-rendered lines;
 `fill` then applies one `str.format_map` over a fixed set of named fields.
 
-**Op dispatch.** `execute_query` accepts either a plain string or a mapping carrying an `op` key. `LLM.FETCH` runs a fetch; `LLM.MODELS` reports protocol and variant; `LLM.ESTIMATE` bounds what the same fetch could cost, without contacting anything, and returns it as a one-record list because that is what this surface returns. An unrecognized op raises an error that lists the supported ones. Both surfaces also take `optional_properties`, which is where a per-request ceiling goes: the keys are merged over the instance's properties for that call and are not written back.
+**Op dispatch.** `execute_query` accepts natural language, an operation dict, or a JSON-encoded object carrying an `op` key. Other strings remain natural-language queries. `LLM.FETCH` runs a fetch; `LLM.MODELS` reports protocol and variant; `LLM.ESTIMATE` bounds what the same fetch could cost, without contacting anything, and returns it as a one-record list because that is what this surface returns. An unrecognized op raises an error that lists the supported ones. Both surfaces also take `optional_properties`. General per-call properties merge over the instance's for that call and are not written back; `limits.*` can only tighten an effective ceiling, and `None` leaves it unchanged; `limits.max_retries=None` is invalid.
 
 ### Planning and Execution
 

@@ -10,11 +10,13 @@ Base-class order determines which implementations resolve. `DataSource` is a pla
 
 **Registering an already-constructed instance is the supported route**: `register_source` stores the object under its name and records its class alongside `name` and `properties`. `connect_source` returns that live instance while it exists, then reconstructs a new source from the recorded class and properties. The registration therefore outlives the original object. Client-only configuration is not part of that record; see the configured-ceiling rules below. Dispatch by protocol name is a legacy path for older records and is not how this source is reached; inheriting the base class does not add a protocol arm.
 
-The supported integration is to build the source and pass the instance to `register_source`. Protocol-driven construction requires an upstream addition.
+Protocol-driven construction requires an upstream addition.
 
 `blue_data_llm_source.compat.blue_data.BlueDataLlmSource` is an alias for `LlmSource`, retained for imports written against the earlier optional adapter. It is not a subclass: the core now carries the inheritance, so a separate class would add no behavior and introduce another method resolution order. New code should import `LlmSource`.
 
 Shared `optional_properties["commit"]` is accepted and ignored. `read_only` on `execute_query_nl`, `execute_nl_tool` and `execute_query_nl_tools` never enables writes, and the latter still refuses the tool-driven loop (including `max_sample_size`). Creation methods accept `overwrite=False` and return `{}` for either value. The virtual entity's granular attributes match its bulk `properties`; relation metadata/attributes remain `{}` and statistics remain `None`. Advertised `get_sample` forwards `sample_size` to keyword-only `fetch_entity_stats(..., row_sample_size=10)` and returns `None` without provider contact or stored samples.
+
+`LLM.FETCH` is a read operation because it does not change source data. It can send the query to the configured provider and incur charges. Configure `limits.max_cost` or an operator ceiling to bound provider spend independently of read-only dispatch.
 
 Synchronous query methods called inside a running event loop wait for an owned worker thread, blocking the calling thread and delaying its cancellation callbacks. Prefer `afetch` for concurrent work and for clients tied to the caller's loop. When the waiting thread receives `KeyboardInterrupt`, the bridge cancels the in-flight fetch and re-raises once it stops, or after five seconds if the client ignores cancellation. Under `asyncio.run` on Python 3.11 and later, the first Ctrl-C requests cancellation of the runner's main task. When the synchronous call runs in that main task, the bridge observes its cancellation request and cancels the fetch. A call in another task observes cancellation only if that task receives the request. In a plain event-loop callback there is no current task to observe: the fetch may finish before the first interrupt is raised by `asyncio.run`. A second Ctrl-C interrupts the waiting thread; use a task running `afetch` to avoid blocking the loop. Time limits and Ctrl-C cancel cooperatively, so a client that ignores cancellation cannot be forcibly stopped and may finish in the background. A normal interpreter shutdown waits for that worker to finish.
 
@@ -23,6 +25,12 @@ Synchronous query methods called inside a running event loop wait for an owned w
 **Errors are raised, not returned.** This library raises typed errors from the `LlmSourceError` hierarchy. Callers that need an error value at an operator boundary can convert the raised error. Use a `try`/`except` at the call site to convert a raised error to a value.
 
 A missing or invalid provider credential fails the provider request, not configuration validation: the provider SDK reads and validates the credential. With no answered extraction response and no retained records, a failed attempt produces `TransportError` (CLI exit 5) if the retry policy is exhausted or `max_calls` prevents the next retry. If `max_cost` or `max_seconds` refuses that retry, or a ceiling refuses the first attempt, the fetch returns `stopped_by_limit` (CLI exit 7). If an extraction response has already been parsed, the fetch keeps its records with `outcome=partial` and a gap for the failed part. `ConfigError` covers settings checked by this package: unknown overrides, invalid or unknown ceilings, ceilings the resolved client cannot enforce, and missing optional extras.
+
+## Default client logging
+
+`DefaultLlmClient` loads LiteLLM lazily. Before importing it, the client raises the effective logging threshold of `LiteLLM`, `LiteLLM Router` and `LiteLLM Proxy` to at least WARNING, including when the host enabled INFO or DEBUG. Stricter levels and existing handlers are preserved. LiteLLM INFO/DEBUG diagnostics are discarded, and its provider-error help banner is suppressed.
+
+Keep `litellm.set_verbose` and `litellm.turn_on_debug()` disabled in stdio hosts. Output emitted by a host's earlier LiteLLM import cannot be suppressed retroactively. Explicit provider debugging and host handlers that write to stdout can still corrupt the protocol. The library does not redirect process-wide stdout; stdio hosts should guard embedded sources at the transport boundary.
 
 ## Deviations from the earlier implementation
 
@@ -50,7 +58,7 @@ The method requires a client to declare its capabilities explicitly; an attribut
 
 Anyone porting a caller that injects its own client should implement `budget_capabilities`, claim against the budget it receives, and append this call's `Usage` to the list arriving under the `usage_sink` property, which is where the fetch reads its token counts and model name from. A client that declares nothing still works; it is refused the three provider-level ceilings, and `limits.max_rows` needs nothing from it.
 
-**A ceiling is an input to the query.** `execute_query` and `execute_query_nl` both take `optional_properties`, and a `limits.*` key placed there binds that call and no other: the properties are merged over the instance's for the duration of the request and are not written back. That is how a caller reaching this source through the query surface bounds a request, and it is the route to reach for first, because it needs nothing beyond the arguments the surface already takes.
+**A ceiling is an input to the query.** `execute_query` and `execute_query_nl` both take `optional_properties`. Per-call properties apply only to that request and are not written back. Ordinary properties override the instance's values; `limits.*` and `max_records` can only tighten the configured ceilings, and `None` leaves those ceilings unchanged; `limits.max_retries=None` is invalid. This lets a caller bound a request through the existing query arguments.
 
 The registry stores the source's own properties, not its injected client or the client's settings. Put ceilings, model and rates on the source when they must survive registration and reconstruction; a rebuilt source starts with the default client.
 
@@ -85,7 +93,7 @@ a versioned planning receipt without changing the two-field `FetchResult` datacl
 shared `execute_query` methods can receive the same properties but return rows only, as their base
 contract requires. CLI and MCP intentionally omit distribution search and the receipt.
 
-Non-flat planning here is an adaptation to the Blue source contract, not a port: nothing in this package wraps an external planning API, and no result is promised to match one produced elsewhere. The receipt checks internal agreement among rules, planning facts, and plan serialization; it does not verify answer truth, completeness, or quality superiority.
+Non-flat planning here is an adaptation to the Blue source contract, not a port: nothing in this package wraps an external planning API, and no result is promised to match one produced elsewhere. The receipt checks consistency among rules, planning facts and the serialized plan; it does not verify answer accuracy or completeness.
 
 **The virtual entity is not vendor-named.** The earlier implementation synthesized `openai_entity` and `openai_entity_attribute`. This library uses `llm_entity` and `llm_entity_attribute`, consistent with the protocol being the family.
 

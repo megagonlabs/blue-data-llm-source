@@ -24,6 +24,7 @@ from blue_data_llm_source.planning.bounds import (
     proposal_attempt_limit,
 )
 from blue_data_llm_source.planning.cardinality import (
+    PARSE_PARSED,
     CardinalityEstimate,
     estimate_from_dict,
     estimate_from_reported,
@@ -66,7 +67,7 @@ PLAN_SERIALIZATION_VERSION: Final = 1
 RANGE_PLAN_SERIALIZATION_VERSION: Final = 2
 """The version a plan carrying any ``Range`` constraint is written under.
 
-Its own number because a 0.2.1.0 reader of version 1 has no range kind, and a payload it must
+Its own number because an earlier reader of version 1 has no range kind, and a payload it must
 refuse should say so by its version rather than fail on a constraint deep inside. A plan
 without ranges is still written as version 1, byte for byte as before."""
 PLAN_SERIALIZATION_VERSIONS: Final = (PLAN_SERIALIZATION_VERSION, RANGE_PLAN_SERIALIZATION_VERSION)
@@ -83,7 +84,8 @@ CHILD_WORDINGS: Final = (CHILD_WORDING_PARENT, CHILD_WORDING_CANONICAL)
 
 @dataclass(frozen=True)
 class PartitionPolicy:
-    """How an accepted proposal becomes child leaves. The defaults are 0.2.1.0 behavior.
+    """How an accepted proposal becomes child leaves. Defaults retain the parent wording
+    and use exact-value filters.
 
     ``child_wording="parent"`` gives every child its parent's wording, separated from its
     siblings only by the filter. ``"canonical"`` derives the wording from the root request
@@ -150,6 +152,7 @@ class Gap:
     PROPOSAL_REJECTED = "proposal_rejected"
     PLAN_TRUNCATED = "plan_truncated"
     ESTIMATE_UNKNOWN = "estimate_unknown"
+    SPLIT_COVERAGE_SHORT = "split_coverage_short"
     DEDUP_KEY_ABSENT = "dedup_key_absent"
     DEDUP_CONFLICT = "dedup_conflict"
     DEDUP_NORMALIZATION_COLLISION = "dedup_normalization_collision"
@@ -169,6 +172,7 @@ class Gap:
         PROPOSAL_REJECTED,
         PLAN_TRUNCATED,
         ESTIMATE_UNKNOWN,
+        SPLIT_COVERAGE_SHORT,
         DEDUP_KEY_ABSENT,
         DEDUP_CONFLICT,
         DEDUP_NORMALIZATION_COLLISION,
@@ -1451,12 +1455,37 @@ def apply_partition_proposal(
             attempted_proposals=attempts,
         )
 
+    notes = list(plan.notes)
+    cardinality = leaf.cardinality
+    child_estimates = [
+        child.cardinality.expected if child.cardinality is not None else None for child in children
+    ]
+    if (
+        cardinality is not None
+        and cardinality.parse_status == PARSE_PARSED
+        and cardinality.lower is not None
+        and all(value is not None for value in child_estimates)
+    ):
+        total = sum(value for value in child_estimates if value is not None)
+        if total < cardinality.lower:
+            notes.append(
+                Note(
+                    code=Gap.SPLIT_COVERAGE_SHORT,
+                    target_id=leaf.id,
+                    detail=(
+                        f"slice {leaf.id} child estimates total {total}, below the parent "
+                        f"model's lower estimate {cardinality.lower} (estimate-based warning)"
+                    ),
+                )
+            )
+
     at = plan.leaves.index(leaf)
     leaves = [*plan.leaves[:at], *children, *plan.leaves[at + 1 :]]
     return replace(
         plan,
         leaves=leaves,
         nodes=[*plan.nodes, node],
+        notes=notes,
         attempted_proposals=attempts,
         accepted_internal_nodes=plan.accepted_internal_nodes + 1,
         applied_partition_decisions=(

@@ -2,13 +2,23 @@ tools discovered: ['llmdb_query', 'llmdb_estimate', 'llmdb_list_models', 'llmdb_
 
 task   Which library version and provider variant is this server running?
 called ['llmdb_inspect_metadata']
-answer This server is running on protocol version "llm", provider variant "openai", and library version "2.0.0".
+answer This server is running library version 1.0.0 with the provider variant "openai."
 
 task   What would it cost to ask for the commercial airports in metropolitan France with their name and IATA code?
 called ['llmdb_estimate']
-answer The estimated cost to ask for the commercial airports in metropolitan France along with their names and IATA codes is approximately $0.13. This exceeds the threshold of $0.02, so I will not fetch the data.
+answer The estimated cost to ask for the commercial airports in metropolitan France with their name and IATA code is approximately $0.0106, which is below the threshold of 0.02. I can proceed to fetch the data if you'd like.
 
 task   Go ahead and get me at most eight of them, with name and IATA code.
-called ['llmdb_estimate']
-answer The estimated cost for fetching the requested data is above 0.02, so I will not proceed with the query. If you have a different request or need information on a specific topic, feel free to ask!
+called ['llmdb_query']
+answer Here are eight commercial airports in metropolitan France along with their IATA codes:
 
+1. Ajaccio Napoleon Bonaparte Airport - IATA: AJA
+2. Aurillac–Tronquières Airport - IATA: AUR
+3. Bastia–Poretta Airport - IATA: BIA
+4. Béziers Cap d'Agde Airport - IATA: BZR
+5. Biarritz Pays Basque Airport - IATA: BIQ
+6. Bordeaux–Mérignac Airport - IATA: BOD
+7. Brest Bretagne Airport - IATA: BES
+8. Brive–Souillac Airport - IATA: BVE
+
+Please note that the results may be incomplete as there were more records available, but the query was capped at eight.

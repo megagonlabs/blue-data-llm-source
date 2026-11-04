@@ -54,7 +54,7 @@ Click commands are synchronous, so the adapter calls the library's synchronous w
    not hide a misspelled limit or invalid distribution rule.
 3. `checks` then normalizes the request text. An empty request ends the run here, with no records and
    an outcome of `empty_query`. No budget or client is constructed, and no model is called.
-4. A `max_records` argument, when given, replaces the row limit for this run. The run's budget is
+4. A `max_records` argument, when given, can only tighten the effective row limit for this run. The run's budget is
    then produced from those limits: a fresh `Budget` when the caller supplied none, and otherwise a
    child derived from the caller's, which spends from what that budget has left. The three
    distribution controls are removed from the provider property map. A client is then resolved: a
@@ -90,11 +90,11 @@ The default client uses the same call arguments and bound calculation for estima
 
 1. Caller invokes `execute_query(query, database, collection, optional_properties)`.
 2. If `query` is a mapping, its `op` key selects the operation. `LLM.MODELS` returns protocol and variant without a model call. `LLM.ESTIMATE` reads `query`, `attrs` or `attr_names`, and `context` from the mapping, runs the estimate path above with `optional_properties` as its properties, and returns the estimate as a one-record list, because a list of records is what this surface returns. `LLM.FETCH` reads `query`, `attrs` or `attr_names`, `context`, and `max_records` from the mapping, and an unrecognized op raises a `QueryError` naming the supported ones.
-3. If `query` is a string, it is treated as the request itself.
+3. A JSON-encoded object with an `op` key follows the same operation dispatch as a mapping. Other strings, including malformed JSON, are treated as the request itself.
 4. Recognized keys are removed from `optional_properties` and become arguments; anything left over is passed through as per-call properties.
 5. The synchronous `fetch` runs the fetch path above, and the records alone are returned. `database` and `collection` are accepted for signature compatibility and are not used, because a model has neither.
 
-Step 4 is how a spending ceiling reaches a request made through this surface, and it is the route to reach for first. A `limits.*` key in `optional_properties` survives the extraction, is merged over the instance's properties for this call, and is never written back, so it bounds the request it arrived with and the next request through the same source is unbounded again. A caller builds one source and asks it many questions, each with its own tolerance, which is the shape that argument already has.
+Step 4 is how a spending ceiling reaches a request made through this surface. A `limits.*` key in `optional_properties` applies only to that request and is never written back. It can tighten the effective ceiling; `None` leaves the configured ceiling unchanged; `limits.max_retries=None` is invalid. The next request uses the configured ceiling unless it supplies its own tighter value.
 
 ### Natural-Language Path
 

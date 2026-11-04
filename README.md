@@ -59,6 +59,8 @@ blue-data-llm-source/
 │   ├── framework-demos/            # agent framework integrations
 │   ├── integration-demos/          # Blue data-layer examples
 │   └── scenario-demos/             # complete retrieval tasks
+├── tests/
+│   └── integration/                # offline integration checks
 └── design/                         # architecture, interface, and repository documents
 ```
 
@@ -112,19 +114,6 @@ The example passes a local answer through the normal fetch, parsing, type-checki
 | [platform/llm-cli/](platform/llm-cli/README.md) | `blue-data-llm-cli`: installs the `blue-llmdb` command for profiles, model inspection, cost estimation, and record queries |
 | [platform/llm-mcp/](platform/llm-mcp/README.md) | `blue-data-llm-mcp`: installs the `blue-data-llm-mcp` command serving five tools over stdio |
 
-## Testing
-
-With each component's `dev` extra and the library's `llm` extra installed, run from the repository root:
-
-```bash
-(cd lib && python -m pytest)
-(cd platform/llm-cli && python -m pytest)
-(cd platform/llm-mcp && python -m pytest)
-python -m pytest -q tests/integration/test_offline_examples.py
-```
-
-The last command runs the 14 no-key examples in isolated processes and compares their output with the captured examples. The guard blocks Python socket connections, datagram sends and subprocess helpers. Provider-backed examples are excluded. This smoke suite is verified on macOS with Python 3.12; Linux, Windows and free-threaded builds have not been verified.
-
 ## Code of conduct
 
 This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md), the same one that governs [Blue](https://github.com/megagon-internal/blue?tab=coc-ov-file). By participating, you are expected to uphold it. Report unacceptable behavior to contact_oss@megagon.ai.
@@ -147,7 +136,7 @@ For Datasets having different portions released under different licenses, please
 |-----|----------------------------------|----------|------------------|-----------------------------------------------------------------------------------------------------------|--------------------|
 | 1 | WikiTabGen (table #15 query and 11 column names, embedded in [`examples/scenario-demos/partitioned_wikitabgen_demo.py`](examples/scenario-demos/partitioned_wikitabgen_demo.py); the dataset is not distributed) | No | Not established | [link](https://github.com/analysis-bots/WikiTabGen) | Not established locally |
 
-The test cassettes contain generated model responses, with a recording script and receipt under `lib/tests/`; they are fixtures, not an external benchmark dataset. The local source does not establish the WikiTabGen license or redistribution rights; this reference grants none. Provider-generated output and data supplied by callers require their own rights and accuracy review.
+The test cassettes contain generated model responses, with a recording script and a `RECEIPT.json` spend record under `lib/tests/`; they are fixtures, not an external benchmark dataset. The local source does not establish the WikiTabGen license or redistribution rights; this reference grants none. Provider-generated output and data supplied by callers require their own rights and accuracy review.
 
 ### Open Source Software (OSS) Components
 
@@ -161,14 +150,15 @@ For OSS components having different portions released under different licenses, 
 |-----|----------------------------------|----------|------------------|-----------------------------------------------------------------------------------------------------------|--------------------|
 | 1 | Blue data | No | Megagon Labs, Inc. | [link](https://github.com/megagon-internal/blue-data) | BSD 3-Clause with Attribution / NOTICE Requirement |
 | 2 | tenacity | No | Julien Danjou | [link](https://github.com/jd/tenacity) | Apache Software License |
-| 3 | LiteLLM | Yes (Python 3.15 build) | Berri AI | [link](https://github.com/BerriAI/litellm) | MIT License |
-| 4 | fastuuid | Yes (Python 3.15 build) | Omer Katz | [link](https://pypi.org/project/fastuuid/) | BSD License |
+| 3 | LiteLLM | No | Berri AI | [link](https://github.com/BerriAI/litellm) | MIT License |
+| 4 | fastuuid | No | Omer Katz | [link](https://pypi.org/project/fastuuid/) | BSD License |
 | 5 | diskcache | No | Grant Jenks | [link](https://github.com/grantjenks/python-diskcache) | Apache Software License |
 | 6 | click | No | Pallets | [link](https://github.com/pallets/click) | BSD License |
 | 7 | rich | No | Will McGugan | [link](https://github.com/Textualize/rich) | MIT License |
 | 8 | MCP Python SDK | No | Anthropic, PBC | [link](https://github.com/modelcontextprotocol/python-sdk) | MIT License |
 | 9 | langgraph (examples only) | No | LangChain, Inc. | [link](https://github.com/langchain-ai/langgraph) | MIT License |
-| 10 | langchain-openai (examples only) | No | LangChain, Inc. | [link](https://pypi.org/project/langchain-openai/) | MIT License |
-| 11 | langchain-mcp-adapters (examples only) | No | LangChain, Inc. | [link](https://github.com/langchain-ai/langchain-mcp-adapters) | MIT License |
+| 10 | langchain (examples only) | No | LangChain, Inc. | [link](https://pypi.org/project/langchain/) | MIT License |
+| 11 | langchain-openai (examples only) | No | LangChain, Inc. | [link](https://pypi.org/project/langchain-openai/) | MIT License |
+| 12 | langchain-mcp-adapters (examples only) | No | LangChain, Inc. | [link](https://github.com/langchain-ai/langchain-mcp-adapters) | MIT License |
 
-The first eight rows cover the direct runtime dependencies and the transitive fastuuid dependency used in the Python 3.15 compatibility build. The last three are installed separately to run the framework examples, which list them in their install commands. "Modified" marks the Python 3.15 compatibility builds, which are patched copies of the upstream releases (see [installation](docs/installation.md#python-315-installation)); the LiteLLM row covers the MIT-licensed core, and separately licensed enterprise code has its own terms. Transitive dependencies, including pandas, NumPy and jsonpath-ng through Blue data, retain their own licenses and bundled notices. Development tools (`pytest`, `pytest-asyncio`, `pytest-cov`, `jsonschema`, Ruff, Pyright, build and Twine) are separate from the runtime inventory; consult their licenses when installing them.
+The first eight rows cover the direct runtime dependencies and the transitive fastuuid dependency. The last four are installed separately to run the framework examples, which list them in their install commands. The LiteLLM row covers the MIT-licensed core; separately licensed enterprise code has its own terms. Transitive dependencies, including pandas, NumPy and jsonpath-ng through Blue data, retain their own licenses and bundled notices. Development tools (`pytest`, `pytest-asyncio`, `pytest-cov`, `jsonschema`, Ruff, Pyright, build and Twine) are separate from the runtime inventory; consult their licenses when installing them.

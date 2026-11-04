@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import inspect
 import json
+import logging
 import math
 import os
 import stat
@@ -83,6 +84,15 @@ _RESERVED = {"api", "service_url", "variant", "protocol"}
 DEFAULT_MODEL = "gpt-6-luna"
 DEFAULT_REASONING_EFFORT = "medium"
 REASONING_EFFORTS = frozenset(models.EFFORT_ORDER)
+
+
+def _cap_provider_logging() -> None:
+    # LiteLLM routes INFO/DEBUG to stdout, including during import; stdio hosts need it quiet.
+    # Keep stricter host levels and leave handlers alone.
+    for name in ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy"):
+        logger = logging.getLogger(name)
+        if logger.getEffectiveLevel() < logging.WARNING:
+            logger.setLevel(logging.WARNING)
 
 
 def default_max_tokens_for(model: object) -> int:
@@ -489,7 +499,7 @@ class DefaultLlmClient:
         # A detached task could continue spending after the caller returned.
         try:
             answer = await asyncio.wait_for(self._answer(prompt, merged), timeout=remaining)
-        except (TimeoutError, asyncio.TimeoutError) as e:
+        except TimeoutError as e:
             # Only when the budget really is spent. A cache store or a client raising its own
             # TimeoutError is not this ceiling, and reporting it as one hid the real failure
             # behind a limit that had not expired.
@@ -874,12 +884,14 @@ class DefaultLlmClient:
         ConfigError for the same reason the cache import is: a missing optional extra is
         a configuration problem the caller can fix, not a transport failure.
         """
+        _cap_provider_logging()
         try:
             import litellm
         except ImportError as e:
             raise ConfigError(
                 "the llm provider is not installed (pip install 'blue-data-llm-source[llm]')"
             ) from e
+        litellm.suppress_debug_info = True
         return cast("_Provider", litellm)
 
     def budget_capabilities(self) -> frozenset[str]:

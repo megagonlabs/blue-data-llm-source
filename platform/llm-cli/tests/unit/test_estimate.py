@@ -73,7 +73,10 @@ def test_the_prose_limits_the_figure_to_a_flat_fetch(
 ) -> None:
     install_source(RecordingSource())
     result = runner.invoke(cli, ["data", "estimate", QUERY, "--format", "nl"])
-    assert "$0.1200" in result.stdout
+    assert (
+        "One flat fetch of this request is bounded at $0.1200 against the configured rates "
+        "for gpt-4o, across 3 attempt(s)." in result.stdout
+    )
     assert "does not bound their total cost" in result.stdout
 
 
@@ -208,7 +211,12 @@ def test_a_ceiling_that_fits_every_attempt_says_so(runner: CliRunner, install_so
     prose = runner.invoke(
         cli, ["data", "estimate", QUERY, "--limit-cost", "100", "--format", "nl"]
     ).stdout
+    assert (
+        "One flat fetch of this request is bounded at $0.1200 against the configured rates "
+        "for gpt-4o, across 3 attempt(s)." in prose
+    )
     assert "At this ceiling 3 of 3 attempts fit." in " ".join(prose.split())
+    assert "Ceilings applied: max_cost 100." in " ".join(prose.split())
 
 
 def test_a_ceiling_below_one_attempt_names_the_figure_and_the_remedy(

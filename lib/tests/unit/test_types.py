@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, get_args
 
 from blue_data_llm_source.llm.client import DefaultLlmClient, FunctionClient
 from blue_data_llm_source.types import (
@@ -20,6 +20,18 @@ from blue_data_llm_source.types import (
     TransportError,
 )
 from tests.doubles import FailingClient, MemoryCache, ScriptedClient
+
+
+def test_json_scalar_export_remains_a_runtime_union() -> None:
+    import blue_data_llm_source as pkg
+    from blue_data_llm_source.types import JsonScalar
+
+    assert pkg.JsonScalar is JsonScalar
+    assert "JsonScalar" in pkg.__all__
+    assert get_args(pkg.JsonScalar) == (str, int, float, bool)
+    for value in ("x", 1, 1.5, False):
+        assert isinstance(value, pkg.JsonScalar)
+    assert not isinstance(None, pkg.JsonScalar)
 
 
 def test_every_error_shares_one_base() -> None:

@@ -1,4 +1,0 @@
-# Pass with -c when installing on Python 3.15 from the compatibility wheelhouse, so pip
-# keeps these local builds even if a newer upstream release appears on the index.
-litellm==1.106.5+blue.1; python_version == "3.15"
-fastuuid==0.14.0+blue.1; python_version == "3.15"

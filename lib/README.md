@@ -87,11 +87,11 @@ execute_query_nl(query, database=None, collection=None, schema=None, llm_fn=None
 translate_nl_to_native_query(query, schema, llm_fn) -> str | None
 ```
 
-`execute_query` takes either a natural language string or a dict with an `op` key. Supported ops are `LLM.FETCH`, `LLM.MODELS`, and `LLM.ESTIMATE`; an unknown op raises `QueryError` listing them. `LLM.ESTIMATE` reads the same `query`, `attrs` or `attr_names`, and `context` keys as `LLM.FETCH`. It returns the estimate as a one-record list, matching this surface's return type. Call `estimate` directly to get the `Estimate` object.
+`execute_query` takes natural language, an operation dict, or a JSON-encoded object with an `op` key, such as `'{"op":"LLM.MODELS"}'`. Other strings remain natural-language queries. Supported ops are `LLM.FETCH`, `LLM.MODELS`, and `LLM.ESTIMATE`; names are case-sensitive, and an unknown op raises `QueryError` listing them. `LLM.ESTIMATE` reads the same `query`, `attrs` or `attr_names`, and `context` keys as `LLM.FETCH`. It returns the estimate as a one-record list, matching this surface's return type. Call `estimate` directly to get the `Estimate` object.
 
 For every other source in the layer, `llm_fn` translates natural language into a native dialect. This source has no other dialect, so `translate_nl_to_native_query` is the identity and `llm_fn` is used as the model client instead of being ignored.
 
-Both methods take `optional_properties`, and that is where a ceiling goes when you are reaching the source through this surface. A `limits.*` key placed there is merged over the instance's properties for the duration of that call and is not written back, so it bounds the request it was passed with and nothing after it.
+Both methods take `optional_properties`, and that is where a ceiling goes when you are reaching the source through this surface. Per-call properties merge over the instance's for that request and are not written back. A `limits.*` value can only tighten the effective ceiling; `None` leaves it unchanged; `limits.max_retries=None` is invalid.
 
 ```python
 from blue_data_llm_source import LlmSource
@@ -184,7 +184,7 @@ the same call arguments the attempt itself uses.
 
 Both completion methods take the prompt first and the merged per-call properties second, and both return the model's text. `afetch` calls `acomplete`, and `fetch` wraps `afetch`, so the asynchronous form is the one every fetch reaches; `complete` is there for a caller driving the client directly.
 
-Two keys arrive in `properties` on every call the source makes. `budget` carries the run's `Budget`, which the client claims against per provider attempt. `usage_sink` carries a list this call owns, and whatever `Usage` entries the client appends to it become the fetch's token counts and model name; the fetch reads nothing else, because a client's own history cannot be sliced back into per-request totals when two fetches share it. Both are passed per call instead of on the client for the same reason: one client can serve several concurrent fetches.
+Two keys arrive in `properties` on every call the source makes. `budget` carries the run's `Budget`, which the client claims against per provider attempt. `usage_sink` carries a list this call owns, and whatever `Usage` entries the client appends to it become the fetch's token counts and model name; client-wide usage totals cannot be attributed to one fetch when clients are shared. Both are passed per call instead of on the client for the same reason: one client can serve several concurrent fetches.
 
 `budget_capabilities` says which ceilings the client can be held to, returning axis names from `Capability`. It is a method, not an attribute, so that satisfying the contract takes a deliberate implementation rather than a name that happens to match. Every configured ceiling on an axis the client does not name is refused with a `ConfigError` at the first fetch, and a client omitting the method declares nothing and is refused all three provider-level ceilings; `limits.max_rows` binds regardless, since the source counts the records itself.
 
@@ -422,7 +422,7 @@ For the same reason, **a result produced by an `llm_fn` sets `meta.accounting_kn
 
 ### Bounding one request
 
-Limits configured on the source apply to every fetch it makes. To bound a single request instead, pass the ceiling with the request: `properties` on `fetch` and `afetch`, or `optional_properties` on `execute_query` and `execute_query_nl`, both merge over the instance's properties for that call and are not written back, so the ceiling binds the call it arrived with and does not leak into the next.
+Limits configured on the source apply to every fetch it makes. To bound a single request instead, pass the ceiling with the request: `properties` on `fetch` and `afetch`, or `optional_properties` on `execute_query` and `execute_query_nl`. Ordinary per-call properties override the instance's values; `limits.*` and `max_records` only tighten configured ceilings. Cost, row, call and time ceilings accept `None` as no change; `limits.max_retries=None` is invalid. Per-call values are not written back.
 
 ### A budget across calls
 
@@ -476,7 +476,7 @@ separately and merged on the way back. Nothing selects a shape for you.
 | `plan.filter_enforcement` | `flag` | What happens to a record whose checkable filter column contradicts its leaf's filter. `flag` keeps it; `drop` removes it at the leaf, before reduction merges it into anything. Both count it in `meta.filter_contradictions`. `drop` is refused in `flat` mode, which has no filter. |
 | `plan.range_filters` | `False` | In `partitioned` mode, reads a partition proposal written as integer spans, such as `1946–1952`, on a column the schema declares `int` or `integer`, as inclusive `Range` filters instead of exact text that no record's value can equal. The spans must not overlap and each must start at or below its end, or the proposal is refused with the reason. Requires `plan.leaf_prompt="keyed-leaf-fetch-2"`, because a range travels only on that contract's wire version. |
 | `plan.partition_guardrails` | `False` | In `partitioned` mode, sends the `partition-2` proposal prompt, which adds generic rules: no identifier or continuous-measurement keys, no placeholder or catch-all values, and a value count calibrated against the slice's own row estimate and `plan.target_rows_per_leaf`. It also refuses a proposed key the schema declares `int`, `integer`, `float` or `number` unless its values are integers or integer spans covering at most 1,000 integers; the reason appears in `meta.gaps` as `guard_collapsed`. Adds no call. |
-| `plan.split_policy` | `always` | In `partitioned` mode, whether the root always splits (`always`, the 0.2.1.0 behavior) or is asked once first (`evidence`). Under `evidence` the root leaf runs once as a probe, with no continuation. The plan splits only when the provider says the probe's answer hit its output allowance, the answer ended mid-document and only its complete records could be read, the probe failed outright (reported as a `probe_failed` gap), or the probe holds fewer than half the keys an estimate above `plan.split_threshold_rows` expects. Otherwise the probe's answer is the result, with no proposal call. The probe is a single ask even when `plan.max_continuations` is set, and a probe that meets `plan.exact_rows` is accepted unless its answer was cut, by the output allowance or mid-document; a target of zero asks nothing and reports no `split_decision`. When the plan does split, the probe's records are merged with the children's under the origin `root`, and every child is told which keys the probe already holds, bounded by `plan.max_excluded_keys` and `plan.max_exclusion_bytes`. The probe is one more logical call in every published bound. `meta.split_decision` says what was decided. Refused outside `partitioned`. |
+| `plan.split_policy` | `always` | In `partitioned` mode, whether the root always splits (`always`, the default) or is asked once first (`evidence`). Under `evidence` the root leaf runs once as a probe, with no continuation. The plan splits only when the provider says the probe's answer hit its output allowance, the answer ended mid-document and only its complete records could be read, the probe failed outright (reported as a `probe_failed` gap), or the probe holds fewer than half the keys an estimate above `plan.split_threshold_rows` expects. Otherwise the probe's answer is the result, with no proposal call. The probe is a single ask even when `plan.max_continuations` is set, and a probe that meets `plan.exact_rows` is accepted unless its answer was cut, by the output allowance or mid-document; a target of zero asks nothing and reports no `split_decision`. When the plan does split, the probe's records are merged with the children's under the origin `root`, and every child is told which keys the probe already holds, bounded by `plan.max_excluded_keys` and `plan.max_exclusion_bytes`. The probe is one more logical call in every published bound. `meta.split_decision` says what was decided. Refused outside `partitioned`. |
 | `plan.split_threshold_rows` | `120` | Under `plan.split_policy="evidence"`, the estimate above which a short probe answer triggers a split. A value other than 120 is refused with any other policy. |
 | `plan.distribution_search` | `False` | Direct-Python-only opt-in for rule-backed distribution selection. Requires `partitioned`. |
 | `plan.identity_partitions` | empty | Direct-Python-only list of versioned finite-domain rule mappings accepted by `IdentityPartitionRule.from_dict()`. |
@@ -552,9 +552,12 @@ for gap in result.meta.gaps:
 
 It reports what this source can see: a part that failed, a continuation cap that fired, a
 response cut off at the model's output limit, a plan refused for exceeding `plan.max_leaves`, records
-kept unmerged because no key was identified. A valid empty response alone is not a gap. It does not
-report a model that simply answered with fewer records than exist because nothing in such a response
-says it is short.
+kept unmerged because no key was identified. A valid empty response alone is not a gap.
+
+For non-flat requests, `split_coverage_short` reports when all accepted child estimates sum below
+the parent's lower estimate. `observed_coverage_short` reports when complete distinct identities
+before the row cap fall below the root's lower estimate. These estimate-based warnings do not
+change `outcome` or prove missing records. A short response without such evidence remains undetected.
 
 ## FetchResult and ExecMeta
 
@@ -624,6 +627,19 @@ The Pyright development gate uses a separate `lib/.venv` because `pyproject.toml
 ```bash
 python -m venv .venv && source .venv/bin/activate
 ```
+
+### Component and example suites
+
+With each component's `dev` extra and the library's `llm` extra installed, run these commands from the repository root:
+
+```bash
+(cd lib && python -m pytest)
+(cd platform/llm-cli && python -m pytest)
+(cd platform/llm-mcp && python -m pytest)
+python -m pytest -q tests/integration/test_offline_examples.py
+```
+
+The last command runs 14 no-key examples in isolated processes and compares their output with the captured examples. Its guard blocks Python socket connections, datagram sends, and subprocess helpers. Provider-backed examples are excluded.
 
 ### The contract test
 

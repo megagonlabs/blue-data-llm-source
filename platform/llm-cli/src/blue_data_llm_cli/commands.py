@@ -1159,8 +1159,9 @@ def _estimate_sentences(
         return (f"This request cannot be bounded: {reason}.", settings.ceilings())
     fit = _ceiling_sentence(published, ceiling)
     return (
-        f"One flat fetch of this request costs at most ${published['max_cost']:.4f} against "
-        f"{published['model']}, across {published['max_attempts']} attempt(s).",
+        f"One flat fetch of this request is bounded at ${published['max_cost']:.4f} against "
+        f"the configured rates for {published['model']}, across "
+        f"{published['max_attempts']} attempt(s).",
         *((fit,) if fit else ()),
         "Non-flat requests may make planning and extraction calls with different prompts; "
         "this figure does not bound their total cost.",
@@ -1185,8 +1186,8 @@ def _ceiling_sentence(published: dict[str, Any], ceiling: object) -> str | None:
 def _distinct_amounts(first: float, second: float) -> tuple[str, str]:
     """Two dollar amounts written with as many digits as it takes to tell them apart.
 
-    Four fixed decimals printed a $0.000041 bound against a $0 ceiling as $0.0000 against
-    $0.0000, which reads as a refusal for no reason.
+    Fixed four-decimal formatting would print a $0.000041 bound and a $0 ceiling
+    identically, which reads as a refusal for no reason.
     """
 
     def written(amount: float, digits: int) -> str:

@@ -83,9 +83,10 @@ def test_every_served_op_is_declared_exactly_once_as_a_read_or_a_write() -> None
 
 def test_no_served_op_needs_commit() -> None:
     source = LlmSource(client=ScriptedClient())
+    requires_commit = cast(Callable[[object], bool], getattr(source, "_query_requires_commit"))
     for op in C.OPS:
-        assert not source._query_requires_commit({"op": op})  # pyright: ignore[reportPrivateUsage]
-        assert not source._query_requires_commit(json.dumps({"op": op}))  # pyright: ignore[reportPrivateUsage]
+        assert not requires_commit({"op": op})
+        assert not requires_commit(json.dumps({"op": op}))
 
 
 def test_a_dict_query_without_an_op_is_rejected() -> None:

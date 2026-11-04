@@ -2,7 +2,10 @@ WikiTabGen #15: chemical elements
 query: Generate a detailed table about chemical elements
 context: Use the full modern periodic table. Return each element once, with its atomic number and period. The exact requested Z values are: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118.
 columns: Z, Sym, Element, Group, Period, Atomic weight u, Density g / cm 3, Melt K, Boil K, Heat J / g * K, Neg
-modes: flat, row_by_row, partitioned
+modes: flat, partitioned, row_by_row
 model: gpt-6-luna; reasoning none; 4096 output tokens per call; no cache or retries
 shared cap: $0.30, 160 calls, 900 seconds
+flat allowance: $0.100000, 54 calls, 300 seconds; shared 900-second deadline
+partitioned allowance: $0.100000, 53 calls, 300 seconds; shared 900-second deadline
+row_by_row allowance: $0.100000, 53 calls, 300 seconds; shared 900-second deadline
 Add --live to call GPT-6 Luna and print every model response.

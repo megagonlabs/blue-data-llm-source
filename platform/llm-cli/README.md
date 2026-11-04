@@ -287,7 +287,7 @@ blue-llmdb data query "the member states of the European Union" \
 
 The remaining standard controls are `--plan-keys` for ordered composite identity, `--plan-exact-rows` for a hard target when the plan has one leaf, `--plan-exclusion-bytes` for continuation-prompt size, `--plan-planning-order` for one of the five schedules, and `--plan-expose-estimate`/`--no-plan-expose-estimate` for extraction-prompt context.
 
-Five optional controls change how a split is asked. Each keeps the 0.2.1.0 behavior unless selected:
+Five optional controls change how a split is asked. Each keeps its default behavior unless selected:
 
 - `--plan-leaf-prompt keyed-leaf-fetch-2` asks a leaf for every matching record rather than a sample. It is experimental; check the returned records when using it.
 - `--plan-child-wording canonical` builds each child's request from the original request and its own filters rather than the parent's wording.
@@ -384,38 +384,59 @@ blue-llmdb data query "the member states of the European Union" \
     --limit-cost 0.50 --format json
 ```
 
-The following shortened response illustrates the JSON shape; values vary by run.
+Sample output, shortened to one of 27 records and its matching `record_origins`. `<cache-path>` stands for the local cache directory; values vary by run.
 
 ```text
 {
   "records": [
     {
-      "country": "France",
-      "accession_year": 1958
+      "country": "Austria",
+      "accession_year": 1995
     }
   ],
   "meta": {
     "outcome": "ok",
-    "model": "gpt-4o",
+    "model": "gpt-4o-2024-08-06",
     "calls": 1,
-    "prompt_tokens": 202,
-    "completion_tokens": 34,
-    "cost": 0.043143,
-    "elapsed_seconds": 0.31,
+    "prompt_tokens": 177,
+    "completion_tokens": 461,
+    "cost": 0.043123,
+    "elapsed_seconds": 5.22,
     "row_estimate": null,
     "cardinality_estimate": null,
     "primary_keys": [],
     "observed_key_count": 0,
-    "marginal_key_yields": [1],
+    "marginal_key_yields": [
+      27
+    ],
     "incomplete_key_records": 0,
     "filter_contradictions": 0,
     "gaps": [],
     "stop_reasons": [],
-    "requested_attrs": ["country", "accession_year"]
+    "requested_attrs": [
+      "country",
+      "accession_year"
+    ],
+    "record_origins": [
+      [
+        "0.0"
+      ]
+    ],
+    "accounting_known": false
   },
   "settings": {
-    "applied": {"llm.model": "gpt-4o", "limits.max_cost": 0.5, "plan.max_continuations": 0},
-    "source": {"llm.model": "flag", "limits.max_cost": "flag", "plan.max_continuations": "default"}
+    "applied": {
+      "llm.model": "gpt-4o",
+      "llm.cache_dir": "<cache-path>",
+      "limits.max_cost": 0.5,
+      "plan.max_continuations": 0
+    },
+    "source": {
+      "llm.model": "flag",
+      "llm.cache_dir": "default",
+      "limits.max_cost": "flag",
+      "plan.max_continuations": "default"
+    }
   }
 }
 ```
@@ -464,6 +485,8 @@ ERROR: TRANSPORT TransportError: Provider request failed; max_calls stopped retr
 **Exit 2 belongs to Click's parser.** A misspelled option, bad value, or missing argument exits 2. On a command that accepts `--format`, `--format json` or a valid `BLUE_DATA_CLI_FORMAT=json` default also writes `{"error": {"code": "USAGE", "message": ...}}` to standard output if parsing fails. The last explicit `--format` flag wins over the default; a flag after `--` is treated as an argument. The standard error line remains. A profile default is available only after the root callback exports it. Root-option parse failures can use an already exported environment default, but cannot use a profile-only default; pass `--format json` on the selected command when you need JSON for those failures. Errors after parsing use the same JSON envelope when the selected format is already known, including an unknown `--profile`, an unreadable profiles file, or a profile value that will not cast. Before a profile can be read, startup errors use an explicit format flag or an already exported environment default. Commands without `--format` report errors only on standard error. If `BLUE_DATA_CLI_FORMAT` itself holds an invalid value and no format flag is given, that lookup also reports only on standard error.
 
 ## Tests
+
+Run these commands from `platform/llm-cli/` in the active environment.
 
 ```bash
 python3 -m pytest tests/unit -q

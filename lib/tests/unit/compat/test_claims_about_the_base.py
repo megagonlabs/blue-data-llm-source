@@ -13,7 +13,6 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 # Directories that are not part of what ships: virtual environments, build output, tool
 # caches, and the recorded provider responses, whose stored text is evidence of what a
 # provider returned rather than prose this project maintains.
-# The last four are the Python 3.15 build directories docs/installation.md creates here.
 SKIP = {
     ".venv",
     "build",
@@ -21,10 +20,6 @@ SKIP = {
     ".pytest_cache",
     ".ruff_cache",
     "cassettes",
-    ".build315",
-    ".native315",
-    ".venv315",
-    ".wheels315",
 }
 
 # The changelog is part record and part claim about what is about to ship, so it is split

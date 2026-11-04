@@ -110,6 +110,16 @@ blue-llmdb data estimate "the member states of the European Union" --format nl
 One flat fetch of this request is bounded at $0.1293 against the configured rates for gpt-4o, across 3 attempt(s). Non-flat requests may make planning and extraction calls with different prompts; this figure does not bound their total cost. No ceiling was set.
 ```
 
+Set a ceiling to see whether it covers the permitted attempts:
+
+```bash
+blue-llmdb data estimate "the member states of the European Union" --limit-cost 0.50 --format nl
+```
+
+```text
+One flat fetch of this request is bounded at $0.1293 against the configured rates for gpt-4o, across 3 attempt(s). At this ceiling 3 of 3 attempts fit. Non-flat requests may make planning and extraction calls with different prompts; this figure does not bound their total cost. Ceilings applied: max_cost 0.5.
+```
+
 ## 5. Store the provider key, out of shell history
 
 The prompt hides what you type and writes it to `~/.blue-llmdb/.profiles` at mode `0600`. Enter `$OPENAI_API_KEY` instead of the key to store a reference to the environment variable.

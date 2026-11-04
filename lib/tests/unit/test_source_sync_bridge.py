@@ -262,10 +262,29 @@ async def test_caller_cancellation_callback_waits_for_sync_return() -> None:
     assert callbacks == [True]
 
 
+def test_sync_fetch_in_plain_loop_callback_without_current_task() -> None:
+    async def run() -> None:
+        loop = asyncio.get_running_loop()
+        done: asyncio.Future[bool] = loop.create_future()
+
+        def fetch() -> None:
+            try:
+                assert asyncio.current_task() is None
+                result = LlmSource(client=ScriptedClient([ROWS])).fetch("items")
+                done.set_result(bool(result.records))
+            except BaseException as error:
+                done.set_exception(error)
+
+        loop.call_soon(fetch)
+        assert await done
+
+    asyncio.run(run())
+
+
 def _interrupt_the_wait(
     monkeypatch: pytest.MonkeyPatch, ready: threading.Event | None
 ) -> list[float]:
-    """Raise KeyboardInterrupt in the waiting thread, as Ctrl-C does on Python 3.10.
+    """Raise KeyboardInterrupt in the waiting thread, as the default SIGINT handler can.
 
     With *ready*, the interrupt lands once the provider call is in flight. Without it, the
     interrupt lands first and the worker starts only once the caller waits out the grace.

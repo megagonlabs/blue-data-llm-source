@@ -69,7 +69,7 @@ def test_every_component_is_exercised_by_the_walkthrough() -> None:
     assert {"profile", "data", "model", "metadata"} <= shown
 
 
-def test_the_machine_output_sample_matches_the_default_serializer_shape() -> None:
+def test_the_machine_output_sample_matches_the_optional_serializer_shape() -> None:
     body = README.read_text(encoding="utf-8")
     blocks = re.findall(r"```text\n(.*?)\n```", body, re.DOTALL)
     sample = next(json.loads(block) for block in blocks if '"records"' in block)
@@ -78,10 +78,30 @@ def test_the_machine_output_sample_matches_the_default_serializer_shape() -> Non
     assert set(sample["settings"]) == {"applied", "source"}
 
     documented = sample["meta"]
-    actual = meta_view(ExecMeta())
+    actual = meta_view(ExecMeta(accounting_known=False, record_origins=[["0.0"]]))
     assert set(documented) == set(actual)
     for field, value in actual.items():
         assert type(documented[field]) is type(value), field
+    assert documented["accounting_known"] is False
+    assert documented["record_origins"] == [["0.0"]]
+    assert sample["settings"]["applied"]["llm.cache_dir"] == "<cache-path>"
+    assert sample["settings"]["source"]["llm.cache_dir"] == "default"
+    assert set(sample["settings"]["applied"]) == {
+        "llm.model",
+        "llm.cache_dir",
+        "limits.max_cost",
+        "plan.max_continuations",
+    }
+    assert sample["settings"]["source"] == {
+        "llm.model": "flag",
+        "llm.cache_dir": "default",
+        "limits.max_cost": "flag",
+        "plan.max_continuations": "default",
+    }
+    guide = README.parents[2] / "docs" / "cli.md"
+    guide_blocks = re.findall(r"```text\n(.*?)\n```", guide.read_text(), re.DOTALL)
+    guide_sample = next(json.loads(block) for block in guide_blocks if '"records"' in block)
+    assert guide_sample == sample
 
 
 def test_the_documented_exit_codes_are_the_ones_in_use() -> None:

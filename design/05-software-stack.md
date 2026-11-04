@@ -55,7 +55,7 @@ That is the whole required set. Everything else is an extra.
 | `dev` | `pytest`, `pytest-asyncio`, `pytest-cov`, `ruff`, `pyright`, `build`, `twine` | Test, lint, type-check, build, and publish tooling |
 | `all` | `litellm`, `diskcache` | Convenience alias for `llm` |
 
-There is no `blue-data` extra. It existed to gate the compatibility adapter while the dependency was optional, and it is removed rather than kept as a no-op, so the metadata does not advertise a choice that is no longer there.
+There is no `blue-data` extra, because `blue-data` is a core dependency.
 
 ---
 
@@ -74,12 +74,12 @@ There is no `blue-data` extra. It existed to gate the compatibility adapter whil
 
 The client also uses two `litellm` functions beyond transport, avoiding the need to maintain copies of their contracts. `completion_cost` reads what a call was billed. `stream_chunk_builder` rebuilds a response from streamed chunks, allowing `llm.stream=True` without a separate downstream path. Neither function is trusted blindly. An unreadable cost, including a calculator result of zero for a call that reached the provider, is reported as unknown. The client also works around the assembler's practice of filling in token counts with a local tokenizer rather than using those counts for accounting. See `04-detailed-architecture.md` for details.
 
-One behavior of that dependency reaches the process boundary and is worth recording. On some
-failure paths `litellm` writes colored banners to standard output rather than standard error. The
-CLI redirects interpreter-level `sys.stdout` writes for the synchronous fetch boundary, and the MCP
-server redirects them for the server run. Those redirects cover the known banners, but not direct
-file-descriptor writes or output produced outside the protected lifetime. A program embedding the
-library owns its process streams and may still receive the dependency's output.
+Before loading LiteLLM, the default client raises its provider logging thresholds to at least WARNING.
+It then suppresses the provider-error banner. INFO/DEBUG diagnostics are discarded; existing handlers and
+stricter logging levels are preserved. The CLI also redirects interpreter-level `sys.stdout` writes
+for the synchronous fetch boundary, and the MCP server does so for the server run. Those host guards
+cover other Python stdout writes during their protected
+lifetime, but not direct file-descriptor writes. An embedding host still owns its process streams.
 
 The model boundary is a structural protocol with two methods:
 

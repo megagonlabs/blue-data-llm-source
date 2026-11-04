@@ -14,11 +14,13 @@ Use this index to find installation, usage, interface, and design documentation 
 | [library README](../lib/README.md) | Read the library's settings, model table, and limits |
 | [compatibility guide](../lib/COMPATIBILITY.md) | Port a caller from the earlier source or integrate with `DataSource` |
 | [design/](../design/) | Read the architecture and interface decisions |
-| [`CHANGELOG.md`](../CHANGELOG.md) | Upgrade from an earlier release. 0.2.2.1 protects diagnostics and caches; 0.2.2.0 adds the opt-in evidence-gated split and five experimental plan settings; 0.2.1.0 adds the GPT model table and reads the MCP server's settings from its environment; 0.2.0.0 renames the command line, renames every MCP tool, and closes the `properties` map |
+| [`CHANGELOG.md`](../CHANGELOG.md) | Changes since the earlier internal builds: 0.2.2.1 protects diagnostics and caches; 0.2.2.0 adds the opt-in evidence-gated split and five experimental plan settings; 0.2.1.0 adds the GPT model table and reads the MCP server's settings from its environment; 0.2.0.0 renames the command line, renames every MCP tool, and closes the `properties` map |
+
+The 0.2.x versions below were internal builds, never published to a package index. These notes apply to callers with an installed internal copy.
 
 ## Upgrading from 0.2.2.0 (installed as 2.2.0)
 
-The current packages are 1.0.0. Installed copies of earlier releases report their original numbers, so pip ranks an installed 0.1.1.0 to 0.2.2.1 (1.1.0 to 2.2.1) above 1.0.0 and an ordinary upgrade does not select the current release. The CLI and MCP require `blue-data-llm-source[llm]==1.0.0`; the CLI also pins `blue-data==1.0.0` for its protected storage hooks. See [installing exact built wheels](installation.md#installing-exact-built-wheels).
+The current packages are 1.0.0. Installed copies of earlier internal builds report their original numbers, so pip ranks an installed 0.1.1.0 to 0.2.2.1 (1.1.0 to 2.2.1) above 1.0.0 and an ordinary upgrade does not select the current release. The CLI and MCP require `blue-data-llm-source[llm]==1.0.0`; the CLI also pins `blue-data==1.0.0` for its protected storage hooks. See [installing exact built wheels](installation.md#installing-exact-built-wheels).
 
 Version 0.2.2.1 (installed copies report 2.2.1) began masking credential-shaped text in CLI and MCP diagnostics and requiring private on-disk cache directories. See the [changelog](../CHANGELOG.md#0221--unreleased-as-221) for details. That dev release required `blue-data-llm-source[llm]>=2.2.1`.
 

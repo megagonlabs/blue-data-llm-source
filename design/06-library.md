@@ -110,8 +110,8 @@ Fetches records for `query`. Returns a `FetchResult`.
 - `query`: the natural language request. It is annotated `Any` rather than `str`, because handling an absent or wrong-typed request is part of the contract. `None`, an empty string, or whitespace is an empty ask, not a caller mistake, and returns an empty result whose `meta.outcome` is `empty_query`, without a model call. Any other non-string raises `QueryError` naming the type that arrived
 - `attrs`: requested output attributes, as a list of names, a list of `Attr`, or a list of `{"name": ..., "type": ...}` mappings
 - `context`: additional text, as a string or a list of strings; its documented use is to say what an attribute name means
-- `max_records`: a positive integer cap on returned records; replaces the row limit for this run
-- `properties`: per-call configuration merged over the instance properties for this call only. A `limits.*` key here bounds this request and is not written back, which is the primary way to cap what one request may spend
+- `max_records`: a positive integer cap on returned records; can only tighten the effective row limit for this run
+- `properties`: per-call configuration merged over the instance properties for this call only. A `limits.*` value can only tighten the effective ceiling; `None` leaves it unchanged; `limits.max_retries=None` is invalid. Per-call properties are not written back.
 - `llm_fn`: a `(prompt: str) -> str` callable used as the model client for this run
 - `budget`: a `Budget` the caller owns. Supplied, this fetch derives a child from it, so the ceilings accumulate across every call the budget is handed to and this fetch can never spend more than it has left. Omitted, one is built from the configured limits for this call alone, so each fetch is bounded on its own. This is the secondary route, for a caller that wants one total across several requests rather than a bound on each
 
@@ -194,7 +194,7 @@ These methods override those declared by `DataSource`, so an instance exposes th
 
 #### `execute_query(query, database=None, collection=None, optional_properties=None)`
 
-Runs a query and returns `list[dict]`. `query` is either a natural language string or a mapping carrying an `op` key.
+Runs a query and returns `list[dict]`. `query` accepts natural language, a dict carrying an `op` key, or a JSON-encoded operation object. A string is decoded as an operation only when it is a valid JSON object containing `op`; other strings keep their natural-language meaning. Operation names are case-sensitive.
 
 | Op | Effect |
 |----|--------|
@@ -202,7 +202,7 @@ Runs a query and returns `list[dict]`. `query` is either a natural language stri
 | `LLM.MODELS` | Returns `[{"protocol": ..., "variant": ...}]` without a model call |
 | `LLM.ESTIMATE` | Returns a one-record list holding an `Estimate` for the same arguments a fetch would take, without a model call |
 
-An unrecognized op raises `QueryError` listing the supported ones. Keys recognized in `optional_properties` become arguments; anything left is passed through as per-call properties. That is how a ceiling travels with a request made through this surface: a `limits.*` key in `optional_properties` is merged over the instance properties for this call and is not written back, so the next call through the same source is unbounded again. `database` and `collection` are accepted for signature compatibility and are unused, since a model has neither.
+An unrecognized op raises `QueryError` listing the supported ones. Keys recognized in `optional_properties` become arguments; anything left is passed through as per-call properties. A `limits.*` value can only tighten the effective ceiling, and `None` leaves it unchanged; `limits.max_retries=None` is invalid. Per-call properties are not written back, so the next call uses the configured ceiling unless it supplies its own tighter value. `database` and `collection` are accepted for signature compatibility and are unused, since a model has neither.
 
 #### `execute_query_nl(query, database=None, collection=None, schema=None, llm_fn=None, optional_properties=None, read_only=True)`
 

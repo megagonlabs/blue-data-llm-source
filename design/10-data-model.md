@@ -43,7 +43,7 @@ These names have no meaning to the fetch path. They give a registry a well-forme
 | `attrs` | list | no | The output attributes the caller wants. Names, `Attr` instances, or `{"name", "type"}` mappings |
 | `context` | `str` or list of `str` | no | Additional text. Its documented use is to say what an attribute name means, and it is rendered as its own prompt section |
 | `max_records` | `int` | no | A positive integer cap on returned records |
-| `properties` | mapping | no | Per-call configuration, merged over the instance's for this call and not written back. This is where a `limits.*` ceiling goes when it should bound one request; `optional_properties` carries the same keys on the source query surface |
+| `properties` | mapping | no | Per-call configuration, merged over the instance's for this call and not written back. A `limits.*` value can only tighten the effective ceiling; `None` leaves it unchanged; `limits.max_retries=None` is invalid. `optional_properties` carries the same keys on the source query surface |
 
 The three input fields are a query, optional attribute names, and optional context that may resolve ambiguity in those names. The source accepts both plain names and typed attributes. Plain names shape the output; typed attributes also drive coercion.
 

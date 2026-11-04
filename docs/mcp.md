@@ -6,7 +6,7 @@ This page mirrors [`platform/llm-mcp/README.md`](../platform/llm-mcp/README.md),
 
 ## Upgrading from the `llm_*` tools
 
-Version 0.2.0.0 renamed every tool. Earlier versions exposed `llm_fetch`, `llm_estimate`, and `llm_info`.
+Internal build 0.2.0.0 renamed every tool. Earlier internal builds exposed `llm_fetch`, `llm_estimate`, and `llm_info`.
 
 | Before 0.2.0.0 | Now |
 |---|---|
@@ -329,7 +329,7 @@ The `blue-llmdb` CLI spells the same settings as hyphenated flags, because a dot
 | `plan.split_policy` | `--plan-split-policy` |
 | `plan.split_threshold_rows` | `--plan-split-threshold-rows` |
 
-`max_records` maps to `Limits.max_rows` and overrides any configured value for that call. The MCP surface has no separate `limits.max_rows` argument; the server refuses that spelling to avoid two names for the same setting.
+`max_records` maps to `Limits.max_rows` and uses the tighter of the argument and any configured row ceiling for that call. The MCP surface has no separate `limits.max_rows` argument; the server refuses that spelling to avoid two names for the same setting.
 
 ## What this server does not expose
 

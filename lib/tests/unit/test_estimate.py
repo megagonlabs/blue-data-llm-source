@@ -382,8 +382,8 @@ def test_a_client_that_will_not_respect_the_attempt_allowance_is_unestimable() -
     assert sized.reason
 
 
-# Local environments, including the Python 3.15 build directories docs/installation.md creates.
-_SKIP = frozenset({".venv", ".build315", ".native315", ".venv315", ".wheels315"})
+# Local environments.
+_SKIP = frozenset({".venv"})
 
 
 def test_no_shipped_file_describes_the_whole_fetch_bound_as_a_product() -> None:

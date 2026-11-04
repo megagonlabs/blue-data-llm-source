@@ -190,15 +190,15 @@ Run this from the checkout root in the active root `.venv`. `langchain-mcp-adapt
 
 ```bash
 ./platform/llm-mcp/scripts/install.sh
-python -m pip install langgraph langchain-openai langchain-mcp-adapters
+python -m pip install langgraph 'langchain>=1.0' langchain-openai langchain-mcp-adapters
 export BLUE_DATA_LLM_SOURCE_LIMIT_COST=0.02
 export BLUE_DATA_LLM_SOURCE_MAX_TOKENS=4000
 python3 examples/framework-demos/langgraph_mcp_demo.py
 ```
 
-**Requires:** `OPENAI_API_KEY`, `BLUE_DATA_LLM_SOURCE_LIMIT_COST`, `langgraph`, `langchain-openai`, `langchain-mcp-adapters`, and the MCP package on PATH | **[Earlier output](framework-demos/langgraph_mcp_demo.output.txt)**, captured with library 0.2.0.0, which reports its version as 2.0.0, and the default output allowance. It shows the agent declining to fetch when the estimate exceeds $0.02; the command above uses a smaller allowance and may take the query path.
+**Requires:** `OPENAI_API_KEY`, `BLUE_DATA_LLM_SOURCE_LIMIT_COST`, `langgraph`, `langchain`, `langchain-openai`, `langchain-mcp-adapters`, and the MCP package on PATH | **[Recorded output](framework-demos/langgraph_mcp_demo.output.txt)** from a provider-backed run with library 1.0.0 and the settings above: metadata inspection, estimate, then a query for eight French airports. Tool choices and answers vary by run.
 
-The example passes the provider key and [MCP deployment settings](../platform/llm-mcp/README.md#configuration) to the server subprocess. Other environment settings, including endpoint and proxy variables, are not forwarded.
+The agent carries the returned message history into each task, so the final request can refer to the French airports discussed earlier. Each follow-up resends the full conversation, including raw tool results, to the configured chat model. Input tokens and cost can grow with that history; those chat calls are outside the MCP query ceiling. It passes the provider key and [MCP deployment settings](../platform/llm-mcp/README.md#configuration) to the server subprocess. Other environment settings, including endpoint and proxy variables, are not forwarded.
 
 ---
 
@@ -244,13 +244,13 @@ python3 examples/scenario-demos/bounded_enumeration_demo.py
 
 ### Retrieval modes on one WikiTabGen table (`partitioned_wikitabgen_demo.py`)
 
-This example applies `flat`, `row_by_row`, and `partitioned` retrieval to the chemical-elements query from one table in the public [WikiTabGen dataset](https://github.com/analysis-bots/WikiTabGen). Every mode receives the same query and 11 columns. The context supplies atomic numbers 1–118, but no element names or attribute values. `row_by_row` uses atomic number `Z` as its key. `partitioned` uses `Period` and `Z`, with a declared finite domain of seven periods. Each call uses GPT-6 Luna with reasoning effort `none` and a 4,096-token output allowance. Continuations are disabled, so flat makes one capped call. Modes selected in one invocation share a $0.30, 160-call, 900-second budget; later modes receive what remains. The script prints each request, model response, returned records, diagnostics, and a run summary.
+This example applies `flat`, `partitioned`, and `row_by_row` retrieval to the chemical-elements query from one table in the public [WikiTabGen dataset](https://github.com/analysis-bots/WikiTabGen). Every mode receives the same query and 11 columns. The context supplies atomic numbers 1–118, but no element names or attribute values. `row_by_row` uses atomic number `Z` as its key. `partitioned` uses `Period` and `Z`, with a declared finite domain of seven periods. Each call uses GPT-6 Luna with reasoning effort `none` and a 4,096-token output allowance. Continuations are disabled, so flat makes one capped call. Selected modes divide a $0.30, 160-call, 900-second budget into equal cost and time allowances; extra calls go to the earlier selections. A single selected mode gets the full allowance. Each mode's time allowance starts when it runs, and every mode also obeys the shared 900-second deadline. Unused allowances stay unused. The ledger retains attempt reservations when provider cost is unknown, so its charges can differ from the provider invoice. Row-by-row may stop before all 118 elements fit. The script prints each request, model response, returned records, diagnostics, and a run summary.
 
 ```bash
 python3 examples/scenario-demos/partitioned_wikitabgen_demo.py --live
 ```
 
-Omit `--live` to preview the inputs and settings without contacting the provider. Repeat `--mode` to run a subset, such as `--mode flat --mode partitioned`. With no `--mode`, all three run. Flat mode often stops at its one-response output allowance before returning all 118 rows; observed runs returned about 54–55 rows with `stopped_by_limit`. Row counts vary. Use the preview and `estimate()` to inspect the configured allowance before a live run. The returned records are model output and should be checked against an authoritative source when accuracy matters.
+Omit `--live` to preview the inputs, settings, and per-mode allowances without contacting the provider. Repeat `--mode` to choose modes and their order, such as `--mode row_by_row --mode partitioned`. With no `--mode`, all three run. Flat mode can stop at its one-response output allowance before returning all 118 rows. Row counts vary. Use the preview and `estimate()` to inspect the configured allowance before a live run. The returned records are model output and should be checked against an authoritative source when accuracy matters.
 
 **Requires for `--live`:** `OPENAI_API_KEY` and the `llm` extra | **[Preview output](scenario-demos/partitioned_wikitabgen_demo.output.txt)**
 
