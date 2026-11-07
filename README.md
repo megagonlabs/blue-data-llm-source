@@ -116,7 +116,7 @@ The example passes a local answer through the normal fetch, parsing, type-checki
 
 ## Code of conduct
 
-This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md), the same one that governs [Blue](https://github.com/megagon-internal/blue?tab=coc-ov-file). By participating, you are expected to uphold it. Report unacceptable behavior to contact_oss@megagon.ai.
+This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md), the same one that governs Blue. By participating, you are expected to uphold it. Report unacceptable behavior to contact_oss@megagon.ai.
 
 ## Disclosures
 
@@ -148,7 +148,7 @@ For OSS components having different portions released under different licenses, 
 
 | ID  | OSS Component Name | Modified | Copyright Holder | Upstream Link | License  |
 |-----|----------------------------------|----------|------------------|-----------------------------------------------------------------------------------------------------------|--------------------|
-| 1 | Blue data | No | Megagon Labs, Inc. | [link](https://github.com/megagon-internal/blue-data) | BSD 3-Clause with Attribution / NOTICE Requirement |
+| 1 | Blue data | No | Megagon Labs, Inc. | [link](https://github.com/megagonlabs/blue-data) | BSD 3-Clause with Attribution / NOTICE Requirement |
 | 2 | tenacity | No | Julien Danjou | [link](https://github.com/jd/tenacity) | Apache Software License |
 | 3 | LiteLLM | No | Berri AI | [link](https://github.com/BerriAI/litellm) | MIT License |
 | 4 | fastuuid | No | Omer Katz | [link](https://pypi.org/project/fastuuid/) | BSD License |
