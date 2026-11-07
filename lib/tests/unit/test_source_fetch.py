@@ -370,7 +370,12 @@ def _a_partly_answered_run() -> str:
         "who?",
         attrs=["name"],
         llm_fn=model,
-        properties={"plan.mode": "partitioned", "plan.key": "name"},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+            "plan.key": "name",
+        },
     )
     return str(result.meta.outcome)
 

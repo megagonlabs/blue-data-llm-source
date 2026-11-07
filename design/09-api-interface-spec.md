@@ -249,7 +249,7 @@ General properties may be set on the instance or per call, with per-call values 
 | `budget` | `Budget` | set per call | Reserved. The source writes the run's budget here on every call, so a caller setting it is overwritten |
 | `usage_sink` | `list[Usage]` | set per call | Reserved. The source writes a fresh list here on every call and reads this call's token counts and model name from it alone |
 | `plan.mode` | `str` | `flat` | `flat`, `partitioned`, or `row_by_row` |
-| `plan.max_continuations` | `int` | `0` | Additional extraction asks permitted per leaf |
+| `plan.max_continuations` | `int` | `3` in `partitioned`, else `0` | Additional extraction asks permitted per leaf |
 | `plan.max_leaves` | `int` | `100` | Maximum number of terminal plan slices |
 | `plan.partition_key` | `str` | none | Preferred root partition dimension |
 | `plan.max_depth` | `int` | `2` | Maximum partition depth; zero disables subdivision |
@@ -268,7 +268,7 @@ General properties may be set on the instance or per call, with per-call values 
 | `plan.filter_enforcement` | `str` | `flag` | `flag` keeps records contradicting a leaf filter; `drop` removes them before reduction. Both count contradictions |
 | `plan.range_filters` | `bool` | `False` | Reads integer spans as range filters in partitioned mode; requires `plan.leaf_prompt=keyed-leaf-fetch-2` |
 | `plan.partition_guardrails` | `bool` | `False` | Adds partition proposal rules and rejects unsuitable numeric key buckets in partitioned mode |
-| `plan.split_policy` | `str` | `always` | `evidence` probes the root once before deciding whether to split in partitioned mode |
+| `plan.split_policy` | `str` | `evidence` in `partitioned`, else `always` | `evidence` asks the root first, with its continuations, and splits only when that answer shows one request was not enough; `always` splits the root whatever it holds. `evidence` requires partitioned mode |
 | `plan.split_threshold_rows` | `int` | `120` | Under `evidence`, the estimate above which a probe with fewer than half the expected keys triggers a split |
 | `plan.distribution_search` | `bool` | `False` | Direct-Python-only opt-in for rule-backed distribution selection; requires `plan.mode='partitioned'` |
 | `plan.identity_partitions` | list | empty | Direct-Python-only closed rule mappings from source configuration or a per-call declaration |
@@ -398,7 +398,7 @@ JSON scalar values. A `PlanningReceipt` serializes exactly `contract_version`,
 `planning-receipt-1`. The receipt checks agreement among those structures, not authenticity,
 factual truth, completeness, or quality.
 
-`cardinality_estimate` carries the accepted non-flat bootstrap estimate as `expected`, `lower`, `upper`, `row_unit`, `source`, `parse_status`, and `diagnostics`; `row_estimate` is its `expected` compatibility value. `primary_keys` lists the ordered identifying attributes used by execution and reduction. `observed_key_count` counts distinct complete keys in the final returned records, after reduction, deduplication, and row capping. `marginal_key_yields` gives the new normalized key identities from each extraction attempt in leaf order, or new exact records when no primary key exists. `incomplete_key_records` counts distinct per-leaf records missing at least one primary-key value. Each entry in `normalization_collisions` contains `primary_keys`, `kept`, and `collided` for two per-leaf key spellings that normalize to the same identity. `repaired_numbers` counts numbers written with thousands separators in an object value, such as `4,470`, that were read as `4470` after strict parsing failed. `filter_contradictions` counts records whose checkable filter column contradicts the filter of the leaf that returned them, once per record and before reduction; `plan.filter_enforcement` decides whether they are kept (`flag`) or removed at the leaf (`drop`), and zero means none was observed, not that every leaf obeyed. `split_decision` says what the root probe decided under `plan.split_policy="evidence"`: `probe_accepted`, `probe_split_length`, `probe_split_incomplete`, `probe_split_shortfall` or `probe_split_failed`; it is `None` under the default policy or when the root could not split and was not probed. The estimate and observed counts do not state that the result is complete.
+`cardinality_estimate` carries the accepted non-flat bootstrap estimate as `expected`, `lower`, `upper`, `row_unit`, `source`, `parse_status`, and `diagnostics`; `row_estimate` is its `expected` compatibility value. `primary_keys` lists the ordered identifying attributes used by execution and reduction. `observed_key_count` counts distinct complete keys in the final returned records, after reduction, deduplication, and row capping. `marginal_key_yields` gives the new normalized key identities from each extraction attempt in leaf order, or new exact records when no primary key exists. `incomplete_key_records` counts distinct per-leaf records missing at least one primary-key value. Each entry in `normalization_collisions` contains `primary_keys`, `kept`, and `collided` for two per-leaf key spellings that normalize to the same identity. `repaired_numbers` counts numbers written with thousands separators in an object value, such as `4,470`, that were read as `4470` after strict parsing failed. `filter_contradictions` counts records whose checkable filter column contradicts the filter of the leaf that returned them, once per record and before reduction; `plan.filter_enforcement` decides whether they are kept (`flag`) or removed at the leaf (`drop`), and zero means none was observed, not that every leaf obeyed. `split_decision` says what the root probe decided under `plan.split_policy="evidence"`: `probe_accepted`, `probe_split_length`, `probe_split_incomplete`, `probe_split_shortfall` or `probe_split_failed`; it is `None` under `always` or when the root could not split and was not probed. The estimate and observed counts do not state that the result is complete.
 
 `Exact` and `OneOf` are how a plan says what one part filters on. A part narrowed to a single value carries `Exact`; a part covering several alternatives carries `OneOf`. Values use the finite JSON scalar types: string, integer, finite number, and boolean. Null, non-finite numbers, and empty or whitespace-only strings are rejected. They are tagged, not held as an untagged scalar or list, because an absent-minded `join` can ask a different question: joined on `", "`, the alternatives `['A, B', 'C']` and `['A', 'B', 'C']` render identically, so a request about one region whose name contains a comma and a request about two regions become the same prompt, and the result says nothing about which was answered. With the tag, that mistake stops type-checking.
 
@@ -617,12 +617,12 @@ The server uses the low-level API because tool schemas are maintained explicitly
       },
       "plan.max_continuations": {
         "type": "integer",
-        "description": "How many times a part may ask again for records it did not get. Zero by default, so each part asks once. It bounds asks per part, not provider attempts or planning calls; an ask may be retried up to limits.max_retries times.",
+        "description": "How many times a part may ask again for records it did not get. Default: 3 in partitioned mode, 0 otherwise. It bounds asks per part, not provider attempts or planning calls; an ask may be retried up to limits.max_retries times.",
         "minimum": 0
       },
       "plan.max_leaves": {
         "type": "integer",
-        "description": "The most parts a plan may hold; the term that bounds its worst cost. In partitioned mode, values past it run grouped several to a part rather than being dropped. In row_by_row, an entity list past it falls back to one unsplit ask. Default: 100.",
+        "description": "The most parts a plan may hold; the term that bounds its worst cost. In partitioned mode, a split past it is refused and its part is asked whole. In row_by_row, an entity list past it falls back to one unsplit ask. Default: 100.",
         "minimum": 1
       },
       "plan.partition_key": {
@@ -730,7 +730,7 @@ The server uses the low-level API because tool schemas are maintained explicitly
           "always",
           "evidence"
         ],
-        "description": "`always` (default) splits the root of a partitioned plan whatever it holds. `evidence` asks the root once first and splits only when that answer was cut off or failed, or holds fewer than half the keys a large estimate expects; otherwise that answer is the result. Requires partitioned mode."
+        "description": "`evidence`, the default in partitioned mode, asks the root first, with its continuations, and splits only when that answer was cut off, was still growing when the continuations ran out, failed, has no records although some are expected, or has fewer than half the records a large estimate expects. Otherwise that answer is the result. `always` splits the root whatever it holds. `evidence` requires partitioned mode."
       },
       "plan.split_threshold_rows": {
         "type": "integer",
@@ -1060,7 +1060,7 @@ blue-llmdb data query QUERY [--attr NAME[:TYPE]]... [--context TEXT] [--max-reco
 | `--price-in X`, `--price-out X` | `llm.price_per_input_token`, `llm.price_per_output_token` | Rates for a model the price table does not carry |
 | `--limit-cost`, `--limit-seconds`, `--limit-calls` | `limits.max_cost`, `limits.max_seconds`, `limits.max_calls` | Per-run ceilings, claimed before the call rather than reported after it |
 | `--max-retries N` | `limits.max_retries` | Retries allowed per ask |
-| `--effort LEVEL` | `plan.max_continuations` = 0/1/2 | A CLI convenience over the plan setting, not library policy. An explicit `--plan-continuations` wins. Flat `medium`/`high` requires a requested `--plan-key` or `--plan-keys` and fails before source construction when none is supplied |
+| `--effort LEVEL` | `plan.max_continuations` = 0/1/2 | A CLI convenience over the plan setting, not library policy. An explicit `--plan-continuations` wins. Without either, `partitioned` keeps the library default of 3, so any level is lower. Flat `medium`/`high` requires a requested `--plan-key` or `--plan-keys` and fails before source construction when none is supplied |
 | `--variant NAME` | `connection.variant` | Source variant within the `llm` protocol |
 | the 21 `--plan-*` options | `plan.*` | One option per planning control, passed through under the library's own key; see the planning controls above |
 | `--rate-limit` | — | Refused as `ERROR: USAGE`, exit 2, carrying the library's own reason. Declared so the refusal can name the remedy rather than producing Click's generic "no such option" |

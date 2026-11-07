@@ -282,8 +282,8 @@ PLAN_PROPERTIES: dict[str, Any] = {
     "plan.max_continuations": {
         "type": "integer",
         "description": (
-            "How many times a part may ask again for records it did not get. Zero by "
-            "default, so each part asks once. It bounds asks per part, not provider attempts "
+            "How many times a part may ask again for records it did not get. Default: 3 in "
+            "partitioned mode, 0 otherwise. It bounds asks per part, not provider attempts "
             "or planning calls; an ask may be retried up to limits.max_retries times."
         ),
         "minimum": 0,
@@ -292,9 +292,8 @@ PLAN_PROPERTIES: dict[str, Any] = {
         "type": "integer",
         "description": (
             "The most parts a plan may hold; the term that bounds its worst cost. In "
-            "partitioned mode, values past it run grouped several to a part rather than "
-            "being dropped. In row_by_row, an entity list past it falls back to one unsplit "
-            "ask. Default: 100."
+            "partitioned mode, a split past it is refused and its part is asked whole. In "
+            "row_by_row, an entity list past it falls back to one unsplit ask. Default: 100."
         ),
         "minimum": 1,
     },
@@ -422,10 +421,12 @@ PLAN_PROPERTIES: dict[str, Any] = {
         "type": "string",
         "enum": list(SPLIT_POLICIES),
         "description": (
-            "`always` (default) splits the root of a partitioned plan whatever it holds. "
-            "`evidence` asks the root once first and splits only when that answer was cut off "
-            "or failed, or holds fewer than half the keys a large estimate expects; "
-            "otherwise that answer is the result. Requires partitioned mode."
+            "`evidence`, the default in partitioned mode, asks the root first, with its "
+            "continuations, and splits only when that answer was cut off, was still growing "
+            "when the continuations ran out, failed, has no records although some are "
+            "expected, or has fewer than half the records a large estimate expects. "
+            "Otherwise that answer is the result. `always` splits the root whatever it holds. "
+            "`evidence` requires partitioned mode."
         ),
     },
     "plan.split_threshold_rows": {

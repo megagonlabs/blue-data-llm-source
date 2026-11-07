@@ -20,17 +20,24 @@ BASELINE_DIGESTS = {
 
 
 CURRENT_DIGESTS = {
-    "partitioned": "2f3040ad3a1665df373921db7ccc669760aa54ab2ec05fb087e8a1dc39906259",
+    "partitioned": "5ffe78b10c1eab2f1ea5c202453edc87376b36498767b729c5668864a2705049",
     "row_by_row": "269013b1d461a157245b8348c4f9cb41dd77fbbef033f223aba5f3868aec74d5",
     "flat": BASELINE_DIGESTS["flat"],
 }
-"""Current digests include the schema-stage key-inference clarification."""
+"""Current digests include key inference and whole-slice partition guidance."""
 
 _KEY_INFERENCE_CLARIFICATION = (
     "Caller-supplied primary keys must remain unchanged. When none were supplied, infer fields\n"
     "from the schema and request that jointly identify one record, only when defensible.\n"
     "An empty declared primary_keys list means no key was supplied; "
     "it does not disable inference.\n"
+)
+
+_IDENTITY_COVERAGE_GUIDANCE = (
+    "The values together must cover every record matching this slice and preserve its filters.\n"
+    "Choose categories or periods, rather than record identifiers or identity-field values.\n"
+    "Do not sample or truncate a domain to fit the value limit. If no useful complete split\n"
+    "fits, return an empty values list so the parent slice can run intact.\n\n"
 )
 
 DEFAULTS_SPELLED_OUT: dict[str, Any] = {
@@ -70,12 +77,15 @@ def test_the_defaults_written_out_change_nothing(scenario: str) -> None:
 
 
 @pytest.mark.parametrize("scenario", sorted(CURRENT_DIGESTS))
-def test_key_clarification_preserves_other_release_defaults(scenario: str) -> None:
+def test_prompt_clarifications_preserve_other_release_defaults(scenario: str) -> None:
     client, result = run_scenario(scenario)
     occurrences = sum(prompt.count(_KEY_INFERENCE_CLARIFICATION) for prompt in client.prompts)
     assert occurrences == (0 if scenario == "flat" else 1)
     prior = copy(client)
-    prior.prompts = [prompt.replace(_KEY_INFERENCE_CLARIFICATION, "") for prompt in client.prompts]
+    prior.prompts = [
+        prompt.replace(_KEY_INFERENCE_CLARIFICATION, "").replace(_IDENTITY_COVERAGE_GUIDANCE, "")
+        for prompt in client.prompts
+    ]
     assert digest(prior, result) == BASELINE_DIGESTS[scenario]
 
 

@@ -164,7 +164,11 @@ _TYPED = [
 _PLACES = [{"name": "name", "type": "string"}, {"name": "country", "type": "string"}]
 
 SCENARIOS: dict[str, tuple[Callable[[str], str], dict[str, Any], list[dict[str, str]]]] = {
-    "partitioned": (partitioned_answer, {"plan.mode": "partitioned"}, _TYPED),
+    "partitioned": (
+        partitioned_answer,
+        {"plan.mode": "partitioned", "plan.split_policy": "always", "plan.max_continuations": 0},
+        _TYPED,
+    ),
     "row_by_row": (row_by_row_answer, {"plan.mode": "row_by_row"}, _PLACES),
     "flat": (flat_answer, {"plan.mode": "flat"}, _PLACES),
 }

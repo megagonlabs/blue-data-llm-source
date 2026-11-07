@@ -456,9 +456,9 @@ separately and merged on the way back. Nothing selects a shape for you.
 
 | Property | Default | Meaning |
 |---|---|---|
-| `plan.mode` | `flat` | `flat` asks once. `partitioned` splits the ask by a key the analysis found. `row_by_row` asks once per entity in a list the analysis found. An unknown value raises `ConfigError`. |
-| `plan.max_continuations` | `0` | How many times a part may ask again for records it did not get. At `0` each part asks once. It bounds asks per part, not provider attempts or planning calls; each ask may still be retried up to `limits.max_retries` times, three attempts by default. |
-| `plan.max_leaves` | `100` | Most terminal slices. Partitioned root values are grouped when over the cap; later expansions that cannot fit stay intact, and row-by-row keeps its batch slice. |
+| `plan.mode` | `flat` | `flat` asks once. `partitioned` asks the whole request first and splits it by a key the analysis found when that answer falls short. `row_by_row` asks once per entity in a list the analysis found. An unknown value raises `ConfigError`. |
+| `plan.max_continuations` | `3` in `partitioned`, else `0` | How many times a part may ask again for records it did not get. At `0` each part asks once. It bounds asks per part, not provider attempts or planning calls; each ask may still be retried up to `limits.max_retries` times, three attempts by default. |
+| `plan.max_leaves` | `100` | Most terminal slices. A partitioned split that would exceed it is refused and its slice runs as one request, and row-by-row keeps its batch slice. |
 | `plan.key` | none | The attribute identifying a record, so parts returning the same record merge. Must be one of the attributes you asked for. |
 | `plan.partition_key` | none | Preferred root split dimension. Descendants may choose another dimension and cannot repeat an ancestor dimension. |
 | `plan.max_depth` | `2` | Deepest partition level. `0` disables subdivision while retaining non-flat bootstrap analysis. |
@@ -476,13 +476,13 @@ separately and merged on the way back. Nothing selects a shape for you.
 | `plan.filter_enforcement` | `flag` | What happens to a record whose checkable filter column contradicts its leaf's filter. `flag` keeps it; `drop` removes it at the leaf, before reduction merges it into anything. Both count it in `meta.filter_contradictions`. `drop` is refused in `flat` mode, which has no filter. |
 | `plan.range_filters` | `False` | In `partitioned` mode, reads a partition proposal written as integer spans, such as `1946–1952`, on a column the schema declares `int` or `integer`, as inclusive `Range` filters instead of exact text that no record's value can equal. The spans must not overlap and each must start at or below its end, or the proposal is refused with the reason. Requires `plan.leaf_prompt="keyed-leaf-fetch-2"`, because a range travels only on that contract's wire version. |
 | `plan.partition_guardrails` | `False` | In `partitioned` mode, sends the `partition-2` proposal prompt, which adds generic rules: no identifier or continuous-measurement keys, no placeholder or catch-all values, and a value count calibrated against the slice's own row estimate and `plan.target_rows_per_leaf`. It also refuses a proposed key the schema declares `int`, `integer`, `float` or `number` unless its values are integers or integer spans covering at most 1,000 integers; the reason appears in `meta.gaps` as `guard_collapsed`. Adds no call. |
-| `plan.split_policy` | `always` | In `partitioned` mode, whether the root always splits (`always`, the default) or is asked once first (`evidence`). Under `evidence` the root leaf runs once as a probe, with no continuation. The plan splits only when the provider says the probe's answer hit its output allowance, the answer ended mid-document and only its complete records could be read, the probe failed outright (reported as a `probe_failed` gap), or the probe holds fewer than half the keys an estimate above `plan.split_threshold_rows` expects. Otherwise the probe's answer is the result, with no proposal call. The probe is a single ask even when `plan.max_continuations` is set, and a probe that meets `plan.exact_rows` is accepted unless its answer was cut, by the output allowance or mid-document; a target of zero asks nothing and reports no `split_decision`. When the plan does split, the probe's records are merged with the children's under the origin `root`, and every child is told which keys the probe already holds, bounded by `plan.max_excluded_keys` and `plan.max_exclusion_bytes`. The probe is one more logical call in every published bound. `meta.split_decision` says what was decided. Refused outside `partitioned`. |
+| `plan.split_policy` | `evidence` in `partitioned`, else `always` | In `partitioned` mode, whether the root is asked first (`evidence`, the default) or always splits (`always`). Under `evidence` the root leaf runs first as a probe, with its continuations. The plan splits only when the provider says the probe's answer hit its output allowance, the answer ended mid-document and only its complete records could be read, the continuations ran out while the answer was still adding records, the probe failed outright (reported as a `probe_failed` gap), the probe holds no keys although the estimate expects records, or it holds fewer than half the keys an estimate above `plan.split_threshold_rows` expects. Otherwise the probe's answer is the result, with no proposal call. A probe that meets `plan.exact_rows` is accepted unless its answer was cut or ran out of continuations; a target of zero asks nothing and reports no `split_decision`. When the plan does split, a split-key value in the probe's records with a complete key that no proposed child asks for is added to the proposal, with its number of distinct keys as its estimate. If no proposal survives, including one those values take past `plan.max_partitions`, the probe's answer is the result. Otherwise the probe's records are merged with the children's under the origin `root`. The probe and its continuations count in every published bound. `meta.split_decision` says what was decided. `evidence` is refused outside `partitioned`. |
 | `plan.split_threshold_rows` | `120` | Under `plan.split_policy="evidence"`, the estimate above which a short probe answer triggers a split. A value other than 120 is refused with any other policy. |
 | `plan.distribution_search` | `False` | Direct-Python-only opt-in for rule-backed distribution selection. Requires `partitioned`. |
 | `plan.identity_partitions` | empty | Direct-Python-only list of versioned finite-domain rule mappings accepted by `IdentityPartitionRule.from_dict()`. |
 | `plan.max_strategy_candidates` | `5` | Direct-Python-only candidate bound. Must be at least `1` when distribution search is enabled. |
 
-The five settings from `plan.leaf_prompt` to `plan.partition_guardrails` are experimental. `plan.split_policy="evidence"` is opt-in. Neither an accepted probe nor a completed split establishes that every matching record was found.
+The five settings from `plan.leaf_prompt` to `plan.partition_guardrails` are experimental. Neither an accepted probe nor a completed split establishes that every matching record was found.
 
 ### Rule-backed distribution search
 
@@ -517,23 +517,28 @@ result = source.fetch(
 
 **What this does not do.** `estimate` does not price a decomposed request; it bounds a flat fetch,
 retries included, and reads none of these settings. Pass any `plan.*` value and it returns the same
-figures. Use `planning.worst_case_attempts(PlanLimits(...), mode)` for the conservative configured
+figures. Use `planning.worst_case_attempts(PlanLimits(...), mode, split_policy=...)` for the conservative configured
 attempt diagnostic; a hand formula that omits the selected schedule or proposal work understates the
 request.
 
 A partitioned request's figure is a worst case over the plan's caps, not a forecast.
-`planning.planned_logical_calls(limits, mode, planning_order=..., distribution_search=...)` counts the
-planning schedule's fact calls (one for `planning.combined`, two for the locked schedules, three for
-`planning.schema_first`, the default, and `planning.cardinality_first`), then the split proposals, or
-the distribution calls when distribution search is on, then the leaves. With the default caps, twenty
-partitions at depth two and 100 leaves, and the default schedule, that is 124: three fact calls, at
-most 21 partition proposals (one per node that can split, the root and its twenty children) and at
-most 100 leaves. With the default retries that is 372 provider attempts. At the flat per-attempt bound
-of a short request, about $0.0209 on `gpt-6-luna` and $0.0431 on `gpt-4o`, the worst case is roughly
-$7.76 and $16.05; leaf prompts carry their constraints and are a little longer.
-A fetch is not refused against that figure. Each planning call and each provider attempt is admitted
-against the ceiling when it is made, so a ceiling below the worst case stops the run where the money
-runs out and reports it in `stopped_by`.
+`planning.planned_logical_calls(limits, mode, planning_order=..., distribution_search=...,
+split_policy=...)` counts the planning schedule's fact calls (one for `planning.combined`, two for
+the locked schedules, three for `planning.schema_first`, the default, and
+`planning.cardinality_first`), the root probe and its continuations under `split_policy="evidence"`,
+then the split proposals, or the distribution calls when distribution search is on, then the leaves
+with their continuations. `LlmSource` runs a partitioned request under `split_policy="evidence"`
+with three continuations unless told otherwise, so the root and each leaf may ask four times. With
+the caps of `PlanLimits()` (twenty partitions at depth two, 100 leaves), `max_continuations=3`,
+`split_policy="evidence"` and the default schedule, that is 428 calls: three fact calls, the root's
+four asks, at most 21 partition proposals (one per node that can split, the root and its twenty
+children) and at most 100 leaves of four asks each. With the default retries that is 1,284 provider
+attempts. At the flat per-attempt bound of a short request, about $0.0209 on `gpt-6-luna` and
+$0.0431 on `gpt-4o`, the worst case is roughly $26.78 and $55.40; leaf prompts carry their
+constraints and are a little longer. With `PlanLimits()` and the default `split_policy="always"`,
+the figure is 124 calls and 372 attempts. A fetch is not refused against that figure. Each planning
+call and each provider attempt is admitted against the ceiling when it is made, so a ceiling below
+the worst case stops the run where the money runs out and reports it in `stopped_by`.
 
 A split plan is not reserved at its worst case. Before each optional planning call, the coordinator
 checks that the planning call and one extraction attempt fit the current call, cost, and deadline

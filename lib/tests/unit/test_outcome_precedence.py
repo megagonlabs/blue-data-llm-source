@@ -102,7 +102,12 @@ class OneLeafRaisesAndTheRestKeepProducing(OneLeafRaises):
 
 
 def partitioned(model: Any, **props: Any) -> Any:
-    merged = {"plan.mode": "partitioned", "plan.key": "name"}
+    merged = {
+        "plan.mode": "partitioned",
+        "plan.split_policy": "always",
+        "plan.max_continuations": 0,
+        "plan.key": "name",
+    }
     merged.update(props)
     return LlmSource().fetch(
         "commercial airports in France", attrs=["name"], llm_fn=model, properties=merged

@@ -32,7 +32,12 @@ from blue_data_llm_source import (
 from blue_data_llm_source import __version__ as library_version
 from blue_data_llm_source.llm.client import default_max_tokens_for
 from blue_data_llm_source.llm.models import entry_for
-from blue_data_llm_source.planning import MODES, PLANNING_ORDERS, SCHEMA_MODES
+from blue_data_llm_source.planning import (
+    MODES,
+    PARTITIONED_MAX_CONTINUATIONS,
+    PLANNING_ORDERS,
+    SCHEMA_MODES,
+)
 from blue_data_llm_source.planning.plan import CHILD_WORDINGS
 from blue_data_llm_source.planning.split_gate import SPLIT_POLICIES
 from blue_data_llm_source.prompts import LEAF_PROMPT_VERSIONS
@@ -256,7 +261,8 @@ _PLAN_OPTIONS = [
         type=click.Choice(config.EFFORTS),
         default=None,
         help="Continuation allowance: low, medium, high allow 1/2/3 extraction asks per part. "
-        "Default: the profile's BLUE_DATA_LLM_SOURCE_EFFORT, else low.",
+        "Default: the profile's BLUE_DATA_LLM_SOURCE_EFFORT; if that is unset, low, except "
+        "with --plan-mode partitioned, which allows 3 continuations (4 asks) per part.",
     ),
     click.option(
         "--plan-mode",
@@ -268,7 +274,7 @@ _PLAN_OPTIONS = [
         "--plan-continuations",
         type=int,
         default=None,
-        help="How many times a part may ask again. 0 by default, so each part asks once. "
+        help="How many times a part may ask again. Default: 0, or 3 in partitioned mode. "
         "It bounds asks, not billed attempts: an ask may still be retried.",
     ),
     click.option(
@@ -300,7 +306,7 @@ _PLAN_OPTIONS = [
         type=int,
         default=None,
         help=(
-            "Most parts a split may run. Values past it are grouped, several to a part. "
+            "Most parts a split may run. A split past it is refused and the part is asked whole. "
             "Default: 100."
         ),
     ),
@@ -378,8 +384,9 @@ _PLAN_OPTIONS = [
         "--plan-split-policy",
         type=click.Choice(SPLIT_POLICIES),
         default=None,
-        help="Whether the root always splits, or is asked once first and splits only on a cut, "
-        "failed or short answer (evidence). Needs partitioned mode. Default: always.",
+        help="evidence, the default in partitioned mode, asks the whole request first and "
+        "splits only if that answer is cut off, fails or falls short; always splits without "
+        "asking first. evidence needs partitioned mode.",
     ),
     click.option(
         "--plan-split-threshold-rows",
@@ -961,14 +968,23 @@ def _plan_settings(
 ) -> dict[str, Any]:
     """The `plan.*` settings, with the effort shorthand folded into the allowance."""
     chosen, source = _effort(resolver, effort)
-    continuations = (
-        plan_continuations
-        if plan_continuations is not None
-        else config.continuations_for_effort(chosen)
-    )
     _refuse_keyless_effort(chosen, source, plan_continuations, plan)
+    # With no effort chosen anywhere, a partitioned request keeps the library's own allowance.
+    library_default = (
+        plan_continuations is None
+        and source == "default"
+        and plan.get("plan_mode") == "partitioned"
+    )
+    if plan_continuations is not None:
+        continuations = plan_continuations
+    elif library_default:
+        continuations = PARTITIONED_MAX_CONTINUATIONS
+    else:
+        continuations = config.continuations_for_effort(chosen)
 
-    out = config.plan_properties(plan_continuations=continuations, **plan)
+    out = config.plan_properties(
+        plan_continuations=None if library_default else continuations, **plan
+    )
     for key, value in out.items():
         if key != "plan.max_continuations":
             settings.applied[key] = value

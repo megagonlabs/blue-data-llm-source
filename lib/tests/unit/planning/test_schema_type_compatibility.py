@@ -272,6 +272,8 @@ def test_public_fetch_type_matrix(
             "plan.schema_mode": mode,
             "plan.max_depth": 1,
             "plan.max_continuations": 1,
+            # The matrix exercises a split, which the evidence policy would skip.
+            **({"plan.split_policy": "always"} if strategy == "partitioned" else {}),
         },
     )
     assert result.meta.primary_keys == ["name"]
@@ -303,6 +305,8 @@ def test_inferred_date_key_keeps_date_semantics(schedule: str) -> None:
         "events",
         properties={
             "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
             "plan.max_depth": 0,
             "plan.planning_order": schedule,
         },
@@ -361,6 +365,7 @@ def test_public_fetch_still_rejects_a_custom_inferred_type(schedule: str) -> Non
         attrs=[{"name": "name", "type": "text"}, {"name": "value", "type": "int"}],
         properties={
             "plan.mode": "partitioned",
+            "plan.split_policy": "always",
             "plan.planning_order": schedule,
             "plan.schema_mode": "enrich",
             "plan.max_depth": 1,

@@ -80,7 +80,12 @@ def _one_part_raises(prompt: str, properties: Any = None) -> str:
 
 
 def _partitioned(model: Any, **props: Any) -> Any:
-    merged: dict[str, Any] = {"plan.mode": "partitioned", "plan.key": "name"}
+    merged: dict[str, Any] = {
+        "plan.mode": "partitioned",
+        "plan.split_policy": "always",
+        "plan.max_continuations": 0,
+        "plan.key": "name",
+    }
     merged.update(props)
     return LlmSource().fetch("airports", attrs=["name"], llm_fn=model, properties=merged)
 
@@ -249,6 +254,8 @@ class TestInvariantsFailWhenBroken:
             budget=parent,
             properties={
                 "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
                 "plan.max_leaves": 1,
                 "plan.planning_order": "planning.combined",
             },
@@ -268,6 +275,8 @@ class TestInvariantsFailWhenBroken:
             budget=Budget(Limits(max_calls=2, max_retries=0)),
             properties={
                 "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
                 "plan.max_leaves": 1,
                 "plan.planning_order": "planning.combined",
             },

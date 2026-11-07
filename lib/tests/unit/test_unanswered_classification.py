@@ -81,7 +81,12 @@ def fetch(order: list[str], reasons: Mapping[str, BaseException]) -> Any:
     return LlmSource(client=Unanswered(order, reasons)).fetch(
         "airports",
         attrs=["name"],
-        properties={"plan.mode": "partitioned", "plan.key": "name"},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+            "plan.key": "name",
+        },
     )
 
 
@@ -158,7 +163,12 @@ class TestAPartialRunIsStillNotThisCase:
         result = LlmSource(client=OneAnswers([FIRST, SECOND], {})).fetch(
             "airports",
             attrs=["name"],
-            properties={"plan.mode": "partitioned", "plan.key": "name"},
+            properties={
+                "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
+                "plan.key": "name",
+            },
         )
         assert result.records
         assert result.meta.outcome == Outcome.PARTIAL

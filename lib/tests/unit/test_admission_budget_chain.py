@@ -44,7 +44,12 @@ def scripted(*responses: str) -> ScriptedClient:
 
 
 def fetch(client: ScriptedClient, parent: Budget, **props: Any) -> Any:
-    merged: dict[str, Any] = {"plan.mode": "partitioned", "plan.max_leaves": 1}
+    merged: dict[str, Any] = {
+        "plan.mode": "partitioned",
+        "plan.split_policy": "always",
+        "plan.max_continuations": 0,
+        "plan.max_leaves": 1,
+    }
     merged.update(props)
     return LlmSource(client=client).fetch(
         "commercial airports in France", attrs=["name"], budget=parent, properties=merged

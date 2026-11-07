@@ -138,7 +138,12 @@ def _partitioned(
     ).fetch(
         "airports",
         attrs=["name"],
-        properties={"plan.mode": "partitioned", **properties},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+            **properties,
+        },
     )
     return result, client
 
@@ -266,7 +271,13 @@ def test_mixed_failure_and_budget_denial_raise_with_both_facts_in_either_order(
 
     with pytest.raises(LlmSourceError, match="max_cost") as caught:
         LlmSource(properties={"plan.planning_order": "planning.combined"}, client=client).fetch(
-            "airports", attrs=["name"], properties={"plan.mode": "partitioned"}
+            "airports",
+            attrs=["name"],
+            properties={
+                "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
+            },
         )
 
     assert caught.value.__cause__ is shared
@@ -314,7 +325,12 @@ def test_unknown_estimate_does_not_create_a_gap_on_clean_execution() -> None:
     ).fetch(
         "airports",
         attrs=["name"],
-        properties={"plan.mode": "partitioned", "plan.max_depth": 0},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+            "plan.max_depth": 0,
+        },
     )
 
     assert result.records == [{"name": "Orly"}]
@@ -341,7 +357,15 @@ def test_malformed_or_failing_optional_planning_falls_back_and_keeps_usage(
     )
     result = LlmSource(
         properties={"plan.planning_order": "planning.combined"}, client=client
-    ).fetch("airports", attrs=["name"], properties={"plan.mode": "partitioned"})
+    ).fetch(
+        "airports",
+        attrs=["name"],
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+        },
+    )
 
     assert result.records == [{"name": "Orly"}]
     assert result.meta.outcome == Outcome.OK

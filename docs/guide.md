@@ -240,7 +240,11 @@ The separate `llm.cache` switch opens a `diskcache` backend instead and does not
 
 ## Splitting a large request
 
-`plan.mode` defaults to `flat`: one question, one call. `partitioned` splits along a key the planning stages find and merges the parts on the way back.
+`plan.mode` defaults to `flat`: one question, one call. `partitioned` asks the whole request first and, when that answer falls short, splits along a key the planning stages find and merges the parts with it.
+
+Use `plan.key` or `plan.keys` for the fields that identify one record. Use `plan.partition_key` to suggest a category such as a region or a period that covers the request in a few groups. A list of individual records can leave out most of the request, so a split on the only key field the slice leaves open, such as `state` for "the US states", is kept only when the request states its values or you declare them with `plan.identity_partitions`, `plan.distribution_search` and `plan.keys` (direct Python only); otherwise the slice runs as one request and `meta.gaps` records `guard_collapsed` with the reason. The refused proposal still counts toward call and cost ceilings. A key field that leaves others open, such as `year` in a `(country, year)` key, groups records and splits like any category.
+
+Both partition prompts ask for values that together cover the current slice, or for no split when a complete partition cannot fit. A model asked for a split may list individual records, as `gpt-4o` does for the US states; setting `plan.partition_key` to a category such as a region or a period asks it for groups instead. Check `meta.gaps` for estimate warnings.
 
 ```python
 import json
@@ -285,7 +289,7 @@ print(result.meta.calls, result.meta.row_estimate, result.meta.record_origins)
 print(result.meta.gaps)
 ```
 
-Six calls to `answer`: three planning stages, one partition proposal, two leaves. A provider-backed run prices each prompt separately; the flat estimate does not bound their sum. Set a cost ceiling for the run or use `flat` mode. See [Estimating before you spend](#estimating-before-you-spend).
+Nine calls to `answer`: three planning stages, the root's own ask, one partition proposal, and two for each leaf. The stand-in answers the root's ask, which names no region, with `[]`, so the root splits. Each leaf asks again because its first answer added records, and stops when the second adds none. A provider-backed run prices each prompt separately; the flat estimate does not bound their sum. Set a cost ceiling for the run or use `flat` mode. See [Estimating before you spend](#estimating-before-you-spend).
 
 The settings worth knowing first:
 
@@ -297,7 +301,7 @@ The settings worth knowing first:
 | `plan.partition_key` | none | Preferred root split dimension. Descendants may choose another and cannot repeat an ancestor's |
 | `plan.max_depth` | `2` | Deepest partition level. `0` keeps the planning stages and disables subdivision |
 | `plan.max_partitions` | `20` | Most children one proposal may create |
-| `plan.max_leaves` | `100` | Most terminal slices. Partitioned root values are grouped when over the cap; later expansions that cannot fit stay intact |
+| `plan.max_leaves` | `100` | Most terminal slices. A split that would exceed it is refused and its slice runs as one request |
 | `plan.planning_order` | `planning.schema_first` | Which fact schedule runs, and how many calls it may make |
 
 The full set is in [api-reference.md](api-reference.md#plan-properties).
@@ -306,9 +310,9 @@ A planning stage whose response does not parse does not fail the request. It fal
 
 `meta.asked` is worth checking on a non-flat run. The analysis stage restates the request for retrieval, and that restated text becomes the query every part runs. The rewrite is what makes "I don't know how many countries are there?" answerable at all, and it is also what could broaden or narrow the question. The change is reported rather than prevented: when `meta.asked` is not `None`, that is the question the records answer.
 
-### Asking once before splitting
+### Asking the root before splitting
 
-`partitioned` mode splits the root whatever it holds. With `plan.split_policy="evidence"` it asks first: the whole request goes out once as a single leaf, the probe, and the plan splits only when the probe's answer was cut off, failed, or holds fewer than half the keys an estimate above `plan.split_threshold_rows` (default `120`) expects. Otherwise that one answer is the result. The probe is an ordinary leaf prompt that names no partition value, so in a scripted `answer` it reaches the last branch:
+`partitioned` mode asks the root first. Under `plan.split_policy="evidence"`, the default in that mode, the whole request goes out as a single leaf with its continuations, the probe, and the plan splits only when the probe's answer was cut off, ran out of continuations while still adding records, failed, holds no keys although the estimate expects records, or holds fewer than half the keys an estimate above `plan.split_threshold_rows` (default `120`) expects. Otherwise that answer is the result. A model that stops early and adds nothing when asked to continue therefore keeps its short answer when the estimate is `plan.split_threshold_rows` or less, or missing; `meta.gaps` reports `observed_coverage_short` when the answer falls below the model's lower estimate. Lower `plan.split_threshold_rows` to apply the half-of-the-estimate rule to smaller requests. `plan.split_policy="always"` splits the root whatever it holds. The probe is an ordinary leaf prompt that names no partition value, so in a scripted `answer` it reaches the last branch:
 
 ```python
 import json
@@ -345,21 +349,22 @@ def answer_with(expected, probe_answer):
 
 
 settings = {"plan.mode": "partitioned", "plan.key": "name",
-            "plan.partition_key": "region", "plan.max_depth": 1,
-            "plan.split_policy": "evidence"}
+            "plan.partition_key": "region", "plan.max_depth": 1}
 
 whole = LlmSource().fetch("commercial airports in France", attrs=["name", "region"],
                           llm_fn=answer_with(3, ALL), properties=settings)
 print(whole.meta.split_decision, whole.meta.calls, len(whole.records))
-# probe_accepted 4 3
+# probe_accepted 5 3
 
 short = LlmSource().fetch("commercial airports in France", attrs=["name", "region"],
                           llm_fn=answer_with(200, ALL[:1]), properties=settings)
 print(short.meta.split_decision, short.meta.calls, len(short.records))
-# probe_split_shortfall 7 3
+# probe_split_shortfall 10 3
 ```
 
-The first request is answered by the probe: three planning calls and one probe, where the default policy would have made six. In the second, the estimate of 200 is above the threshold and the probe holds one key, so the plan splits: the probe, one proposal and two leaves, with the probe's record merged into the result under the origin `root`. `meta.split_decision` names the outcome and is absent when no probe ran. The probe adds one call to every published bound. The setting is opt-in.
+The first request is answered by the probe: three planning calls, the probe, and one continuation that adds nothing. In the second, the estimate of 200 is above the threshold and the probe holds one key, so the plan splits: two probe calls, one proposal and two calls for each leaf, with the probe's record merged into the result under the origin `root`. `meta.split_decision` names the outcome and is absent when no probe ran. The probe and its continuations count in every published bound.
+
+When the plan splits, any value of the split key that the probe returned but the proposal left out is added to the proposal, so its records are still asked for. If that takes the proposal past `plan.max_partitions`, the proposal is refused and the probe's answer is the result.
 
 ## Asking again for what did not come back
 
@@ -402,7 +407,7 @@ for gap in result.meta.gaps:
 
 The continuation prompt names the records the leaf already holds, which is the `Already returned:` line the stand-in above keys off. `plan.max_depth=0` keeps the planning stages and disables subdivision, so this is one leaf asking twice rather than a split.
 
-At the default of `0`, each part asks once. A continuation may make another provider call and incur a charge; a cache hit does neither. Continuations are off by default to limit additional calls.
+In `partitioned` mode a part with a known primary key may ask again up to three times unless you set the cap. `flat` and `row_by_row` default to `0`, so each part asks once. A continuation may make another provider call and incur a charge; a cache hit does neither.
 
 When the cap ends a run that was still producing records, `meta.stopped_by` reports `plan.max_continuations`. Read that as "completeness was not established", not as "more records exist": the last permitted response looks identical whether the model had one row left or a thousand.
 

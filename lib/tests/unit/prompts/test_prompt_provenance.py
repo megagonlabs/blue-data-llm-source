@@ -174,7 +174,11 @@ class TestTheRewrittenAskIsModelOutputToo:
             "airports",
             attrs=["name"],
             llm_fn=model,
-            properties={"plan.mode": "partitioned"},
+            properties={
+                "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
+            },
         )
         return list(model.sent)
 

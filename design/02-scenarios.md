@@ -316,7 +316,7 @@ Plain table output includes gaps and every stop reason. `--verbose` adds alignme
 
 A caller asks for all commercial airports in France with their IATA code and the region they serve. There are roughly a hundred and fifty. A single model call returns twenty to forty, stops at a plausible place, and reports no problem.
 
-The default path still makes one completion. `plan.mode=partitioned` opts into bootstrap analysis, bounded breadth-first partition proposals, leaf extraction, and exact-key reduction. A large or unknown descendant estimate may trigger another split up to `plan.max_depth`; `plan.max_continuations` can ask a productive leaf again. These controls can gather more records from a large request, but they do not establish that the result is complete.
+The default path still makes one completion. `plan.mode=partitioned` opts into bootstrap analysis, one ask of the whole request and, when that answer falls short, bounded breadth-first partition proposals, leaf extraction, and exact-key reduction. A large or unknown descendant estimate may trigger another split up to `plan.max_depth`; `plan.max_continuations` can ask a productive leaf again. These controls can gather more records from a large request, but they do not establish that the result is complete.
 
 Non-flat bootstrap also infers a schema when none is supplied. With declared attributes, preserve mode keeps them and enrich mode may append inferred fields. Row estimates remain uncertain operational hints. `meta.gaps` and `meta.stop_reasons` report observed failures, discarded output, and interrupted work; an empty list does not certify completeness.
 

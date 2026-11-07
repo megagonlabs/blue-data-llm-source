@@ -1,8 +1,9 @@
 """plan.mode: one ask, a split ask, an ask per entity -- and continuations within a part.
 
 One model call answers a request by default. ``plan.mode`` selects a different structure:
-``partitioned`` splits the ask by a key the planning stage found, ``row_by_row`` asks once
-per entity it enumerated. Nothing picks a shape for you, and ``flat`` makes no planning
+``partitioned`` first asks the whole question and splits it by a key the planning stage
+found only when that answer is cut off or short, ``row_by_row`` asks once per entity it
+enumerated. Nothing picks a shape for you, and ``flat`` makes no planning
 call at all.
 
 ``plan.max_continuations`` is the orthogonal control: how many times one part may ask
@@ -171,7 +172,8 @@ def main() -> None:
 
     split = Airports()
     show(
-        "partitioned: bootstrap, one partition proposal, then one extraction per part",
+        "partitioned: bootstrap, the whole ask once (empty here), a partition proposal, then "
+        "each part with one continuation that finds nothing new",
         split.sequence,
         combined().fetch(
             "commercial airports in France",

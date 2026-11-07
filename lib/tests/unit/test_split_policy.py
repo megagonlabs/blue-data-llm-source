@@ -1,24 +1,39 @@
-"""Evidence-gated splitting: the root is asked once before any split is proposed.
+"""Evidence-gated splitting: the root is asked, with its continuations, before any split.
 
 Under `plan.split_policy="evidence"` a partitioned request first runs its root leaf as a
-probe. The plan splits only when the provider said the probe's answer hit its output
-allowance, or the probe holds fewer than half the keys an estimate above
-`plan.split_threshold_rows` expects. Otherwise the probe's answer is the result.
+probe. The plan splits only when that answer was cut off, was still growing when its
+continuations ran out, failed, holds no keys although records are expected, or holds fewer
+than half the keys an estimate above `plan.split_threshold_rows` expects. Otherwise the
+probe's answer is the result.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
 from blue_data_llm_source import meta_view
 from blue_data_llm_source.llm.budget import Budget
-from blue_data_llm_source.planning import bounds
+from blue_data_llm_source.planning import bounds, coordinator
+from blue_data_llm_source.planning.plan import PartitionPolicy, PartitionProposal, root_plan
+from blue_data_llm_source.planning.schema import Schema
+from blue_data_llm_source.planning.split_gate import ProbeOutcome
 from blue_data_llm_source.source import LlmSource
-from blue_data_llm_source.types import BudgetExceeded, Capability, ConfigError, FetchResult, Usage
+from blue_data_llm_source.types import (
+    Attr,
+    BudgetExceeded,
+    Capability,
+    ConfigError,
+    FetchResult,
+    JsonScalar,
+    OneOf,
+    Range,
+    Usage,
+)
 
 Reply = str | tuple[str, str]
 
@@ -111,7 +126,12 @@ def fetch(answer: Callable[[str], Reply], **settings: Any) -> tuple[ProbeClient,
     ).fetch(
         "stations",
         attrs=ATTRS,
-        properties={"plan.mode": "partitioned", "plan.split_policy": "evidence", **settings},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.max_continuations": 0,
+            "plan.split_policy": "evidence",
+            **settings,
+        },
     )
     return client, result
 
@@ -189,9 +209,7 @@ def test_an_unreadable_probe_splits_as_the_default_would() -> None:
 
 
 def test_a_split_no_proposal_survives_reuses_the_probe_rather_than_asking_again() -> None:
-    client, result = fetch(
-        responder(estimate=40, root=(rows(["a"], "North"), "length"), values=["only"])
-    )
+    client, result = fetch(responder(estimate=40, root=(rows(["a"]), "length"), values=["only"]))
     assert kinds(client) == ["bootstrap", "fetch", "proposal"]
     assert [record["name"] for record in result.records] == ["a"]
     # Nothing split, so the truncation stands as the reason the answer may be short.
@@ -226,7 +244,11 @@ def test_root_records_count_toward_the_row_cap() -> None:
         "stations",
         attrs=ATTRS,
         max_records=4,
-        properties={"plan.mode": "partitioned", "plan.split_policy": "evidence"},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.max_continuations": 0,
+            "plan.split_policy": "evidence",
+        },
     )
     assert len(result.records) == 4
     assert result.meta.truncated_to == 4
@@ -291,7 +313,15 @@ def test_the_decision_is_published_only_when_a_probe_ran() -> None:
     client = ProbeClient(responder(estimate=40, root=rows(["a"])))
     default = LlmSource(
         properties={"plan.planning_order": "planning.combined"}, client=client
-    ).fetch("stations", attrs=ATTRS, properties={"plan.mode": "partitioned"})
+    ).fetch(
+        "stations",
+        attrs=ATTRS,
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+        },
+    )
     assert default.meta.split_decision is None
     assert "split_decision" not in meta_view(default.meta)
 
@@ -323,7 +353,13 @@ def test_evidence_is_refused_outside_partitioned_mode(mode: str) -> None:
 def test_bad_split_settings_are_refused(settings: dict[str, Any], message: str) -> None:
     with pytest.raises(ConfigError, match=message):
         LlmSource(client=ProbeClient(lambda _p: "[]")).fetch(
-            "x", properties={"plan.mode": "partitioned", **settings}
+            "x",
+            properties={
+                "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
+                **settings,
+            },
         )
 
 
@@ -331,10 +367,11 @@ def test_bad_split_settings_are_refused(settings: dict[str, Any], message: str) 
 
 
 @pytest.mark.parametrize("mode", ["flat", "partitioned", "row_by_row"])
-def test_the_probe_is_one_logical_call_in_every_accessor(mode: str) -> None:
+def test_every_accessor_charges_the_probe_and_its_continuations(mode: str) -> None:
     limits = bounds.PlanLimits()
     extra = 1 if mode == "partitioned" else 0
     assert bounds.probe_calls(mode, "evidence") == extra
+    assert bounds.probe_calls(mode, "evidence", 3) == 4 * extra
     assert bounds.probe_calls(mode, "always") == 0
     assert bounds.planned_logical_calls(limits, mode, split_policy="evidence") == (
         bounds.planned_logical_calls(limits, mode) + extra
@@ -394,11 +431,12 @@ def test_a_probe_that_meets_the_row_target_is_accepted_whatever_the_estimate() -
     assert result.meta.split_decision == "probe_accepted"
 
 
-def test_an_accepted_probe_is_one_ask_even_with_continuations_configured() -> None:
+def test_a_probe_asks_its_continuations_before_it_is_accepted() -> None:
+    # The second ask returns nothing new, so the probe stops there and stands as the answer.
     client, result = fetch(
         responder(estimate=40, root=rows(["a"])), **{"plan.max_continuations": 3}
     )
-    assert kinds(client) == ["bootstrap", "fetch"]
+    assert kinds(client) == ["bootstrap", "fetch", "fetch"]
     assert result.meta.split_decision == "probe_accepted"
 
 
@@ -478,3 +516,381 @@ def test_an_unreadable_probe_gap_carries_no_model_text() -> None:
     assert [gap for gap in result.meta.gaps if gap.startswith("probe_failed")] == [
         "probe_failed: ParseError"
     ]
+
+
+# ------------------------------------------- probe values, continuations and defaults ---
+
+
+def test_a_value_the_probe_returned_is_added_to_a_short_proposal() -> None:
+    root = (
+        json.dumps([{"name": "a", "region": "North"}, {"name": "b", "region": "South"}]),
+        "length",
+    )
+    client, result = fetch(responder(estimate=40, root=root, values=["North"]))
+    children = [p for p in client.prompts if kind(p) == "fetch" and not is_root(p)]
+    assert any('"South"' in p.split("Filters:", 1)[1] for p in children)
+    assert {record["name"] for record in result.records} == {"a", "b", "n1", "n2", "s1"}
+    within_bound(client, result)
+
+
+def test_a_proposal_missing_more_values_than_fit_is_refused_and_the_probe_stands() -> None:
+    probe = [("a", "North"), ("b", "South"), ("c", "East")]
+    root = (json.dumps([{"name": name, "region": region} for name, region in probe]), "length")
+    client, result = fetch(
+        responder(estimate=40, root=root, values=["North", "West"]),
+        **{"plan.max_partitions": 3},
+    )
+    assert kinds(client) == ["bootstrap", "fetch", "proposal"]
+    assert {record["name"] for record in result.records} == {"a", "b", "c"}
+
+
+def test_a_probe_still_growing_when_its_continuations_run_out_splits() -> None:
+    asks = 0
+    base = responder(estimate=40, root=rows(["a"], "North"))
+
+    def answer(prompt: str) -> Reply:
+        nonlocal asks
+        if kind(prompt) == "fetch" and is_root(prompt):
+            asks += 1
+            return rows([f"r{asks}"], "North")
+        return base(prompt)
+
+    client, result = fetch(answer, **{"plan.max_continuations": 1})
+    assert asks == 2
+    assert result.meta.split_decision == "probe_split_length"
+    assert "proposal" in kinds(client)
+    within_bound(client, result, **{"plan.max_continuations": 1})
+
+
+def test_partitioned_mode_defaults_to_the_evidence_policy_with_continuations() -> None:
+    plan_limits = LlmSource._plan_limits  # pyright: ignore[reportPrivateUsage]
+    assert plan_limits({"plan.mode": "partitioned"}).max_continuations == 3
+    assert plan_limits({"plan.mode": "flat"}).max_continuations == 0
+    client = ProbeClient(responder(estimate=40, root=rows(["a", "b"], "North")))
+    result = LlmSource(
+        properties={"plan.planning_order": "planning.combined"}, client=client
+    ).fetch("stations", attrs=ATTRS, properties={"plan.mode": "partitioned"})
+    assert result.meta.split_decision == "probe_accepted"
+    ceiling = bounds.planned_provider_attempts(
+        plan_limits({"plan.mode": "partitioned"}),
+        "partitioned",
+        planning_order="planning.combined",
+        split_policy="evidence",
+    )
+    assert result.meta.calls == len(client.prompts) <= ceiling
+
+
+def test_an_empty_probe_against_a_positive_estimate_splits() -> None:
+    client, result = fetch(responder(estimate=40, root="[]"))
+    assert result.meta.split_decision == "probe_split_shortfall"
+    assert {record["name"] for record in result.records} == {"n1", "n2", "s1"}
+    within_bound(client, result)
+
+
+# ------------------------------------------------- what the probe's records add or keep ---
+
+
+def test_a_refused_continuation_keeps_the_answer_the_root_gave() -> None:
+    client = ProbeClient(responder(estimate=40, root=rows(["a"], "North")))
+    result = LlmSource(
+        properties={
+            "plan.planning_order": "planning.combined",
+            "limits.max_calls": 2,
+            "limits.max_retries": 0,
+        },
+        client=client,
+    ).fetch(
+        "stations",
+        attrs=ATTRS,
+        properties={"plan.mode": "partitioned", "plan.max_continuations": 1},
+    )
+    assert [record["name"] for record in result.records] == ["a"]
+    assert result.meta.outcome == "partial"
+    assert result.meta.stopped_by == "max_calls"
+    assert "proposal" not in kinds(client)
+
+
+def test_a_keyless_probe_does_not_continue() -> None:
+    base = responder(estimate=40, root=rows(["a"], "North"))
+
+    def answer(prompt: str) -> Reply:
+        if kind(prompt) == "bootstrap":
+            return json.dumps(
+                {
+                    "ask": "stations",
+                    "constraints": {},
+                    "row_estimate": 40,
+                    "schema": {"attrs": ATTRS},
+                }
+            )
+        return base(prompt)
+
+    client, result = fetch(answer, **{"plan.max_continuations": 3})
+    assert kinds(client) == ["bootstrap", "fetch"]
+    assert any(gap.startswith("key_unavailable") for gap in result.meta.gaps)
+
+
+def probe_values(
+    records: list[dict[str, Any]],
+    values: tuple[JsonScalar, ...],
+    attrs: list[Attr],
+    *,
+    key: str | None = None,
+    policy: PartitionPolicy | None = None,
+) -> PartitionProposal:
+    plan = root_plan(
+        mode="partitioned",
+        original_query="stations",
+        retrieval_query="stations",
+        constraints={},
+        estimate=None,
+    )
+    probed = ProbeOutcome(run=SimpleNamespace(records=records), decision="probe_split_length")
+    proposal, _ = coordinator._with_probe_values(  # pyright: ignore[reportPrivateUsage]
+        plan,
+        plan.leaves[0],
+        PartitionProposal(key=key or attrs[1].name, values=values),
+        probed,
+        Schema(attrs=attrs, primary_keys=("name",)),
+        policy,
+    )
+    return proposal
+
+
+TEXT = [Attr("name", "string"), Attr("region", "string")]
+
+
+def test_a_value_a_child_already_asks_for_is_not_added_again() -> None:
+    proposal = probe_values([{"name": "a", "region": "north"}], ("North", "South"), TEXT)
+    assert proposal.values == ("North", "South")
+    years = [Attr("name", "string"), Attr("year", "integer")]
+    assert probe_values([{"name": "a", "year": 1}], ("1", "2"), years).values == ("1", "2")
+
+
+def test_a_value_read_through_an_aliased_field_is_added() -> None:
+    proposal = probe_values([{"Name": "c", "Region": "South"}], ("North",), TEXT)
+    assert proposal.values == ("North", "South")
+
+
+def test_an_added_value_is_estimated_by_its_distinct_keys() -> None:
+    proposal = probe_values([{"name": "a", "region": "South"}] * 4, ("North",), TEXT)
+    assert proposal.child_estimates == (None, 1)
+
+
+def test_a_range_child_asks_for_the_years_inside_it() -> None:
+    asks_for = coordinator._asks_for  # pyright: ignore[reportPrivateUsage]
+    assert asks_for(Range(2000, 2004), 2000, "integer")
+    assert not asks_for(Range(2000, 2004), 2005, "integer")
+
+
+def test_a_proposal_key_spelled_differently_still_reads_the_probe() -> None:
+    proposal = probe_values(
+        [{"name": "e0", "region": "East"}], ("North", "South"), TEXT, key="Region"
+    )
+    assert proposal.values == ("North", "South", "East")
+
+
+UNTYPED = [Attr("name", "string"), Attr("region")]
+
+
+def test_an_untyped_value_keeps_its_json_identity() -> None:
+    # The number 1 is not the text "1", but 1 and 1.0 are one number.
+    assert probe_values([{"name": "a", "region": 1}], ("1", "2"), UNTYPED).values == ("1", "2", 1)
+    twice = [{"name": "a", "region": 1}, {"name": "b", "region": 1.0}]
+    proposal = probe_values(twice, ("North", "South"), UNTYPED)
+    assert proposal.values == ("North", "South", 1)
+    assert proposal.child_estimates == (None, None, 2)
+
+
+def test_a_single_span_proposal_adds_only_years_outside_it() -> None:
+    years = [Attr("name", "string"), Attr("year", "integer")]
+    proposal = probe_values(
+        [{"name": "a", "year": 2000}, {"name": "b", "year": 2005}],
+        ("2000-2004",),
+        years,
+        policy=PartitionPolicy(range_filters=True),
+    )
+    assert proposal.values == ("2000-2004", 2005)
+
+
+def test_a_known_year_list_recovers_through_a_differently_spelled_range_proposal() -> None:
+    # The request names 2000 and 2005; the model proposes "Year" as a span and a text year.
+    attrs = [{"name": "name", "type": "string"}, {"name": "year", "type": "integer"}]
+
+    def answer(prompt: str) -> Reply:
+        if kind(prompt) == "bootstrap":
+            return json.dumps(
+                {
+                    "ask": "stations in years 2000 and 2005",
+                    "constraints": {"year": [2000, 2005]},
+                    "row_estimate": 40,
+                    "schema": {"attrs": attrs, "key": "name"},
+                }
+            )
+        if kind(prompt) == "proposal":
+            return json.dumps({"key": "Year", "values": ["2000-2004", "2005"], "ambiguity": 0})
+        scope = json.loads(prompt.split("Request scope: ", 1)[1].splitlines()[0])["year"]
+        if scope["kind"] != "exact":
+            return json.dumps([{"name": "a", "year": 2000}, {"name": "b", "year": 2005}]), "length"
+        year = int(scope["value"])
+        return json.dumps([{"name": {2000: "c", 2005: "d"}[year], "year": year}])
+
+    result = LlmSource(
+        properties={"plan.planning_order": "planning.combined"}, client=ProbeClient(answer)
+    ).fetch(
+        "stations in years 2000 and 2005",
+        attrs=attrs,
+        properties={
+            "plan.mode": "partitioned",
+            "plan.max_continuations": 0,
+            "plan.max_depth": 1,
+            "plan.range_filters": True,
+            "plan.leaf_prompt": "keyed-leaf-fetch-2",
+            "plan.partition_key": "Year",
+        },
+    )
+    assert {record["name"] for record in result.records} == {"a", "b", "c", "d"}
+
+
+def test_a_requested_partition_key_matches_whatever_its_spelling() -> None:
+    def answer(prompt: str) -> Reply:
+        if kind(prompt) == "proposal":
+            return json.dumps({"key": "Region", "values": ["North", "South"], "ambiguity": 0})
+        return responder(estimate=40, root=(rows(["a"], "North"), "length"))(prompt)
+
+    client, result = fetch(answer, **{"plan.partition_key": "region"})
+    assert {record["name"] for record in result.records} == {"a", "n1", "n2", "s1"}
+    within_bound(client, result)
+
+
+def test_a_request_scope_spelled_differently_is_narrowed_in_place() -> None:
+    # The analysis writes the scope as "Year"; the plan keys it by the schema's year column.
+    attrs = [{"name": "name", "type": "string"}, {"name": "year", "type": "integer"}]
+
+    def answer(prompt: str) -> Reply:
+        if kind(prompt) == "bootstrap":
+            return json.dumps(
+                {
+                    "ask": "stations in years 2000 and 2005",
+                    "constraints": {"Year": ["2000", "2005"]},
+                    "row_estimate": 40,
+                    "schema": {"attrs": attrs, "key": "name"},
+                }
+            )
+        if kind(prompt) == "proposal":
+            return json.dumps({"key": "Year", "values": ["2000", "2005", "2010"], "ambiguity": 0})
+        scope = json.loads(prompt.split("Request scope: ", 1)[1].splitlines()[0])
+        assert set(scope) == {"year"}
+        if scope["year"]["kind"] != "exact":
+            return json.dumps([{"name": "a", "year": 2000}, {"name": "b", "year": 2005}]), "length"
+        year = int(scope["year"]["value"])
+        return json.dumps([{"name": {2000: "c", 2005: "d"}[year], "year": year}])
+
+    result = LlmSource(
+        properties={"plan.planning_order": "planning.combined"}, client=ProbeClient(answer)
+    ).fetch(
+        "stations in years 2000 and 2005",
+        attrs=attrs,
+        properties={
+            "plan.mode": "partitioned",
+            "plan.max_continuations": 0,
+            "plan.max_depth": 1,
+            "plan.max_leaves": 2,
+            "plan.max_partitions": 3,
+            "plan.leaf_prompt": "keyed-leaf-fetch-2",
+            "plan.partition_key": "Year",
+        },
+    )
+    assert {record["name"] for record in result.records} == {"a", "b", "c", "d"}
+    assert result.meta.outcome == "ok"
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        {"Country": "US"},
+        {"Country": "US", "COUNTRY": "US"},
+        {"Country": "US", "tag": ["a", "b"], "Tag": ["a", "b"]},
+    ],
+    ids=["one-spelling", "two-spellings", "unrelated-collision"],
+)
+def test_a_field_fixed_under_several_spellings_still_closes_its_key(scope: dict[str, Any]) -> None:
+    attrs = [
+        {"name": "country", "type": "string"},
+        {"name": "year", "type": "integer"},
+        {"name": "tag", "type": "string"},
+    ]
+    every = [{"country": "US", "year": year, "tag": "a"} for year in (2000, 2005, 2010)]
+
+    def answer(prompt: str) -> Reply:
+        if kind(prompt) == "bootstrap":
+            return json.dumps(
+                {
+                    "ask": "US records",
+                    "constraints": scope,
+                    "row_estimate": 3,
+                    "schema": {"attrs": attrs, "primary_keys": ["country", "year"]},
+                }
+            )
+        if kind(prompt) == "proposal":
+            return json.dumps(
+                {
+                    "key": "year",
+                    "values": ["2000", "2005"],
+                    "child_estimates": [2, 1],
+                    "ambiguity": 0,
+                }
+            )
+        return json.dumps(every)
+
+    result = LlmSource(
+        properties={"plan.planning_order": "planning.combined"}, client=ProbeClient(answer)
+    ).fetch(
+        "US records",
+        attrs=attrs,
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_depth": 1,
+            "plan.max_continuations": 0,
+            "plan.leaf_prompt": "keyed-leaf-fetch-2",
+        },
+    )
+    assert {record["year"] for record in result.records} == {2000, 2005, 2010}
+    assert any("lists individual records" in gap for gap in result.meta.gaps)
+
+
+def test_two_spellings_of_a_scoped_field_are_intersected() -> None:
+    by_schema_name = coordinator._by_schema_name  # pyright: ignore[reportPrivateUsage]
+    schema = Schema(attrs=[Attr("name", "string"), Attr("year", "integer")], primary_keys=("name",))
+    scope = {"Year": OneOf((2000, 2005, 2010)), "YEAR": OneOf((2000, 2005))}
+    assert by_schema_name(scope, schema) == {"year": OneOf((2000, 2005))}
+
+
+@pytest.mark.parametrize("split_policy", ["always", "evidence"])
+def test_contradicting_spellings_of_a_scope_stop_before_any_extraction(split_policy: str) -> None:
+    attrs = [{"name": "name", "type": "string"}, {"name": "year", "type": "integer"}]
+
+    def answer(prompt: str) -> Reply:
+        if kind(prompt) == "bootstrap":
+            return json.dumps(
+                {
+                    "ask": "stations",
+                    "constraints": {"Year": [2000], "YEAR": [2005]},
+                    "row_estimate": 40,
+                    "schema": {"attrs": attrs, "key": "name"},
+                }
+            )
+        raise AssertionError("an unsatisfiable scope asks nothing more")
+
+    client = ProbeClient(answer)
+    result = LlmSource(
+        properties={"plan.planning_order": "planning.combined"}, client=client
+    ).fetch(
+        "stations",
+        attrs=attrs,
+        properties={"plan.mode": "partitioned", "plan.split_policy": split_policy},
+    )
+    assert kinds(client) == ["bootstrap"]
+    assert result.records == []
+    assert any("no value every spelling allows" in gap for gap in result.meta.gaps)

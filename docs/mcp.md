@@ -54,7 +54,7 @@ Fetch structured records from a language model's own knowledge. This is the one 
 | `limits.max_seconds` | number, minimum 0 | no | Refuse a call once the run has been going this long |
 | `limits.max_calls` | integer, minimum 0 | no | Refuse more than this many provider calls, retries included |
 | `plan.mode` | enum: `flat`, `partitioned`, `row_by_row` | no | How the ask is decomposed. `flat` is the default |
-| `plan.max_continuations` | integer, minimum 0 | no | Extra asks allowed per leaf |
+| `plan.max_continuations` | integer, minimum 0 | no | Extra asks allowed per leaf. `3` by default in `partitioned`, `0` otherwise |
 | `plan.max_leaves` | integer, minimum 1 | no | Maximum terminal slices |
 | `plan.partition_key` | string | no | Preferred root split dimension |
 | `plan.max_depth` | integer, minimum 0 | no | Deepest partition level |
@@ -72,7 +72,7 @@ Fetch structured records from a language model's own knowledge. This is the one 
 | `plan.filter_enforcement` | enum: `flag`, `drop` | no | Keep or remove records that contradict their part's filter |
 | `plan.range_filters` | boolean | no | Read integer-span partition values as range filters |
 | `plan.partition_guardrails` | boolean | no | Proposal rules and the numeric-key reject |
-| `plan.split_policy` | enum: `always`, `evidence` | no | Always split the root, or ask it once first |
+| `plan.split_policy` | enum: `always`, `evidence` | no | Ask the root first (`evidence`, the `partitioned` default), or always split it |
 | `plan.split_threshold_rows` | integer, minimum 0 | no | Estimate above which a short probe answer splits |
 
 Nothing is required. A missing query is a successful call with no records, not an error.
@@ -263,12 +263,12 @@ No inputs. Returns the protocol, the variant, and the version of the library und
 
 ## Decomposition
 
-`llmdb_query` answers with one model call by default. A large ask can be split into parts, each asked separately and merged on the way back, at a call per part. The caller selects the decomposition mode.
+`llmdb_query` answers with one model call by default. A large ask can be split into parts, each asked separately and merged on the way back, at one or more calls per part. The caller selects the decomposition mode.
 
 | Argument | Meaning |
 |---|---|
 | `plan.mode` | `flat` is the one-completion default; `partitioned` builds a bounded recursive tree; `row_by_row` asks per identified entity. |
-| `plan.max_continuations` | How many times a part may ask again for records it did not get. `0` by default, so each part asks once. It bounds asks per part, not provider attempts or planning calls; each ask may still be retried up to `limits.max_retries` times, three attempts by default. |
+| `plan.max_continuations` | How many times a part may ask again for records it did not get. `3` by default in `partitioned`; `0` in the other modes, so each part asks once. It bounds asks per part, not provider attempts or planning calls; each ask may still be retried up to `limits.max_retries` times, three attempts by default. |
 | `plan.max_leaves` | The most parts a plan may hold, the term that bounds its worst-case cost. Default `100`. |
 | `plan.key` | The attribute identifying a record, so parts returning the same one merge. Must be among the requested attributes. |
 | `plan.partition_key` | Preferred root split dimension. Descendants may choose another dimension. |
@@ -286,14 +286,14 @@ No inputs. Returns the protocol, the variant, and the version of the library und
 | `plan.filter_enforcement` | `flag` keeps records that contradict their part's filter; `drop` removes them at the part, before merging. Both count them in `meta.filter_contradictions`. |
 | `plan.range_filters` | Reads partition values written as integer spans, on an integer column, as range filters. Needs `partitioned` and `plan.leaf_prompt` `keyed-leaf-fetch-2`. |
 | `plan.partition_guardrails` | Sends proposal rules against identifier, measurement, placeholder and catch-all values, and refuses a numeric key bucketed like a measurement. Needs `partitioned`. |
-| `plan.split_policy` | `always` is the default. `evidence` asks the root once and splits only when that answer was cut off, by the output allowance or mid-answer, when the probe failed, or when it holds fewer than half the keys an estimate above `plan.split_threshold_rows` expects; otherwise that answer is the result, and `meta.split_decision` says which. The probe is one more call in the bound. Needs `partitioned`. |
+| `plan.split_policy` | `evidence` is the default in `partitioned`. It asks the root first, with its continuations, and splits only when that answer was cut off, was still growing when the continuations ran out, failed, came back empty although records are expected, or has fewer than half the records an estimate above `plan.split_threshold_rows` expects. Otherwise that answer is the result, and `meta.split_decision` says which. The root's asks count in the bound. `always` splits the root whatever it holds. `evidence` needs `partitioned`. |
 | `plan.split_threshold_rows` | Under `evidence`, the estimate above which a short probe answer splits. Default `120`. |
 
-`plan.leaf_prompt`, `plan.child_wording`, `plan.filter_enforcement`, `plan.range_filters` and `plan.partition_guardrails` are experimental. `plan.split_policy` `evidence` is opt-in. Check the returned records and diagnostics; neither setting establishes completeness.
+`plan.leaf_prompt`, `plan.child_wording`, `plan.filter_enforcement`, `plan.range_filters` and `plan.partition_guardrails` are experimental. Check the returned records and diagnostics; these planning settings do not establish completeness.
 
 These are the 21 standard planning controls shared with Python and the CLI. The MCP schema does not expose `plan.max_excluded_keys`, `plan.distribution_search`, `plan.identity_partitions`, or `plan.max_strategy_candidates`, and `llmdb_query` returns only records and meta, not the direct-Python planning receipt.
 
-Non-flat calls also spend on the selected planning schedule and may make bounded proposal or entity enumeration calls before leaf extraction. The library admits those calls incrementally against the shared budget; `plan.max_continuations` is not a bound on the whole request.
+Non-flat calls also spend on the selected planning schedule, and may ask the whole request first and make bounded proposal or entity enumeration calls before leaf extraction. The library admits those calls incrementally against the shared budget; `plan.max_continuations` is not a bound on the whole request.
 
 ## Argument names, and the CLI's flags
 

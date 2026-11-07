@@ -2,7 +2,8 @@
 
 `plan.partition_guardrails` sends a proposal prompt with generic rules about which keys and
 values make a usable split, and refuses a model-proposed key the schema declares numeric
-whose values are not a small ordinal set. Off, the proposal prompt and the checks are 0.2.1.0's.
+whose values are not a small ordinal set. Both prompts require whole-slice coverage;
+identity splits also need complete domain evidence with either setting.
 """
 
 from __future__ import annotations
@@ -39,6 +40,16 @@ def _proposals(sent: list[str]) -> list[str]:
 
 
 # --------------------------------------------------------------------------- prompt ---
+
+
+@pytest.mark.parametrize("guardrails", [False, True])
+def test_both_partition_prompts_require_complete_scope_or_parent_fallback(guardrails: bool) -> None:
+    client, _ = run_scenario("partitioned", {"plan.partition_guardrails": guardrails})
+    for prompt in _proposals(client.prompts):
+        assert "cover every record matching this slice and preserve its filters" in prompt
+        assert "Do not sample or truncate a domain" in prompt
+        assert "return an empty values list so the parent slice can run intact" in prompt
+        assert "identity-field value" in prompt
 
 
 def test_the_guarded_prompt_states_each_rule_and_its_contract() -> None:
@@ -262,7 +273,12 @@ def test_the_reject_reason_reaches_the_published_gaps_and_spends_no_extra_call()
         ).fetch(
             "cities",
             attrs=[{"name": "name", "type": "string"}, {"name": "population", "type": "integer"}],
-            properties={"plan.mode": "partitioned", "plan.partition_guardrails": guardrails},
+            properties={
+                "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
+                "plan.partition_guardrails": guardrails,
+            },
         )
         return client, result
 

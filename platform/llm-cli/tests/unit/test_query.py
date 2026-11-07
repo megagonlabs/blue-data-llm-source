@@ -269,7 +269,6 @@ def test_the_plan_options_reach_the_call(runner: CliRunner, install_source: Any)
     )
     assert result.exit_code == 0, result.output
     assert source.properties == {
-        "plan.max_continuations": 0,
         "plan.mode": "partitioned",
         "plan.max_depth": 3,
         "plan.max_partitions": 6,

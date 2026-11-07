@@ -59,7 +59,6 @@ def test_hierarchy_and_schema_flags_reach_the_library(
     assert result.exit_code == 0, result.output
     plan = {key: value for key, value in source.properties.items() if key.startswith("plan.")}
     assert plan == {
-        "plan.max_continuations": 0,
         "plan.mode": "partitioned",
         "plan.max_depth": 3,
         "plan.max_partitions": 6,
@@ -144,3 +143,23 @@ def test_row_estimate_is_unconditional_and_human_readable(
     assert json.loads(machine.stdout)["meta"]["row_estimate"] == estimate
     assert human.exit_code == 0, human.output
     assert f"row estimate {shown}" in human.stdout
+
+
+@pytest.mark.parametrize(
+    ("args", "sent", "applied"),
+    [
+        (["--plan-mode", "partitioned"], None, 3),
+        (["--plan-mode", "partitioned", "--effort", "low"], 0, 0),
+        (["--plan-mode", "partitioned", "--plan-continuations", "1"], 1, 1),
+        (["--plan-mode", "flat"], 0, 0),
+    ],
+)
+def test_a_partitioned_query_keeps_the_library_continuations_unless_chosen(
+    runner: CliRunner, install_source: Any, args: list[str], sent: int | None, applied: int
+) -> None:
+    source = install_source(RecordingSource())
+    result = runner.invoke(cli, ["data", "query", QUERY, "--format", "json", *args])
+    assert result.exit_code == 0, result.output
+    assert source.properties.get("plan.max_continuations") == sent
+    settings = json.loads(result.output)["settings"]
+    assert settings["applied"]["plan.max_continuations"] == applied

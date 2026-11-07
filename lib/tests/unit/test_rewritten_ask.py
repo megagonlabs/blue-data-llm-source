@@ -48,6 +48,8 @@ def model(ask: str) -> Any:
 def fetch(query: str, ask: str, **props: Any) -> Any:
     merged: dict[str, Any] = {
         "plan.mode": "partitioned",
+        "plan.split_policy": "always",
+        "plan.max_continuations": 0,
         "plan.planning_order": "planning.combined",
     }
     merged.update(props)
@@ -101,6 +103,8 @@ class TestTheQuestionThatWasAnsweredIsReported:
             llm_fn=fn,
             properties={
                 "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
                 "plan.planning_order": "planning.combined",
             },
         )
