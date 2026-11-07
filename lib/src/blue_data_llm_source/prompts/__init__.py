@@ -743,6 +743,11 @@ Required container shape:
 {{"key":"...","values":["..."],"ambiguity":0,"child_estimates":[1]}}
 The square-bracket arrays are required. Do not return an object keyed by value.
 
+The values together must cover every record matching this slice and preserve its filters.
+Choose categories or periods, rather than record identifiers or identity-field values.
+Do not sample or truncate a domain to fit the value limit. If no useful complete split
+fits, return an empty values list so the parent slice can run intact.
+
 Do not repeat an ancestor key. If a preferred key is given, use it or return an empty
 values list. Return only the JSON object.
 
@@ -771,9 +776,12 @@ Required container shape:
 The square-bracket arrays are required. Do not return an object keyed by value.
 
 Rules for the key and its values:
+- The values together must cover every record matching this slice and preserve its filters.
+  Do not sample or truncate a domain to fit the value limit. If no useful complete split
+  fits, return an empty values list so the parent slice can run intact.
 - Choose a key that sorts records into categories or periods. Do not choose an identifier,
-  a code, a name unique to each record, or a continuous measurement such as an amount, a
-  count, a price, a score, or a size.
+  an identity-field value, a code, a name unique to each record, or a continuous measurement
+  such as an amount, a count, a price, a score, or a size.
 - Every value must be a real, specific value of the key. Do not use placeholders such as
   "...", "etc.", "value 1", or "TBD".
 - Do not use catch-all values such as "Other", "Unknown", "Miscellaneous", or "All".

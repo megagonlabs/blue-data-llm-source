@@ -86,6 +86,7 @@ def _classic_partition() -> str:
 def _source_properties(*rules: dict[str, object]) -> dict[str, object]:
     return {
         "plan.mode": "partitioned",
+        "plan.split_policy": "always",
         "plan.planning_order": "planning.combined",
         "plan.distribution_search": True,
         "plan.identity_partitions": list(rules),
@@ -126,6 +127,8 @@ def test_disabled_distribution_settings_leave_the_source_run_unchanged(
 ) -> None:
     shared = {
         "plan.mode": "partitioned",
+        "plan.split_policy": "always",
+        "plan.max_continuations": 0,
         "plan.planning_order": "planning.combined",
         "plan.keys": list(KEYS),
         "plan.max_depth": 1,
@@ -567,3 +570,18 @@ def test_estimate_remains_the_flat_bound_when_distribution_is_configured() -> No
     ).estimate("games", attrs=ATTRS)
 
     assert configured == baseline
+
+
+def test_a_declared_split_applies_when_the_scope_spells_its_field_differently() -> None:
+    # The analysis writes the scope as "console"; the schema and the declared rule say Console.
+    bootstrap = json.loads(_bootstrap())
+    bootstrap["constraints"] = {"console": ["Switch", "PS4"]}
+    rule = _rule("Console", ("Switch", "PS4"), "source_configuration")
+    client = ScriptedClient(
+        [json.dumps(bootstrap), _distribution("Console", ("Switch", "PS4")), *_fetch_responses()]
+    )
+    result = LlmSource(properties=_source_properties(rule), client=client).fetch(
+        "games by console", attrs=ATTRS
+    )
+    assert len(result.records) == 2
+    assert result.meta.outcome == "ok"

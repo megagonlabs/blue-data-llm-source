@@ -344,14 +344,16 @@ class ExecMeta:
     split_decision: str | None = None
     """What the root probe decided under ``plan.split_policy="evidence"``, or None.
 
-    ``probe_accepted``: the root answered in one call and the plan did not split.
-    ``probe_split_length``: the provider said its output allowance ended the probe's answer.
+    ``probe_accepted``: the root's answer stood and the plan did not split.
+    ``probe_split_length``: the provider said its output allowance ended the probe's answer,
+    or its continuations ran out while it was still adding records.
     ``probe_split_incomplete``: the probe's answer ended mid-document and only its complete
     records were read, with no word from the provider on why.
-    ``probe_split_shortfall``: the probe held fewer than half the keys an estimate above
-    ``plan.split_threshold_rows`` expects. ``probe_split_failed``: the probe gave no usable
-    answer. None under the default policy, when the root could not split and was not
-    probed, or when ``plan.exact_rows=0`` answered the root without a call. Absent from
+    ``probe_split_shortfall``: the probe held no keys although records were expected, or
+    fewer than half the keys an estimate above ``plan.split_threshold_rows`` expects.
+    ``probe_split_failed``: the probe gave no usable answer. None under
+    ``plan.split_policy="always"``, when the root could not split and was not probed, or
+    when ``plan.exact_rows=0`` answered the root without a call. Absent from
     :meth:`FetchResult.to_dict` and ``meta_view`` when None."""
     filter_contradictions: int = 0
     """Records whose checkable filter column contradicts the filter of the leaf that returned
@@ -476,8 +478,8 @@ class FetchResult:
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = asdict(self)
         meta = cast("dict[str, object]", payload["meta"])
-        # Written only when a root probe ran, so a result from the default policy serializes
-        # exactly as it did before the field existed.
+        # Written only when a root probe ran, so a result under the "always" policy
+        # serializes exactly as it did before the field existed.
         if meta.get("split_decision") is None:
             meta.pop("split_decision", None)
         receipt = self.planning_receipt

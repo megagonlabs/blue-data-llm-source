@@ -22,6 +22,8 @@ The 0.2.x versions below were internal builds, never published to a package inde
 
 The current packages are 1.0.0. Installed copies of earlier internal builds report their original numbers, so pip ranks an installed 0.1.1.0 to 0.2.2.1 (1.1.0 to 2.2.1) above 1.0.0 and an ordinary upgrade does not select the current release. The CLI and MCP require `blue-data-llm-source[llm]==1.0.0`; the CLI also pins `blue-data==1.0.0` for its protected storage hooks. See [installing exact built wheels](installation.md#installing-exact-built-wheels).
 
+In `partitioned` mode, 1.0.0 asks the root first and splits only when that answer shows one request was not enough, and, when a primary key is known, each part may ask again up to three times: `plan.split_policy` defaults to `evidence` and `plan.max_continuations` to `3`. Set `plan.split_policy="always"` and `plan.max_continuations=0` to get the earlier number of calls. A split on a record's own key, such as `state` for "the US states", is kept only when the request lists the values or you declare them with `plan.identity_partitions`, `plan.distribution_search` and `plan.keys` (direct Python only). The [changelog](../CHANGELOG.md#100--current) has the details.
+
 Version 0.2.2.1 (installed copies report 2.2.1) began masking credential-shaped text in CLI and MCP diagnostics and requiring private on-disk cache directories. See the [changelog](../CHANGELOG.md#0221--unreleased-as-221) for details. That dev release required `blue-data-llm-source[llm]>=2.2.1`.
 
 ## Upgrading from 0.2.1.0 (installed as 2.1.0)
@@ -32,7 +34,7 @@ At the defaults, 0.2.2.0 sends the same prompts and returns the same records as 
 - `ExecMeta` has two new fields ahead of `observed_keys`.
 - The CLI and MCP server required `blue-data-llm-source[llm]>=2.2.0`.
 
-`plan.split_policy="evidence"` is opt-in.
+`plan.split_policy="evidence"` was opt-in in 0.2.2.0. In 1.0.0 it is the `partitioned` default.
 
 ## Upgrading from 0.2.0.0 (installed as 2.0.0)
 

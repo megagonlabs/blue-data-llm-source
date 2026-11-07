@@ -41,6 +41,10 @@ MODE_ROW_BY_ROW: Final = "row_by_row"
 
 MODES: Final = (MODE_FLAT, MODE_PARTITIONED, MODE_ROW_BY_ROW)
 
+# Continuations a partitioned leaf may ask when the caller sets none. Each asks again with the
+# records already held, so the root can add what it left out before any split is considered.
+PARTITIONED_MAX_CONTINUATIONS: Final = 3
+
 
 @dataclass(frozen=True)
 class PlanLimits:
@@ -54,9 +58,10 @@ class PlanLimits:
     max_partitions: int = 20
     target_rows_per_leaf: int = 50
     max_continuations: int = 0
-    """How many times a leaf may ask again for what it did not get. Zero by default.
+    """How many times a leaf may ask again for what it did not get.
 
-    Each continuation is a billed call. The same default applies at every entry point.
+    Each continuation is a billed call. Zero here; ``LlmSource`` uses
+    ``PARTITIONED_MAX_CONTINUATIONS`` for a partitioned request that sets none.
     """
 
     max_schema_candidates: int = 3
@@ -179,17 +184,21 @@ SPLIT_POLICY_ALWAYS: Final = "always"
 SPLIT_POLICY_EVIDENCE: Final = "evidence"
 
 
-def probe_calls(mode: str, split_policy: str = SPLIT_POLICY_ALWAYS) -> int:
-    """Logical calls the root probe makes: one under ``split_policy="evidence"``, else none.
+def probe_calls(
+    mode: str, split_policy: str = SPLIT_POLICY_ALWAYS, max_continuations: int = 0
+) -> int:
+    """Logical calls the root probe makes under ``split_policy="evidence"``, else none.
 
-    The probe is one ask of the root leaf with no continuation and no empty-answer retry, so
-    a single logical call bounds it; its retries are the transport attempts every accessor
-    multiplies by. Only a partitioned plan probes.
+    The probe is the root leaf's ask plus its continuations, without the empty-answer retry;
+    its retries are the transport attempts every accessor multiplies by. Only a partitioned
+    plan probes.
     """
     _check_mode(mode)
     if split_policy not in (SPLIT_POLICY_ALWAYS, SPLIT_POLICY_EVIDENCE):
         raise ConfigError(f"unknown split policy {split_policy!r}")
-    return 1 if mode == MODE_PARTITIONED and split_policy == SPLIT_POLICY_EVIDENCE else 0
+    if mode != MODE_PARTITIONED or split_policy != SPLIT_POLICY_EVIDENCE:
+        return 0
+    return 1 + max_continuations
 
 
 def fact_calls(planning_order: str) -> int:
@@ -233,7 +242,7 @@ def planning_model_calls(
     _check_mode(mode)
     if mode == MODE_FLAT:
         return 0
-    facts = fact_calls(planning_order) + probe_calls(mode, split_policy)
+    facts = fact_calls(planning_order) + probe_calls(mode, split_policy, limits.max_continuations)
     if mode == MODE_ROW_BY_ROW:
         return facts + 1
     if distribution_search:
@@ -327,7 +336,7 @@ def planning_calls(
     # rewrite it into. Charging a rewrite there would inflate the bound on the one shape
     # where the caller is most likely to be watching the cost.
     rewrites = 0 if mode == MODE_FLAT else leaf_limit(limits, mode)
-    return 2 + schema + nodes + rewrites + probe_calls(mode, split_policy)
+    return 2 + schema + nodes + rewrites + probe_calls(mode, split_policy, limits.max_continuations)
 
 
 def execution_calls(limits: PlanLimits, leaves: int) -> int:

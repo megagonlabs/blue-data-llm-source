@@ -100,16 +100,16 @@ A large request can be split into smaller requests. The caller selects the shape
 | Mode | What it does | Extra model calls before extraction |
 |---|---|---|
 | `flat` | Asks once | None |
-| `partitioned` | Splits the ask along a key the planning stages found, asks each part separately, merges on the way back | One fact schedule, then bounded partition proposals |
+| `partitioned` | Asks the root first and, when that answer was not enough, splits the ask along a key the planning stages found, asks each part separately, merges on the way back | One fact schedule, the root's ask and its continuations, then bounded partition proposals |
 | `row_by_row` | Asks once per entity in a list the planning stages enumerated | One fact schedule, then a bounded entity enumeration |
 
 For a non-flat request the planning stages run first, under one of five closed schedules named by `plan.planning_order`. Each stage sends one prompt and parses one JSON object: what the request is actually asking for, what schema the answer should have, and roughly how many rows to expect. The combined schedule makes at most one such call, the two locked schedules at most two, and the other two at most three.
 
 A planning stage that fails to parse does not fail the request. It falls back to what the caller declared, records a diagnostic in `meta.gaps`, and the run continues, so a decomposed request degrades to a flat one rather than raising.
 
-Planning is breadth-first and bounded on all axes: `plan.max_depth`, `plan.max_partitions`, `plan.max_leaves`, `plan.max_strategy_candidates`, and the shared budget. At a partitioned root, values beyond the leaf cap are grouped into at most that many leaves. Other expansions that cannot fit are left intact.
+Planning is breadth-first and bounded on all axes: `plan.max_depth`, `plan.max_partitions`, `plan.max_leaves`, `plan.max_strategy_candidates`, and the shared budget. An expansion that cannot fit is refused and its slice runs as one leaf.
 
-Ready leaves then run concurrently through the leaf driver, each asking the same client under the same budget. Each leaf may ask again for records it did not get, up to `plan.max_continuations`. Records from overlapping parts are merged on an identity built from `plan.keys`, and `meta.record_origins` records which parts produced each record.
+Ready leaves then run concurrently through the leaf driver, each asking the same client under the same budget. Each leaf may ask again for records it did not get, up to `plan.max_continuations`, which is three by default in `partitioned` mode. Records from overlapping parts are merged on an identity built from `plan.keys`, and `meta.record_origins` records which parts produced each record.
 
 Direct Python callers can additionally opt into rule-backed distribution search over finite identity domains they declare. A split is accepted only after containment, pairwise disjointness, and coverage are established, and the result may carry a `PlanningReceipt` binding the configured rule digests, the planning facts, and the plan. The receipt checks internal agreement. It does not verify factual truth, completeness, or answer quality. Neither the command-line interface nor the MCP server exposes distribution search or the receipt.
 

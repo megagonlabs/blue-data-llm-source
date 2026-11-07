@@ -11,7 +11,7 @@ records the reason. All enumerated values remain in the plan; only granularity i
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Final, cast
 
@@ -48,6 +48,7 @@ from blue_data_llm_source.reduction.identity import (
     clean_key_names,
     key_identity,
     normalized_value,
+    typed_identity,
 )
 from blue_data_llm_source.types import (
     Attr,
@@ -1275,6 +1276,64 @@ def _child_query(
     return canonical_child_wording(request, columns)
 
 
+def value_key(value: object, declared: str | None) -> Hashable:
+    """*value* under the column's declared type when it reads as one, else its JSON identity."""
+    typed = typed_identity(value, declared)
+    return typed if typed is not None else value_identity(value)
+
+
+def _names_one_value(constraint: Constraint | None) -> bool:
+    """Whether *constraint* lets a key field take only one value in its slice."""
+    if isinstance(constraint, Exact):
+        return True
+    if isinstance(constraint, OneOf):
+        return len({value_identity(value) for value in constraint.values}) == 1
+    if isinstance(constraint, Range):
+        return constraint.lo == constraint.hi
+    return False
+
+
+def proposal_filters(
+    plan: FetchPlan,
+    *,
+    leaf_id: str,
+    proposal: PartitionProposal,
+    schema: Schema,
+    policy: PartitionPolicy | None = None,
+) -> tuple[str, list[Constraint]]:
+    """The schema field a proposal splits on and the filter each of its values would get.
+
+    The same conversion :func:`apply_partition_proposal` applies, ranges included, but without
+    its checks on count, cap or coverage, so a caller can compare records it already holds with
+    what the children would be asked for before deciding which values a proposal lacks.
+    """
+    policy = policy or PartitionPolicy()
+    leaf = next((candidate for candidate in plan.leaves if candidate.id == leaf_id), None)
+    key = proposal.key.strip()
+    attr = resolve_attr(key, schema.attrs)
+    field_name = attr.name if attr is not None else key
+    values: list[JsonScalar] = []
+    seen: set[object] = set()
+    for raw in proposal.values:
+        value = raw.strip() if isinstance(raw, str) else raw
+        if isinstance(value, str) and not value:
+            continue
+        if value_identity(value) not in seen:
+            seen.add(value_identity(value))
+            values.append(value)
+    if (
+        policy.range_filters
+        and leaf is not None
+        and leaf.constraints.get(field_name) is None
+        and proposal.values_from == VALUES_FROM_ENUMERATION
+        and is_ordinal(_declared_type(schema, field_name))
+    ):
+        typed, failure = typed_children(values)
+        if failure is None and typed is not None:
+            return field_name, list(typed)
+    return field_name, [Exact(value) for value in values]
+
+
 def _proposal_children(
     plan: FetchPlan,
     leaf: Leaf,
@@ -1290,6 +1349,13 @@ def _proposal_children(
     key = proposal.key.strip()
     if not key:
         return [], None, "the partition key was empty"
+    attr = resolve_attr(key, schema.attrs)
+    if attr is None and any(
+        key.casefold() == name.strip().casefold() for name in schema.primary_keys
+    ):
+        return [], None, "ambiguous identity partition key cannot establish domain coverage"
+    if attr is not None:
+        key = attr.name
     if key in _ancestor_keys(plan, leaf):
         return [], None, f"partition key {key!r} repeats an ancestor split"
     if leaf.depth >= limits.max_depth:
@@ -1342,14 +1408,17 @@ def _proposal_children(
     if isinstance(inherited, Range):
         return [], None, f"range constraint on {key!r} cannot be subdivided"
     if isinstance(inherited, OneOf):
+        declared = _declared_type(schema, key)
         known = _dedup(list(inherited.values))
-        known_set = {value_identity(value) for value in known}
+        known_set = {value_key(value, declared) for value in known}
         admitted = [
-            (value, estimate) for value, estimate in paired if value_identity(value) in known_set
+            (value, estimate)
+            for value, estimate in paired
+            if value_key(value, declared) in known_set
         ]
         if (
             len(admitted) != len(known)
-            or {value_identity(value) for value, _ in admitted} != known_set
+            or {value_key(value, declared) for value, _ in admitted} != known_set
         ):
             return [], None, f"proposal does not cover every known value for {key!r}"
         paired = admitted
@@ -1455,29 +1524,68 @@ def apply_partition_proposal(
             attempted_proposals=attempts,
         )
 
+    if applied_decision is not None and (
+        schema_contract or plan.schema_contract
+    ) != PlanSchemaContract.from_schema(schema):
+        raise ConfigError("applied partition decision schema does not match the current schema")
+
     notes = list(plan.notes)
     cardinality = leaf.cardinality
+    lower = (
+        cardinality.lower
+        if cardinality is not None and cardinality.parse_status == PARSE_PARSED
+        else None
+    )
     child_estimates = [
         child.cardinality.expected if child.cardinality is not None else None for child in children
     ]
+    total = (
+        sum(value for value in child_estimates if value is not None)
+        if all(value is not None for value in child_estimates)
+        else None
+    )
+
+    # A model asked for a partition often lists examples. If the split field is the only key
+    # field still open in this slice, each value names one record, so keep the slice whole
+    # unless the request or the caller supplied the values. A key field that leaves others
+    # open, as year does in (country, year), groups records like any category.
+    split_attr = resolve_attr(node.key, schema.attrs)
+    split_field = split_attr.name if split_attr is not None else node.key
+    open_keys = [
+        name for name in schema.primary_keys if not _names_one_value(leaf.constraints.get(name))
+    ]
     if (
-        cardinality is not None
-        and cardinality.parse_status == PARSE_PARSED
-        and cardinality.lower is not None
-        and all(value is not None for value in child_estimates)
+        open_keys == [split_field]
+        and not isinstance(leaf.constraints.get(node.key), OneOf)
+        and applied_decision is None
     ):
-        total = sum(value for value in child_estimates if value is not None)
-        if total < cardinality.lower:
-            notes.append(
+        return replace(
+            plan,
+            notes=[
+                *plan.notes,
                 Note(
-                    code=Gap.SPLIT_COVERAGE_SHORT,
+                    code=Gap.GUARD_COLLAPSED,
                     target_id=leaf.id,
                     detail=(
-                        f"slice {leaf.id} child estimates total {total}, below the parent "
-                        f"model's lower estimate {cardinality.lower} (estimate-based warning)"
+                        f"split on {node.key!r} lists individual records, and nothing shows "
+                        "the list is complete; keeping the slice as one request"
                     ),
-                )
+                ),
+            ],
+            attempted_proposals=attempts,
+        )
+
+    if lower is not None and total is not None and total < lower:
+        notes.append(
+            Note(
+                code=Gap.SPLIT_COVERAGE_SHORT,
+                target_id=leaf.id,
+                detail=(
+                    f"slice {leaf.id} child estimates total {total}, below the parent "
+                    f"model's lower estimate {lower} (estimate-based warning)"
+                ),
             )
+        )
 
     at = plan.leaves.index(leaf)
     leaves = [*plan.leaves[:at], *children, *plan.leaves[at + 1 :]]

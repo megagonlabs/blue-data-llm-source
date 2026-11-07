@@ -85,6 +85,8 @@ def test_alias_key_inference_preserves_caller_authority_and_no_key_fallback(
         attrs=attrs,
         properties={
             "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
             "plan.planning_order": schedule,
             "plan.max_depth": 0,
             "plan.keys": list(caller_keys),

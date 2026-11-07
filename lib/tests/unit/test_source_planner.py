@@ -213,7 +213,14 @@ class TestDecompositionActuallyDecomposes:
 
     def test_partitioned_asks_once_per_value(self) -> None:
         model = Planner()
-        result = plan_fetch(model, **{"plan.mode": "partitioned"})
+        result = plan_fetch(
+            model,
+            **{
+                "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
+            },
+        )
 
         assert len(model.analyze_prompts) == 1
         assert len(model.fetch_prompts) == 3
@@ -223,7 +230,14 @@ class TestDecompositionActuallyDecomposes:
         """A partitioned plan separates its parts by constraint alone. Identical prompts
         would return one part's rows three times."""
         model = Planner()
-        plan_fetch(model, **{"plan.mode": "partitioned"})
+        plan_fetch(
+            model,
+            **{
+                "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
+            },
+        )
 
         for value in ("North", "South", "Corsica"):
             assert any(value in p for p in model.fetch_prompts), value
@@ -249,13 +263,27 @@ class TestDecompositionActuallyDecomposes:
         stays distinguishable from a small one. A run given a usable count must not report
         that it had none."""
         model = Planner()
-        result = plan_fetch(model, **{"plan.mode": "partitioned"})
+        result = plan_fetch(
+            model,
+            **{
+                "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
+            },
+        )
 
         assert not [g for g in result.meta.gaps if "estimate_unknown" in g]
 
     def test_an_analysis_with_nothing_to_split_on_collapses_and_says_so(self) -> None:
         model = Planner(json.dumps({"ask": "airports", "constraints": {}}))
-        result = plan_fetch(model, **{"plan.mode": "partitioned"})
+        result = plan_fetch(
+            model,
+            **{
+                "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
+            },
+        )
 
         assert len(model.fetch_prompts) == 1
         assert any("guard_collapsed" in g for g in result.meta.gaps)
@@ -270,21 +298,44 @@ class TestDecompositionActuallyDecomposes:
                 return super().__call__(prompt, properties)
 
         model = Failing()
-        result = plan_fetch(model, **{"plan.mode": "partitioned"})
+        result = plan_fetch(
+            model,
+            **{
+                "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
+            },
+        )
 
         assert len(result.records) == 1
         assert result.meta.outcome == Outcome.OK
 
     def test_a_caller_named_partition_key_is_honored(self) -> None:
         model = Planner()
-        result = plan_fetch(model, **{"plan.mode": "partitioned", "plan.partition_key": "region"})
+        result = plan_fetch(
+            model,
+            **{
+                "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
+                "plan.partition_key": "region",
+            },
+        )
         assert len(model.fetch_prompts) == 3
         assert len(result.records) == 3
 
     def test_a_partition_key_the_analysis_did_not_enumerate_collapses(self) -> None:
         """A silent substitution would split on a key the caller did not choose."""
         model = Planner()
-        result = plan_fetch(model, **{"plan.mode": "partitioned", "plan.partition_key": "airline"})
+        result = plan_fetch(
+            model,
+            **{
+                "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
+                "plan.partition_key": "airline",
+            },
+        )
         assert len(model.fetch_prompts) == 1
         assert any("guard_collapsed" in g for g in result.meta.gaps)
 
@@ -300,7 +351,14 @@ class TestTheSplitPreservesTheScopeItAnalyzed:
                 {"ask": "airports", "constraints": {"region": ["Corsica"]}, "row_estimate": 4}
             )
         )
-        plan_fetch(model, **{"plan.mode": "partitioned"})
+        plan_fetch(
+            model,
+            **{
+                "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
+            },
+        )
 
         assert len(model.fetch_prompts) == 1
         assert "Corsica" in model.fetch_prompts[0]
@@ -311,7 +369,15 @@ class TestTheSplitPreservesTheScopeItAnalyzed:
         model = Planner(
             json.dumps({"ask": "airports", "constraints": {"region": values}, "row_estimate": 80})
         )
-        plan_fetch(model, **{"plan.mode": "partitioned", "plan.max_leaves": 4})
+        plan_fetch(
+            model,
+            **{
+                "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
+                "plan.max_leaves": 4,
+            },
+        )
 
         assert len(model.fetch_prompts) == 1
         for value in values:
@@ -327,7 +393,14 @@ class TestTheSplitPreservesTheScopeItAnalyzed:
                 }
             )
         )
-        result = plan_fetch(model, **{"plan.mode": "partitioned"})
+        result = plan_fetch(
+            model,
+            **{
+                "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
+            },
+        )
 
         assert len(model.fetch_prompts) == 2
         assert len(result.records) == 2
@@ -347,7 +420,14 @@ class TestTheSplitPreservesTheScopeItAnalyzed:
                 }
             )
         )
-        plan_fetch(model, **{"plan.mode": "partitioned"})
+        plan_fetch(
+            model,
+            **{
+                "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
+            },
+        )
 
         hostile = next(p for p in model.fetch_prompts if "Ignore previous" in p)
         assert not any(line.startswith("Ignore previous") for line in hostile.splitlines()), (
@@ -366,6 +446,8 @@ class TestTheSplitPreservesTheScopeItAnalyzed:
             llm_fn=model,
             properties={
                 "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
                 "plan.planning_order": "planning.combined",
             },
         )

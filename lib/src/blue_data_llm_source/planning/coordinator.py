@@ -58,7 +58,9 @@ from blue_data_llm_source.planning.plan import (
     build_entity_plan,
     build_key_tuple_plan,
     partition_keys,
+    proposal_filters,
     root_plan,
+    value_key,
 )
 from blue_data_llm_source.planning.schedules import (
     build_planning_context,
@@ -88,13 +90,19 @@ from blue_data_llm_source.planning.split_gate import (
     decide,
     held_from_records,
 )
+from blue_data_llm_source.reduction.aligner import align
+from blue_data_llm_source.reduction.identity import key_identity, typed_identity
 from blue_data_llm_source.types import (
     Attr,
+    BudgetExceeded,
     ConfigError,
     Constraint,
     Exact,
+    JsonScalar,
     OneOf,
+    Range,
     Usage,
+    resolve_attr,
     value_identity,
 )
 
@@ -164,6 +172,9 @@ class PlanningBundle:
     diagnostics: list[str] = field(default_factory=list[str])
     probe: ProbeOutcome | None = None
     """The root probe under ``split_policy="evidence"``, or None when none ran."""
+
+    refusal: BudgetExceeded | None = None
+    """The budget refusal that ended optional planning, or None."""
 
 
 def partition_proposal_from_response(
@@ -326,6 +337,88 @@ def _fetch_prompt(
     if probed is None or leaf.parent_id is None:
         return prompt
     return prompts.with_held(prompt, probed.held, probed.held_total)
+
+
+def _by_schema_name(constraints: Mapping[str, Constraint], schema: Schema) -> dict[str, Constraint]:
+    """The request scope keyed by the schema field each constraint names, where one is named.
+
+    Splits, guards and declared decisions read fields by schema name, so a scope kept under the
+    analysis's own spelling would be a second name for the same field. Two spellings of one
+    field are combined by intersection, since a record has to satisfy both.
+    """
+    scoped: dict[str, Constraint] = {}
+    for key, constraint in constraints.items():
+        name = _field_name(key, schema)
+        scoped[name] = (
+            intersect_constraints(scoped[name], constraint) if name in scoped else constraint
+        )
+    return scoped
+
+
+def _field_name(name: str, schema: Schema) -> str:
+    """The schema attribute *name* refers to, or the name as written."""
+    attr = resolve_attr(name.strip(), schema.attrs)
+    return attr.name if attr is not None else name.strip()
+
+
+def _asks_for(constraint: Constraint, value: object, declared: str | None) -> bool:
+    """Whether a child filtered by *constraint* is asked for records holding *value*."""
+    if isinstance(constraint, Range):
+        typed = typed_identity(value, "integer")
+        return typed is not None and constraint.contains(cast("tuple[str, object]", typed)[1])
+    options = constraint.values if isinstance(constraint, OneOf) else (constraint.value,)
+    return any(value_key(option, declared) == value_key(value, declared) for option in options)
+
+
+def _with_probe_values(
+    plan: FetchPlan,
+    leaf: Leaf,
+    proposal: PartitionProposal,
+    probed: ProbeOutcome,
+    schema: Schema,
+    policy: PartitionPolicy | None,
+) -> tuple[PartitionProposal, int]:
+    """The proposal with every split value the probe's keyed records hold and no child asks for.
+
+    Children are asked only for their own values, so the rest of a group the probe saw but no
+    child names would never be asked for. Values are compared with the filters the children
+    would get. An added value's estimate is how many distinct keys the probe holds for it.
+    Records without a complete key are skipped. Returns the proposal and how many values were
+    added.
+    """
+    key, filters = proposal_filters(
+        plan, leaf_id=leaf.id, proposal=proposal, schema=schema, policy=policy
+    )
+    attr = resolve_attr(key, schema.attrs)
+    declared = attr.type if attr is not None else None
+    added: dict[Hashable, tuple[JsonScalar, set[Hashable]]] = {}
+    for record in align(
+        [dict(record) for record in probed.run.records], list(schema.attrs)
+    ).records:
+        identity = key_identity(record, schema.primary_keys, schema.attrs)
+        value = record.get(key)
+        if identity is None or not _scalar(value):
+            continue
+        if any(_asks_for(constraint, value, declared) for constraint in filters):
+            continue
+        group = value_key(value, declared)
+        added.setdefault(group, (cast("JsonScalar", value), set()))[1].add(identity.normalized)
+    if not added:
+        return proposal, 0
+    estimates = list(proposal.child_estimates[: len(proposal.values)])
+    estimates += [None] * (len(proposal.values) - len(estimates))
+    return replace(
+        proposal,
+        values=(*proposal.values, *(value for value, _ in added.values())),
+        child_estimates=(*estimates, *(len(keys) for _, keys in added.values())),
+    ), len(added)
+
+
+def _scalar(value: object) -> bool:
+    """Whether a record value can name a split value: not None, blank, a dict or a list."""
+    if value is None or isinstance(value, (dict, list)):
+        return False
+    return not (isinstance(value, str) and not value.strip())
 
 
 def _rejected_attempt(plan: FetchPlan, leaf: Leaf, reason: str) -> FetchPlan:
@@ -502,10 +595,34 @@ async def coordinate_plan(
         mode=mode,
         original_query=original_query,
         retrieval_query=analysis.ask,
-        constraints=analysis.constraints,
+        constraints=_by_schema_name(analysis.constraints, schema),
         estimate=analysis.row_estimate,
         cardinality=analysis.cardinality,
     )
+    empty = [
+        name
+        for name, value in prospective.leaves[0].constraints.items()
+        if isinstance(value, OneOf) and not value.values
+    ]
+    if empty:
+        diagnostics.append(
+            "bootstrap returned an explicit empty constraint"
+            if any(
+                isinstance(value, OneOf) and not value.values
+                for value in analysis.constraints.values()
+            )
+            else f"the request scope for {empty[0]!r} has no value every spelling allows"
+        )
+        return PlanningBundle(
+            plan=prospective,
+            analysis=analysis,
+            schema=schema,
+            facts=base_facts,
+            context=context,
+            usages=context_usages,
+            diagnostics=diagnostics,
+        )
+
     if extraction_fits(
         client,
         budget,
@@ -521,20 +638,6 @@ async def coordinate_plan(
             plan=protected,
             analysis=base_analysis,
             schema=declared_schema,
-            facts=base_facts,
-            context=context,
-            usages=context_usages,
-            diagnostics=diagnostics,
-        )
-
-    if any(
-        isinstance(value, OneOf) and not value.values for value in analysis.constraints.values()
-    ):
-        diagnostics.append("bootstrap returned an explicit empty constraint")
-        return PlanningBundle(
-            plan=plan,
-            analysis=analysis,
-            schema=schema,
             facts=base_facts,
             context=context,
             usages=context_usages,
@@ -562,17 +665,23 @@ async def coordinate_plan(
 
     probed: ProbeOutcome | None = None
     if split_policy == SPLIT_EVIDENCE and _eligible(plan.leaves[0], limits):
-        # Before any proposal: the root is asked once, and its answer decides whether a
-        # proposal is worth making. A root that cannot split is not probed, because the leaf
-        # that would run instead is the same ask.
+        # Before any proposal: the root is asked, with its continuations, and its answer
+        # decides whether a proposal is worth making. A root that cannot split is not probed,
+        # because the leaf that would run instead is the same ask.
         if probe is None:
             raise ConfigError("split_policy='evidence' needs a probe to run the root leaf")
         root = plan.leaves[0]
         run = await probe(root, schema)
-        if run.budget_denied and run.exception is not None:
+        if run.budget_denied and run.exception is not None and not run.answered:
             # Refused before it could answer: nothing is known, and a split would need more.
             raise run.exception
-        decision = decide(run, root.cardinality, split_threshold_rows, probe_exact_rows)
+        # A continuation refused after the root answered keeps that answer, and planning goes
+        # no further: a split would need more of the budget that just ran out.
+        decision = (
+            PROBE_ACCEPTED
+            if run.budget_denied
+            else decide(run, root.cardinality, split_threshold_rows, probe_exact_rows)
+        )
         held, held_total = (
             held_from_records(
                 run.records,
@@ -597,6 +706,7 @@ async def coordinate_plan(
                 probe=probed,
             )
 
+    refusal: BudgetExceeded | None = None
     frontier = [plan.leaves[0]]
     candidates_considered = 0
     distribution_attempts = 0
@@ -696,9 +806,16 @@ async def coordinate_plan(
                     diagnostics.append(f"{leaf.id}: distribution skipped to preserve extraction")
                     break
                 distribution_attempts += 1
-                response, was_truncated = await call_planning_model(
-                    client, distribution_prompt, props, usages
-                )
+                try:
+                    response, was_truncated = await call_planning_model(
+                        client, distribution_prompt, props, usages
+                    )
+                except BudgetExceeded as exc:
+                    if probed is None:
+                        raise
+                    refusal = exc
+                    plan = _rejected_attempt(plan, leaf, f"distribution refused by {exc.limit}")
+                    break
                 stats = DistributionEstimator.parse(
                     response if not was_truncated else None,
                     rule=rule,
@@ -727,6 +844,8 @@ async def coordinate_plan(
                 )
                 candidates.append(candidate)
             usable_candidates += len(candidates)
+            if refusal is not None:
+                break
             selected = StrategyEvaluator.select(candidates)
             if selected is None:
                 selected_safety = last_safety or PartitionSafety(
@@ -826,7 +945,16 @@ async def coordinate_plan(
         ):
             diagnostics.append(f"{leaf.id}: proposal skipped to preserve extraction")
             break
-        response, was_truncated = await call_planning_model(client, proposal_prompt, props, usages)
+        try:
+            response, was_truncated = await call_planning_model(
+                client, proposal_prompt, props, usages
+            )
+        except BudgetExceeded as exc:
+            if probed is None:
+                raise
+            refusal = exc
+            plan = _rejected_attempt(plan, leaf, f"proposal refused by {exc.limit}")
+            break
         if response is not None and not was_truncated:
             proposal, proposal_failure = partition_proposal_from_response(response, limits)
         elif was_truncated:
@@ -837,7 +965,7 @@ async def coordinate_plan(
             leaf.depth == 0
             and partition_key is not None
             and proposal is not None
-            and proposal.key != partition_key
+            and _field_name(proposal.key, schema) != _field_name(partition_key, schema)
         ):
             diagnostics.append(
                 f"{leaf.id}: proposal key {proposal.key!r} did not match "
@@ -845,6 +973,15 @@ async def coordinate_plan(
             )
             proposal_failure = "partition key did not match the requested key"
             proposal = None
+        if proposal is not None and leaf.depth == 0 and probed is not None:
+            proposal, added = _with_probe_values(plan, leaf, proposal, probed, schema, policy)
+            width = len({value_identity(value) for value in proposal.values})
+            if added and width > limits.max_partitions:
+                diagnostics.append(f"{leaf.id}: proposal omitted {added} values the probe returned")
+                proposal_failure = "proposal omitted values the probe returned"
+                proposal = None
+            elif added:
+                diagnostics.append(f"{leaf.id}: added {added} values the probe returned")
         candidate = apply_partition_proposal(
             plan,
             leaf_id=leaf.id,
@@ -873,6 +1010,8 @@ async def coordinate_plan(
         plan = candidate
         frontier.extend(children)
 
+    if refusal is not None:
+        diagnostics.append(f"planning_unserved: {refusal.limit} refused optional planning")
     last_decision = (
         plan.applied_partition_decisions[-1] if plan.applied_partition_decisions else None
     )
@@ -910,6 +1049,7 @@ async def coordinate_plan(
         usages=planning_usages(usages, usage_start),
         diagnostics=diagnostics,
         probe=probed,
+        refusal=refusal,
     )
 
 

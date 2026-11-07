@@ -348,7 +348,12 @@ def test_drop_happens_before_reduction_can_merge_the_record(
             {"name": "region", "type": "string"},
             {"name": "note", "type": "string"},
         ],
-        properties={"plan.mode": "partitioned", "plan.filter_enforcement": enforcement},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+            "plan.filter_enforcement": enforcement,
+        },
     )
     assert result.records == [{"name": "Alpha", "region": "South", "note": note}]
     assert result.meta.record_origins == origins

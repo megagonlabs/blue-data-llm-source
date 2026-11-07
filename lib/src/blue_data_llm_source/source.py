@@ -35,6 +35,7 @@ from blue_data_llm_source.planning.bounds import (
     MODE_FLAT,
     MODE_PARTITIONED,
     MODES,
+    PARTITIONED_MAX_CONTINUATIONS,
     PlanLimits,
 )
 from blue_data_llm_source.planning.cardinality import PARSE_PARSED, Cardinality, CardinalityEstimate
@@ -706,6 +707,8 @@ class LlmSource(DataSource):
             for key, value in merged.items()
             if key.startswith("plan.") and key[len("plan.") :] in _PLAN_LIMIT_KEYS
         }
+        if merged.get("plan.mode") == MODE_PARTITIONED:
+            given.setdefault("max_continuations", PARTITIONED_MAX_CONTINUATIONS)
         return PlanLimits(**given)
 
     @staticmethod
@@ -918,7 +921,9 @@ class LlmSource(DataSource):
                 "plan.partition_guardrails requires plan.mode='partitioned', the only mode "
                 "that asks a model to propose a partition"
             )
-        split_policy = merged.get("plan.split_policy", SPLIT_ALWAYS)
+        split_policy = merged.get(
+            "plan.split_policy", SPLIT_EVIDENCE if mode == MODE_PARTITIONED else SPLIT_ALWAYS
+        )
         if not isinstance(split_policy, str) or split_policy not in SPLIT_POLICIES:
             raise ConfigError(
                 f"unknown plan.split_policy {split_policy!r}; expected one of "
@@ -1318,9 +1323,14 @@ class LlmSource(DataSource):
         probe_sink: list[Usage] = []
 
         async def probe(leaf: Any, effective: Schema) -> LeafRun:
-            """The root leaf, asked once: the same task execution would send, minus the
-            continuations and the empty-answer retry, which the probe's bound does not buy."""
-            probe_limits = replace(plan_limits, max_continuations=0, empty_leaf_retry=False)
+            """The root leaf, asked as execution would ask it, with its continuations but
+            without the empty-answer retry."""
+            # Without a key, continuations cannot merge, as at execution below.
+            probe_limits = replace(
+                plan_limits,
+                empty_leaf_retry=False,
+                max_continuations=plan_limits.max_continuations if effective.primary_keys else 0,
+            )
             task = LeafTask.from_leaf(
                 leaf,
                 caller_context=ctx,
@@ -1336,6 +1346,7 @@ class LlmSource(DataSource):
                 task, client=client, properties=provider_properties, usage_sink=probe_sink
             )
 
+        planning_refusal: BudgetExceeded | None = None
         planning_receipt: PlanningReceipt | None = None
         probed: ProbeOutcome | None = None
         if mode == MODE_FLAT:
@@ -1392,6 +1403,7 @@ class LlmSource(DataSource):
             schema = bundle.schema
             call_usages.extend(probe_sink)
             probed = bundle.probe
+            planning_refusal = bundle.refusal
             # Published only when the probe asked something. A zero-row target answers the
             # root without a call, and a decision about a call never made would say otherwise.
             if probed is not None and probed.run.attempts > 0:
@@ -1479,6 +1491,17 @@ class LlmSource(DataSource):
             runs = (
                 [cast("ProbeOutcome", probed).run]
                 if answered_by_probe
+                else [
+                    LeafRun(
+                        leaf_id=leaf.id,
+                        outcome=Outcome.STOPPED_BY_LIMIT,
+                        stopped_by=planning_refusal.limit,
+                        error=f"planning refused by {planning_refusal.limit}",
+                        exception=planning_refusal,
+                    )
+                    for leaf in plan.leaves
+                ]
+                if planning_refusal is not None
                 else await self._run_leaves(
                     plan,
                     make_ask,
@@ -1556,9 +1579,11 @@ class LlmSource(DataSource):
             for run in runs
         ]
 
-        # Stop reasons come from the leaves that answered the plan. A probe the plan split
-        # after is not one of them: its truncation or shortfall is why the children ran.
+        # Children can recover the probe's truncation. A planning refusal leaves that
+        # recovery unserved, so the probe's stop reasons still apply.
         run_stop_reasons = _run_stop_reasons(runs)
+        if planning_refusal is not None and probed is not None and not answered_by_probe:
+            run_stop_reasons = _ordered_distinct(run_stop_reasons, _run_stop_reasons([probed.run]))
         counted = list(runs)
         if probed is not None and not answered_by_probe and probed.run.ordinary_failure:
             # The split recovered from it, but a failure is still a failure: said, not hidden
@@ -1598,14 +1623,20 @@ class LlmSource(DataSource):
         ]
         answered_any = any(run.answered for run in counted)
         retained_any = any(run.records for run in counted)
-        if any(run.ordinary_failure for run in runs) and not answered_any and not retained_any:
+        failed_runs = counted if planning_refusal is not None else runs
+        if (
+            any(run.ordinary_failure for run in failed_runs)
+            and not answered_any
+            and not retained_any
+        ):
             self._fold_usage(call_usages, meta, run_budget, self._attests(client))
             stop_reasons = _ordered_distinct(
                 run_stop_reasons,
+                [planning_refusal.limit] if planning_refusal is not None else [],
                 meta.stop_reasons,
                 [meta.stopped_by] if meta.stopped_by else [],
             )
-            error = _execution_failure(runs, stop_reasons)
+            error = _execution_failure(failed_runs, stop_reasons)
             raise error from error.__cause__
 
         records, coverage = reduce_leaves(plan, schema, results)
@@ -1671,6 +1702,7 @@ class LlmSource(DataSource):
         meta.unchecked_types = verifier.unchecked_types(attrs)
         meta.stop_reasons = _ordered_distinct(
             run_stop_reasons,
+            [planning_refusal.limit] if planning_refusal is not None else [],
             ["max_rows"] if row_cap_fired else [],
         )
         self._fold_usage(call_usages, meta, run_budget, self._attests(client))
@@ -1679,7 +1711,7 @@ class LlmSource(DataSource):
             [meta.stopped_by] if meta.stopped_by else [],
         )
         meta.stopped_by = meta.stop_reasons[0] if meta.stop_reasons else None
-        interrupted = coverage.run_outcome == Outcome.PARTIAL
+        interrupted = coverage.run_outcome == Outcome.PARTIAL or planning_refusal is not None
         meta.outcome = decide_outcome(
             deduped,
             records,

@@ -166,7 +166,7 @@ def test_partition_keys_are_what_the_root_does_not_carry() -> None:
         schema=_schema(),
         limits=PlanLimits(),
     )
-    assert [partition_keys(plan, leaf) for leaf in plan.leaves] == [("Composer",), ("Composer",)]
+    assert [partition_keys(plan, leaf) for leaf in plan.leaves] == [("composer",), ("composer",)]
 
 
 def test_canonical_wording_names_only_partition_introduced_columns() -> None:
@@ -284,6 +284,8 @@ def _fetch(split: bool) -> tuple[ScriptedClient, FetchResult]:
         ],
         properties={
             "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
             "plan.leaf_prompt": COMPLETE,
             "plan.filter_enforcement": "drop",
         },

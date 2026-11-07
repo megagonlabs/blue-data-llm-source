@@ -681,7 +681,12 @@ def test_source_defaults_nonflat_planning_to_schema_first() -> None:
         "places",
         attrs=["name"],
         llm_fn=model,
-        properties={"plan.mode": "partitioned", "plan.max_depth": 0},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+            "plan.max_depth": 0,
+        },
     )
     assert result.records == [{"name": "Paris"}]
     assert "prepare a data request" in sent[0]

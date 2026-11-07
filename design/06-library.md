@@ -132,12 +132,23 @@ Fetches records for `query`. Returns a `FetchResult`.
    then the injected client, then a `DefaultLlmClient` holding the budget.
 5. Refuse every configured ceiling whose axis the resolved client does not declare, then place the run's budget in the per-call properties under the key `budget` and a fresh list under the key `usage_sink`.
 6. Outside `flat`, build immutable query-analysis, schema, and cardinality facts in the selected `plan.planning_order`. `LlmSource` defaults to `planning.schema_first`; `planning.combined` retains the one-call bootstrap contract for compatibility. Each independent stage has its own prompt and parser, so a malformed result can fall back without another model call. Cancellation and process interrupts propagate.
-7. Coordinate the task tree breadth first. Ordinary `partitioned` planning attempts one proposal per
-   eligible slice and accepts a split only when every child is valid, the known parent value set is
-   preserved, and the whole expansion fits. With distribution search enabled, a bounded set of
-   applicable declared strategies is evaluated and `PartitionSafety` must accept containment,
-   pairwise disjointness, and coverage before the split is used. `row_by_row` uses an explicit key
-   list or a bounded enumeration; if the complete entity plan cannot fit, it keeps one batch leaf.
+7. Coordinate the task tree breadth first. Under `plan.split_policy="evidence"`, the `partitioned`
+   default, the root leaf is first asked with its continuations, and proposals follow only when that
+   answer shows one request was not enough; otherwise it is the result. Split-key values in its
+   keyed records that no proposed child asks for are added to the root proposal, which is refused if
+   they take it past `plan.max_partitions`. Ordinary `partitioned` planning attempts one proposal
+   per eligible slice and accepts a split only when every child is valid, the known parent value set
+   is preserved, and the whole expansion fits. A split on the only key field the slice leaves open
+   lists individual records, so it also needs an inherited `OneOf` list or a validated
+   declared-domain decision; otherwise the slice stays one leaf, the reason is recorded as
+   `guard_collapsed`, and the proposal stays charged. A key field that leaves others open groups
+   records and splits like any category. Request-scope keys are stored under the schema field they
+   name, and two spellings of one field are intersected. An accepted split whose child estimates
+   total less than the parent's lower estimate is reported as `split_coverage_short`. With
+   distribution search enabled, a bounded set of applicable declared strategies is evaluated and
+   `PartitionSafety` must accept containment, pairwise disjointness, and coverage before the split
+   is used. `row_by_row` uses an explicit key list or a bounded enumeration; if the complete entity
+   plan cannot fit, it keeps one batch leaf.
 8. Before an optional planning call, check that the call and one extraction attempt fit current call, cost, and deadline headroom. Locked parallel planning first checks aggregate room for every permitted attempt of both siblings and one extraction attempt. These checks do not reserve budget; each provider attempt still uses the budget's ordinary reservation, so an unrelated concurrent consumer may spend the shared headroom after the check.
 9. Run the plan's parts concurrently. A flat leaf calls `execution.arun_leaf` and renders
    `prompts.build_fetch_prompt`. A non-flat leaf crosses the versioned `LeafTask` boundary through
@@ -350,7 +361,7 @@ class ExecMeta:
 
 What happened during a fetch, alongside the records. `observed_keys` lists every key the model produced, `remapped_keys` maps a returned key to the requested attribute it was matched to, and `unmapped_keys` lists keys with no match. `type_mismatches` lists the values that would not coerce to their declared types. `key_collisions` lists returned keys whose values were not used because another key had already answered the same attribute. `stop_reasons` is always present and retains every observed stop fact; `stopped_by` is its first member. `gaps` is always present and carries supported operational diagnostics, not a completeness result. `requested_attrs` remains the caller declaration.
 
-`cardinality_estimate` is the accepted non-flat bootstrap estimate with `expected`, `lower`, `upper`, `row_unit`, `source`, `parse_status`, and `diagnostics`; `None` means flat mode or that planning did not produce the structure. `row_estimate` is its `expected` value for compatibility. Both are planning evidence, not measured row counts or completeness measures. `primary_keys` is the ordered set of identifying attributes used for execution and reduction. `observed_key_count` counts distinct complete keys in the final returned records, after reduction, deduplication, and the row cap. `marginal_key_yields` records the new normalized key identities from each extraction attempt in leaf order; without primary keys it counts new exact records. `incomplete_key_records` counts distinct per-leaf records missing at least one primary-key value. `normalization_collisions` reports per-leaf key spellings that compare equal after declared-type-aware normalization, with `primary_keys`, `kept`, and `collided` in each entry. `repaired_numbers` counts numbers the model wrote with thousands separators in an object value, such as `4,470`, that were read as `4470`; such a response is not valid JSON and is read only after that one repair. `filter_contradictions` counts records whose checkable filter column contradicts the filter of the leaf that returned them, once per record and before reduction; `plan.filter_enforcement` decides whether they are kept (`flag`) or removed at the leaf (`drop`), and zero means none was observed, not that every leaf obeyed. `split_decision` says what the root probe decided under `plan.split_policy="evidence"`: `probe_accepted`, `probe_split_length`, `probe_split_incomplete`, `probe_split_shortfall` or `probe_split_failed`; it is `None` under the default policy or when the root could not split and was not probed. These observations do not establish that all keys or rows were found.
+`cardinality_estimate` is the accepted non-flat bootstrap estimate with `expected`, `lower`, `upper`, `row_unit`, `source`, `parse_status`, and `diagnostics`; `None` means flat mode or that planning did not produce the structure. `row_estimate` is its `expected` value for compatibility. Both are planning evidence, not measured row counts or completeness measures. `primary_keys` is the ordered set of identifying attributes used for execution and reduction. `observed_key_count` counts distinct complete keys in the final returned records, after reduction, deduplication, and the row cap. `marginal_key_yields` records the new normalized key identities from each extraction attempt in leaf order; without primary keys it counts new exact records. `incomplete_key_records` counts distinct per-leaf records missing at least one primary-key value. `normalization_collisions` reports per-leaf key spellings that compare equal after declared-type-aware normalization, with `primary_keys`, `kept`, and `collided` in each entry. `repaired_numbers` counts numbers the model wrote with thousands separators in an object value, such as `4,470`, that were read as `4470`; such a response is not valid JSON and is read only after that one repair. `filter_contradictions` counts records whose checkable filter column contradicts the filter of the leaf that returned them, once per record and before reduction; `plan.filter_enforcement` decides whether they are kept (`flag`) or removed at the leaf (`drop`), and zero means none was observed, not that every leaf obeyed. `split_decision` says what the root probe decided under `plan.split_policy="evidence"`: `probe_accepted`, `probe_split_length`, `probe_split_incomplete`, `probe_split_shortfall` or `probe_split_failed`; it is `None` under `always` or when the root could not split and was not probed. These observations do not establish that all keys or rows were found.
 
 `record_origins` runs parallel to records, and `asked` carries a restated query when one ran.
 
@@ -786,7 +797,7 @@ Every message names the offending value and the accepted form, because a caller 
 | `build_cardinality_prompt(...)` | `str` | Independent cardinality prompt |
 | `build_bootstrap_prompt(...)` | `str` | Compatible combined analysis, schema, and cardinality prompt |
 | `render_value_count(parent_expected, target_rows_per_leaf, max_partitions)` | `str` | The `partition-2` value-count rule, calibrated against the slice's estimate |
-| `build_partition_prompt(..., prompt_version, parent_expected, target_rows_per_leaf)` | `str` | Partition-proposal prompt; `prompt_version` selects `partition-1` (default, the 0.2.1.0 text) or `partition-2`, which adds key and value rules |
+| `build_partition_prompt(..., prompt_version, parent_expected, target_rows_per_leaf)` | `str` | Partition-proposal prompt; `prompt_version` selects `partition-1` (default) or `partition-2`, which adds key and value rules |
 | `build_distribution_prompt(...)` | `str` | Rule-backed distribution prompt |
 | `build_entity_prompt(...)` | `str` | Row-by-row entity-enumeration prompt |
 

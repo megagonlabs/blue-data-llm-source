@@ -20,8 +20,8 @@ flat with continuations: the same part asks again, merging on plan.key
   outcome  ok
   gaps     []
 
-partitioned: bootstrap, one partition proposal, then one extraction per part
-  calls    ['bootstrap', 'proposal', 'extract', 'extract', 'extract']
+partitioned: bootstrap, the whole ask once (empty here), a partition proposal, then each part with one continuation that finds nothing new
+  calls    ['bootstrap', 'extract', 'proposal', 'extract', 'extract', 'extract', 'extract', 'extract', 'extract']
   records 
       {'name': 'Charles de Gaulle', 'city': 'Paris'}
       {'name': 'Orly', 'city': 'Paris'}

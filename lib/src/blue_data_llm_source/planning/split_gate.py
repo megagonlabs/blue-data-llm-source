@@ -3,16 +3,17 @@
 Under ``plan.split_policy="always"`` the root of a partitioned plan is split whatever it
 holds. Many requests are answered whole by one call, and
 splitting those asks each child a narrower question and merges back less than the root would
-have returned. Under ``"evidence"`` the root leaf is asked once first, as a probe, and the
-plan splits only when that answer shows the one call did not hold the request: the provider
-said its output allowance ended the response, the answer ended mid-document and only its
-complete records could be read, the answer holds fewer than half the keys an estimate above
-``plan.split_threshold_rows`` expects, or the probe failed outright. Otherwise the probe's
-answer is the result.
+have returned. Under ``"evidence"``, the partitioned default, the root leaf is asked first, as
+a probe, and the plan splits only when that answer shows the root alone did not hold the
+request: the provider said its output allowance ended the response, the answer ended
+mid-document and only its complete records could be read, its continuations ran out while it
+was still adding records, it holds no keys although records are expected, it holds fewer than
+half the keys an estimate above ``plan.split_threshold_rows`` expects, or the probe failed
+outright. Otherwise the probe's answer is the result.
 
-The probe is one ask of the normal root leaf, with no continuation and no empty-answer
-retry, so it is exactly one logical call. The published bounds in
-:mod:`~blue_data_llm_source.planning.bounds` charge it in every accessor.
+The probe is the normal root leaf's ask with its continuations and without the empty-answer
+retry. The published bounds in :mod:`~blue_data_llm_source.planning.bounds` charge it in
+every accessor.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from blue_data_llm_source.types import Attr
 SPLIT_ALWAYS: Final = SPLIT_POLICY_ALWAYS
 SPLIT_EVIDENCE: Final = SPLIT_POLICY_EVIDENCE
 SPLIT_POLICIES: Final = (SPLIT_ALWAYS, SPLIT_EVIDENCE)
-"""The split policies, the first being the default."""
+"""The split policies. ``evidence`` is the default in partitioned mode, ``always`` elsewhere."""
 
 DEFAULT_SPLIT_THRESHOLD_ROWS: Final = 120
 """The estimate above which a short probe answer is read as a shortfall rather than the whole.
@@ -72,6 +73,9 @@ class ProbeRun(Protocol):
     def recovered_prefix(self) -> bool: ...
 
     @property
+    def at_cap(self) -> bool: ...
+
+    @property
     def ordinary_failure(self) -> bool: ...
 
     @property
@@ -96,11 +100,13 @@ def decide(
     A probe that failed outright, for a reason other than the budget, gave no evidence, so
     the plan splits as it would have without a probe. A caller's trusted *exact_rows* of zero
     asks nothing and is accepted without a call. Otherwise the probe splits on the provider's
-    attestation that the output allowance ended the response, or on a response that ended
-    mid-document with only its complete records read. Only then does a nonzero *exact_rows*
+    attestation that the output allowance ended the response, on a response that ended
+    mid-document with only its complete records read, or on continuations that ran out while
+    the answer was still growing. Only then does a nonzero *exact_rows*
     the probe met accept it: a cut answer that happens to hold the target count still lost
-    whatever followed the cut. Last, it splits when a positive estimate above
-    *threshold_rows* expects at least twice the keys the probe returned.
+    whatever followed the cut. Last, it splits when a positive estimate meets an answer with
+    no keys, or when an estimate above *threshold_rows* expects at least twice the keys the
+    probe returned.
     """
     if run.ordinary_failure:
         return PROBE_SPLIT_FAILED
@@ -112,9 +118,14 @@ def decide(
         # The parser saw the cut even though the provider gave no reason: the same answer
         # asked again would stop in the same place.
         return PROBE_SPLIT_INCOMPLETE
+    if run.at_cap:
+        return PROBE_SPLIT_LENGTH
     if exact_rows is not None and run.observed_key_count >= exact_rows:
         return PROBE_ACCEPTED
     expected = estimate.expected if estimate is not None else None
+    if expected is not None and expected > 0 and run.observed_key_count == 0:
+        # Nothing came back although records are expected: narrower asks may still answer.
+        return PROBE_SPLIT_SHORTFALL
     if expected is not None and expected > threshold_rows and run.observed_key_count * 2 < expected:
         return PROBE_SPLIT_SHORTFALL
     return PROBE_ACCEPTED

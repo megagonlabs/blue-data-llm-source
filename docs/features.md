@@ -216,7 +216,7 @@ disk.clear()
 
 ## Decomposing a large request
 
-One model call answers a request by default. `plan.mode` splits it instead: `partitioned` asks along a key the planning stages found, `row_by_row` asks once per entity they enumerated.
+One model call answers a request by default. `plan.mode` splits it instead: `partitioned` asks the whole request first and, when that answer falls short, asks along a key the planning stages found, `row_by_row` asks once per entity they enumerated.
 
 ```python
 import json
@@ -255,10 +255,10 @@ result = LlmSource().fetch(
 print([record["name"] for record in result.records])
 # ['Charles de Gaulle', 'Orly', 'Marseille Provence']
 print(result.meta.calls, result.meta.record_origins)
-# 6 [['0.0'], ['0.0'], ['0.1']]
+# 9 [['0.0'], ['0.0'], ['0.1']]
 ```
 
-The scripted answers above stand in for a real model at each planning stage. The shape is bounded by twenty-five `plan.*` settings, listed in [api-reference.md](api-reference.md#plan-properties). With `plan.split_policy="evidence"` the root is asked once first and split only on evidence that one answer was not enough; [the guide](guide.md#asking-once-before-splitting) has a runnable example.
+The scripted answers above stand in for a real model at each planning stage. The shape is bounded by twenty-five `plan.*` settings, listed in [api-reference.md](api-reference.md#plan-properties). The root is asked first and split only on evidence that its answer was not enough; here it answers `[]`, so it splits, and each part asks once more and gets nothing new. [The guide](guide.md#asking-the-root-before-splitting) has a runnable example of both outcomes.
 
 ## Attribution across a split
 
@@ -266,7 +266,7 @@ The scripted answers above stand in for a real model at each planning stage. The
 
 ## Asking again for what did not come back
 
-A model asked for two hundred records returns forty and reports nothing wrong. `plan.max_continuations` lets a part ask again, naming what it already holds, up to a cap. At the default of `0` each part asks once. `meta.stopped_by` reports `plan.max_continuations` when the cap ended a run that was still producing records. That says completeness was never established, not that more records exist.
+A model asked for two hundred records returns forty and reports nothing wrong. `plan.max_continuations` lets a part ask again, naming what it already holds, up to a cap. The cap defaults to `3` in `partitioned` mode and to `0` in the others, where each part asks once. `meta.stopped_by` reports `plan.max_continuations` when the cap ended a run that was still producing records. That says completeness was never established, not that more records exist.
 
 ## Composite identity keys
 

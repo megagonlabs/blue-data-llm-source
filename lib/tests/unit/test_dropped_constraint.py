@@ -36,6 +36,8 @@ def model(constraints: dict[str, Any]) -> Any:
 def fetch(constraints: dict[str, Any], **props: Any) -> Any:
     merged: dict[str, Any] = {
         "plan.mode": "partitioned",
+        "plan.split_policy": "always",
+        "plan.max_continuations": 0,
         "plan.planning_order": "planning.combined",
     }
     merged.update(props)
@@ -88,6 +90,8 @@ class TestAnEnumerationThatNamedNothingIsUnsatisfiable:
             llm_fn=recording,
             properties={
                 "plan.mode": "partitioned",
+                "plan.split_policy": "always",
+                "plan.max_continuations": 0,
                 "plan.planning_order": "planning.combined",
             },
         )

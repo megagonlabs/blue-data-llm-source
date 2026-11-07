@@ -196,7 +196,7 @@ blue-llmdb profile remove staging --confirm
 | `BLUE_DATA_LLM_SOURCE_MAX_RETRIES` | int | — | | `limits.max_retries` |
 | `BLUE_DATA_LLM_SOURCE_EFFORT` | str | — | | `plan.max_continuations` |
 
-A profile leaves `BLUE_DATA_LLM_SOURCE_EFFORT` unset unless you set it. When `data query` has no `--effort` or configured effort, it uses `low` (zero continuations).
+A profile leaves `BLUE_DATA_LLM_SOURCE_EFFORT` unset unless you set it. When `data query` has no `--effort` or configured effort, it uses `low` (zero continuations), except in `partitioned` mode, which allows three.
 
 A parameter name is also its environment-variable name, so exporting `BLUE_DATA_LLM_MODEL` overrides the profile for one shell without editing it. An empty exported value is refused instead of treated as unset. `BLUE_DATA_LLM_MODEL=''` is still an explicit value; falling through to the profile would hide a configuration error. Use `unset BLUE_DATA_LLM_MODEL` to remove the environment tier. Profile storage also refuses blank values because they would otherwise be written but skipped during resolution. A blank or undecodable value edited into the profile file by hand does not block `profile list`, `add`, `select`, `remove` or `config`, so the profile can be repaired; data, model and metadata commands refuse it with ``KEY is blank in profile 'NAME' in <home>/.profiles; it would be read as unset. Set it with `blue-llmdb profile config KEY VALUE --profile NAME`, or delete that line.``
 
@@ -298,7 +298,7 @@ blue-llmdb data query "the largest lakes in Africa" --context "rank by surface a
 blue-llmdb data query "the member states of the European Union" --max-records 5
 ```
 
-`--effort` is a short form for the continuation allowance. `low`, `medium` and `high` allow up to one, two or three logical extraction asks per part when a primary key is available. Later asks request keys the earlier answers missed, so they can improve coverage. The allowance bounds asks, not billed attempts; transport retries can add provider attempts. If the last allowed ask under `medium` or `high` still adds new keys, the records gathered so far are printed, the result reports `stopped by: plan.max_continuations`, and the command exits 7. That means the effort allowance bounded the result, not that the provider failed. In flat mode, `medium` and `high` need a requested `--plan-key` or `--plan-keys`; the CLI refuses a missing key before constructing the source. Non-flat planning can infer one. Use `--plan-continuations` when you need an exact allowance; it overrides `--effort`.
+`--effort` is a short form for the continuation allowance. `low`, `medium` and `high` allow up to one, two or three logical extraction asks per part when a primary key is available. Later asks request keys the earlier answers missed, so they can improve coverage. The allowance bounds asks, not billed attempts; transport retries can add provider attempts. If the last allowed ask under `medium` or `high` still adds new keys, the records gathered so far are printed, the result reports `stopped by: plan.max_continuations`, and the command exits 7. That means the effort allowance bounded the result, not that the provider failed. In flat mode, `medium` and `high` need a requested `--plan-key` or `--plan-keys`; the CLI refuses a missing key before constructing the source. Non-flat planning can infer one. Use `--plan-continuations` when you need an exact allowance; it overrides `--effort`. In `partitioned` mode the default without either flag is four asks per part, so any `--effort` level lowers it; `high` gives three.
 
 ```bash
 blue-llmdb data query "the member states of the European Union" \
@@ -344,14 +344,14 @@ There is a floor a cost ceiling has to clear. The output-only floor is the whole
 
 One model call answers a request by default. A large ask can be split into parts, each asked separately and merged on the way back, which costs a call per part and is never chosen for you.
 
-`--plan-mode` selects the shape: `flat` asks once and is the default, `partitioned` splits the ask recursively, and `row_by_row` asks per entity. `--plan-key` names the attribute that identifies a record, so parts returning the same record merge rather than duplicating it; it has to be one of the attributes you asked for.
+`--plan-mode` selects the shape: `flat` asks once and is the default, `partitioned` asks the whole request first and splits it, recursively, only when that answer falls short, and `row_by_row` asks per entity. `--plan-key` names the attribute that identifies a record, so parts returning the same record merge rather than duplicating it; it has to be one of the attributes you asked for.
 
 ```bash
 blue-llmdb data query "the member states of the European Union" \
     --attr name --attr capital --plan-key name --plan-continuations 1
 ```
 
-`--plan-depth` bounds recursion, `--plan-partitions` bounds children per node, and `--plan-target-rows` supplies the uncertain row-count threshold for descendant splits. `--plan-leaves` caps the number of leaf parts; for a partitioned root with more values, the planner groups neighboring values into at most that many leaves; other expansions that cannot fit are left intact. `--plan-partition-key` guides only the root proposal. `--plan-schema-mode` takes `preserve`, which keeps caller attributes, or `enrich`, which lets non-flat planning append inferred ones.
+`--plan-depth` bounds recursion, `--plan-partitions` bounds children per node, and `--plan-target-rows` supplies the uncertain row-count threshold for descendant splits. `--plan-leaves` caps the number of leaf parts; a split that would exceed it is refused and its part is asked whole. `--plan-partition-key` guides only the root proposal. `--plan-schema-mode` takes `preserve`, which keeps caller attributes, or `enrich`, which lets non-flat planning append inferred ones.
 
 The remaining standard controls are `--plan-keys` for ordered composite identity, `--plan-exact-rows` for a hard target when the plan has one leaf, `--plan-exclusion-bytes` for continuation-prompt size, `--plan-planning-order` for one of the five schedules, and `--plan-expose-estimate`/`--no-plan-expose-estimate` for extraction-prompt context.
 
@@ -365,7 +365,7 @@ Five optional controls change how a split is asked. Each keeps its default behav
 
 These five controls are experimental and add no model calls.
 
-`--plan-split-policy evidence` asks the root of a partitioned plan once before deciding whether to split. It splits if that answer was cut off by the output allowance or mid-answer, the probe failed, or the probe contains fewer than half the keys expected by an estimate above `--plan-split-threshold-rows` (default 120). Otherwise the probe answer is the result. `split_decision` reports the choice. The probe adds one call to the published bound. An accepted probe does not establish completeness.
+A partitioned plan asks its root first, under the default `--plan-split-policy evidence`, and splits only when that answer shows one request was not enough: it was cut off, was still growing when its continuations ran out, failed, came back empty when records were expected, or came back far short of an estimate above `--plan-split-threshold-rows` (default 120). Otherwise that answer is the result, and `split_decision` reports the choice. `--plan-split-policy always` splits the root without asking it first. The root's asks count in the published bound. With no effort set, the root may ask again three times; `--effort` and `--plan-continuations` set the allowance. An accepted answer does not prove the list is complete.
 
 The CLI, MCP, and Python APIs share these 21 planning controls. Rule-backed distribution controls and the optional planning receipt are available only through direct Python calls. Both locked schedules require a non-empty caller schema and ordered `--plan-keys`. A plan with multiple leaves does not apply `--plan-exact-rows`; it reports `exact_rows_not_leaf_bound` in the result's gaps.
 

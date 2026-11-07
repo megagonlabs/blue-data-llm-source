@@ -93,6 +93,8 @@ def fetch(
 ) -> FetchResult:
     props: dict[str, object] = {
         "plan.mode": "partitioned",
+        "plan.split_policy": "always",
+        "plan.max_continuations": 0,
         "plan.max_depth": 1,
         "plan.max_partitions": len(model.values),
     }
@@ -122,12 +124,12 @@ def signals(result: FetchResult) -> list[str]:
 
 
 @pytest.mark.parametrize("distribution", [False, True])
-def test_partial_identity_split_reports_both_estimate_signals(distribution: bool) -> None:
+def test_short_fallback_and_declared_domain_keep_estimate_signals(distribution: bool) -> None:
     result = fetch(PlanetModel(), distribution=distribution)
     assert {record["name"] for record in result.records} == {"Mercury", "Venus"}
     assert result.meta.outcome == Outcome.OK
     assert result.meta.observed_key_count == 2
-    assert any(gap.startswith(SIGNALS[0]) for gap in result.meta.gaps)
+    assert any(gap.startswith(SIGNALS[0]) for gap in result.meta.gaps) == distribution
     assert any(gap.startswith(SIGNALS[1]) for gap in result.meta.gaps)
     assert meta_view(result.meta)["gaps"] == result.meta.gaps
 
@@ -144,7 +146,7 @@ def test_split_estimate_warning_does_not_assert_actual_record_loss(distribution:
     result = fetch(PlanetModel(cardinality={"expected": 2, "lower": 2}), distribution=distribution)
     assert result.meta.observed_key_count == 2
     assert result.meta.outcome == Outcome.OK
-    assert any(gap.startswith(SIGNALS[0]) for gap in result.meta.gaps)
+    assert any(gap.startswith(SIGNALS[0]) for gap in result.meta.gaps) == distribution
     assert not any(gap.startswith(SIGNALS[1]) for gap in result.meta.gaps)
 
 

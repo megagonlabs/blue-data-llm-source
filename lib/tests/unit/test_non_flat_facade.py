@@ -134,7 +134,12 @@ def test_a_real_two_level_tree_keeps_every_parent_slice() -> None:
     ).fetch(
         "airports by region",
         attrs=["name"],
-        properties={"plan.mode": "partitioned", "plan.partition_key": "continent"},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+            "plan.partition_key": "continent",
+        },
     )
 
     assert [row["name"] for row in result.records] == [
@@ -179,6 +184,8 @@ def test_effective_schema_reaches_prompt_and_final_shape(
         attrs=attrs,
         properties={
             "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
             "plan.max_depth": 0,
             "plan.schema_mode": schema_mode,
         },
@@ -204,7 +211,12 @@ def test_root_row_estimate_is_reported_when_bootstrap_is_accepted(
     ).fetch(
         "airport",
         attrs=["name"],
-        properties={"plan.mode": "partitioned", "plan.max_depth": 0},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+            "plan.max_depth": 0,
+        },
     )
 
     assert result.meta.row_estimate == expected
@@ -226,6 +238,7 @@ def test_exact_rows_stops_a_single_leaf_without_a_continuation() -> None:
         attrs=["name"],
         properties={
             "plan.mode": "partitioned",
+            "plan.split_policy": "always",
             "plan.max_depth": 0,
             "plan.max_continuations": 2,
             "plan.exact_rows": 1,
@@ -263,6 +276,7 @@ def test_exact_rows_is_not_applied_as_a_global_multi_leaf_target() -> None:
         attrs=["name"],
         properties={
             "plan.mode": "partitioned",
+            "plan.split_policy": "always",
             "plan.partition_key": "region",
             "plan.max_continuations": 0,
             "plan.exact_rows": 1,
@@ -285,7 +299,15 @@ def test_flat_and_discarded_bootstrap_report_unknown_row_estimate() -> None:
     )
     fallback = LlmSource(
         properties={"plan.planning_order": "planning.combined"}, client=client
-    ).fetch("airport", attrs=["name"], properties={"plan.mode": "partitioned"})
+    ).fetch(
+        "airport",
+        attrs=["name"],
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+        },
+    )
     assert fallback.meta.row_estimate is None
 
 
@@ -331,7 +353,12 @@ def test_normalized_root_estimates_make_the_right_descendant_eligible(
     ).fetch(
         "airports",
         attrs=["name"],
-        properties={"plan.mode": "partitioned", "plan.max_depth": 2},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+            "plan.max_depth": 2,
+        },
     )
 
     assert result.records == [{"name": "row"}]
@@ -352,7 +379,11 @@ def test_planning_output_limit_is_diagnostic_only() -> None:
     ).fetch(
         "airport",
         attrs=["name"],
-        properties={"plan.mode": "partitioned"},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+        },
     )
 
     assert result.records == [{"name": "Orly"}]
@@ -382,7 +413,11 @@ def test_no_key_keeps_partitioned_leaves_without_continuation() -> None:
     ).fetch(
         "airport",
         attrs=["name"],
-        properties={"plan.mode": "partitioned", "plan.max_continuations": 2},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 2,
+        },
     )
 
     assert result.records == [{"name": "Orly"}]
@@ -414,7 +449,12 @@ def test_partial_known_value_split_keeps_the_complete_parent() -> None:
     ).fetch(
         "airports in three countries",
         attrs=["name"],
-        properties={"plan.mode": "partitioned", "plan.partition_key": "country"},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+            "plan.partition_key": "country",
+        },
     )
 
     assert result.records == [{"name": "parent row"}]
@@ -437,7 +477,11 @@ def test_explicit_empty_constraint_skips_extraction() -> None:
     ).fetch(
         "airports nowhere",
         attrs=["name"],
-        properties={"plan.mode": "partitioned"},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+        },
     )
 
     assert result.records == []
@@ -464,7 +508,12 @@ def test_property_caps_change_the_public_plan() -> None:
     LlmSource(properties={"plan.planning_order": "planning.combined"}, client=shallow).fetch(
         "airport",
         attrs=["name"],
-        properties={"plan.mode": "partitioned", "plan.max_depth": 0},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+            "plan.max_depth": 0,
+        },
     )
     assert not any(_kind(prompt) == "proposal" for prompt in shallow.prompts)
 
@@ -472,7 +521,12 @@ def test_property_caps_change_the_public_plan() -> None:
     LlmSource(properties={"plan.planning_order": "planning.combined"}, client=capped).fetch(
         "airport",
         attrs=["name"],
-        properties={"plan.mode": "partitioned", "plan.max_partitions": 1},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+            "plan.max_partitions": 1,
+        },
     )
     assert not any(_kind(prompt) == "proposal" for prompt in capped.prompts)
 
@@ -480,7 +534,12 @@ def test_property_caps_change_the_public_plan() -> None:
     LlmSource(properties={"plan.planning_order": "planning.combined"}, client=one_leaf).fetch(
         "airport",
         attrs=["name"],
-        properties={"plan.mode": "partitioned", "plan.max_leaves": 1},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+            "plan.max_leaves": 1,
+        },
     )
     assert not any(_kind(prompt) == "proposal" for prompt in one_leaf.prompts)
 
@@ -600,12 +659,22 @@ def test_identical_leaf_reuses_provider_cache_across_distinct_trees(
     first = source.fetch(
         "shared request",
         attrs=["name"],
-        properties={"plan.mode": "partitioned", "plan.partition_key": "country"},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+            "plan.partition_key": "country",
+        },
     )
     second = source.fetch(
         "shared request",
         attrs=["name"],
-        properties={"plan.mode": "partitioned", "plan.partition_key": "year"},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+            "plan.partition_key": "year",
+        },
     )
 
     assert first.records == second.records == [{"name": "same"}]
@@ -614,13 +683,20 @@ def test_identical_leaf_reuses_provider_cache_across_distinct_trees(
     source.fetch(
         "shared request",
         attrs=["name", "country"],
-        properties={"plan.mode": "partitioned", "plan.partition_key": "year"},
+        properties={
+            "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
+            "plan.partition_key": "year",
+        },
     )
     source.fetch(
         "shared request",
         attrs=["name"],
         properties={
             "plan.mode": "partitioned",
+            "plan.split_policy": "always",
+            "plan.max_continuations": 0,
             "plan.partition_key": "year",
             "llm.model": "gpt-4o",
         },

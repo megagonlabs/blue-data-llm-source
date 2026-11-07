@@ -238,7 +238,7 @@ Every configuration key has a test proving that changing it changes observable b
 | `limits.*` and `max_records` | Stop a run and name themselves in `stopped_by` |
 | `connection.variant` | Reported by the `variant` property and by `LLM.MODELS` |
 | `plan.mode`, `plan.partition_key`, `plan.max_depth`, `plan.max_partitions`, `plan.target_rows_per_leaf`, `plan.max_leaves` | Change or bound the accepted task tree; a refused expansion keeps the parent leaf intact |
-| `plan.max_continuations`, `plan.max_exclusion_bytes`, `plan.max_excluded_keys` | Change extraction call count or the whole-key exclusion block while respecting both caps |
+| `plan.max_continuations`, `plan.max_exclusion_bytes`, `plan.max_excluded_keys` | Change extraction call count (the root probe's continuations included) or the whole-key exclusion block while respecting both caps; `partitioned` defaults to three continuations and the other modes to none |
 | `plan.key`, `plan.keys` | Change scalar or composite identity, merge, and continuation exclusions |
 | `plan.exact_rows` | Stops a single leaf at the trusted count; a multi-leaf plan reports `exact_rows_not_leaf_bound` instead |
 | `plan.schema_mode`, `plan.planning_order` | Change accepted schema facts or the closed schedule and its stage counts |
@@ -247,8 +247,8 @@ Every configuration key has a test proving that changing it changes observable b
 | `plan.child_wording` | `canonical` changes only the children's retrieval wording, derived from the root request and validated filters; `parent` sends byte-identical prompts |
 | `plan.filter_enforcement` | `flag` keeps and counts contradicting records; `drop` removes them at the leaf before reduction, so they neither merge fields into a kept record nor appear in its origins |
 | `plan.range_filters` | Span values on an integer column become inclusive `Range` children that serialize, render and obey as ranges; other columns, caller-declared domains and the switch off keep exact text; overlapping or reversed spans refuse the proposal |
-| `plan.partition_guardrails` | Proposal prompts carry the `partition-2` rules and a count calibrated against each slice's estimate; a numeric key with bucketed values is refused with its reason in `meta.gaps`; off sends the 0.2.1.0 proposal prompt |
-| `plan.split_policy`, `plan.split_threshold_rows` | `always` sends byte-identical prompts; `evidence` probes the root once, splits only on an output-allowance stop or a shortfall, merges root records under origin `root`, seeds children with bounded probe keys, and stays within bounds that charge the probe in every accessor |
+| `plan.partition_guardrails` | Proposal prompts carry the `partition-2` rules and a count calibrated against each slice's estimate; a numeric key with bucketed values is refused with its reason in `meta.gaps`; off sends the `partition-1` proposal prompt |
+| `plan.split_policy`, `plan.split_threshold_rows` | `always` splits the root without a probe; `evidence`, the `partitioned` default, probes the root with its continuations, splits only on an output-allowance stop, a cut answer, continuations that ran out while still adding records, a failed probe, an empty answer against a positive estimate, or a shortfall, adds the probe's split-key values that no proposed child asks for and refuses the proposal past `plan.max_partitions`, keeps the probe's answer when no proposal survives, merges root records under origin `root`, seeds children with bounded probe keys, and stays within bounds that charge the probe and its continuations in every accessor |
 | `plan.distribution_search`, `plan.identity_partitions`, `plan.max_strategy_candidates` | Change the bounded rule-backed candidates, accepted split, and optional planning receipt |
 
 An unknown `llm.*` key is asserted to raise `ConfigError` whose message lists the accepted names, and control keys are asserted not to appear in the provider call arguments.
