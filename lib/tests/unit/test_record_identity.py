@@ -85,8 +85,7 @@ def _kept_by_reduction() -> list[int]:
 
 
 def test_execution_and_reduction_keep_the_same_records() -> None:
-    """The property that was missing. Neither stage is wrong by its own rule, so only a
-    comparison across the two can fail when they part."""
+    """A cross-stage comparison catches disagreement between identity rules."""
     assert _kept_by_execution() == _kept_by_reduction()
 
 

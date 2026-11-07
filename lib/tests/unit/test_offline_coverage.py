@@ -1,4 +1,4 @@
-"""The offline guard covers all three event classes the criterion names."""
+"""The offline guard refuses network, subprocess and database access."""
 
 from __future__ import annotations
 

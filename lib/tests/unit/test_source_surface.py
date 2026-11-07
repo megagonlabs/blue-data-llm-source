@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable
+from copy import deepcopy
 from typing import Any, cast
 
 import pytest
@@ -12,7 +13,13 @@ from blue_data.source.source import DataSource  # pyright: ignore[reportMissingT
 
 from blue_data_llm_source import Budget, Capability, Limits, LlmSource
 from blue_data_llm_source import _constants as C
-from blue_data_llm_source.types import ConfigError, LlmSourceError, ParseError, QueryError
+from blue_data_llm_source.types import (
+    BudgetExceeded,
+    ConfigError,
+    LlmSourceError,
+    ParseError,
+    QueryError,
+)
 from tests.doubles import LitellmStub, ScriptedClient, chat_payload
 
 ONE_RECORD = '[{"name": "Ada", "age": 36}]'
@@ -1322,6 +1329,172 @@ def test_every_advertised_tool_has_its_documented_result() -> None:
     assert answers["get_sample"] is None
 
 
+@pytest.mark.parametrize("name", SERVED_TOOLS)
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"limits.max_calls": 0},
+        {"limits.max_cals": "private-value"},
+        {"optional_properties": {"limits.max_calls": 0}},
+    ],
+)
+def test_tool_input_extras_are_refused_before_model_work(
+    name: str, extra: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = ScriptedClient([TWO_RECORDS])
+    source = LlmSource(client=client)
+    schemas = deepcopy(source.get_nl_tools())
+    inputs = {**TOOL_INPUTS[name], **extra}
+    before = deepcopy(inputs)
+
+    def no_model_work(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("invalid tool input reached model work")
+
+    monkeypatch.setattr(source, "fetch", no_model_work)
+    monkeypatch.setattr(source, "estimate", no_model_work)
+    monkeypatch.setattr(source, "_resolve_client", no_model_work)
+    with pytest.raises(QueryError) as caught:
+        source.execute_nl_tool(name, inputs)
+    assert str(caught.value) == (
+        "tool_input contains unsupported fields. Pass per-call configuration through "
+        "optional_properties"
+    )
+    assert inputs == before
+    assert source.get_nl_tools() == schemas
+    assert client.prompts == []
+
+
+class ToolFieldName(str):
+    pass
+
+
+@pytest.mark.parametrize(
+    "inputs",
+    [
+        None,
+        ["private-input"],
+        "private-input",
+        {3: "private-value"},
+        {("private-key",): 0},
+        {ToolFieldName("private-key"): 0},
+    ],
+)
+def test_tool_input_requires_a_dict_with_exact_string_keys(inputs: Any) -> None:
+    client = ScriptedClient([TWO_RECORDS])
+    with pytest.raises(QueryError) as caught:
+        LlmSource(client=client).execute_nl_tool("execute_query", inputs)
+    assert str(caught.value) == (
+        "tool_input must be a dict with string field names. Pass per-call configuration "
+        "through optional_properties"
+    )
+    assert client.prompts == []
+
+
+@pytest.mark.parametrize("name", SERVED_TOOLS)
+@pytest.mark.parametrize("all_fields", [False, True])
+def test_declared_tool_fields_and_outer_context_remain_accepted(
+    name: str, all_fields: bool
+) -> None:
+    client = ScriptedClient([TWO_RECORDS])
+    source = LlmSource(client=client)
+    schemas = deepcopy(source.get_nl_tools())
+    tool = next(tool for tool in schemas if tool["name"] == name)
+    schema = tool["input_schema"]
+    values = {
+        **TOOL_INPUTS[name],
+        "database": C.DATABASE,
+        "collection": C.COLLECTION,
+        "sample_size": 2,
+    }
+    fields = schema["properties"] if all_fields else schema["required"]
+    inputs = {key: values[key] for key in fields}
+    if not all_fields:
+        inputs.pop("database", None)
+        inputs.pop("collection", None)
+    # Context is read by the shared dispatcher even for tools that do not declare it.
+    if all_fields:
+        inputs.update(database=C.DATABASE, collection=C.COLLECTION)
+    before = deepcopy(inputs)
+    result = source.execute_nl_tool(
+        name,
+        inputs,
+        database=C.DATABASE,
+        collection=C.COLLECTION,
+        optional_properties={"commit": True},
+        read_only=False,
+    )
+    assert (result is None) == (name == "get_sample")
+    assert len(client.prompts) == (1 if name == "execute_query" else 0)
+    assert inputs == before
+    assert source.get_nl_tools() == schemas
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        None,
+        [],
+        {},
+        {"type": "array", "properties": {}},
+        {"type": "object"},
+        {"type": "object", "properties": None},
+        {"type": "object", "properties": []},
+        {"type": "object", "properties": {3: {}}},
+        {"type": "object", "properties": {"query": "private-schema"}},
+    ],
+)
+def test_malformed_tool_schema_fails_closed(schema: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    client = ScriptedClient([TWO_RECORDS])
+    source = LlmSource(client=client)
+    tool: dict[str, Any] = {"name": "execute_query", "input_schema": schema}
+
+    def malformed_tools(*args: Any) -> list[dict[str, Any]]:
+        return [tool]
+
+    monkeypatch.setattr(source, "get_nl_tools", malformed_tools)
+    with pytest.raises(ConfigError, match="served tool input schema must declare valid properties"):
+        source.execute_nl_tool("execute_query", TOOL_INPUTS["execute_query"])
+    assert client.prompts == []
+
+
+def test_missing_tool_schema_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    source = LlmSource(client=ScriptedClient([TWO_RECORDS]))
+
+    def missing_schema(*args: Any) -> list[dict[str, Any]]:
+        return [{"name": "execute_query"}]
+
+    monkeypatch.setattr(source, "get_nl_tools", missing_schema)
+    with pytest.raises(ConfigError, match="served tool input schema must declare valid properties"):
+        source.execute_nl_tool("execute_query", TOOL_INPUTS["execute_query"])
+
+
+def test_outer_tool_call_cap_still_prevents_provider_contact() -> None:
+    client = ScriptedClient([TWO_RECORDS])
+    with pytest.raises(BudgetExceeded) as caught:
+        LlmSource(client=client).execute_nl_tool(
+            "execute_query",
+            TOOL_INPUTS["execute_query"],
+            optional_properties={"limits.max_calls": 0},
+        )
+    assert caught.value.limit == "max_calls"
+    assert client.prompts == []
+
+
+@pytest.mark.parametrize("encoded", [False, True])
+def test_tool_query_preserves_operation_field_rejection(encoded: bool) -> None:
+    client = ScriptedClient([TWO_RECORDS])
+    source = LlmSource(client=client)
+    spec = {"op": C.OP_FETCH, "query": "people", "limits.max_calls": 0}
+    query = json.dumps(spec) if encoded else spec
+    with pytest.raises(QueryError) as direct:
+        source.execute_query(query)
+    with pytest.raises(QueryError) as tool:
+        source.execute_nl_tool("execute_query", {"query": query})
+    assert str(tool.value) == str(direct.value)
+    assert "Accepted fields:" in str(tool.value)
+    assert client.prompts == []
+
+
 def test_a_tool_this_source_does_not_advertise_is_refused_by_name() -> None:
     """And the refusal names what a caller can reach instead.
 
@@ -1382,10 +1555,11 @@ def test_a_ceiling_supplied_with_a_tool_call_binds_the_tool_that_spends() -> Non
     reachable ceiling is a tool an orchestrator can run until the bill arrives.
     """
     refused = ScriptedClient([TWO_RECORDS], cost=0.02)
-    stopped = LlmSource(client=refused).execute_nl_tool(
-        "execute_query", {"query": "who?"}, optional_properties={"limits.max_cost": 0.000001}
-    )
-    assert stopped == []
+    with pytest.raises(BudgetExceeded) as caught:
+        LlmSource(client=refused).execute_nl_tool(
+            "execute_query", {"query": "who?"}, optional_properties={"limits.max_cost": 0.000001}
+        )
+    assert caught.value.limit == "max_cost"
     assert refused.prompts == [], "a spend ceiling has to bind before the provider is contacted"
 
     allowed = ScriptedClient([TWO_RECORDS], cost=0.02)
@@ -1739,3 +1913,557 @@ def test_samples_stay_unavailable_before_and_after_fetch(in_loop: bool) -> None:
         asyncio.run(run())
     else:
         check()
+
+
+def _row_query(source: LlmSource, path: str, options: dict[str, Any]) -> list[dict[str, Any]]:
+    if path.startswith("registry-"):
+        from blue_data.registry.data_registry import (
+            DataRegistry,  # pyright: ignore[reportMissingTypeStubs]
+        )
+        from blue_data.source.json.memory_json_source import (
+            MemoryJSONSource,  # pyright: ignore[reportMissingTypeStubs]
+        )
+
+        registry = cast("Any", DataRegistry(store=MemoryJSONSource(properties={})))
+        registry.register_source(source)
+        query: Any = {"op": C.OP_FETCH, "query": "people"}
+        if path == "registry-json":
+            query = json.dumps(query)
+        return registry.execute_query(source.name, query, optional_properties=options)
+    if path == "nl":
+        return source.execute_query_nl("people", optional_properties=options)
+    if path == "tool":
+        return source.execute_nl_tool(
+            "execute_query", {"query": "people"}, optional_properties=options
+        )
+    query: Any = "people"
+    if path in ("dict", "json"):
+        query = {"op": C.OP_FETCH, "query": "people"}
+        if path == "json":
+            query = json.dumps(query)
+    return source.execute_query(query, optional_properties=options)
+
+
+@pytest.mark.parametrize(
+    "path", ["text", "dict", "json", "nl", "tool", "registry-dict", "registry-json"]
+)
+@pytest.mark.parametrize("limit", ["max_cost", "max_calls", "max_seconds"])
+def test_row_only_paths_raise_fresh_typed_refusal(path: str, limit: str) -> None:
+    client = ScriptedClient([TWO_RECORDS], cost=0.1)
+    source = LlmSource(client=client)
+    options = {f"limits.{limit}": 0}
+    errors: list[BudgetExceeded] = []
+    for _ in range(2):
+        with pytest.raises(BudgetExceeded) as caught:
+            _row_query(source, path, options)
+        errors.append(caught.value)
+        assert caught.value.limit == limit
+        assert isinstance(caught.value, LlmSourceError)
+        assert "fetch" in caught.value.message
+    assert errors[0] is not errors[1]
+    assert client.prompts == []
+    assert options == {f"limits.{limit}": 0}
+
+
+@pytest.mark.parametrize(
+    "path", ["text", "dict", "json", "nl", "tool", "registry-dict", "registry-json"]
+)
+@pytest.mark.parametrize(
+    "reply, settings",
+    [
+        ("[]", {}),
+        ('[{"unmatched":null}]', {}),
+        ("[]", {"plan.exact_rows": 0, "limits.max_calls": 0}),
+        ("[]", {"plan.exact_rows": 0, "limits.max_seconds": 0}),
+        ("[]", {"limits.max_cost": 0.1}),
+    ],
+)
+def test_row_only_valid_empty_answers_are_preserved(
+    path: str, reply: str, settings: dict[str, Any]
+) -> None:
+    source = LlmSource(client=ScriptedClient([reply], cost=0.1), properties=settings)
+    assert _row_query(source, path, {"attrs": ["name"]}) == []
+
+
+@pytest.mark.parametrize(
+    "path", ["text", "dict", "json", "nl", "tool", "registry-dict", "registry-json"]
+)
+@pytest.mark.parametrize("responses", [[TWO_RECORDS], [TWO_RECORDS, "invalid response"]])
+def test_row_only_retains_partial_answer(path: str, responses: list[str]) -> None:
+    settings: dict[str, Any] = {
+        "plan.key": "name",
+        "plan.exact_rows": 4,
+        "plan.max_continuations": 2,
+    }
+    if len(responses) == 1:
+        settings["limits.max_calls"] = 1
+    source = LlmSource(client=ScriptedClient(responses), properties=settings)
+    assert _row_query(source, path, {"attrs": ["name"]}) == [{"name": "Ada"}, {"name": "Grace"}]
+
+
+@pytest.mark.parametrize(
+    "path", ["fetch", "text", "dict", "json", "nl", "tool", "registry-dict", "registry-json"]
+)
+@pytest.mark.parametrize("shaping", ["retained", "capped", "root_scope"])
+def test_probe_prefix_survives_real_continuation_refusal(path: str, shaping: str) -> None:
+    from tests.unit.test_split_policy import ATTRS, ProbeClient, Reply, kind, responder
+
+    prefix = [{"name": "Ada", "region": "North", "ignored": "extra"}]
+    if shaping == "capped":
+        prefix.append({"name": "Grace", "region": "North", "ignored": "extra"})
+    partial = json.dumps(prefix)[:-1] + ',{"name":'
+    bootstrap = responder(estimate=200, root=partial)
+
+    def respond(prompt: str) -> Reply:
+        if kind(prompt) == "bootstrap":
+            reply = bootstrap(prompt)
+            assert isinstance(reply, str)
+            payload = json.loads(reply)
+            if shaping == "root_scope":
+                payload["constraints"] = {"region": ["South"]}
+            return json.dumps(payload)
+        assert kind(prompt) == "fetch"
+        return partial
+
+    settings: dict[str, Any] = {
+        "plan.mode": "partitioned",
+        "plan.planning_order": "planning.combined",
+        "plan.key": "name",
+        "plan.max_continuations": 1,
+        "plan.filter_enforcement": "drop",
+        "limits.max_calls": 2,
+        "limits.max_retries": 0,
+    }
+    if shaping == "capped":
+        settings["limits.max_rows"] = 1
+    client = ProbeClient(respond)
+    source = LlmSource(client=client, properties=settings)
+    expected = [{"name": "Ada", "region": "North"}]
+    if path == "fetch":
+        result = source.fetch("people", attrs=ATTRS)
+        assert result.records == expected
+        assert result.meta.split_decision == "probe_accepted"
+        assert result.meta.calls == 2
+        assert result.meta.stopped_by == "max_calls"
+        assert "response_incomplete" in result.meta.stop_reasons
+        assert result.meta.record_origins == [["0"]]
+        assert result.meta.observed_key_count == len(expected)
+        assert result.meta.filter_contradictions == 0
+        assert result.meta.outcome == "partial"
+        if shaping == "capped":
+            assert result.meta.truncated_to == 1
+            assert "max_rows" in result.meta.stop_reasons
+        assert any(gap.startswith("leaf_response_truncated:") for gap in result.meta.gaps)
+    else:
+        assert _row_query(source, path, {"attrs": ATTRS}) == expected
+    assert [kind(prompt) for prompt in client.prompts] == ["bootstrap", "fetch"]
+
+
+@pytest.mark.parametrize(
+    "path", ["fetch", "text", "dict", "json", "nl", "tool", "registry-dict", "registry-json"]
+)
+@pytest.mark.parametrize("max_calls", [0, 2])
+def test_budgeted_probe_preserves_empty_answer_and_no_answer_refusal(
+    path: str, max_calls: int
+) -> None:
+    from tests.unit.test_split_policy import ATTRS, ProbeClient, kind, responder
+
+    client = ProbeClient(responder(estimate=200, root="[]"))
+    source = LlmSource(
+        client=client,
+        properties={
+            "plan.mode": "partitioned",
+            "plan.planning_order": "planning.combined",
+            "plan.key": "name",
+            "plan.max_continuations": 1,
+            "limits.max_calls": max_calls,
+            "limits.max_retries": 0,
+        },
+    )
+    if path == "fetch":
+        result = source.fetch("people", attrs=ATTRS)
+        assert result.records == []
+        assert result.meta.stopped_by == ("max_calls" if max_calls == 0 else None)
+        assert result.meta.calls == max_calls
+    elif max_calls == 0:
+        with pytest.raises(BudgetExceeded) as caught:
+            _row_query(source, path, {"attrs": ATTRS})
+        assert caught.value.limit == "max_calls"
+    else:
+        assert _row_query(source, path, {"attrs": ATTRS}) == []
+    assert [kind(prompt) for prompt in client.prompts] == (
+        ["bootstrap", "fetch"] if max_calls else []
+    )
+
+
+@pytest.mark.parametrize(
+    "path", ["text", "dict", "json", "nl", "tool", "registry-dict", "registry-json"]
+)
+def test_row_only_preserves_parse_failure(path: str) -> None:
+    source = LlmSource(client=ScriptedClient(["invalid response"]))
+    with pytest.raises(ParseError):
+        _row_query(source, path, {})
+
+
+@pytest.mark.parametrize(
+    "path", ["text", "dict", "json", "nl", "tool", "registry-dict", "registry-json"]
+)
+def test_cached_empty_and_empty_query_remain_successful(
+    path: str,
+    litellm_stub: Callable[[LitellmStub], LitellmStub],
+) -> None:
+    from blue_data_llm_source import MemoryCache
+
+    stub = litellm_stub(LitellmStub(chat_payload("[]")))
+    source = LlmSource(properties={"cache_store": MemoryCache()})
+    assert _row_query(source, path, {}) == []
+    assert _row_query(source, path, {"limits.max_calls": 0}) == []
+    assert len(stub.calls) == 1
+    assert source.execute_query("", optional_properties={"limits.max_calls": 0}) == []
+    assert source.execute_query_nl("", optional_properties={"limits.max_calls": 0}) == []
+
+
+@pytest.mark.parametrize(
+    "path", ["text", "dict", "json", "nl", "tool", "registry-dict", "registry-json"]
+)
+def test_planning_admission_refusal_is_typed(path: str) -> None:
+    source = LlmSource(client=ScriptedClient([]), properties={"plan.mode": "partitioned"})
+    with pytest.raises(BudgetExceeded) as caught:
+        _row_query(source, path, {"limits.max_calls": 0})
+    assert caught.value.limit == "max_calls"
+
+
+@pytest.mark.parametrize("path", ["text", "nl", "registry-dict", "registry-json"])
+def test_concurrent_row_success_and_refusal_do_not_share_state(path: str) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    barrier = Barrier(2)
+
+    class ConcurrentClient(ScriptedClient):
+        async def acomplete(self, prompt: str, properties: dict[str, Any] | None = None) -> str:
+            barrier.wait(timeout=5)
+            return await super().acomplete(prompt, properties)
+
+    client = ConcurrentClient([ONE_RECORD], cost=0.1)
+    source = LlmSource(client=client)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        denied = pool.submit(_row_query, source, path, {"limits.max_cost": 0.01})
+        allowed = pool.submit(_row_query, source, path, {"limits.max_cost": 1.0})
+        with pytest.raises(BudgetExceeded) as caught:
+            denied.result(timeout=10)
+        assert caught.value.limit == "max_cost"
+        assert allowed.result(timeout=10) == [{"name": "Ada", "age": 36}]
+    assert len(client.prompts) == 1
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("path", ["text", "nl", "registry-dict", "registry-json"])
+def test_limit_denials_are_ranked_independently_of_leaf_order(reverse: bool, path: str) -> None:
+    from tests.unit.test_unanswered_classification import FIRST, SECOND, Unanswered
+
+    order = [SECOND, FIRST] if reverse else [FIRST, SECOND]
+    client = Unanswered(
+        order,
+        {
+            FIRST: BudgetExceeded("refused", "max_calls"),
+            SECOND: BudgetExceeded("refused", "max_cost"),
+        },
+    )
+    source = LlmSource(
+        client=client,
+        properties={"plan.mode": "partitioned", "plan.key": "name", "plan.split_policy": "always"},
+    )
+    with pytest.raises(BudgetExceeded) as caught:
+        _row_query(source, path, {"attrs": ["name"]})
+    assert caught.value.limit == "max_cost"
+
+
+@pytest.mark.parametrize("path", ["text", "nl", "registry-dict", "registry-json"])
+@pytest.mark.parametrize("other", ["empty", "failed"])
+def test_answered_empty_and_actual_failure_precede_sibling_refusal(path: str, other: str) -> None:
+    from tests.unit.test_unanswered_classification import FIRST, SECOND, Unanswered
+
+    # This double returns unmetered planning/empty responses, so response facts must also
+    # exclude a refusal even when the provider-call ledger is zero.
+    errors: dict[str, BaseException] = {FIRST: BudgetExceeded("refused", "max_cost")}
+    if other == "failed":
+        errors[SECOND] = RuntimeError("failed extraction")
+    source = LlmSource(
+        client=Unanswered([FIRST, SECOND], errors),
+        properties={"plan.mode": "partitioned", "plan.key": "name", "plan.split_policy": "always"},
+    )
+    if other == "empty":
+        assert _row_query(source, path, {"attrs": ["name"]}) == []
+    else:
+        with pytest.raises(LlmSourceError) as caught:
+            _row_query(source, path, {"attrs": ["name"]})
+        assert not isinstance(caught.value, BudgetExceeded)
+
+
+class ClientBudget:
+    """A tighter client allowance that charges the source ledger through a child budget."""
+
+    def __init__(self, client: Any, budget: Budget) -> None:
+        self.client = client
+        self.limits = budget.limits
+        self.parent: Budget | None = None
+        self.budget = budget
+
+    def _properties(self, properties: dict[str, Any] | None) -> dict[str, Any]:
+        props = dict(properties or {})
+        parent = props["budget"]
+        assert isinstance(parent, Budget)
+        if parent is not self.parent:
+            self.parent = parent
+            self.budget = parent.derive(self.limits)
+        return {**props, "budget": self.budget}
+
+    def budget_capabilities(self) -> frozenset[str]:
+        return Capability.ALL
+
+    def complete(self, prompt: str, properties: dict[str, Any] | None = None) -> str:
+        return self.client.complete(prompt, self._properties(properties))
+
+    async def acomplete(self, prompt: str, properties: dict[str, Any] | None = None) -> str:
+        return await self.client.acomplete(prompt, self._properties(properties))
+
+
+@pytest.mark.parametrize(
+    "path", ["text", "dict", "json", "nl", "tool", "registry-dict", "registry-json"]
+)
+@pytest.mark.parametrize("limit", ["max_calls", "max_cost"])
+@pytest.mark.parametrize("denied_stage", ["planning", "extraction"])
+def test_planning_work_followed_by_denial_reports_no_extraction_answer(
+    path: str, limit: str, denied_stage: str
+) -> None:
+    from tests.unit.test_unanswered_classification import FIRST, SECOND, analysis
+
+    request = json.loads(analysis([FIRST, SECOND]))
+    if denied_stage == "extraction":
+        request["row_estimate"] = 1
+    response = json.dumps(request)
+    client = ScriptedClient([response, response], cost=0.1)
+    limits = Limits(max_calls=1) if limit == "max_calls" else Limits(max_cost=0.1)
+    owned = ClientBudget(client, Budget(limits))
+    source = LlmSource(
+        client=owned,
+        properties={
+            "plan.mode": "partitioned",
+            "plan.key": "name",
+            "plan.planning_order": "planning.combined",
+            "plan.max_depth": 1 if denied_stage == "planning" else 0,
+            "plan.split_policy": "always",
+        },
+    )
+    direct = source.fetch("people", attrs=["name"])
+    assert direct.records == []
+    assert direct.meta.calls == 1 and direct.meta.cost == 0.1
+    assert direct.meta.cache_hits == 0
+    assert direct.meta.outcome == "stopped_by_limit"
+    assert direct.meta.stopped_by == limit
+    assert any("planning_unserved" in gap for gap in direct.meta.gaps) == (
+        denied_stage == "planning"
+    )
+    with pytest.raises(BudgetExceeded) as caught:
+        _row_query(source, path, {"attrs": ["name"]})
+    assert caught.value.limit == limit
+    assert caught.value.message == (
+        f"{limit} prevented an extraction answer. "
+        "Review source limits or optional_properties; use fetch for outcome metadata."
+    )
+    assert len(client.prompts) == 2
+    assert all("Prepare a structured data request" in prompt for prompt in client.prompts)
+
+
+@pytest.mark.parametrize(
+    "path", ["text", "dict", "json", "nl", "tool", "registry-dict", "registry-json"]
+)
+@pytest.mark.parametrize("limit", ["max_calls", "max_cost"])
+def test_planning_cache_hit_does_not_hide_extraction_refusal(
+    path: str, limit: str, litellm_stub: Callable[[LitellmStub], LitellmStub]
+) -> None:
+    from blue_data_llm_source import DefaultLlmClient, MemoryCache
+    from tests.unit.test_unanswered_classification import FIRST, analysis
+
+    request = json.loads(analysis([FIRST]))
+    request["row_estimate"] = 1
+    stub = litellm_stub(LitellmStub(chat_payload(json.dumps(request)), cost=0.001))
+    client = DefaultLlmClient(
+        properties={
+            "cache_store": MemoryCache(),
+            "llm.max_tokens": 256,
+            "llm.price_per_input_token": 1e-6,
+            "llm.price_per_output_token": 2e-6,
+        }
+    )
+    owned = ClientBudget(client, Budget(Limits(max_calls=1)))
+    source = LlmSource(
+        client=owned,
+        properties={
+            "plan.mode": "partitioned",
+            "plan.key": "name",
+            "plan.planning_order": "planning.combined",
+            "plan.max_depth": 0,
+        },
+    )
+    warm = source.fetch("people", attrs=["name"])
+    assert warm.meta.calls == 1 and warm.records == []
+    owned.limits = Limits(max_calls=0) if limit == "max_calls" else Limits(max_cost=1e-9)
+    direct = source.fetch("people", attrs=["name"])
+    assert direct.records == []
+    assert direct.meta.calls == 0 and direct.meta.cache_hits == 1
+    assert direct.meta.stopped_by == limit
+    with pytest.raises(BudgetExceeded) as caught:
+        _row_query(source, path, {"attrs": ["name"]})
+    assert caught.value.limit == limit
+    assert "prevented an extraction answer" in caught.value.message
+    assert len(stub.calls) == 1
+    owned.limits = Limits(max_calls=1)
+    stub.payload = chat_payload("[]")
+    answered = source.fetch("people", attrs=["name"])
+    assert answered.records == [] and answered.meta.calls == 1 and answered.meta.cache_hits == 1
+    owned.limits = Limits(max_calls=0)
+    cached = source.fetch("people", attrs=["name"])
+    assert cached.records == [] and cached.meta.calls == 0 and cached.meta.cache_hits == 2
+    assert _row_query(source, path, {"attrs": ["name"]}) == []
+    assert len(stub.calls) == 2
+
+
+def test_stop_metadata_alone_does_not_create_a_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
+    from blue_data_llm_source import ExecMeta, FetchResult, Outcome
+
+    result = FetchResult(
+        meta=ExecMeta(
+            outcome=Outcome.STOPPED_BY_LIMIT,
+            stopped_by="max_seconds",
+            stop_reasons=["max_seconds"],
+        )
+    )
+    source = LlmSource()
+
+    def fetch(*args: Any, **kwargs: Any) -> FetchResult:
+        return result
+
+    monkeypatch.setattr(source, "fetch", fetch)
+    assert source.execute_query("people") == []
+    assert source.execute_query_nl("people") == []
+
+
+@pytest.mark.parametrize(
+    "path", ["text", "dict", "json", "nl", "tool", "registry-dict", "registry-json"]
+)
+def test_answered_empty_probe_precedes_later_planning_refusal(path: str) -> None:
+    from tests.unit.test_unanswered_classification import FIRST, SECOND, analysis
+
+    client = ScriptedClient([analysis([FIRST, SECOND]), "[]"], cost=0.1)
+    source = LlmSource(
+        client=ClientBudget(client, Budget(Limits(max_calls=2))),
+        properties={
+            "plan.mode": "partitioned",
+            "plan.key": "name",
+            "plan.split_policy": "evidence",
+            "plan.planning_order": "planning.combined",
+        },
+    )
+    assert _row_query(source, path, {"attrs": ["name"]}) == []
+    assert len(client.prompts) == 2
+    assert "Prepare a structured data request" in client.prompts[0]
+    assert "Propose one useful partition" not in client.prompts[1]
+
+
+@pytest.mark.parametrize("path", ["nl", "dict", "json"])
+@pytest.mark.parametrize("axis", ["max_calls", "max_seconds"])
+def test_trusted_zero_precedes_a_refused_planning_call(path: str, axis: str) -> None:
+    client = ScriptedClient([])
+    source = LlmSource(client=client, properties={"plan.mode": "partitioned"})
+    assert _row_query(source, path, {"plan.exact_rows": 0, f"limits.{axis}": 0}) == []
+    assert client.prompts == []
+
+
+@pytest.mark.parametrize("worker", [False, True])
+def test_async_and_worker_fetch_keep_the_private_refusal(worker: bool) -> None:
+    source = LlmSource(client=ScriptedClient([]))
+
+    async def run() -> None:
+        from blue_data_llm_source.source import (
+            _query_records,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        result = (
+            source.fetch("people", properties={"limits.max_calls": 0})
+            if worker
+            else await source.afetch("people", properties={"limits.max_calls": 0})
+        )
+        assert result.records == [] and result.meta.stopped_by == "max_calls"
+        with pytest.raises(BudgetExceeded) as caught:
+            _query_records(result)
+        assert caught.value.limit == "max_calls"
+        if worker:
+            with pytest.raises(BudgetExceeded, match="max_calls prevented an extraction answer"):
+                source.execute_query_nl("people", optional_properties={"limits.max_calls": 0})
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("policy", ["evidence", "always"])
+@pytest.mark.parametrize("path", ["dict", "nl"])
+def test_filtered_answer_precedes_a_sibling_refusal(policy: str, path: str) -> None:
+    from tests.unit.test_split_policy import ProbeClient, Reply, kind, responder, rows
+
+    answer = responder(
+        estimate=300,
+        root="[]",
+        children={
+            "North": rows(["Ada"], "South"),
+            "South": "[]",
+        },
+    )
+
+    def respond(prompt: str) -> Reply:
+        if kind(prompt) == "fetch" and "\nFilters: {}\n" not in prompt:
+            if '"South"' in prompt.split("Filters:", 1)[1]:
+                raise BudgetExceeded("sibling refused", "max_calls")
+        return answer(prompt)
+
+    client = ProbeClient(respond)
+    source = LlmSource(
+        client=client,
+        properties={
+            "plan.mode": "partitioned",
+            "plan.planning_order": "planning.combined",
+            "plan.split_policy": policy,
+            "plan.max_depth": 1,
+            "plan.key": "name",
+            "plan.max_continuations": 0,
+            "plan.filter_enforcement": "drop",
+        },
+    )
+    attrs = [{"name": "name", "type": "string"}, {"name": "region", "type": "string"}]
+    direct = source.fetch("people", attrs=attrs)
+    assert direct.records == []
+    assert direct.meta.filter_contradictions == 1
+    assert direct.meta.stopped_by == "max_calls"
+    assert _row_query(source, path, {"attrs": attrs}) == []
+
+
+@pytest.mark.parametrize("path", ["dict", "nl"])
+def test_nonempty_answer_and_denied_sibling_keep_the_rows(path: str) -> None:
+    from tests.unit.test_unanswered_classification import FIRST, SECOND, Unanswered
+
+    class Mixed(Unanswered):
+        def _respond(self, prompt: str, properties: dict[str, Any] | None) -> str:
+            if "Filters:" in prompt and f'"{SECOND}"' in prompt.split("Filters:", 1)[1]:
+                return '[{"name":"Ada"}]'
+            return super()._respond(prompt, properties)
+
+    source = LlmSource(
+        client=Mixed(
+            [FIRST, SECOND],
+            {
+                FIRST: BudgetExceeded("refused", "max_calls"),
+            },
+        ),
+        properties={"plan.mode": "partitioned", "plan.split_policy": "always", "plan.key": "name"},
+    )
+    assert _row_query(source, path, {"attrs": ["name"]}) == [{"name": "Ada"}]

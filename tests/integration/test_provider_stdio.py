@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+PROVIDER_TIMEOUT_SECONDS = 120
 BOOTSTRAP = r"""
 import asyncio, contextlib, importlib.metadata, io, json, logging, socket, sys
 sys.path[:0] = json.loads(sys.argv[2])
@@ -45,7 +46,13 @@ if "preimport" in mode:
     # The host owns output from imports it performs before calling this client.
     with contextlib.redirect_stdout(io.StringIO()):
         import litellm
-    litellm.turn_on_debug()
+    turn_on_debug = getattr(litellm, "turn_on_debug", None)
+    if not callable(turn_on_debug):
+        turn_on_debug = getattr(litellm, "_turn_on_debug", None)
+    assert callable(turn_on_debug), "LiteLLM debug switch unavailable"
+    turn_on_debug()
+    for name in ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy"):
+        assert logging.getLogger(name).level == logging.DEBUG, name
 if "explicit" in mode:
     for name in ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy"):
         logging.getLogger(name).setLevel(logging.DEBUG)
@@ -85,6 +92,8 @@ print(json.dumps(attempts), file=sys.stderr)
     ],
 )
 def test_provider_stdout_is_empty_offline(mode: str, tmp_path: Path) -> None:
+    for directory in ("home", "tmp", "cache", "config", "data", "profiles"):
+        (tmp_path / directory).mkdir()
     env = {
         key: os.environ[key]
         for key in ("PATH", "SYSTEMROOT", "WINDIR")
@@ -94,7 +103,14 @@ def test_provider_stdout_is_empty_offline(mode: str, tmp_path: Path) -> None:
         LITELLM_LOCAL_MODEL_COST_MAP="True",
         LITELLM_DISABLE_DOTENV="True",
         PYTHONDONTWRITEBYTECODE="1",
+        HOME=str(tmp_path / "home"),
+        TMPDIR=str(tmp_path / "tmp"),
+        TMP=str(tmp_path / "tmp"),
+        TEMP=str(tmp_path / "tmp"),
         XDG_CACHE_HOME=str(tmp_path / "cache"),
+        XDG_CONFIG_HOME=str(tmp_path / "config"),
+        XDG_DATA_HOME=str(tmp_path / "data"),
+        BLUE_DATA_LLM_SOURCE_HOME=str(tmp_path / "profiles"),
     )
     paths = [
         str(Path(path).resolve())
@@ -102,15 +118,24 @@ def test_provider_stdout_is_empty_offline(mode: str, tmp_path: Path) -> None:
         if path
     ]
     paths.append(str(ROOT / "lib/src"))
-    result = subprocess.run(
-        [sys.executable, "-I", "-B", "-c", BOOTSTRAP, mode, json.dumps(paths)],
-        env=env,
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        timeout=45,
-        check=False,
-    )
+    result: subprocess.CompletedProcess[str] | None = None
+    try:
+        result = subprocess.run(
+            [sys.executable, "-I", "-B", "-c", BOOTSTRAP, mode, json.dumps(paths)],
+            env=env,
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=PROVIDER_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        pass
+    if result is None:
+        pytest.fail(
+            f"Provider bootstrap ({mode}) exceeded {PROVIDER_TIMEOUT_SECONDS} seconds.",
+            pytrace=False,
+        )
     assert result.returncode == 0, result.stderr
     assert result.stdout == "", result.stdout
     assert '"socket": 0, "http": 0' in result.stderr

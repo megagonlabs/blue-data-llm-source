@@ -64,13 +64,6 @@ class RecordingProvider:
         return module
 
 
-@pytest.fixture(autouse=True)
-def clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Start every test with none of the settings set, whatever the shell exported."""
-    for variable in [*VARIABLES, *LIMIT_VARIABLES]:
-        monkeypatch.delenv(variable, raising=False)
-
-
 @pytest.fixture
 def provider(monkeypatch: pytest.MonkeyPatch) -> RecordingProvider:
     stub = RecordingProvider()

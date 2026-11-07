@@ -2,6 +2,8 @@
 
 This guide describes `LlmSource` integration with `blue-data` and migration from the earlier LLM source.
 
+The 1.0 release was tested on Linux x86_64 with Python 3.12.11 and 3.13.17, using LiteLLM 1.108.0 for fresh installs and 1.105.7 when installed with `blue-data-kb-source` or `blue-data-user-source`, which require `litellm<1.106`. Supported Python versions are 3.12 and 3.13 (`>=3.12,<3.14`).
+
 ## Integration with blue-data
 
 **The source inherits from `DataSource`.** `LlmSource` extends `blue_data.source.source.DataSource` directly. `blue-data>=1.0.0,<2` and `tenacity>=9.0.0` are core dependencies; the data layer is required at install time.
@@ -18,7 +20,7 @@ Shared `optional_properties["commit"]` is accepted and ignored. `read_only` on `
 
 `LLM.FETCH` is a read operation because it does not change source data. It can send the query to the configured provider and incur charges. Configure `limits.max_cost` or an operator ceiling to bound provider spend independently of read-only dispatch.
 
-Synchronous query methods called inside a running event loop wait for an owned worker thread, blocking the calling thread and delaying its cancellation callbacks. Prefer `afetch` for concurrent work and for clients tied to the caller's loop. When the waiting thread receives `KeyboardInterrupt`, the bridge cancels the in-flight fetch and re-raises once it stops, or after five seconds if the client ignores cancellation. Under `asyncio.run` on Python 3.11 and later, the first Ctrl-C requests cancellation of the runner's main task. When the synchronous call runs in that main task, the bridge observes its cancellation request and cancels the fetch. A call in another task observes cancellation only if that task receives the request. In a plain event-loop callback there is no current task to observe: the fetch may finish before the first interrupt is raised by `asyncio.run`. A second Ctrl-C interrupts the waiting thread; use a task running `afetch` to avoid blocking the loop. Time limits and Ctrl-C cancel cooperatively, so a client that ignores cancellation cannot be forcibly stopped and may finish in the background. A normal interpreter shutdown waits for that worker to finish.
+Synchronous query methods called inside a running event loop wait for an owned worker thread, blocking the calling thread and delaying its cancellation callbacks. Prefer `afetch` for concurrent work and for clients tied to the caller's loop. When the waiting thread receives `KeyboardInterrupt`, the bridge cancels the in-flight fetch and re-raises once it stops, or after five seconds if the client ignores cancellation. Under `asyncio.run`, the first Ctrl-C requests cancellation of the runner's main task. When the synchronous call runs in that main task, the bridge observes its cancellation request and cancels the fetch. A call in another task observes cancellation only if that task receives the request. In a plain event-loop callback there is no current task to observe: the fetch may finish before the first interrupt is raised by `asyncio.run`. A second Ctrl-C interrupts the waiting thread; use a task running `afetch` to avoid blocking the loop. Time limits and Ctrl-C cancel cooperatively, so a client that ignores cancellation cannot be forcibly stopped and may finish in the background. A normal interpreter shutdown waits for that worker to finish.
 
 **Dependency impact.** `blue-data` installs `pandas`, `numpy`, and `jsonpath-ng`, although this package does not use them directly. It does not introduce a dependency on the orchestration layer: the package imports neither `blue` nor `blue_data_ops`, and a test enforces that boundary.
 
@@ -30,7 +32,7 @@ A missing or invalid provider credential fails the provider request, not configu
 
 `DefaultLlmClient` loads LiteLLM lazily. Before importing it, the client raises the effective logging threshold of `LiteLLM`, `LiteLLM Router` and `LiteLLM Proxy` to at least WARNING, including when the host enabled INFO or DEBUG. Stricter levels and existing handlers are preserved. LiteLLM INFO/DEBUG diagnostics are discarded, and its provider-error help banner is suppressed.
 
-Keep `litellm.set_verbose` and `litellm.turn_on_debug()` disabled in stdio hosts. Output emitted by a host's earlier LiteLLM import cannot be suppressed retroactively. Explicit provider debugging and host handlers that write to stdout can still corrupt the protocol. The library does not redirect process-wide stdout; stdio hosts should guard embedded sources at the transport boundary.
+Keep `litellm.set_verbose` and LiteLLM's debug switch (`turn_on_debug()` or `_turn_on_debug()`, depending on the version) disabled in stdio hosts. Output emitted by a host's earlier LiteLLM import cannot be suppressed retroactively. Explicit provider debugging and host handlers that write to stdout can still corrupt the protocol. The library does not redirect process-wide stdout; stdio hosts should guard embedded sources at the transport boundary.
 
 ## Deviations from the earlier implementation
 

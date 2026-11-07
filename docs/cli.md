@@ -395,7 +395,7 @@ blue-llmdb data query "the member states of the European Union" --log --log-limi
 
 ## data estimate
 
-`data estimate` prices a request without contacting a provider, so it runs with no credential present.
+`data estimate` prices a request without contacting a provider, so it runs with no credential present. On a profile with no ceiling and no ceiling set in the environment, the output is:
 
 ```bash
 blue-llmdb data estimate "the member states of the European Union" --model gpt-4o --format nl
@@ -405,7 +405,7 @@ blue-llmdb data estimate "the member states of the European Union" --model gpt-4
 One flat fetch of this request is bounded at $0.1293 against the configured rates for gpt-4o, across 3 attempt(s). Non-flat requests may make planning and extraction calls with different prompts; this figure does not bound their total cost. No ceiling was set.
 ```
 
-Add `--limit-cost` to see how many permitted attempts fit:
+If you followed the Configuration steps above, the default profile still has its $0.50 ceiling, so the same command reports `At this ceiling 3 of 3 attempts fit.` and ends with `Ceilings applied: max_cost 0.5.` Add `--limit-cost` to set that ceiling explicitly:
 
 ```bash
 blue-llmdb data estimate "the member states of the European Union" --model gpt-4o --limit-cost 0.50 --format nl
@@ -636,7 +636,7 @@ ERROR: PARSE ParseError: model response is not valid JSON: Expecting value: line
 The provider SDK detects a missing `OPENAI_API_KEY` during a call; the library masks credential-shaped diagnostic text. With no answered extraction response and no retained records, exhausted retries or a `max_calls` retry refusal produce `TRANSPORT` with exit 5. If `max_cost` or `max_seconds` refuses the retry, the command reports `stopped_by_limit` and exits 7. A ceiling refusal before the first attempt also exits 7. If an extraction response has already been parsed, the result is partial with a gap for the failed part. The SDK-specific error prefix can vary by LiteLLM version. Set the key with `blue-llmdb profile config OPENAI_API_KEY` or export `OPENAI_API_KEY` in the process environment. With `--limit-calls 1`, the fixed retry-stop text for a request with no answered extraction is:
 
 ```text
-ERROR: TRANSPORT TransportError: Provider request failed; max_calls stopped retries.
+ERROR: TRANSPORT TransportError: Provider request failed; max_calls stopped retries.; limits also stopped work: max_calls
 ```
 
 ## Where to go next

@@ -1,4 +1,4 @@
-"""The data-layer base class, now inherited directly rather than through an adapter."""
+"""The data-layer base class is inherited directly."""
 
 from __future__ import annotations
 

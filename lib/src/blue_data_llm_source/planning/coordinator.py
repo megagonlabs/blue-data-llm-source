@@ -672,11 +672,9 @@ async def coordinate_plan(
             raise ConfigError("split_policy='evidence' needs a probe to run the root leaf")
         root = plan.leaves[0]
         run = await probe(root, schema)
-        if run.budget_denied and run.exception is not None and not run.answered:
-            # Refused before it could answer: nothing is known, and a split would need more.
+        if run.budget_denied and run.exception is not None and not run.answered and not run.records:
             raise run.exception
-        # A continuation refused after the root answered keeps that answer, and planning goes
-        # no further: a split would need more of the budget that just ran out.
+        # Keep parsed answers and recovered prefixes; the exhausted budget prevents a split.
         decision = (
             PROBE_ACCEPTED
             if run.budget_denied

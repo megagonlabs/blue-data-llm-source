@@ -1,8 +1,8 @@
 """Fixtures for the MCP tests.
 
-The model is the only boundary, so it is the only thing doubled. Nothing here starts a
-server or opens a transport: the tools are called as functions, which is what the server
-does to them.
+The model is the only boundary, so it is the only thing doubled. The tools are called as
+functions, which is what the server does to them; the few tests that start the server do so
+as a subprocess of their own.
 """
 
 from __future__ import annotations
@@ -14,6 +14,8 @@ from typing import Any, cast
 import pytest
 from blue_data_llm_source import Capability, LlmSource, Usage
 from blue_data_llm_source.llm.budget import Budget
+
+from blue_data_llm_mcp import tools
 
 EU_RECORDS = json.dumps(
     [
@@ -97,6 +99,20 @@ class FakeClient:
 
     async def acomplete(self, prompt: str, properties: dict[str, Any] | None = None) -> str:
         return self.complete(prompt, properties)
+
+
+@pytest.fixture(autouse=True)
+def clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start every test with none of the deployment settings set, whatever the shell exported.
+
+    The runtime reads these variables on every call and honors them, as it should, so a
+    caller who exported an operator ceiling would otherwise change what the tests observe.
+    The names come from the runtime's own tables, so a setting added later is cleared too.
+    A test that needs a setting sets it itself, after this runs.
+    """
+    settings = (*tools._ENVIRONMENT_SETTINGS, *tools._OPERATOR_LIMITS)  # pyright: ignore[reportPrivateUsage]
+    for variable, _, _ in settings:
+        monkeypatch.delenv(variable, raising=False)
 
 
 @pytest.fixture

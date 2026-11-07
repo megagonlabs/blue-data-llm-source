@@ -193,6 +193,7 @@ _NAMESPACES: Final = ("llm.", "limits.", "plan.")
 # signatures have nowhere else to put them. `fetch` takes each as a parameter, so these
 # fields are removed from the map before validating the property names.
 _REQUEST_KEYS: Final = ("attrs", "attr_names", "context", "max_records")
+_OP_KEYS: Final = frozenset({"op", "query", *_REQUEST_KEYS})
 
 
 def _changes_model(configured: dict[str, Any], call: dict[str, Any]) -> bool:
@@ -260,6 +261,49 @@ def _run_stop_reasons(runs: list[Any]) -> list[str]:
         if run.at_cap:
             reasons.append(STOPPED_BY_CONTINUATIONS)
     return _ordered_distinct(reasons)
+
+
+def _unanswered_refusal(
+    denied: list[BudgetExceeded], runs: list[LeafRun], *, trusted_zero: bool = False
+) -> str | None:
+    """Find a limit refusal before filtering can remove a valid answer's rows."""
+    refusals = [
+        *denied,
+        *(run.exception for run in runs if isinstance(run.exception, BudgetExceeded)),
+    ]
+    refused_limits = _ordered_distinct(
+        [e.limit for e in refusals if e.limit in ("max_cost", "max_calls", "max_seconds")]
+    )
+    if (
+        refused_limits
+        and not trusted_zero
+        and not any(
+            run.answered
+            or run.records
+            or run.ordinary_failure
+            or run.outcome in (Outcome.EMPTY_QUERY, Outcome.MODEL_RETURNED_NONE)
+            for run in runs
+        )
+    ):
+        return refused_limits[0]
+    return None
+
+
+def _with_admission_refusal(result: FetchResult, limit: str | None) -> FetchResult:
+    if limit is not None and not result.records:
+        result._with_admission_refusal(limit)  # pyright: ignore[reportPrivateUsage]
+    return result
+
+
+def _query_records(result: FetchResult) -> list[dict[str, Any]]:
+    limit = result._admission_refusal  # pyright: ignore[reportPrivateUsage]
+    if limit is not None:
+        raise BudgetExceeded(
+            f"{limit} prevented an extraction answer. "
+            "Review source limits or optional_properties; use fetch for outcome metadata.",
+            limit=limit,
+        )
+    return result.records
 
 
 def _execution_failure(runs: list[Any], stop_reasons: list[str]) -> LlmSourceError:
@@ -483,6 +527,33 @@ class _ContractControls:
 _TOOL_KEYS_FROM_ARGUMENTS = frozenset({"database", "collection"})
 
 
+def _check_tool_input(tool: dict[str, Any], tool_input: object) -> None:
+    if not isinstance(tool_input, dict) or any(
+        type(key) is not str for key in cast("dict[object, Any]", tool_input)
+    ):
+        raise QueryError(
+            "tool_input must be a dict with string field names. Pass per-call configuration "
+            "through optional_properties"
+        )
+    schema = tool.get("input_schema")
+    if not isinstance(schema, dict):
+        raise ConfigError("served tool input schema must declare valid properties")
+    schema = cast("dict[str, Any]", schema)
+    properties = schema.get("properties")
+    if schema.get("type") != "object" or not isinstance(properties, dict):
+        raise ConfigError("served tool input schema must declare valid properties")
+    properties = cast("dict[object, Any]", properties)
+    if any(
+        type(key) is not str or not isinstance(value, dict) for key, value in properties.items()
+    ):
+        raise ConfigError("served tool input schema must declare valid properties")
+    if cast("dict[str, Any]", tool_input).keys() - properties.keys() - _TOOL_KEYS_FROM_ARGUMENTS:
+        raise QueryError(
+            "tool_input contains unsupported fields. Pass per-call configuration through "
+            "optional_properties"
+        )
+
+
 def _missing_tool_input(tool: dict[str, Any], tool_input: dict[str, Any]) -> list[str]:
     """Required keys this call did not supply, read off the advertised schema.
 
@@ -526,6 +597,9 @@ class LlmSource(DataSource):
     # answer, and none changes stored data, so all of them are reads.
     _READ_OPS: frozenset[str] = frozenset(C.OPS)
     _WRITE_OPS: frozenset[str] = frozenset()
+    _transient_properties: frozenset[str] = getattr(
+        DataSource, "_transient_properties", frozenset[str]()
+    ) | frozenset({"cache_store"})
 
     def __init__(
         self,
@@ -1321,6 +1395,7 @@ class LlmSource(DataSource):
         # allowance is not reported as a discarded planning response, and folded into the
         # run's accounting whichever way planning ends.
         probe_sink: list[Usage] = []
+        probe_runs: list[LeafRun] = []
 
         async def probe(leaf: Any, effective: Schema) -> LeafRun:
             """The root leaf, asked as execution would ask it, with its continuations but
@@ -1342,9 +1417,11 @@ class LlmSource(DataSource):
                 ),
                 prompt_version=contract.leaf_prompt,
             )
-            return await run_local_leaf(
+            run = await run_local_leaf(
                 task, client=client, properties=provider_properties, usage_sink=probe_sink
             )
+            probe_runs.append(run)
+            return run
 
         planning_refusal: BudgetExceeded | None = None
         planning_receipt: PlanningReceipt | None = None
@@ -1398,7 +1475,10 @@ class LlmSource(DataSource):
                 self._fold_usage(call_usages, meta, run_budget, self._attests(client))
                 meta.gaps = [f"planning_unserved: {e}"]
                 meta.latency_seconds = time.monotonic() - started
-                return FetchResult(records=[], meta=meta)
+                return _with_admission_refusal(
+                    FetchResult(records=[], meta=meta),
+                    _unanswered_refusal([e], probe_runs, trusted_zero=exact_rows == 0),
+                )
             plan = bundle.plan
             schema = bundle.schema
             call_usages.extend(probe_sink)
@@ -1523,11 +1603,16 @@ class LlmSource(DataSource):
             meta.stop_reasons = _ordered_distinct([e.limit])
             meta.stopped_by = meta.stop_reasons[0]
             meta.outcome = Outcome.STOPPED_BY_LIMIT
+            for sink in leaf_usages:
+                call_usages.extend(sink)
             self._fold_usage(call_usages, meta, run_budget, self._attests(client))
             meta.gaps = list(planning_gaps)
             meta.gaps.append(f"execution_unserved: {e}")
             meta.latency_seconds = time.monotonic() - started
-            result = FetchResult(records=[], meta=meta)
+            result = _with_admission_refusal(
+                FetchResult(records=[], meta=meta),
+                _unanswered_refusal([e], probe_runs, trusted_zero=exact_rows == 0),
+            )
             return (
                 result.with_planning_receipt(planning_receipt)
                 if planning_receipt is not None
@@ -1538,6 +1623,12 @@ class LlmSource(DataSource):
         # change, not an accounting one, and the totals a caller reads must not move.
         for sink in leaf_usages:
             call_usages.extend(sink)
+
+        refusal = _unanswered_refusal(
+            [planning_refusal] if planning_refusal is not None else [],
+            [*runs, *([probed.run] if probed is not None and not answered_by_probe else [])],
+            trusted_zero=exact_rows == 0,
+        )
 
         # At the leaf and before reduction, because reduction merges fields across leaves that
         # returned the same key: a row removed after the merge has already lent its fields to a
@@ -1623,7 +1714,7 @@ class LlmSource(DataSource):
         ]
         answered_any = any(run.answered for run in counted)
         retained_any = any(run.records for run in counted)
-        failed_runs = counted if planning_refusal is not None else runs
+        failed_runs = counted
         if (
             any(run.ordinary_failure for run in failed_runs)
             and not answered_any
@@ -1727,7 +1818,7 @@ class LlmSource(DataSource):
             [*planning_gaps, *result_gaps],
         )
         meta.latency_seconds = time.monotonic() - started
-        result = FetchResult(records=deduped, meta=meta)
+        result = _with_admission_refusal(FetchResult(records=deduped, meta=meta), refusal)
         return (
             result.with_planning_receipt(planning_receipt)
             if planning_receipt is not None
@@ -2078,11 +2169,28 @@ class LlmSource(DataSource):
 
         if isinstance(query, dict):
             spec = cast("dict[str, Any]", query)
+            if any(type(key) is not str for key in spec):
+                raise QueryError(
+                    "operation fields must be strings. "
+                    f"Accepted fields: {', '.join(sorted(_OP_KEYS))}. "
+                    "Put settings in optional_properties."
+                )
             op = spec.get("op")
+            if op is not None and not isinstance(op, str):
+                raise QueryError(
+                    f"unknown op: expected a string. Supported ops: {', '.join(C.OPS)}"
+                )
+            if op not in C.OPS:
+                raise QueryError(f"unknown op {op!r}. Supported ops: {', '.join(C.OPS)}")
+            unsupported = sorted(spec.keys() - _OP_KEYS)
+            if unsupported:
+                raise QueryError(
+                    f"unsupported operation fields: {', '.join(unsupported)}. "
+                    f"Accepted fields: {', '.join(sorted(_OP_KEYS))}. "
+                    "Put settings in optional_properties."
+                )
             if op == C.OP_MODELS:
                 return [{"protocol": self.protocol, "variant": self.variant}]
-            if op not in (C.OP_FETCH, C.OP_ESTIMATE):
-                raise QueryError(f"unknown op {op!r}. Supported ops: {', '.join(C.OPS)}")
             text = spec.get("query", "")
             # Read once for both ops, from both places, with the spec losing to a field the
             # caller put in `optional_properties`. Reading the estimate's attributes from the
@@ -2116,7 +2224,7 @@ class LlmSource(DataSource):
             max_records=request.pop("max_records", None),
             properties=options or None,
         )
-        return result.records
+        return _query_records(result)
 
     def execute_query_nl(
         self,
@@ -2136,14 +2244,15 @@ class LlmSource(DataSource):
         """
         options = dict(optional_properties or {})
         request = _take_request_keys(options)
-        return self.fetch(
+        result = self.fetch(
             query,
             attrs=request.pop("attrs", None) or request.pop("attr_names", None),
             context=request.pop("context", None),
             max_records=request.pop("max_records", None),
             properties=options or None,
             llm_fn=llm_fn,
-        ).records
+        )
+        return _query_records(result)
 
     def translate_nl_to_native_query(
         self, query: str, schema: dict[str, Any] | None, llm_fn: Any
@@ -2208,6 +2317,7 @@ class LlmSource(DataSource):
                     f"{', '.join(sorted(served))}. Use execute_query_nl for the "
                     f"natural-language surface"
                 )
+            _check_tool_input(served[name], tool_input)
             # Checked for every tool rather than only the one that spends, for the reason
             # execute_query checks it before reading the op: a ceiling key accepted on one
             # call and refused on the next is a ceiling a caller believes they have set. The
