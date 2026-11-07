@@ -169,7 +169,7 @@ python -m pip install --no-index --no-deps --force-reinstall \
 
 Run outside the source trees with `PYTHONPATH` unset. `--no-deps` does not resolve dependencies: check the installed requirements separately. An ordinary upgrade from 0.2.2.1 (installed copies report 2.2.1) will not select 1.0.0, which pip ranks lower.
 
-Tested with Python 3.12.14 and LiteLLM 1.106.5 on macOS ARM64. The packages declare Python 3.12 and 3.13, the versions on which the whole Blue DI 1.0 family installs and runs together.
+The 1.0 release was tested on Linux x86_64 with Python 3.12.11 and 3.13.17, using LiteLLM 1.108.0 for fresh installs and 1.105.7 when installed with `blue-data-kb-source` or `blue-data-user-source`, which require `litellm<1.106`. The packages support Python 3.12 and 3.13 (`>=3.12,<3.14`).
 
 ### Python 3.15 installation
 

@@ -15,7 +15,7 @@ from blue_data.registry.data_registry import (  # pyright: ignore[reportMissingT
 
 from blue_data_llm_source import LlmSource
 from blue_data_llm_source import _constants as C
-from blue_data_llm_source.types import ConfigError, QueryError
+from blue_data_llm_source.types import BudgetExceeded, ConfigError, QueryError
 from tests.doubles import ScriptedClient
 
 RECORDS = '[{"name": "Ada", "age": 36}, {"name": "Grace", "age": 37}]'
@@ -165,12 +165,11 @@ def test_encoded_fetch_cannot_raise_a_configured_cost_ceiling(ceiling: float | N
     client = ScriptedClient([RECORDS], cost=0.1)
     source = LlmSource(client=client, properties={"limits.max_cost": 0.01})
 
-    assert (
+    with pytest.raises(BudgetExceeded) as caught:
         registered_query(
             source, '{"op":"LLM.FETCH","query":"people"}', {"limits.max_cost": ceiling}
         )
-        == []
-    )
+    assert caught.value.limit == "max_cost"
     assert client.prompts == []
 
 
@@ -213,3 +212,184 @@ def test_natural_language_entry_point_keeps_an_op_string_as_text() -> None:
 
     assert source.execute_query_nl('{"op":"LLM.MODELS"}') == json.loads(RECORDS)
     assert len(client.prompts) == 1
+
+
+@pytest.mark.parametrize("op", C.OPS)
+@pytest.mark.parametrize("encoded", [False, True])
+@pytest.mark.parametrize("via_registry", [False, True])
+@pytest.mark.parametrize("commit", [False, True])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "limits.max_cost",
+        "limits",
+        "limit.max_cost",
+        "max_recrods",
+        "attributes",
+        "commit",
+        "llm.model",
+        "plan.mode",
+        "optional_properties",
+        "properties",
+    ],
+)
+def test_unsupported_fields_fail_before_dispatch_without_mutation(
+    op: str,
+    encoded: bool,
+    via_registry: bool,
+    commit: bool,
+    field: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source, client = source_with_response()
+    spec = {"op": op, "query": "people", field: {"private-value": 0}}
+    before = json.dumps(spec)
+    options = {"commit": commit, "attrs": ["name"]}
+
+    def no_dispatch(*args: Any, **kwargs: Any) -> NoReturn:
+        raise AssertionError("invalid fields reached estimate/fetch/cache/client dispatch")
+
+    monkeypatch.setattr(source, "fetch", no_dispatch)
+    monkeypatch.setattr(source, "estimate", no_dispatch)
+    monkeypatch.setattr(source, "_resolve_client", no_dispatch)
+    query = " \t" + json.dumps(spec) + "\n" if encoded else spec
+    with pytest.raises(QueryError) as caught:
+        if via_registry:
+            registered_query(source, query, options)
+        else:
+            source.execute_query(query, optional_properties=options)
+    assert field in str(caught.value)
+    assert "Accepted fields:" in str(caught.value)
+    assert "optional_properties" in str(caught.value)
+    assert "private-value" not in str(caught.value)
+    assert json.dumps(spec) == before
+    assert options == {"commit": commit, "attrs": ["name"]}
+    assert client.prompts == []
+
+
+@pytest.mark.parametrize("op", C.OPS)
+@pytest.mark.parametrize("key", [None, 3, ("limits", "max_cost")])
+def test_nonstring_field_names_are_typed_errors(op: str, key: object) -> None:
+    source, client = source_with_response()
+    with pytest.raises(QueryError, match="fields must be strings"):
+        source.execute_query({"op": op, key: 0})
+    assert client.prompts == []
+
+
+def test_arbitrary_key_is_never_rendered() -> None:
+    class Key:
+        def __repr__(self) -> str:
+            raise AssertionError("rendered arbitrary key")
+
+        __str__ = __repr__
+
+    source, client = source_with_response()
+    with pytest.raises(QueryError, match="fields must be strings"):
+        source.execute_query({"op": C.OP_MODELS, Key(): "hidden"})
+    assert client.prompts == []
+
+
+@pytest.mark.parametrize("op", C.OPS)
+@pytest.mark.parametrize("encoded", [False, True])
+def test_common_envelope_accepts_explicit_none_and_keeps_inputs(op: str, encoded: bool) -> None:
+    source, _ = source_with_response()
+    spec = {
+        "op": op,
+        "query": "people",
+        "attrs": None,
+        "attr_names": ["name"],
+        "context": None,
+        "max_records": None,
+    }
+    before = json.dumps(spec)
+    options = {"attrs": ["age"], "context": "ages", "max_records": None, "commit": True}
+    result = registered_query(source, json.dumps(spec) if encoded else spec, options)
+    if op == C.OP_FETCH:
+        assert result == [{"age": 36}, {"age": 37}]
+    assert json.dumps(spec) == before
+    assert options == {"attrs": ["age"], "context": "ages", "max_records": None, "commit": True}
+
+
+def test_nonstring_key_cannot_run_equality_during_op_lookup() -> None:
+    class Key:
+        def __hash__(self) -> int:
+            return hash("op")
+
+        def __eq__(self, other: object) -> bool:
+            raise AssertionError("compared arbitrary key during op lookup")
+
+        def __repr__(self) -> str:
+            raise AssertionError("rendered arbitrary key")
+
+    with pytest.raises(QueryError, match="fields must be strings"):
+        LlmSource().execute_query({Key(): "hidden"})
+
+
+@pytest.mark.parametrize("op", [[], {}, 1, False])
+def test_nonstring_op_values_are_rejected_without_rendering(op: Any) -> None:
+    class Hostile:
+        def __repr__(self) -> str:
+            raise AssertionError("rendered hostile op")
+
+        __str__ = __repr__
+
+        def __eq__(self, other: object) -> bool:
+            raise AssertionError("compared hostile op")
+
+    source, client = source_with_response()
+    for value in (op, Hostile()):
+        with pytest.raises(QueryError, match="expected a string"):
+            source.execute_query({"op": value, "unknown": "hidden-value"})
+    assert client.prompts == []
+
+
+@pytest.mark.parametrize("spec", [{}, {"op": None}])
+def test_absent_or_none_op_keeps_the_unknown_none_message(spec: dict[str, Any]) -> None:
+    with pytest.raises(QueryError) as caught:
+        LlmSource().execute_query(spec)
+    assert str(caught.value) == f"unknown op None. Supported ops: {', '.join(C.OPS)}"
+
+
+@pytest.mark.parametrize("encoded", [False, True])
+def test_operation_validation_precedence_and_no_work(
+    encoded: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, client = source_with_response()
+
+    def no_work(*args: Any, **kwargs: Any) -> NoReturn:
+        raise AssertionError("malformed operation reached work")
+
+    for method in ("fetch", "estimate", "_resolve_client"):
+        monkeypatch.setattr(source, method, no_work)
+    cases: list[tuple[dict[str, Any], dict[str, Any], type[Exception], str]] = [
+        (
+            {"op": C.OP_MODELS, "unknown": "hidden-value"},
+            {"unknown.setting": True},
+            ConfigError,
+            "unknown property",
+        ),
+        (
+            {"op": "LLM.UNKNOWN", "unknown": "hidden-value"},
+            {},
+            QueryError,
+            "unknown op 'LLM.UNKNOWN'",
+        ),
+        (
+            {"op": C.OP_ESTIMATE, "unknown": "hidden-value", "max_records": 1},
+            {},
+            QueryError,
+            "unsupported operation fields",
+        ),
+        (
+            {"op": C.OP_FETCH, "unknown": "hidden-value", "attrs": 5},
+            {},
+            QueryError,
+            "unsupported operation fields",
+        ),
+    ]
+    for spec, options, error, message in cases:
+        query = json.dumps(spec) if encoded else spec
+        with pytest.raises(error, match=message) as caught:
+            source.execute_query(query, optional_properties=options)
+        assert "hidden-value" not in str(caught.value)
+    assert client.prompts == []

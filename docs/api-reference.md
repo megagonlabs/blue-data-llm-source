@@ -126,7 +126,7 @@ Source settings override client settings; a call can only tighten the resulting 
 | `llm_fn` | `Any` | `None` | A `(prompt) -> str` callable, or a coroutine function, used as the model for this call. Wrapped in a `FunctionClient` |
 | `budget` | `Budget \| None` | `None` | A budget you own. The fetch derives a child from it, so ceilings accumulate across every call you hand it to |
 
-Synchronous query methods work inside a running event loop by waiting for an owned worker thread. They block the calling thread and delay its cancellation callbacks. Use `afetch` for concurrent async work and for a client or `llm_fn` that needs the caller's own event loop; a synchronous call hangs on such a client. Thread-affine objects, such as an sqlite connection used inside `llm_fn`, fail on the worker thread. Under `asyncio.run` on Python 3.11 and later, the first Ctrl-C cancels the in-flight fetch when the synchronous call runs in the runner's main task. A call in another task observes cancellation only if that task receives the request. In a plain event-loop callback, that signal cancels the runner's main task while the fetch continues; a second Ctrl-C interrupts the waiting thread. Schedule and await `afetch` in a task for cancellable asynchronous work. Once the bridge receives an interrupt or task-cancellation request, it raises as soon as the fetch stops, or after five seconds if the client ignores cancellation; that work then finishes in the background. Time limits cancel the same cooperative way, so they cannot forcibly stop a client that ignores cancellation either. See [`lib/COMPATIBILITY.md`](../lib/COMPATIBILITY.md).
+Synchronous query methods work inside a running event loop by waiting for an owned worker thread. They block the calling thread and delay its cancellation callbacks. Use `afetch` for concurrent async work and for a client or `llm_fn` that needs the caller's own event loop; a synchronous call hangs on such a client. Thread-affine objects, such as an sqlite connection used inside `llm_fn`, fail on the worker thread. Under `asyncio.run`, the first Ctrl-C cancels the in-flight fetch when the synchronous call runs in the runner's main task. A call in another task observes cancellation only if that task receives the request. In a plain event-loop callback, that signal cancels the runner's main task while the fetch continues; a second Ctrl-C interrupts the waiting thread. Schedule and await `afetch` in a task for cancellable asynchronous work. Once the bridge receives an interrupt or task-cancellation request, it raises as soon as the fetch stops, or after five seconds if the client ignores cancellation; that work then finishes in the background. Time limits cancel the same cooperative way, so they cannot forcibly stop a client that ignores cancellation either. See [`lib/COMPATIBILITY.md`](../lib/COMPATIBILITY.md).
 
 `estimate` takes no `max_records` and no `budget`, contacts nothing, and reads no `plan.*` setting.
 
@@ -150,6 +150,8 @@ Inherited from `DataSource` and overridden here.
 
 `optional_properties` accepts the three closed namespaces `llm.*`, `limits.*`, and `plan.*`, plus the unnamespaced request fields the query surfaces consume. Any other key is refused with `ConfigError`. `execute_query` has no `llm_fn` parameter, so inject a custom client at construction instead.
 
+The row-only methods (`execute_query`, `execute_query_nl` and the `execute_query` tool) raise `BudgetExceeded` when a cost, call or time refusal prevents an extraction answer. Planning work alone does not count as an answer. A parsed empty answer, cached answer or answer filtered to zero rows remains valid. Use `fetch` or `afetch` for outcome metadata, including limits that stop a partially answered request. In a planned request, a failed extraction with no answered part or retained rows raises its ordinary error even when a limit also stops other leaves.
+
 #### Op codes
 
 | Op | Reads from the dict | Returns |
@@ -159,6 +161,8 @@ Inherited from `DataSource` and overridden here.
 | `LLM.ESTIMATE` | `query`, `attrs` or `attr_names`, `context` | The `Estimate` as a one-record list, without contacting anything |
 
 An unrecognized op raises `QueryError` listing the three.
+
+Operation dictionaries and their JSON forms accept only `op`, `query`, `attrs`, `attr_names`, `context` and `max_records`. A non-string key, non-string operation name or unsupported field raises `QueryError` before dispatch, including for `LLM.MODELS`. Pass per-call configuration through `optional_properties` on methods that expose it; `limits.*` is not an operation field. Generic registry CLI, REST and MCP query surfaces do not expose that per-call channel, so configure ceilings on the registered source there. The Python registry method accepts `optional_properties`. Per-call ceilings can only tighten source ceilings.
 
 ### Orchestrator tool surface
 
@@ -180,6 +184,8 @@ An unrecognized op raises `QueryError` listing the three.
 | `get_sample` | yes | Accepts shared `sample_size` (default 10); returns `None`, with no provider call |
 
 A tool input missing a key the advertised schema requires raises `QueryError` naming what was missing and what was supplied. `database` and `collection` may be supplied either in `tool_input` or as arguments. Nothing on this path leaves the `LlmSourceError` hierarchy.
+
+`tool_input` must be a dict with string field names from the advertised schema's `properties`, plus `database` and `collection` context. Unsupported fields now raise `QueryError` before provider contact instead of being ignored; errors omit their names and values. Pass ceilings as the outer `optional_properties` argument, for example `source.execute_nl_tool("execute_query", {"query": "people"}, optional_properties={"limits.max_calls": 0})`. Putting `limits.*` or an `optional_properties` map inside `tool_input` is refused. A missing or malformed input schema raises `ConfigError`. The advertised schemas are unchanged. The dedicated CLI and MCP tool APIs use their own argument guards and do not expose `execute_nl_tool`.
 
 `execute_query_nl_tools` drives a loop of up to ten provider calls that this source's ceilings do not govern, so it is refused rather than served.
 

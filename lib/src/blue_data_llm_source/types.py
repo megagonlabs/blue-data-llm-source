@@ -285,7 +285,7 @@ STOPPED_BY_OUTPUT: Final = "provider_output_limit"
 """The provider reported that its output allowance ended the response.
 
 Named for the provider rather than the model because ``llm.max_tokens`` may be the caller's
-own setting, and the adapter is the witness either way. Reported only where the provider
+own setting. The adapter reports this reason only when the provider
 actually said so: a response that merely failed to parse whole is
 :data:`STOPPED_BY_INCOMPLETE_RESPONSE`, which claims less.
 
@@ -466,6 +466,14 @@ class FetchResult:
 
     records: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     meta: ExecMeta = field(default_factory=ExecMeta)
+
+    @property
+    def _admission_refusal(self) -> str | None:
+        return getattr(self, "_admission_refusal_limit", None)
+
+    def _with_admission_refusal(self, limit: str) -> FetchResult:
+        self._admission_refusal_limit = limit
+        return self
 
     @property
     def planning_receipt(self) -> PlanningReceiptProtocol | None:

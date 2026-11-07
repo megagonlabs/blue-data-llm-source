@@ -142,3 +142,28 @@ def test_the_budget_surface_is_exported_from_the_package_root() -> None:
     for name in ("Budget", "Limits", "Reservation", "BudgetAwareClient"):
         assert hasattr(pkg, name), name
         assert name in pkg.__all__, name
+
+
+def test_admission_refusal_is_private_per_result_and_never_serialized() -> None:
+    from dataclasses import asdict, fields
+
+    from blue_data_llm_source import meta_view
+
+    class Receipt:
+        def to_dict(self) -> dict[str, object]:
+            return {"public_receipt": True}
+
+    plain = FetchResult().with_planning_receipt(Receipt())
+    refused = FetchResult().with_planning_receipt(Receipt())
+    refused._with_admission_refusal("max_cost")  # pyright: ignore[reportPrivateUsage]
+    assert plain._admission_refusal is None  # pyright: ignore[reportPrivateUsage]
+    assert refused._admission_refusal == "max_cost"  # pyright: ignore[reportPrivateUsage]
+    assert plain == refused
+    assert repr(plain) == repr(refused)
+    assert asdict(plain) == asdict(refused)
+    assert [item.name for item in fields(refused)] == ["records", "meta"]
+    assert plain.to_dict() == refused.to_dict()
+    assert refused.to_dict()["planning_receipt"] == {"public_receipt": True}
+    assert meta_view(plain.meta) == meta_view(refused.meta)
+    assert meta_view(plain.meta, verbose=True) == meta_view(refused.meta, verbose=True)
+    assert "max_cost" not in repr(refused.to_dict())

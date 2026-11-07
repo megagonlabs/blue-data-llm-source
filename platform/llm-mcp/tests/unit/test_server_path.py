@@ -11,6 +11,7 @@ import asyncio
 import builtins
 import contextlib
 import importlib
+import importlib.util
 import json
 import logging
 import os
@@ -21,12 +22,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import blue_data_llm_source
 import pytest
 from blue_data_llm_source import ConfigError, TransportError
 
 from blue_data_llm_mcp import __version__, tools
 
 PACKAGE = Path(tools.__file__).parent
+MCP_TIMEOUT_SECONDS = 30
 
 
 @pytest.mark.parametrize(
@@ -80,7 +83,7 @@ def test_console_arguments_finish_without_starting_transport(
             assert output.out.strip() == __version__
 
 
-def test_malformed_frame_does_not_log_caller_arguments() -> None:
+def test_malformed_frame_does_not_log_caller_arguments(tmp_path: Path) -> None:
     pytest.importorskip("mcp")
     marker = "SYNTHETIC_MCP_MARKER_123"
     frames: list[dict[str, object]] = [
@@ -102,14 +105,53 @@ def test_malformed_frame_does_not_log_caller_arguments() -> None:
             "params": {"name": "llmdb_query", "arguments": [{"name": marker}]},
         },
     ]
-    process = subprocess.run(
-        [sys.executable, "-m", "blue_data_llm_mcp.server"],
-        input="".join(json.dumps(frame) + "\n" for frame in frames),
-        text=True,
-        capture_output=True,
-        timeout=8,
-        check=False,
+    for directory in ("home", "tmp", "cache", "config", "data", "profiles"):
+        (tmp_path / directory).mkdir()
+    env = {key: os.environ[key] for key in ("PATH", "SYSTEMROOT", "WINDIR") if key in os.environ}
+    sdk_spec = importlib.util.find_spec("blue_data")
+    assert sdk_spec is not None and sdk_spec.origin is not None
+    paths = [
+        str(PACKAGE.parent.resolve()),
+        str(Path(blue_data_llm_source.__file__).resolve().parents[1]),
+        str(Path(sdk_spec.origin).resolve().parents[1]),
+    ]
+    paths.extend(
+        str(Path(path).resolve())
+        for path in os.environ.get("PYTHONPATH", "").split(os.pathsep)
+        if path
     )
+    env.update(
+        PYTHONPATH=os.pathsep.join(paths),
+        HOME=str(tmp_path / "home"),
+        TMPDIR=str(tmp_path / "tmp"),
+        TMP=str(tmp_path / "tmp"),
+        TEMP=str(tmp_path / "tmp"),
+        XDG_CACHE_HOME=str(tmp_path / "cache"),
+        XDG_CONFIG_HOME=str(tmp_path / "config"),
+        XDG_DATA_HOME=str(tmp_path / "data"),
+        BLUE_DATA_LLM_SOURCE_HOME=str(tmp_path / "profiles"),
+        PYTHONDONTWRITEBYTECODE="1",
+        LITELLM_LOCAL_MODEL_COST_MAP="True",
+        LITELLM_DISABLE_DOTENV="True",
+    )
+    process: subprocess.CompletedProcess[str] | None = None
+    try:
+        process = subprocess.run(
+            [sys.executable, "-B", "-m", "blue_data_llm_mcp.server"],
+            env=env,
+            cwd=tmp_path,
+            input="".join(json.dumps(frame) + "\n" for frame in frames),
+            text=True,
+            capture_output=True,
+            timeout=MCP_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        pass
+    if process is None:
+        pytest.fail(
+            f"MCP malformed-frame process exceeded {MCP_TIMEOUT_SECONDS} seconds.", pytrace=False
+        )
     assert process.returncode == 0
     assert marker not in process.stderr
     assert marker not in process.stdout

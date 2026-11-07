@@ -1,6 +1,6 @@
 """The field policy `meta_view` publishes, pinned field by field.
 
-The policy is the contract two adapters now share, so it is checked here rather than in
+The policy is the contract two adapters share, so it is checked here rather than in
 either of them. A field moved between tiers by accident is a field that silently appears
 in or disappears from a shipped surface.
 """

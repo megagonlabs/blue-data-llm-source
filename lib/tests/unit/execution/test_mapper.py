@@ -563,8 +563,7 @@ class TestTheLibraryDefaultIsOneCall:
 
 
 class TestTheAsyncDriverAgreesWithTheSyncOne:
-    """Two drivers over one loop. The risk being fixed is the two disagreeing, so these
-    run the same models through both and compare, rather than asserting on one."""
+    """Run identical models through both drivers of the shared loop to detect disagreement."""
 
     async def arun(self, answers: list[str], **kw: Any) -> LeafRun:
         pending = list(answers)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Callable
 from contextlib import contextmanager
 from typing import Any, cast
@@ -499,16 +500,17 @@ def test_a_cost_ceiling_supplied_with_the_query_binds_that_query(
     litellm_stub(LitellmStub(chat_payload(ONE_RECORD), cost=0.02))
     source = LlmSource(properties={"llm.model": "gpt-4o-mini", "llm.max_tokens": 64})
 
-    refused = source.execute_query(
-        {"op": "LLM.FETCH", "query": "who?"},
-        optional_properties={"limits.max_cost": 0.000001},
-    )
+    with pytest.raises(BudgetExceeded) as caught:
+        source.execute_query(
+            {"op": "LLM.FETCH", "query": "who?"},
+            optional_properties={"limits.max_cost": 0.000001},
+        )
+    assert caught.value.limit == "max_cost"
     allowed = source.execute_query(
         {"op": "LLM.FETCH", "query": "who?"},
         optional_properties={"limits.max_cost": 1.0},
     )
 
-    assert refused == []
     assert allowed == [{"name": "Ada", "age": 36}]
 
 
@@ -519,9 +521,10 @@ def test_a_per_query_ceiling_does_not_leak_into_the_next_query(
     litellm_stub(LitellmStub(chat_payload(ONE_RECORD), cost=0.02))
     source = LlmSource(properties={"llm.model": "gpt-4o-mini", "llm.max_tokens": 64})
 
-    source.execute_query(
-        {"op": "LLM.FETCH", "query": "who?"}, optional_properties={"limits.max_cost": 0.000001}
-    )
+    with pytest.raises(BudgetExceeded, match="max_cost"):
+        source.execute_query(
+            {"op": "LLM.FETCH", "query": "who?"}, optional_properties={"limits.max_cost": 0.000001}
+        )
     after = source.execute_query({"op": "LLM.FETCH", "query": "who?"})
 
     assert after == [{"name": "Ada", "age": 36}]
@@ -1389,3 +1392,57 @@ def test_the_shared_semaphore_registry_does_not_grow_without_bound() -> None:
             loop.close()
         registry.clear()
         gc.collect()
+
+
+@pytest.mark.parametrize("planning_work", [False, True])
+def test_cost_refusal_outranks_later_deadline_observation(
+    monkeypatch: pytest.MonkeyPatch,
+    planning_work: bool,
+) -> None:
+    from blue_data_llm_source.types import ExecMeta
+
+    fold = LlmSource._fold_usage  # pyright: ignore[reportPrivateUsage]
+
+    def after_deadline(
+        usages: list[Usage],
+        meta: ExecMeta,
+        budget: Budget,
+        accounting_known: bool = True,
+    ) -> None:
+        # The cost claim was already denied. Only usage folding observes this clock tick.
+        monkeypatch.setattr(budget, "_clock", lambda: 10**20)
+        fold(usages, meta, budget, accounting_known)
+
+    monkeypatch.setattr(LlmSource, "_fold_usage", staticmethod(after_deadline))
+    planning = json.dumps(
+        {
+            "ask": "people",
+            "constraints": {},
+            "row_estimate": 1,
+            "schema": {"attrs": [{"name": "name"}], "key": "name"},
+        }
+    )
+    from tests.unit.test_source_surface import ClientBudget
+
+    client = ScriptedClient([planning, planning] if planning_work else [ONE_RECORD], cost=0.1)
+    owned = ClientBudget(client, Budget(Limits(max_cost=0.1)))
+    settings: dict[str, Any] = {
+        "limits.max_cost": None if planning_work else 0.01,
+        "limits.max_seconds": 60,
+    }
+    if planning_work:
+        settings.update(
+            {
+                "plan.mode": "partitioned",
+                "plan.planning_order": "planning.combined",
+                "plan.max_depth": 0,
+            }
+        )
+    source = LlmSource(client=owned if planning_work else client, properties=settings)
+    direct = source.fetch("people")
+    assert direct.meta.stopped_by == "max_seconds"
+    assert direct.meta.stop_reasons == ["max_seconds", "max_cost"]
+    with pytest.raises(BudgetExceeded) as caught:
+        source.execute_query("people")
+    assert caught.value.limit == "max_cost"
+    assert len(client.prompts) == (2 if planning_work else 0)

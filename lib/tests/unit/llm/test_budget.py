@@ -588,19 +588,16 @@ def test_a_reentrant_take_cannot_spend_the_headroom_twice() -> None:
 
 
 def test_an_absurd_total_saturates_instead_of_raising() -> None:
-    """`fsum` raises on two 1e308 values, and raising here stranded a parent's claim.
+    """Overflowing totals must not strand a parent claim.
 
-    The child inserted into the parent, `fsum` raised before the child's own insert, and the
-    child's finalizer found nothing local to remove — so the parent kept a counted call and
-    an unreachable claim. The withdrawal says an absurd total reads as absurd; it now does.
+    ``fsum`` overflows on two 1e308 values; the reservation must saturate so both
+    ledgers can release the unsettled child claim.
     """
     parent = Budget(Limits(max_calls=4))
     child = parent.derive()
 
     outer = parent.reserve(1e308)
-    # Left unresolved on purpose: the finalizer must give it back from both ledgers. Under
-    # the raising version the parent was claimed and the child was not, so the child's
-    # finalizer found nothing local and the parent's entry could never be reached again.
+    # Finalization must release the unsettled claim from both ledgers.
     with child.attempt(1e308):
         assert math.isinf(parent.reserved)
 

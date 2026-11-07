@@ -59,7 +59,7 @@ class ToolError(Exception):
     """A failed tool call with text safe for an MCP caller."""
 
     def __init__(self, message: str, kind: str = "ToolError") -> None:
-        masked = conceal(redact(message))
+        masked = masked_display(message)
         super().__init__(masked)
         self.message = masked
         self.kind = kind
@@ -724,6 +724,30 @@ def conceal(text: str) -> str:
     return text
 
 
+def masked_display(text: str) -> str:
+    """*text* masked for credentials and private values, each found in the original text.
+
+    Masking one first can split the other's match, leaving its remainder readable, so when
+    both match and may overlap, the whole text is masked.
+    """
+    redacted = redact(text)
+    concealed = conceal(text)
+    if redacted != text and concealed != text:
+        return MASK
+    return redacted if redacted != text else concealed
+
+
+def masked_model(text: str) -> str:
+    """Mask a model field that may already contain a credential mask.
+
+    A previous mask can break a private-value match. With private settings,
+    mask the whole name whenever it already contains a mask.
+    """
+    if MASK in text and _concealed():
+        return MASK
+    return masked_display(text)
+
+
 def build_source(environ: Mapping[str, str] | None = None) -> LlmSource:
     """Construct the source a tool call runs against, from the deployment's settings.
 
@@ -810,7 +834,8 @@ def _query_result(result: Any) -> dict[str, Any]:
     name it was asked for, which here is the operator's setting.
     """
     meta = meta_view(result.meta, verbose=True)
-    meta["model"] = conceal(str(meta["model"]))
+    # Read the model before meta_view applies its credential mask.
+    meta["model"] = masked_model(str(result.meta.model))
     return {"records": list(result.records), "meta": meta}
 
 
@@ -846,7 +871,8 @@ def estimate_summary(estimate: Estimate) -> dict[str, Any]:
         "max_cost_per_attempt": estimate.max_cost_per_attempt,
         "max_attempts": estimate.max_attempts,
         "reason": _estimate_reason(estimate.reason),
-        "model": conceal(estimate.model),
+        # The library has already masked a credential in it; see masked_model.
+        "model": masked_model(estimate.model),
         "prompt_bytes": estimate.prompt_bytes,
         "max_output_tokens": estimate.max_output_tokens,
         "attempts_within_ceiling": estimate.attempts_within_ceiling,
@@ -925,9 +951,8 @@ def llmdb_inspect_model(
     properties: dict[str, Any] = dict(target.properties)
     allowance = _model_allowance(target, name)
     return {
-        # The one field here that is the caller's own text on its way back out. The lookups
-        # above read what arrived; what is published is masked.
-        "model": redact(name),
+        # The caller's own text on its way out: masked from the original (see masked_display).
+        "model": masked_display(name),
         # The price table alone, which is what the word means. A deployment that supplied
         # its own rates makes a ceiling bindable without making the model priced here, and
         # the rates it supplied are its configuration rather than this tool's answer.

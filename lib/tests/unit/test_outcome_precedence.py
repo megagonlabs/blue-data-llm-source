@@ -1,14 +1,8 @@
-"""What ``meta.outcome`` must say when part of a split request did not come back.
+"""``meta.outcome`` distinguishes incomplete split requests without parsing ``gaps``.
 
-``outcome`` exists so that a caller does not have to parse ``gaps`` to find out whether it
-holds an answer. A run that lost a third of its parts and reports the same member as a run
-that lost nothing has moved that decision back into the gap list, where the field was
-introduced to stop it living.
-
-Nothing here asserts a row count. Rows are the wrong oracle for this: a partly-failed run
-and a complete one can return the same number of records, and a partial run that returns
-none is still partial. The invariant is over the plan -- how many parts were asked for
-against how many reported -- so that is what these compare.
+Row counts cannot establish completeness: complete and partly failed runs can return
+the same count, and a partial run can return no rows. Compare the plan parts requested
+with those reported.
 """
 
 from __future__ import annotations

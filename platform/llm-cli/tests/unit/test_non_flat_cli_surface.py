@@ -1,8 +1,4 @@
-"""Non-flat planning and result facts at the command-line boundary.
-
-Carried across the CLI replacement unchanged in substance: the command is now
-`data query` rather than `fetch`, and the facts it has to keep publishing are the same.
-"""
+"""Non-flat planning and result metadata published by ``data query``."""
 
 from __future__ import annotations
 

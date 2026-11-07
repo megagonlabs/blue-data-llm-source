@@ -12,7 +12,7 @@ from blue_data.source.json.memory_json_source import (
     MemoryJSONSource,  # pyright: ignore[reportMissingTypeStubs]
 )
 
-from blue_data_llm_source import Budget, ConfigError, Limits, LlmSource, QueryError
+from blue_data_llm_source import Budget, BudgetExceeded, ConfigError, Limits, LlmSource, QueryError
 from tests.doubles import ScriptedClient
 
 ROWS = '[{"item":"alpha"},{"item":"beta"},{"item":"gamma"}]'
@@ -52,7 +52,12 @@ def test_configured_zero_survives_call_overrides(
     source = LlmSource(properties={f"limits.{axis}": 0}, client=client)
     options = {f"limits.{axis}": call["value"]} if call else {}
     before = deepcopy((source.properties, options))
-    assert invoke(source, route, options) == []
+    if route not in ("fetch", "afetch") and axis != "max_rows":
+        with pytest.raises(BudgetExceeded) as caught:
+            invoke(source, route, options)
+        assert caught.value.limit == axis
+    else:
+        assert invoke(source, route, options) == []
     assert (source.properties, options) == before
     assert len(client.prompts) == (1 if axis == "max_rows" else 0)
 
