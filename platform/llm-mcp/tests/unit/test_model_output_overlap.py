@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import os
 import sys
 import threading
@@ -322,9 +323,18 @@ def test_a_query_keeps_its_records_and_numbers_under_a_masked_model(
     result = run_query(how, source)
 
     assert result["meta"]["model"] == MASK
+    assert control["meta"]["model"] == "gpt-4o"
     assert result["records"] == control["records"]
     assert result["records"] != []
-    assert without_model(result["meta"]) == without_model(control["meta"])
+    for metadata in (control["meta"], result["meta"]):
+        elapsed = metadata["elapsed_seconds"]
+        assert isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool)
+        assert math.isfinite(elapsed) and elapsed >= 0
+    # Elapsed time belongs to each request, so compare every other metadata field.
+    volatile = {"model", "elapsed_seconds"}
+    assert {key: value for key, value in result["meta"].items() if key not in volatile} == {
+        key: value for key, value in control["meta"].items() if key not in volatile
+    }
     assert result["meta"]["cost"] == client.cost
     assert result["meta"]["prompt_tokens"] == client.prompt_tokens
     assert result["meta"]["completion_tokens"] == client.completion_tokens
