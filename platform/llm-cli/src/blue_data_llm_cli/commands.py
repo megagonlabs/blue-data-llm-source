@@ -1241,11 +1241,14 @@ def _model_sentence(name: str, rates: tuple[float, float] | None, allowance: int
             f"--price-out."
         )
     entry = entry_for(name)
-    # The bound carries the regional uplift for the models subject to it, so the floor does.
+    # Match the output tier and regional uplift used by the cost bound.
     floor = rates[1] * allowance * (entry.regional_uplift if entry is not None else 1.0)
+    if entry is not None and entry.long_context is not None:
+        floor *= entry.long_context.output_multiplier
     return (
         f"{name} is priced at {rates[0]:.10g} per input token and {rates[1]:.10g} per output "
-        f"token, so a cost ceiling has to clear about ${floor:.4f} at {allowance} output tokens."
+        f"token. The output-only cost floor is about ${floor:.4f} at {allowance} output "
+        f"tokens; the prompt adds to it."
     )
 
 

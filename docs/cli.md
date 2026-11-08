@@ -510,7 +510,7 @@ blue-llmdb model inspect gpt-4o
 └──────────────────────────────────────────────────┴────────────┘
 ```
 
-The `published_defaults.*` rows are the model's entry in the package's table: the reasoning efforts it accepts and its default, when it accepts a temperature (`always`, `effort_none_only` or `never`), the output-token parameter, the cached-input and cache-write rates, and the long-context threshold. They describe the model; a profile setting or a flag overrides them for a query. The `nl` format adds a sentence naming the floor a cost ceiling has to clear, with the regional uplift included where it applies.
+The `published_defaults.*` rows are the model's entry in the package's table: the reasoning efforts it accepts and its default, when it accepts a temperature (`always`, `effort_none_only` or `never`), the output-token parameter, the cached-input and cache-write rates, and the long-context threshold. They describe the model; a profile setting or a flag overrides them for a query. The `nl` format reports a rounded output-only floor using the published rates, long-context output multiplier and regional uplift. Prompt tokens and higher configured rates can raise the bound.
 
 ```bash
 blue-llmdb model select gpt-4o

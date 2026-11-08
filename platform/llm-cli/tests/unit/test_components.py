@@ -96,22 +96,28 @@ def test_selecting_a_blank_model_is_refused(runner: CliRunner) -> None:
     assert values["values"]["BLUE_DATA_LLM_MODEL"]["value"] == "gpt-4o-mini"
 
 
-def test_the_prose_names_the_floor_a_cost_ceiling_has_to_clear(runner: CliRunner) -> None:
+def test_the_prose_names_the_output_only_floor(runner: CliRunner) -> None:
     out = " ".join(
         runner.invoke(cli, ["model", "inspect", "gpt-4o", "--format", "nl"]).stdout.split()
     )
-    assert "cost ceiling has to clear" in out
+    assert "output-only cost floor" in out
+    assert "the prompt adds to it" in out
 
 
 @pytest.mark.parametrize(
     ("model", "floor"),
-    [("gpt-4o", "$0.0410 at 4096"), ("gpt-6-luna", "$0.0138 at 25000")],
+    [
+        ("gpt-4o", "$0.0410 at 4096"),
+        ("gpt-6-luna", "$0.0206 at 25000"),
+        ("gpt-5.5", "$1.2375 at 25000"),
+        ("gpt-5.4-nano", "$0.0344 at 25000"),
+    ],
 )
-def test_the_floor_carries_the_regional_uplift_where_the_bound_does(
+def test_the_floor_carries_the_output_tier_and_regional_uplift(
     runner: CliRunner, model: str, floor: str
 ) -> None:
     out = " ".join(runner.invoke(cli, ["model", "inspect", model, "--format", "nl"]).stdout.split())
-    assert f"has to clear about {floor} output tokens" in out
+    assert f"{floor} output tokens" in out
 
 
 def test_model_inspect_adds_the_published_defaults(runner: CliRunner) -> None:
