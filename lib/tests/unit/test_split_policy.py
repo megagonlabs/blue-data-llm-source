@@ -441,7 +441,7 @@ def test_a_probe_asks_its_continuations_before_it_is_accepted() -> None:
 
 
 @pytest.mark.parametrize("mode", ["flat", "partitioned", "row_by_row"])
-def test_a_default_result_serializes_without_the_split_decision(mode: str) -> None:
+def test_a_result_without_a_probe_serializes_without_the_split_decision(mode: str) -> None:
     from tests.unit.scenario_doubles import run_scenario
 
     _, result = run_scenario(mode)

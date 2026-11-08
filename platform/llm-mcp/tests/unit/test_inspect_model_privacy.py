@@ -257,8 +257,6 @@ def test_a_credential_inside_a_private_value_does_not_leave_its_ends_in_an_error
 
     error = refused("llmdb_query", {private: 1})
 
-    # Masking the credential first would leave "team-***-model", which no longer contains the
-    # private value, so nothing would conceal the rest of it.
     assert error.kind == tools.INVALID_ARGUMENTS
     assert error.message == MASK
     for text in (error.message, str(error)):
@@ -277,8 +275,6 @@ def test_a_private_value_inside_a_credential_does_not_leave_its_ends_in_an_error
 
     error = refused("llmdb_query", {FAKE_KEY: 1})
 
-    # Concealing first would turn the credential into "FAKE_***_FRAGMENT_7", which no longer
-    # contains it, so nothing would mask the prefix and suffix that are left.
     assert error.kind == tools.INVALID_ARGUMENTS
     assert error.message == MASK
     for text in (error.message, str(error)):

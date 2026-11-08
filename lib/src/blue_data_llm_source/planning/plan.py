@@ -1545,10 +1545,10 @@ def apply_partition_proposal(
         else None
     )
 
-    # A model asked for a partition often lists examples. If the split field is the only key
-    # field still open in this slice, each value names one record, so keep the slice whole
-    # unless the request or the caller supplied the values. A key field that leaves others
-    # open, as year does in (country, year), groups records like any category.
+    # If the split field is the only key field still open in this slice, each value names
+    # one record, so keep the slice whole unless the request or the caller supplied the
+    # values. A key field that leaves others open, as year does in (country, year), groups
+    # records like any category.
     split_attr = resolve_attr(node.key, schema.attrs)
     split_field = split_attr.name if split_attr is not None else node.key
     open_keys = [

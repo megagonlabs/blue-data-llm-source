@@ -730,7 +730,7 @@ The server uses the low-level API because tool schemas are maintained explicitly
           "always",
           "evidence"
         ],
-        "description": "`evidence`, the default in partitioned mode, asks the root first, with its continuations, and splits only when that answer was cut off, was still growing when the continuations ran out, failed, has no records although some are expected, or has fewer than half the records a large estimate expects. Otherwise that answer is the result. `always` splits the root whatever it holds. `evidence` requires partitioned mode."
+        "description": "`evidence`, the default in partitioned mode, asks the root first, with its continuations, and splits only when that answer was cut off, was still growing when the continuations ran out, failed, holds no keys although records are expected, or holds fewer than half the keys an estimate above `plan.split_threshold_rows` expects (distinct records when there is no primary key). Otherwise that answer is the result. `always` splits the root whatever it holds. `evidence` requires partitioned mode."
       },
       "plan.split_threshold_rows": {
         "type": "integer",

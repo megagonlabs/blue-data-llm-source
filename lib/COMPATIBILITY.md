@@ -2,7 +2,7 @@
 
 This guide describes `LlmSource` integration with `blue-data` and migration from the earlier LLM source.
 
-The 1.0 release was tested on Linux x86_64 with Python 3.12.11 and 3.13.17, using LiteLLM 1.108.0 for fresh installs and 1.105.7 when installed with `blue-data-kb-source` or `blue-data-user-source`, which require `litellm<1.106`. Supported Python versions are 3.12 and 3.13 (`>=3.12,<3.14`).
+Supported Python versions are 3.12 and 3.13 (`>=3.12,<3.14`). [Installation](../docs/installation.md#requirements) lists the versions the 1.0 release was tested with.
 
 ## Integration with blue-data
 

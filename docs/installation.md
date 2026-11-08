@@ -24,7 +24,7 @@ The `mcp` requirement is bounded below 2 rather than only floored. The low-level
 
 ## Requirements
 
-- Python 3.12 or 3.13 (declared range `>=3.12,<3.14`). Python 3.12 is the standard setup.
+- Python 3.12 or 3.13 (declared range `>=3.12,<3.14`). Python 3.12 is the standard setup. The 1.0 release was tested on Linux x86_64 with Python 3.12.11 and 3.13.17, using LiteLLM 1.108.0 for fresh installs and 1.105.7 when installed with `blue-data-kb-source` or `blue-data-user-source`, which require `litellm<1.106`.
 - A local checkout of the `blue-data` repository. It is not on a public package index, so it must be installed from source.
 - A provider credential in the environment for any request that reaches a model. The provider SDK uses it for authentication; the library reads credential environment values only for diagnostic masking. A request with an injected client or an `llm_fn` needs none.
 
@@ -129,7 +129,7 @@ python -m pip install -e platform/llm-cli
 python -m pip install -e platform/llm-mcp
 ```
 
-This is the route to take when `blue-data` is already installed, or when you want a different set of extras than the scripts choose. `blue-data` must be in place before `lib`, or the install fails to resolve it and reads as a broken package rather than a missing sibling.
+These commands omit the development extras; to run the tests below, use `"lib[dev,llm]"`, `"platform/llm-cli[dev]"` and `"platform/llm-mcp[dev]"`. This is the route to take when `blue-data` is already installed, or when you want a different set of extras than the scripts choose. `blue-data` must be in place before `lib`, or the install fails to resolve it and reads as a broken package rather than a missing sibling.
 
 ## Optional extras
 
@@ -169,11 +169,9 @@ python -m pip install --no-index --no-deps --force-reinstall \
 
 Run outside the source trees with `PYTHONPATH` unset. `--no-deps` does not resolve dependencies: check the installed requirements separately. An ordinary upgrade from 0.2.2.1 (installed copies report 2.2.1) will not select 1.0.0, which pip ranks lower.
 
-The 1.0 release was tested on Linux x86_64 with Python 3.12.11 and 3.13.17, using LiteLLM 1.108.0 for fresh installs and 1.105.7 when installed with `blue-data-kb-source` or `blue-data-user-source`, which require `litellm<1.106`. The packages support Python 3.12 and 3.13 (`>=3.12,<3.14`).
-
 ### Python 3.15 installation
 
-Python 3.15 is unsupported. The family packages declare `>=3.12,<3.14`, so pip refuses to install them on Python 3.15.
+Python 3.14 and later are unsupported. The family packages declare `>=3.12,<3.14`, so pip refuses to install them on Python 3.14 or 3.15.
 
 ## Building distributions
 

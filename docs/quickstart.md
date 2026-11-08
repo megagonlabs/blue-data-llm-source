@@ -86,7 +86,7 @@ blue-llmdb model list
 └───────────────────┘
 ```
 
-Each of these carries its own request contract and prices; [Supported models](../lib/README.md#supported-models) lists them.
+Each of these carries its prices, and all but the three price-only models also carry a request contract; [Supported models](../lib/README.md#supported-models) lists them.
 
 ## 3. Choose one
 
@@ -122,7 +122,7 @@ One flat fetch of this request is bounded at $0.1293 against the configured rate
 
 ## 5. Store the provider key, out of shell history
 
-The prompt hides what you type and writes it to `~/.blue-llmdb/.profiles` at mode `0600`. Enter `$OPENAI_API_KEY` instead of the key to store a reference to the environment variable.
+The prompt hides what you type and writes it to `~/.blue-llmdb/.profiles` at mode `0600`. Enter `$OPENAI_API_KEY` instead of the key to store a reference to the environment variable. Export that variable before step 7; until then `profile inspect` shows it as `(unset)`.
 
 ```bash
 blue-llmdb profile config OPENAI_API_KEY

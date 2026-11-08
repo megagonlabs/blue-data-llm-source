@@ -244,7 +244,7 @@ The separate `llm.cache` switch opens a `diskcache` backend instead and does not
 
 Use `plan.key` or `plan.keys` for the fields that identify one record. Use `plan.partition_key` to suggest a category such as a region or a period that covers the request in a few groups. A list of individual records can leave out most of the request, so a split on the only key field the slice leaves open, such as `state` for "the US states", is kept only when the request states its values or you declare them with `plan.identity_partitions`, `plan.distribution_search` and `plan.keys` (direct Python only); otherwise the slice runs as one request and `meta.gaps` records `guard_collapsed` with the reason. The refused proposal still counts toward call and cost ceilings. A key field that leaves others open, such as `year` in a `(country, year)` key, groups records and splits like any category.
 
-Both partition prompts ask for values that together cover the current slice, or for no split when a complete partition cannot fit. A model asked for a split may list individual records, as `gpt-4o` does for the US states; setting `plan.partition_key` to a category such as a region or a period asks it for groups instead. Check `meta.gaps` for estimate warnings.
+Both partition prompts ask for values that together cover the current slice, or for no split when a complete partition cannot fit. A model asked for a split may list individual records; setting `plan.partition_key` to a category such as a region or a period asks it for groups instead.
 
 ```python
 import json
@@ -364,7 +364,7 @@ print(short.meta.split_decision, short.meta.calls, len(short.records))
 
 The first request is answered by the probe: three planning calls, the probe, and one continuation that adds nothing. In the second, the estimate of 200 is above the threshold and the probe holds one key, so the plan splits: two probe calls, one proposal and two calls for each leaf, with the probe's record merged into the result under the origin `root`. `meta.split_decision` names the outcome and is absent when no probe ran. The probe and its continuations count in every published bound.
 
-When the plan splits, any value of the split key that the probe returned but the proposal left out is added to the proposal, so its records are still asked for. If that takes the proposal past `plan.max_partitions`, the proposal is refused and the probe's answer is the result.
+When the plan splits, a value of the split key in a probe record with a complete key that the proposal left out is added to the proposal, so its records are still asked for; null, blank, list and object values are skipped. If that takes the proposal past `plan.max_partitions`, the proposal is refused and the probe's answer is the result.
 
 ## Asking again for what did not come back
 

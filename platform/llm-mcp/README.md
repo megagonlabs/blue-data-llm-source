@@ -254,7 +254,7 @@ By default, `llmdb_query` answers with one model call. A large request can be sp
 | `plan.filter_enforcement` | `flag` keeps records that contradict their part's filter; `drop` removes them at the part, before merging. Both count them in `meta.filter_contradictions`. |
 | `plan.range_filters` | Reads partition values written as integer spans, on an integer column, as range filters. Needs `partitioned` and `plan.leaf_prompt` `keyed-leaf-fetch-2`. |
 | `plan.partition_guardrails` | Sends proposal rules against identifier, measurement, placeholder and catch-all values, and refuses a numeric key bucketed like a measurement. Needs `partitioned`. |
-| `plan.split_policy` | `evidence` is the default in `partitioned`. It asks the root first, with its continuations, and splits only when that answer was cut off, was still growing when the continuations ran out, failed, came back empty although records are expected, or has fewer than half the records an estimate above `plan.split_threshold_rows` expects. Otherwise that answer is the result, and `meta.split_decision` says which. The root's asks count in the bound. `always` splits the root whatever it holds. `evidence` needs `partitioned`. |
+| `plan.split_policy` | `evidence` is the default in `partitioned`. It asks the root first, with its continuations, and splits only when that answer was cut off, was still growing when the continuations ran out, failed, holds no keys although records are expected, or holds fewer than half the keys an estimate above `plan.split_threshold_rows` expects (distinct records when there is no primary key). Otherwise that answer is the result, and `meta.split_decision` says which. The root's asks count in the bound. `always` splits the root whatever it holds. `evidence` needs `partitioned`. |
 | `plan.split_threshold_rows` | Under `evidence`, the estimate above which a short probe answer splits. Default `120`. |
 
 `plan.leaf_prompt`, `plan.child_wording`, `plan.filter_enforcement`, `plan.range_filters` and `plan.partition_guardrails` are experimental. Check the returned records and diagnostics; these planning settings do not establish completeness.
@@ -369,7 +369,7 @@ On success, each tool returns one MCP text content block containing a JSON objec
 From the checkout root, with `blue-data` beside it, use the root `.venv`:
 
 ```bash
-python3 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 ./platform/llm-mcp/scripts/install.sh
 command -v blue-data-llm-mcp

@@ -105,7 +105,7 @@ def decide(
     the answer was still growing. Only then does a nonzero *exact_rows*
     the probe met accept it: a cut answer that happens to hold the target count still lost
     whatever followed the cut. Last, it splits when a positive estimate meets an answer with
-    no keys, or when an estimate above *threshold_rows* expects at least twice the keys the
+    no keys, or when an estimate above *threshold_rows* expects more than twice the keys the
     probe returned.
     """
     if run.ordinary_failure:
@@ -124,7 +124,7 @@ def decide(
         return PROBE_ACCEPTED
     expected = estimate.expected if estimate is not None else None
     if expected is not None and expected > 0 and run.observed_key_count == 0:
-        # Nothing came back although records are expected: narrower asks may still answer.
+        # No key was counted although records are expected: narrower asks may still answer.
         return PROBE_SPLIT_SHORTFALL
     if expected is not None and expected > threshold_rows and run.observed_key_count * 2 < expected:
         return PROBE_SPLIT_SHORTFALL

@@ -66,7 +66,7 @@ blue-data-llm-source/
 
 ## Requirements
 
-- Python 3.12 or 3.13 (declared range `>=3.12,<3.14`); Python 3.12 is the tested setup.
+- Python 3.12 or 3.13 (declared range `>=3.12,<3.14`); the commands below use Python 3.12.
 - A `blue-data` checkout beside this repository, on its `1.0` branch: the CLI requires `blue-data==1.0.0`, which provides `blue_data.utils.config`. Its `lib/` directory is a local dependency and is not available from a package index. The installer looks for `../blue-data/lib` from this repository root; set `BLUE_DATA_PATH` to that directory if the checkout is elsewhere.
 - Access to the declared Python dependencies through a package index or local wheels during installation.
 - A provider API key for calls made through the built-in model client. The offline quick start below uses a local function and needs no key.

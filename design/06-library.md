@@ -135,20 +135,20 @@ Fetches records for `query`. Returns a `FetchResult`.
 7. Coordinate the task tree breadth first. Under `plan.split_policy="evidence"`, the `partitioned`
    default, the root leaf is first asked with its continuations, and proposals follow only when that
    answer shows one request was not enough; otherwise it is the result. Split-key values in its
-   keyed records that no proposed child asks for are added to the root proposal, which is refused if
-   they take it past `plan.max_partitions`. Ordinary `partitioned` planning attempts one proposal
-   per eligible slice and accepts a split only when every child is valid, the known parent value set
-   is preserved, and the whole expansion fits. A split on the only key field the slice leaves open
-   lists individual records, so it also needs an inherited `OneOf` list or a validated
-   declared-domain decision; otherwise the slice stays one leaf, the reason is recorded as
-   `guard_collapsed`, and the proposal stays charged. A key field that leaves others open groups
-   records and splits like any category. Request-scope keys are stored under the schema field they
-   name, and two spellings of one field are intersected. An accepted split whose child estimates
-   total less than the parent's lower estimate is reported as `split_coverage_short`. With
-   distribution search enabled, a bounded set of applicable declared strategies is evaluated and
-   `PartitionSafety` must accept containment, pairwise disjointness, and coverage before the split
-   is used. `row_by_row` uses an explicit key list or a bounded enumeration; if the complete entity
-   plan cannot fit, it keeps one batch leaf.
+   keyed records that no proposed child asks for, unless null, blank, a list or an object, are added
+   to the root proposal, which is refused if they take it past `plan.max_partitions`. Ordinary
+   `partitioned` planning attempts one proposal per eligible slice and accepts a split only when
+   every child is valid, the known parent value set is preserved, and the whole expansion fits. A
+   split on the only key field the slice leaves open lists individual records, so it also needs an
+   inherited `OneOf` list or a validated declared-domain decision; otherwise the slice stays one
+   leaf, the reason is recorded as `guard_collapsed`, and the proposal stays charged. A key field
+   that leaves others open groups records and splits like any category. Request-scope keys are
+   stored under the schema field they name, and two spellings of one field are intersected. An
+   accepted split whose child estimates total less than the parent's lower estimate is reported as
+   `split_coverage_short`. With distribution search enabled, a bounded set of applicable declared
+   strategies is evaluated and `PartitionSafety` must accept containment, pairwise disjointness, and
+   coverage before the split is used. `row_by_row` uses an explicit key list or a bounded
+   enumeration; if the complete entity plan cannot fit, it keeps one batch leaf.
 8. Before an optional planning call, check that the call and one extraction attempt fit current call, cost, and deadline headroom. Locked parallel planning first checks aggregate room for every permitted attempt of both siblings and one extraction attempt. These checks do not reserve budget; each provider attempt still uses the budget's ordinary reservation, so an unrelated concurrent consumer may spend the shared headroom after the check.
 9. Run the plan's parts concurrently. A flat leaf calls `execution.arun_leaf` and renders
    `prompts.build_fetch_prompt`. A non-flat leaf crosses the versioned `LeafTask` boundary through

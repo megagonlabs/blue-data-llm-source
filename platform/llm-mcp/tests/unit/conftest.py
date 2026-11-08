@@ -103,13 +103,7 @@ class FakeClient:
 
 @pytest.fixture(autouse=True)
 def clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Start every test with none of the deployment settings set, whatever the shell exported.
-
-    The runtime reads these variables on every call and honors them, as it should, so a
-    caller who exported an operator ceiling would otherwise change what the tests observe.
-    The names come from the runtime's own tables, so a setting added later is cleared too.
-    A test that needs a setting sets it itself, after this runs.
-    """
+    """Clear every deployment setting the shell exported; a test that needs one sets it."""
     settings = (*tools._ENVIRONMENT_SETTINGS, *tools._OPERATOR_LIMITS)  # pyright: ignore[reportPrivateUsage]
     for variable, _, _ in settings:
         monkeypatch.delenv(variable, raising=False)

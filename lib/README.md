@@ -7,7 +7,7 @@ Python library for querying a language model through the `DataSource` interface 
 Run these commands from the `blue-data-llm-source` checkout root, in the same root `.venv` used by the [quick start](../docs/quickstart.md):
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python3.12 -m venv .venv && source .venv/bin/activate
 ./lib/scripts/install.sh
 ```
 
@@ -140,7 +140,7 @@ The other three are not advertised. `get_metadata`, `get_column_stats`, and `get
 
 `execute_query` is the one tool here that reaches a provider, and it takes its ceilings where the query surface takes them: a `limits.*` key in `optional_properties` reaches `execute_query` and binds that call.
 
-`tool_input` accepts string field names declared in the advertised schema, plus `database` and `collection` context. Unsupported fields now raise `QueryError` before provider contact instead of being ignored. Pass ceilings in the outer `optional_properties` argument; a `limits.*` key or nested `optional_properties` map in `tool_input` is refused. The advertised schemas are unchanged.
+`tool_input` accepts string field names declared in the advertised schema, plus `database` and `collection` context. Unsupported fields raise `QueryError` before provider contact. Pass ceilings in the outer `optional_properties` argument; a `limits.*` key or nested `optional_properties` map in `tool_input` is refused.
 
 `execute_query_nl_tools` is not served and raises `ConfigError`. It can make up to ten provider calls, which this source's ceilings do not govern. `execute_query_nl` is the natural-language route; its spend and time ceilings are enforced.
 
@@ -478,7 +478,7 @@ separately and merged on the way back. Nothing selects a shape for you.
 | `plan.filter_enforcement` | `flag` | What happens to a record whose checkable filter column contradicts its leaf's filter. `flag` keeps it; `drop` removes it at the leaf, before reduction merges it into anything. Both count it in `meta.filter_contradictions`. `drop` is refused in `flat` mode, which has no filter. |
 | `plan.range_filters` | `False` | In `partitioned` mode, reads a partition proposal written as integer spans, such as `1946–1952`, on a column the schema declares `int` or `integer`, as inclusive `Range` filters instead of exact text that no record's value can equal. The spans must not overlap and each must start at or below its end, or the proposal is refused with the reason. Requires `plan.leaf_prompt="keyed-leaf-fetch-2"`, because a range travels only on that contract's wire version. |
 | `plan.partition_guardrails` | `False` | In `partitioned` mode, sends the `partition-2` proposal prompt, which adds generic rules: no identifier or continuous-measurement keys, no placeholder or catch-all values, and a value count calibrated against the slice's own row estimate and `plan.target_rows_per_leaf`. It also refuses a proposed key the schema declares `int`, `integer`, `float` or `number` unless its values are integers or integer spans covering at most 1,000 integers; the reason appears in `meta.gaps` as `guard_collapsed`. Adds no call. |
-| `plan.split_policy` | `evidence` in `partitioned`, else `always` | In `partitioned` mode, whether the root is asked first (`evidence`, the default) or always splits (`always`). Under `evidence` the root leaf runs first as a probe, with its continuations. The plan splits only when the provider says the probe's answer hit its output allowance, the answer ended mid-document and only its complete records could be read, the continuations ran out while the answer was still adding records, the probe failed outright (reported as a `probe_failed` gap), the probe holds no keys although the estimate expects records, or it holds fewer than half the keys an estimate above `plan.split_threshold_rows` expects. Otherwise the probe's answer is the result, with no proposal call. A probe that meets `plan.exact_rows` is accepted unless its answer was cut or ran out of continuations; a target of zero asks nothing and reports no `split_decision`. When the plan does split, a split-key value in the probe's records with a complete key that no proposed child asks for is added to the proposal, with its number of distinct keys as its estimate. If no proposal survives, including one those values take past `plan.max_partitions`, the probe's answer is the result. Otherwise the probe's records are merged with the children's under the origin `root`. The probe and its continuations count in every published bound. `meta.split_decision` says what was decided. `evidence` is refused outside `partitioned`. |
+| `plan.split_policy` | `evidence` in `partitioned`, else `always` | In `partitioned` mode, whether the root is asked first (`evidence`, the default) or always splits (`always`). Under `evidence` the root leaf runs first as a probe, with its continuations. The plan splits only when the provider says the probe's answer hit its output allowance, the answer ended mid-document and only its complete records could be read, the continuations ran out while the answer was still adding records, the probe failed outright (reported as a `probe_failed` gap), the probe holds no keys although the estimate expects records, or it holds fewer than half the keys an estimate above `plan.split_threshold_rows` expects. Otherwise the probe's answer is the result, with no proposal call. A probe that meets `plan.exact_rows` is accepted unless its answer was cut or ran out of continuations; a target of zero asks nothing and reports no `split_decision`. When the plan does split, a split-key value in the probe's records with a complete key that no proposed child asks for is added to the proposal (null, blank, list and object values are skipped), with its number of distinct keys as its estimate. If no proposal survives, including one those values take past `plan.max_partitions`, the probe's answer is the result. Otherwise the probe's records are merged with the children's under the origin `root`. The probe and its continuations count in every published bound. `meta.split_decision` says what was decided. `evidence` is refused outside `partitioned`. |
 | `plan.split_threshold_rows` | `120` | Under `plan.split_policy="evidence"`, the estimate above which a short probe answer triggers a split. A value other than 120 is refused with any other policy. |
 | `plan.distribution_search` | `False` | Direct-Python-only opt-in for rule-backed distribution selection. Requires `partitioned`. |
 | `plan.identity_partitions` | empty | Direct-Python-only list of versioned finite-domain rule mappings accepted by `IdentityPartitionRule.from_dict()`. |
@@ -632,7 +632,7 @@ Unit tests only. Every I/O boundary is doubled and no test touches the network. 
 The Pyright development gate uses a separate `lib/.venv` because `pyproject.toml` points there. Create it from `lib/` and install the development dependencies in it before running that gate:
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python3.12 -m venv .venv && source .venv/bin/activate
 ```
 
 ### Component and example suites
