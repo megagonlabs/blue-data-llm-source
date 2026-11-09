@@ -22,14 +22,6 @@ SKIP = {
     "cassettes",
 }
 
-# The changelog is part record and part claim about what is about to ship, so it is split
-# rather than exempted. A released section describes the release it names and stays true
-# about it; scanning one would make rewriting a shipped release the only way to pass, which
-# is the opposite of what a changelog is for. An unreleased section is scanned like anything
-# else. Between releases there is no unreleased section and the whole file is record, until
-# the next section opens and comes back under the scan on its own.
-CHANGELOG = "CHANGELOG.md"
-
 FALSE_CLAIMS = [
     (
         r"every method (it defines |on it )?returns an empty result"
@@ -91,33 +83,12 @@ def _shipped_text_files() -> list[Path]:
     return out
 
 
-def _current_lines(path: Path) -> list[tuple[int, str]]:
-    """The lines of *path* that speak about now, numbered from one.
-
-    For the changelog that is the preamble and the newest section only. The newest section
-    describes the software as it currently behaves whether or not its heading still says
-    unreleased, so it is the one where a false claim would mislead a reader; every section
-    below it describes a release that is past and stays true about itself.
-    """
-    numbered = list(enumerate(path.read_text(encoding="utf-8").splitlines(), 1))
-    if path.name != CHANGELOG:
-        return numbered
-    out: list[tuple[int, str]] = []
-    sections = 0
-    for number, line in numbered:
-        if line.startswith("## "):
-            sections += 1
-        if sections <= 1:
-            out.append((number, line))
-    return out
-
-
 @pytest.mark.parametrize(("pattern", "why"), FALSE_CLAIMS)
 def test_no_shipped_file_repeats_a_claim_the_runtime_contradicts(pattern: str, why: str) -> None:
     compiled = re.compile(pattern, re.IGNORECASE)
     hits: list[str] = []
     for path in _shipped_text_files():
-        for number, line in _current_lines(path):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if compiled.search(line):
                 hits.append(f"{path.relative_to(REPO_ROOT)}:{number}")
     assert not hits, (
@@ -142,50 +113,5 @@ def test_the_scan_actually_reaches_the_repository() -> None:
     # Anchored on paths that exist ONLY at the repository root, so a scan that reaches
     # `lib/` alone cannot satisfy this.
     relative = {str(p.relative_to(REPO_ROOT)) for p in files}
-    for anchor in ("CHANGELOG.md", "design/01-overview.md", "lib/README.md"):
+    for anchor in ("README.md", "design/01-overview.md", "lib/README.md"):
         assert anchor in relative, f"scan is not reaching {anchor}"
-
-
-def test_the_changelog_carve_out_skips_a_released_section_and_nothing_else(
-    tmp_path: Path,
-) -> None:
-    """Narrowing a scan is only safe if it narrows to what it meant to.
-
-    A carve-out that quietly swallowed the whole file would pass every pattern for the wrong
-    reason, so the split is exercised against a changelog holding both kinds of section. It
-    is a fixture and not the shipped file because between releases every section of the
-    shipped file is released, and the mechanism still has to be checked then.
-    """
-    both = tmp_path / CHANGELOG
-    both.write_text(
-        "# Changelog\n\npreamble\n\n"
-        "## 1.0.1 — unreleased\n\nabout to ship\n\n"
-        "## 0.2.2.0 — released (as 2.2.0)\n\nalready shipped\n",
-        encoding="utf-8",
-    )
-    scanned = {line for _, line in _current_lines(both)}
-    assert "about to ship" in scanned, "the newest section must be scanned"
-    assert "already shipped" not in scanned, "an older section is a record and is not scanned"
-    assert "preamble" in scanned, "the text before the first heading is not part of any section"
-
-
-def test_every_released_section_of_the_shipped_changelog_is_skipped() -> None:
-    """The same carve-out, against the file that ships.
-
-    Which sections it has depends on where the repository is in its release cycle, so this
-    reads the headings and requires the split to land on each one correctly.
-    """
-    path = REPO_ROOT / CHANGELOG
-    headings = [
-        (number, line)
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
-        if line.startswith("## ")
-    ]
-    assert headings, "the changelog no longer has version sections, so nothing is being split"
-
-    scanned = {number for number, _ in _current_lines(path)}
-    newest, *older = headings
-    assert newest[0] in scanned, f"{newest[1]!r} is the newest section and must be scanned"
-    for number, line in older:
-        assert number not in scanned, f"{line!r} is a record and is not scanned"
-    assert 1 in scanned, "the changelog's own preamble must still be scanned"

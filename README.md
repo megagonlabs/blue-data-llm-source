@@ -23,7 +23,6 @@ See [features](docs/features.md) for the behavior and its limits, and [examples]
 ```text
 blue-data-llm-source/
 ├── README.md                       # this overview
-├── CHANGELOG.md                    # release history
 ├── LICENSE                         # repository license
 ├── NOTICE                          # attribution notice shipped with each package
 ├── CODE_OF_CONDUCT.md              # Contributor Covenant code of conduct

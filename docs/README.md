@@ -14,7 +14,6 @@ Use this index to find installation, usage, interface, and design documentation 
 | [library README](../lib/README.md) | Read the library's settings, model table, and limits |
 | [compatibility guide](../lib/COMPATIBILITY.md) | Port a caller from the earlier source or integrate with `DataSource` |
 | [design/](../design/) | Read the architecture and interface decisions |
-| [`CHANGELOG.md`](../CHANGELOG.md) | Changes since the earlier internal builds: 0.2.2.1 protects diagnostics and caches; 0.2.2.0 adds the opt-in evidence-gated split and five experimental plan settings; 0.2.1.0 adds the GPT model table and reads the MCP server's settings from its environment; 0.2.0.0 renames the command line, renames every MCP tool, and closes the `properties` map |
 
 The 0.2.x versions below were internal builds, never published to a package index. These notes apply to callers with an installed internal copy.
 
@@ -22,13 +21,13 @@ The 0.2.x versions below were internal builds, never published to a package inde
 
 The current packages are 1.0.0. Installed copies of earlier internal builds report their original numbers, so pip ranks an installed 0.1.1.0 to 0.2.2.1 (1.1.0 to 2.2.1) above 1.0.0 and an ordinary upgrade does not select the current release. The CLI and MCP require `blue-data-llm-source[llm]==1.0.0`; the CLI also pins `blue-data==1.0.0` for its protected storage hooks. See [installing exact built wheels](installation.md#installing-exact-built-wheels).
 
-In `partitioned` mode, 1.0.0 asks the root first and splits only when that answer shows one request was not enough, and, when a primary key is known, each part may ask again up to three times: `plan.split_policy` defaults to `evidence` and `plan.max_continuations` to `3`. Set `plan.split_policy="always"` and `plan.max_continuations=0` to split without asking the root first and without continuations. A split on a record's own key, such as `state` for "the US states", is kept only when the request lists the values or you declare them with `plan.identity_partitions`, `plan.distribution_search` and `plan.keys` (direct Python only). The [changelog](../CHANGELOG.md#100--current) has the details.
+In `partitioned` mode, 1.0.0 asks the root first and splits only when that answer shows one request was not enough, and, when a primary key is known, each part may ask again up to three times: `plan.split_policy` defaults to `evidence` and `plan.max_continuations` to `3`. Set `plan.split_policy="always"` and `plan.max_continuations=0` to split without asking the root first and without continuations. A split on a record's own key, such as `state` for "the US states", is kept only when the request lists the values or you declare them with `plan.identity_partitions`, `plan.distribution_search` and `plan.keys` (direct Python only). The [guide](guide.md#splitting-a-large-request) has the details.
 
-Version 0.2.2.1 (installed copies report 2.2.1) began masking credential-shaped text in CLI and MCP diagnostics and requiring private on-disk cache directories. See the [changelog](../CHANGELOG.md#0221--unreleased-as-221) for details. That dev release required `blue-data-llm-source[llm]>=2.2.1`.
+Version 0.2.2.1 (installed copies report 2.2.1) began masking credential-shaped text in CLI and MCP diagnostics and requiring private on-disk cache directories. That dev release required `blue-data-llm-source[llm]>=2.2.1`.
 
 ## Upgrading from 0.2.1.0 (installed as 2.1.0)
 
-At the defaults, 0.2.2.0 sends the same prompts and returns the same records as 0.2.1.0. The [changelog](../CHANGELOG.md#0220--released-as-220) lists what a caller can still observe:
+At the defaults, 0.2.2.0 sends the same prompts and returns the same records as 0.2.1.0. A caller can still observe these differences:
 
 - Result metadata always carries `filter_contradictions`.
 - `ExecMeta` has two new fields ahead of `observed_keys`.
@@ -38,7 +37,7 @@ At the defaults, 0.2.2.0 sends the same prompts and returns the same records as 
 
 ## Upgrading from 0.2.0.0 (installed as 2.0.0)
 
-These 0.2.1.0 changes can alter what an existing caller gets. The [changelog](../CHANGELOG.md#0210--released-as-210) gives the setting that keeps each 0.2.0.0 behavior.
+These 0.2.1.0 changes can alter what an existing caller gets.
 
 - The default model is `gpt-6-luna`, not `gpt-4o`.
 - `plan.max_partitions` and `plan.max_leaves` default to 20 and 100, not 4 and 24.

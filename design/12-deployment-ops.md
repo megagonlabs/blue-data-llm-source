@@ -206,11 +206,10 @@ Until that pipeline exists, the checks in **Verify** are run by hand from each p
 ## 8. Release Process
 
 1. Bump the version in all six declarations: `lib/pyproject.toml` and `lib/src/blue_data_llm_source/__init__.py`, `platform/llm-cli/pyproject.toml` and `platform/llm-cli/src/blue_data_llm_cli/__init__.py`, `platform/llm-mcp/pyproject.toml` and `platform/llm-mcp/src/blue_data_llm_mcp/__init__.py`. The two interface modules are the ones that get missed; the version test in `lib/tests/unit/test_version.py` fails the release if they are.
-2. Update `CHANGELOG.md`, calling out any prompt change explicitly.
-3. Merge to the default branch.
-4. Push a semver tag.
-5. Build and upload all three packages, library first.
+2. Merge to the default branch.
+3. Push a semver tag.
+4. Build and upload all three packages, library first.
 
-Step 5 is manual because no publication pipeline is configured. No package here has been uploaded to an index. If publication is automated, its credential belongs in the platform's secret store and must never appear in the repository or a build log.
+Step 4 is manual because no publication pipeline is configured. No package here has been uploaded to an index. If publication is automated, its credential belongs in the platform's secret store and must never appear in the repository or a build log.
 
 The three packages currently share one version. They can be versioned independently if an interface begins to change on a different cadence from the library.

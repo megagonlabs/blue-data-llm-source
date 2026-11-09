@@ -8,7 +8,6 @@ This tree lists the packages and files that define their main boundaries. It ser
 blue-data-llm-source/
 │
 ├── LICENSE                                 # BSD 3-Clause with the attribution requirement
-├── CHANGELOG.md                            # one section per release, breaking changes first
 ├── README.md                               # what the source is, quick start, dependency posture
 ├── .gitignore                              # environments, caches, build output, direnv files
 │

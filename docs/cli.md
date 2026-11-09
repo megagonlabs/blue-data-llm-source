@@ -6,7 +6,7 @@ This page mirrors [`platform/llm-cli/README.md`](../platform/llm-cli/README.md),
 
 ## Upgrading from `llm`
 
-Internal build 0.2.0.0 replaced the `llm` command. `llm fetch` is now `blue-llmdb data query`, and `llm info` is now `blue-llmdb metadata inspect`. The old entry point has no alias, so existing scripts must be updated. That release also added profiles, a configuration precedence chain, the `model` and `metadata` components, `data estimate`, four output formats, and coded errors. See [`CHANGELOG.md`](../CHANGELOG.md) for the complete migration notes.
+Internal build 0.2.0.0 replaced the `llm` command. `llm fetch` is now `blue-llmdb data query`, and `llm info` is now `blue-llmdb metadata inspect`. The old entry point has no alias, so existing scripts must be updated. That release also added profiles, a configuration precedence chain, the `model` and `metadata` components, `data estimate`, four output formats, and coded errors.
 
 ## Install
 

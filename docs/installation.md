@@ -159,7 +159,7 @@ Neither platform package has a provider extra of its own. Both depend on `blue-d
 
 ## Installing exact built wheels
 
-Installed copies of the earlier releases in the [changelog](../CHANGELOG.md) report their original numbers: 0.1.1.0 to 0.2.2.1 report 1.1.0 to 2.2.1, which pip ranks above this release, and 0.1.0.0 reports 1.0.0, the same number as this one. A version number alone does not identify a build. Use wheels built from the checkouts above, or obtain them from your release maintainer. The CLI requires shared `blue-data==1.0.0`; build that wheel from the shared SDK's `1.0` checkout. Set `BLUE_DATA_WHEEL`, `LIBRARY_WHEEL`, `CLI_WHEEL` and `MCP_WHEEL` to the four local wheel paths. Install them into a fresh environment with compatible dependencies already installed:
+Installed copies of earlier internal builds report their original numbers: 0.1.1.0 to 0.2.2.1 report 1.1.0 to 2.2.1, which pip ranks above this release, and 0.1.0.0 reports 1.0.0, the same number as this one. A version number alone does not identify a build. Use wheels built from the checkouts above, or obtain them from your release maintainer. The CLI requires shared `blue-data==1.0.0`; build that wheel from the shared SDK's `1.0` checkout. Set `BLUE_DATA_WHEEL`, `LIBRARY_WHEEL`, `CLI_WHEEL` and `MCP_WHEEL` to the four local wheel paths. Install them into a fresh environment with compatible dependencies already installed:
 
 ```bash
 python -m pip install --no-index --no-deps --force-reinstall \

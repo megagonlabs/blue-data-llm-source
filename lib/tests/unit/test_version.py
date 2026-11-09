@@ -193,9 +193,8 @@ def test_platforms_require_the_exact_reset_library() -> None:
         requirement = Requirement(matches[0])
         assert str(requirement.specifier) == "==1.0.0"
         assert requirement.specifier.contains("1.0.0")
-        # Earlier releases carry 0.x labels in the changelog and report their original
-        # numbers when installed. The pin refuses both, except an installed 0.1.0.0, which
-        # reports 1.0.0.
+        # Earlier internal builds carry 0.x labels and report their original numbers when
+        # installed. The pin refuses both, except an installed 0.1.0.0, which reports 1.0.0.
         for historical in ("0.1.0", "1.1.1", "1.2.0", "2.2.1", "0.1.1.1", "0.1.2.0", "0.2.2.1"):
             assert not requirement.specifier.contains(historical)
     core = (ROOT / "lib/pyproject.toml").read_text()
